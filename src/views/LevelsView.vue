@@ -19,6 +19,7 @@ import { useFocusHighlight, useLocalModLink, useMapLink, useModRepositoryLink } 
 import { useListVisibility } from '../composables/useListVisibility'
 import { bulkSwitchValue as bulkSwitchValueOf } from '../listVisibility'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
+import { cachedInstallRelease } from '../repositoryAssets'
 import { levelSetDependencyRows } from '../dependencyRows'
 import { buildLevelSetGroups } from '../levelSetGroups'
 import {
@@ -570,7 +571,12 @@ async function runCardAction(set: LevelSetInfo) {
 
   const map = mapForLevelSet(set, maps.value)
   if (!map) return
-  const targetTag = map.latest_tag ?? undefined
+  const release = cachedInstallRelease(map.cached_releases, map.latest_tag ?? undefined)
+  if (!release) {
+    message.error(t('mapSource.releaseMissing'))
+    return
+  }
+  const targetTag = release.tag_name
   if (!(await planGate.run(mapRelationSubject(map, targetTag), targetTag))) return
   actionInFlight.value = set.dir_name
   try {

@@ -184,6 +184,7 @@ export const api = {
    *
    * `assetName` 是安装页下拉里选中的资产；不传时后端按 `asset_rules` 自动选。
    * 必须与界面上显示的文件一致，否则会出现「选的 A、下载的 B」。
+   * Release 模式只读已检测/刷新出的缓存；缺少指定版本时拒绝，不补查 API。
    */
   installModRepository: (repositoryId: string, tag?: string, previewOnly = false, assetName?: string) =>
     invoke<ModRepositoryInstallOutcome>('install_mod_repository', {
@@ -359,6 +360,7 @@ export const api = {
    * 必须 `discardMapSource` 清理。
    * `assetName` 是详情页下拉里选中的资产；不传时后端按地图源的 `asset_rules`
    * 自动选，与 MOD 安装完全同一条规则。
+   * 只使用已检测/刷新出的版本快照，缺少缓存时由用户显式刷新。
    * `locale` 用于下载进度标签：进度事件在下载过程中持续发出，
    * 名称必须在开始前按界面语言算好。
    */

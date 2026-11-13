@@ -82,6 +82,9 @@ async function installAt(index: number, label: string) {
   const target = status?.repository
   if (!target) throw new Error(t('modsOnline.noInstallableSourceFound'))
   const tag = status?.release?.tag_name
+  if (target.download_mode !== 'repository_file' && tag === undefined) {
+    throw new Error(t('source.noInstallableRelease'))
+  }
   /**
    * 下载 + 确认安装。
    *

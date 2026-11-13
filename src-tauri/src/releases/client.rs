@@ -1,6 +1,13 @@
 use super::error::ReleaseError;
 use reqwest::Client;
 
+/// Release 元数据请求、下载连接与首字节等待共用的最短启动窗口。
+pub(crate) const REQUEST_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+fn connection_timeout(timeout_seconds: u64) -> std::time::Duration {
+    std::time::Duration::from_secs(timeout_seconds).max(REQUEST_START_TIMEOUT)
+}
+
 /// Stable identifier for Cloudflare rules and access logs. The package
 /// version makes every request identify the exact desktop client release.
 pub const APP_USER_AGENT: &str = concat!(
@@ -15,6 +22,7 @@ pub fn build_client(timeout_seconds: u64) -> Result<Client, ReleaseError> {
     let timeout = std::time::Duration::from_secs(timeout_seconds.max(1));
     Client::builder()
         .timeout(timeout)
+        .connect_timeout(connection_timeout(timeout_seconds))
         .user_agent(APP_USER_AGENT)
         .build()
         .map_err(|e| {
@@ -30,9 +38,8 @@ pub fn build_client(timeout_seconds: u64) -> Result<Client, ReleaseError> {
 /// timeout is disabled so a download is allowed to run as long as data keeps
 /// arriving. The read timeout still aborts a connection that has gone idle.
 pub fn build_download_client(timeout_seconds: u64) -> Result<Client, ReleaseError> {
-    let connect_timeout = std::time::Duration::from_secs(timeout_seconds.max(1));
     Client::builder()
-        .connect_timeout(connect_timeout)
+        .connect_timeout(connection_timeout(timeout_seconds))
         .read_timeout(std::time::Duration::from_secs(120))
         .user_agent(APP_USER_AGENT)
         .build()

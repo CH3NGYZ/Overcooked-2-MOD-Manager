@@ -60,6 +60,7 @@ import { useLevelSetScan } from '../composables/useLevelSetScan'
 import type { InstallSource, LevelSetInfo, MapInfo, ModRepository } from '../types'
 import { demoActive, withDemoConfig, withDemoGame, withDemoLevelSets, withDemoMaps, withDemoMapSourceNodes, withDemoMods } from '../tutorial/demo'
 import { useMapReleaseDetail } from '../composables/useMapReleaseDetail'
+import { cachedInstallRelease } from '../repositoryAssets'
 
 /**
  * 地图安装页。
@@ -561,7 +562,12 @@ async function refresh(map: MapInfo) {
  */
 async function install(map: MapInfo, tag?: string, asset?: string) {
   if (isInstalling(map) || isRefreshing(map)) return
-  const targetTag = tag ?? map.latest_tag ?? undefined
+  const release = cachedInstallRelease(map.cached_releases, tag ?? map.latest_tag ?? undefined)
+  if (!release) {
+    message.error(t('mapSource.releaseMissing'))
+    return
+  }
+  const targetTag = release.tag_name
   // 前置检查：地图缺框架时装上也跑不起来，必须先让用户看到
   const ready = await planGate.run(mapRelationSubject(map, targetTag), targetTag)
   if (!ready) return

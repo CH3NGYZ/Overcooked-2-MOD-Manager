@@ -81,3 +81,83 @@ fn asset_rules_match_exact_names() {
         }]
     ));
 }
+
+#[test]
+fn cached_release_selection_never_substitutes_another_requested_version() {
+    let releases = parse_release_json(
+        &serde_json::json!([
+            {"tag_name":"v2.0.0", "assets":[]},
+            {"tag_name":"v1.0.0", "assets":[{"name":"mod.zip", "browser_download_url":"https://example.com/mod.zip"}]}
+        ]),
+        &Provider::Github,
+    ).unwrap();
+    assert!(select_cached_release(&[], None, None).is_none());
+    assert_eq!(
+        select_cached_release(&releases, None, None)
+            .unwrap()
+            .tag_name,
+        "v2.0.0"
+    );
+    assert!(
+        select_cached_release(&releases, None, None)
+            .unwrap()
+            .assets
+            .is_empty()
+    );
+    assert_eq!(
+        select_cached_release(&releases, Some("v1.0.0"), None)
+            .unwrap()
+            .tag_name,
+        "v1.0.0"
+    );
+    assert!(select_cached_release(&releases, Some("missing"), None).is_none());
+    assert!(select_cached_release(&releases, Some("missing"), Some("v1.0.0")).is_none());
+    assert_eq!(
+        select_cached_release(&releases, None, Some("1.0.0"))
+            .unwrap()
+            .tag_name,
+        "v1.0.0"
+    );
+    assert!(select_cached_release(&releases, None, Some("missing")).is_none());
+    assert_eq!(
+        select_cached_release(&releases, Some("v2.0.0"), Some("1.0.0"))
+            .unwrap()
+            .tag_name,
+        "v2.0.0"
+    );
+}
+
+#[test]
+fn cached_asset_selection_preserves_first_matching_snapshot_asset() {
+    let repo =
+        crate::community::repository_from_coordinates(&Provider::Github, "Owner", "Mod", "", "")
+            .unwrap();
+    let releases = parse_release_json(
+        &serde_json::json!([{"tag_name":"v1.0.0", "assets":[
+            {"name":"README.txt", "browser_download_url":"https://example.com/readme"},
+            {"name":"first.zip", "browser_download_url":"https://example.com/first.zip"},
+            {"name":"second.zip", "browser_download_url":"https://example.com/second.zip"}
+        ]}]),
+        &Provider::Github,
+    )
+    .unwrap();
+    let release = select_cached_release(&releases, Some("v1.0.0"), None).unwrap();
+    let request = RepositoryRequest::from(&repo);
+    let rules = [AssetRule {
+        rule_type: AssetRuleType::Glob,
+        value: "*.zip".into(),
+    }];
+    assert_eq!(
+        select_install_asset(&request, &rules, release, None)
+            .unwrap()
+            .name,
+        "first.zip"
+    );
+    assert_eq!(
+        select_install_asset(&request, &rules, release, Some("second.zip"))
+            .unwrap()
+            .name,
+        "second.zip"
+    );
+    assert!(select_install_asset(&request, &rules, release, Some("missing.zip")).is_none());
+}

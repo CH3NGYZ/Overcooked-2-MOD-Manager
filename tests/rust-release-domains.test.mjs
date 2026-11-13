@@ -93,3 +93,37 @@ test('generic repository reads and map adapters do not construct MOD installatio
   assert.match(models, /pub install_target: String/)
   assert.doesNotMatch(read('../models/repositories.rs'), /pub struct ModRepositoryConfig|pub plugin_guid:/)
 })
+
+test('MOD and map downloads share a ten-second startup window while independent request policies remain intact', () => {
+  const client = read('client.rs')
+  assert.match(client, /REQUEST_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs\(10\)/)
+  assert.match(client, /Duration::from_secs\(timeout_seconds\)\.max\(REQUEST_START_TIMEOUT\)/)
+  const [api, download] = client.split('pub fn build_download_client(')
+  for (const builder of [api, download]) assert.match(builder, /\.connect_timeout\(connection_timeout\(timeout_seconds\)\)/)
+  assert.doesNotMatch(download, /\.timeout\(/)
+  assert.match(download, /\.read_timeout\(std::time::Duration::from_secs\(120\)\)/)
+  assert.match(read('transport.rs'), /API_REQUEST_TIMEOUT: std::time::Duration = REQUEST_START_TIMEOUT/)
+  assert.match(read('transport.rs'), /\.timeout\(API_REQUEST_TIMEOUT\)/)
+  assert.match(read('../archive/transfer.rs'), /FIRST_BYTE_TIMEOUT: std::time::Duration = crate::releases::REQUEST_START_TIMEOUT/)
+  for (const path of ['../commands/mod_repository_install.rs', '../commands/map_install.rs']) {
+    assert.match(read(path), /releases::build_download_client\(config\.network\.timeout_seconds\)/)
+    assert.match(read(path), /archive::release_download::download\(/)
+  }
+  for (const path of ['../community/github.rs', '../community/gitcode.rs', '../app_update/manifest.rs']) {
+    assert.match(read(path), /\.timeout\((?:std::time::)?Duration::from_secs\(5\)\)/)
+  }
+})
+
+test('MOD and map download commands consume cached versions without Release API fallbacks', () => {
+  for (const file of ['../commands/mod_repository_install.rs', '../commands/map_install.rs']) {
+    const command = read(file)
+    assert.match(command, /releases::select_cached_release\(/)
+    assert.doesNotMatch(command, /fetch_releases|fetch_map_release_data|refresh_(?:map|repository)_releases|\.release_cache\b/)
+  }
+  for (const file of ['../mod_preview/commands.rs', '../mods/install.rs', '../direct_mod.rs']) {
+    assert.doesNotMatch(read(file), /fetch_releases|fetch_map_release_data|refresh_(?:map|repository)_releases/)
+  }
+  assert.match(read('../commands/maps.rs'), /fetch_map_release_data\(/)
+  assert.match(read('../commands/mod_repository_releases.rs'), /releases::fetch_releases\(/)
+  assert.match(read('../commands/map_install.rs'), /select_map_stage_asset\(&map, release, asset_name\.as_deref\(\)\)/)
+})

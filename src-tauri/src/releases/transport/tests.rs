@@ -2,6 +2,60 @@ use super::super::test_support::{ApiTestServer, api_test_client};
 use super::*;
 
 #[tokio::test]
+async fn release_api_waits_past_legacy_five_second_client_timeout() {
+    use std::io::{Read, Write};
+    use std::time::{Duration, Instant};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let url = format!("http://{}/releases", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(12);
+        let mut socket = loop {
+            match listener.accept() {
+                Ok((socket, _)) => break socket,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "request did not reach fixture");
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Err(error) => panic!("fixture accept failed: {error}"),
+            }
+        };
+        // Windows accepted sockets inherit the listener's nonblocking mode.
+        socket.set_nonblocking(false).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        socket
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut request = Vec::new();
+        while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+            let mut buffer = [0_u8; 1024];
+            let count = socket.read(&mut buffer).unwrap();
+            assert!(count > 0 && request.len() + count <= 8192);
+            request.extend_from_slice(&buffer[..count]);
+        }
+        // The old five-second request deadline fails before this valid response.
+        std::thread::sleep(Duration::from_secs(6));
+        socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n[]")
+            .unwrap();
+    });
+    let started = Instant::now();
+    let result = fetch_release_api(
+        &crate::releases::build_client(5).unwrap(),
+        &url,
+        &Provider::Gitee,
+        None,
+    )
+    .await;
+    server.join().unwrap();
+    assert!(result.unwrap().is_empty());
+    assert!(started.elapsed() >= Duration::from_secs(6));
+}
+
+#[tokio::test]
 async fn failed_api_requests_do_not_expose_query_credentials() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();

@@ -16,6 +16,7 @@ import { pickI18n, t } from '../i18n'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { beginDownloadTask, endDownloadTask, failDownloadTask } from '../downloadTask'
 import { isPrereleaseVersion } from '../modStatus'
+import { cachedInstallRelease } from '../repositoryAssets'
 import type { ModPreview, ModRepository } from '../types'
 
 export interface ModRepositoryPreviewOptions {
@@ -62,8 +63,14 @@ export function useModRepositoryPreview(openPreview: (preview: ModPreview) => vo
   async function previewModRepository(repo: ModRepository, tag?: string, assetName?: string): Promise<void> {
     if (options.gameBlocked?.()) return
 
-    const target = tag ?? repo.cached_releases[0]?.tag_name
-    const release = repo.cached_releases.find((entry) => entry.tag_name === target)
+    const isRaw = repo.download_mode === 'repository_file'
+    const release = isRaw ? undefined : cachedInstallRelease(repo.cached_releases, tag, repo.pinned_version)
+    if (!isRaw && !release) {
+      message.error(t('source.noInstallableRelease'))
+      return
+    }
+    // Freeze the selected version before any dialogs or dependency operations.
+    const target = release?.tag_name
     /*
      * 预发布判定：优先用后端算好的 `prerelease` 标记。
      *
@@ -110,7 +117,7 @@ export function useModRepositoryPreview(openPreview: (preview: ModPreview) => vo
      * （1.0 依赖 B≥2，1.1 依赖 B≥3），所以把 tag 一起传下去。
      */
     if (options.prepareInstall) {
-      const ready = await options.prepareInstall(repo, tag)
+      const ready = await options.prepareInstall(repo, target)
       // 没处理好就不继续：装一个跑不起来或冲突的 MOD 比不装更糟
       if (!ready) return
     }
@@ -127,7 +134,7 @@ export function useModRepositoryPreview(openPreview: (preview: ModPreview) => vo
       })
       options.onBusyChange?.(repo.id, true)
       try {
-        const outcome = await api.installModRepository(repo.id, tag, true, assetName)
+        const outcome = await api.installModRepository(repo.id, target, true, assetName)
         // 走到这里说明 IPC 本身成功了：ok/message 是业务结论，不是下载故障
         endDownloadTask(token)
         if (!outcome.ok) {

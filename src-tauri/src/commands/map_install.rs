@@ -271,25 +271,18 @@ pub async fn stage_map_release(
          * 暂存不写游戏目录，所以不探测游戏目录、也不拦「游戏正在运行」：
          * 真正的写入在 `import_level_sets`，那里仍会校验 `game.notFound` 与运行状态。
          */
-        let release = match tag.as_deref() {
-            Some(tag) => map
-                .cached_releases
-                .iter()
-                .find(|release| release.tag_name == tag)
-                .cloned()
-                .ok_or("mapSource.releaseMissing")?,
-            None => map
-                .cached_releases
-                .first()
-                .cloned()
-                .ok_or("source.noInstallableRelease")?,
-        };
+        let release = releases::select_cached_release(&map.cached_releases, tag.as_deref(), None)
+            .ok_or(if tag.is_some() {
+            "mapSource.releaseMissing"
+        } else {
+            "source.noInstallableRelease"
+        })?;
         /*
          * 指定资产名时精确匹配；未指定时普通地图仍按 `asset_rules` 自动选，
          * tag 模式直接用合成版本自带的唯一资产（见 `select_map_stage_asset`）。
          */
         let asset =
-            crate::map_sources::select_map_stage_asset(&map, &release, asset_name.as_deref())
+            crate::map_sources::select_map_stage_asset(&map, release, asset_name.as_deref())
                 .ok_or("source.noMatchingAsset")?
                 .clone();
 

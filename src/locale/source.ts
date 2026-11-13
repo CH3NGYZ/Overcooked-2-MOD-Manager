@@ -149,11 +149,11 @@ export const source: DomainMessages = {
     ja: 'このリポジトリソースは内蔵フォールバックに対応していません',
   },
   noInstallableRelease: {
-    'zh-CN': '没有可安装的 Release',
-    'zh-TW': '沒有可安裝的 Release',
-    en: 'No installable release',
-    ko: '설치할 수 있는 Release가 없습니다',
-    ja: 'インストールできる Release がありません',
+    'zh-CN': '没有可安装的 Release，请先刷新版本信息后重试。',
+    'zh-TW': '沒有可安裝的 Release，請先重新整理版本資訊後重試。',
+    en: 'No installable release. Refresh the version information and try again.',
+    ko: '설치할 수 있는 Release가 없습니다. 버전 정보를 새로 고친 후 다시 시도하세요.',
+    ja: 'インストールできる Release がありません。バージョン情報を更新してから再試行してください。',
   },
   noMatchingAsset: {
     'zh-CN': '没有匹配的 Release 资产',

@@ -1,4 +1,4 @@
-use super::client::APP_USER_AGENT;
+use super::client::{APP_USER_AGENT, REQUEST_START_TIMEOUT};
 use super::error::ReleaseError;
 use super::error::release_error_kind;
 use super::projection::parse_release_json;
@@ -10,7 +10,7 @@ use reqwest::Client;
 use reqwest::StatusCode;
 use serde_json::Value;
 
-pub(super) const API_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+pub(super) const API_REQUEST_TIMEOUT: std::time::Duration = REQUEST_START_TIMEOUT;
 
 const REPOSITORY_API_ATTEMPTS: usize = 3;
 

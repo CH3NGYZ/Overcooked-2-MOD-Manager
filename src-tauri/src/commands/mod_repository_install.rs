@@ -124,43 +124,12 @@ pub async fn install_mod_repository(
                     repo.name,
                     repo.cached_releases.len()
                 );
-                let fetched_releases = if repo.cached_releases.is_empty() {
-                    let client = releases::build_client(config.network.timeout_seconds)
-                        .map_err(|e| e.to_string())?;
-                    let token = state.config.mod_repository_api_token(&config, &repo);
-                    let api_proxies = crate::providers::api_proxies(&config, &repo.provider);
-                    releases::filter_channel(
-                        releases::fetch_releases(
-                            &client,
-                            &crate::releases::RepositoryRequest::from(&repo),
-                            token.as_deref(),
-                            config.auth.official_api_only,
-                            api_proxies,
-                        )
-                        .await
-                        .map_err(|e| e.to_string())?,
-                        &repo.channel,
-                    )
-                } else {
-                    repo.cached_releases.clone()
-                };
-                let release = tag
-                    .as_deref()
-                    .and_then(|value| {
-                        fetched_releases
-                            .iter()
-                            .find(|release| release.tag_name == value)
-                    })
-                    .or_else(|| {
-                        repo.pinned_version.as_deref().and_then(|value| {
-                            fetched_releases.iter().find(|release| {
-                                release.tag_name == value
-                                    || release.version.as_deref() == Some(value)
-                            })
-                        })
-                    })
-                    .or_else(|| fetched_releases.first())
-                    .ok_or("source.noInstallableRelease")?;
+                let release = releases::select_cached_release(
+                    &repo.cached_releases,
+                    tag.as_deref(),
+                    repo.pinned_version.as_deref(),
+                )
+                .ok_or("source.noInstallableRelease")?;
                 let asset = releases::select_install_asset(
                     &crate::releases::RepositoryRequest::from(&repo),
                     &repo.asset_rules,

@@ -6,6 +6,24 @@ use crate::releases::RepositoryRequest;
 use globset::GlobBuilder;
 use regex::Regex;
 
+/// Downloads consume the version snapshot already shown by the card. A missing
+/// requested or pinned version cannot silently turn into another version.
+pub(crate) fn select_cached_release<'a>(
+    releases: &'a [ReleaseInfo],
+    tag: Option<&str>,
+    pinned_version: Option<&str>,
+) -> Option<&'a ReleaseInfo> {
+    if let Some(tag) = tag {
+        return releases.iter().find(|release| release.tag_name == tag);
+    }
+    if let Some(version) = pinned_version {
+        return releases.iter().find(|release| {
+            release.tag_name == version || release.version.as_deref() == Some(version)
+        });
+    }
+    releases.first()
+}
+
 pub fn asset_matches(asset: &ReleaseAsset, rules: &[AssetRule]) -> bool {
     rules.iter().any(|rule| match rule.rule_type {
         AssetRuleType::Exact => asset.name.eq_ignore_ascii_case(&rule.value),

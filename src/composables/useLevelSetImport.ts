@@ -27,6 +27,7 @@ import { useGameOperationGate } from './useGameOperationGate'
 import { uninstallMapConflict } from '../installConflicts'
 import { conflictCheckModel } from '../installCheck'
 import { backendMessageOf } from '../locale/backend'
+import { cachedInstallRelease } from '../repositoryAssets'
 import { beginDownloadTask, endDownloadTask, failDownloadTask } from '../downloadTask'
 import { modRepositoryIsAvailable } from '../repositoryAvailability'
 import { useDashboard } from './useDashboardStore'
@@ -368,6 +369,13 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
     options: FinishOptions = {},
   ): Promise<boolean> {
     if (importing.value) return false
+    const map = maps.value.find((entry) => entry.id === mapId)
+    const release = map && cachedInstallRelease(map.cached_releases, tag ?? map.latest_tag ?? undefined)
+    if (!release) {
+      message.error(t('mapSource.releaseMissing'))
+      return false
+    }
+    const targetTag = release.tag_name
     importing.value = true
     let stagedFile: string | null = null
     /*
@@ -376,11 +384,11 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
      */
     const token = beginDownloadTask({
       label: releaseLabel(mapId),
-      retry: () => { void installRelease(mapId, tag, assetName, options) },
+      retry: () => { void installRelease(mapId, targetTag, assetName, options) },
     })
     try {
       zipProgress.value = null
-      const staged = await api.stageMapRelease(mapId, tag, assetName)
+      const staged = await api.stageMapRelease(mapId, targetTag, assetName)
       endDownloadTask(token)
       // 下载 + 识别结束：确认弹窗才是接下来的主角
       zipProgress.value = null

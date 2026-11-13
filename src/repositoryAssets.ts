@@ -1,5 +1,18 @@
 import type { AssetRule, ReleaseAsset, ReleaseInfo } from './types'
 
+/** Downloads only select an existing snapshot; a missing explicit/pinned version never falls back. */
+export function cachedInstallRelease(
+  releases: readonly ReleaseInfo[],
+  tag?: string,
+  pinnedVersion?: string,
+): ReleaseInfo | undefined {
+  if (tag !== undefined) return releases.find((release) => release.tag_name === tag)
+  if (pinnedVersion !== undefined) {
+    return releases.find((release) => release.tag_name === pinnedVersion || release.version === pinnedVersion)
+  }
+  return releases[0]
+}
+
 /**
  * 在线内容（MOD 仓库 / 地图）的资产规则匹配。
  *

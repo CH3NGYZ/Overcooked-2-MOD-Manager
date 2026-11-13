@@ -16,11 +16,11 @@ export const mapSource: DomainMessages = {
     ja: 'マップソースにこのマップが見つかりません。',
   },
   releaseMissing: {
-    'zh-CN': '找不到这张地图的最新版本信息',
-    'zh-TW': '找不到這張地圖的最新版本資訊',
-    en: 'No release information found for this map.',
-    ko: '이 지도의 최신 버전 정보를 찾을 수 없습니다.',
-    ja: 'このマップの最新バージョン情報が見つかりません。',
+    'zh-CN': '找不到这张地图的所选版本信息，请先刷新版本信息后重试。',
+    'zh-TW': '找不到這張地圖所選的版本資訊，請先重新整理版本資訊後重試。',
+    en: 'No information found for the selected map version. Refresh the version information and try again.',
+    ko: '선택한 지도 버전 정보를 찾을 수 없습니다. 버전 정보를 새로 고친 후 다시 시도하세요.',
+    ja: '選択したマップのバージョン情報が見つかりません。バージョン情報を更新してから再試行してください。',
   },
   duplicateEntry: {
     'zh-CN': '地图源里有重复条目：{identity}',

@@ -314,6 +314,9 @@ pub struct MapInfo {
     /// 作者忘没忘改 info 里的版本号都不影响结论。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_info_version: Option<String>,
+    /// Complete oldest-to-newest declaration, independent of release cache limits.
+    #[serde(default)]
+    pub asset_versions: Vec<AssetVersionEntry>,
     /// 缓存里最新的 Release tag；没刷新过时为 `None`。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_tag: Option<String>,

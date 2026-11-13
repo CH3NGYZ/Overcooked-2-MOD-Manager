@@ -254,7 +254,7 @@ export function modPreviewDetail(preview: ModPreview): InstallDetailModel {
 export function levelSetImportDetail(
   zipPath: string,
   sets: ZipLevelSet[],
-  options: { dependencies?: (set: ZipLevelSet) => DependencyRow[] } = {},
+  options: { dependencies?: (set: ZipLevelSet) => DependencyRow[]; previousVersions?: (set: ZipLevelSet) => readonly string[] } = {},
 ): InstallDetailModel {
   const pluginCount = sets.reduce((total, set) => total + (set.plugins?.length ?? 0), 0)
   const conflicts = conflictRows(sets.flatMap((set) => set.conflicts ?? []))
@@ -265,7 +265,7 @@ export function levelSetImportDetail(
       kind: t('tools.mapPackage'),
       summary: t('tools.mapPackageSummary', { dlls: pluginCount, sets: sets.length }),
     },
-    entries: sets.map((set) => levelSetEntry(set, options.dependencies?.(set) ?? [])),
+    entries: sets.map((set) => levelSetEntry(set, options.dependencies?.(set) ?? [], options.previousVersions?.(set))),
     conflicts,
     conflictHint: conflicts.length > 0 ? t('tools.installConflictHint') : '',
     emptyHint: [],
@@ -277,7 +277,9 @@ export function levelSetImportDetail(
 }
 
 /** 一张地图集卡片：标题用中文名（作者与玩家平时叫的那个），没有才退回英文名/目录名。 */
-function levelSetEntry(set: ZipLevelSet, dependencies: DependencyRow[]): InstallDetailEntry {
+function levelSetEntry(set: ZipLevelSet, dependencies: DependencyRow[], previousVersions?: readonly string[]): InstallDetailEntry {
+  const target = formatVersion(set.version) || '—'
+  const previous = [...new Set((previousVersions ?? set.conflicts?.map(conflict => conflict.version) ?? []).map(version => formatVersion(version) || '—'))]
   const subtitle = [set.author?.trim(), t('levelSet.levelCount', { count: set.level_count })]
     .filter(Boolean)
     .join(' · ')
@@ -285,7 +287,7 @@ function levelSetEntry(set: ZipLevelSet, dependencies: DependencyRow[]): Install
     key: set.dir_name,
     title: set.name_zh?.trim() || set.name?.trim() || set.dir_name,
     subtitle,
-    meta: formatVersion(set.version) || '—',
+    meta: previous.length ? `${previous.join(' / ')} → ${target}` : target,
     fields: [
       { label: t('levelSet.nameZh'), value: set.name_zh?.trim() || '—' },
       { label: t('levelSet.nameEn'), value: set.name?.trim() || '—' },

@@ -35,7 +35,7 @@ import { modRepositoryIsAvailable } from '../repositoryAvailability'
 import { t } from '../i18n'
 import { runtimeModStatus } from '../modRuntimeStatus'
 import {
-  levelSetState, levelSetIsRefreshing, mapForLevelSet, mapVersionForLevelSet, mapVersionRefs,
+  levelSetAggregateState, aggregateLevelSetVersion, levelSetIsRefreshing,
 } from '../levelSetStatus.ts'
 import { useNotify } from '../useNotify'
 import { FOCUS_QUERY } from '../crossLink'
@@ -328,12 +328,11 @@ async function loadLocalMaps() {
  * 「最新版」，那是无根据的结论（见 `levelSetStatus.ts` 的 `mapVersionRefs`）。
  * 这套判定与地图管理页的卡片状态同源，总览不另写一份比较逻辑。
  */
-const mapVersionList = computed(() => mapVersionRefs(maps.value))
+const mapVersionsOf = (set: LevelSetInfo) => aggregateLevelSetVersion(set, maps.value, refreshingHint.value)
 
 /** 单张本地地图的状态：口径与地图管理页的 `stateOf` 完全一致。 */
 function mapStateOf(set: LevelSetInfo) {
-  if (levelSetIsRefreshing(set, maps.value, refreshingHint.value)) return 'unknown'
-  return levelSetState(set, mapVersionForLevelSet(set, mapVersionList.value))
+  return levelSetAggregateState(set, mapVersionsOf(set))
 }
 
 /** 其中 Release 刷新失败的地图源条目（`last_error` 非空）。 */
@@ -373,8 +372,8 @@ const localMapsSub = computed(() => {
   if (!total) {
     return levelSetScanning.value ? t('levelSet.scanningPreparing') : t('overview.noMapsInstalled')
   }
-  if (localMapsChecking.value) return t('tools.checking')
   const updates = updatableMaps.value.length
+  if (!updates && localMapsChecking.value) return t('tools.checking')
   return updates
     ? t('overview.installedMapsCanUpdate', { count: total, updates })
     : t('overview.installedMaps', { count: total })
@@ -389,7 +388,7 @@ const localMapsSub = computed(() => {
  */
 const localMapsButtonLabel = computed(() => {
   if (levelSetScanning.value) return t('levelSet.scanning')
-  if (localMapsChecking.value) return t('tools.checking')
+  if (!updatableMaps.value.length && localMapsChecking.value) return t('tools.checking')
   return updatableMaps.value.length ? t('overview.review') : t('overview.manage')
 })
 
@@ -415,7 +414,7 @@ function openOnlineMaps() {
  */
 function openLocalMaps() {
   const first = updatableMaps.value[0]
-  const mapId = first ? mapForLevelSet(first, maps.value)?.id : undefined
+  const mapId = first ? mapVersionsOf(first).primaryTarget?.mapId : undefined
   if (!mapId) {
     void router.push({ name: 'levels' })
     return

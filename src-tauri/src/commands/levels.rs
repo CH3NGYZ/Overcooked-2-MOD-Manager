@@ -106,9 +106,16 @@ pub async fn get_level_sets(
                 .map_repositories
                 .iter()
                 .filter(|map| {
-                    infos
-                        .iter()
-                        .any(|info| info.map_id.as_deref() == Some(map.id.as_str()))
+                    infos.iter().any(|info| {
+                        crate::level_sets::level_set_identity_matches(
+                            &info.name,
+                            info.name_zh.as_deref(),
+                            &info.author,
+                            &map.level_set_name,
+                            Some(map.level_set_name_zh.as_str()),
+                            &map.author,
+                        )
+                    })
                 })
                 .map(|map| {
                     crate::api_scheduler::repository_key(

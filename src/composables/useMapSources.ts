@@ -26,7 +26,7 @@ import { prioritizeByIds, runReleaseBatch, runSourceReleaseRefresh, type Release
 import { backendMessageOf } from '../locale/backend'
 import { useNotify, type Notify } from '../useNotify'
 import { useLevelSetScan } from './useLevelSetScan'
-import { mapForLevelSet, type LevelSetRefreshingHint } from '../levelSetStatus'
+import { mapsForLevelSet, type LevelSetRefreshingHint } from '../levelSetStatus'
 import { demoActive, isDemoId } from '../tutorial/demo'
 import type { MapInfo, SourceNode } from '../types'
 
@@ -114,6 +114,7 @@ const refreshingHint = computed<LevelSetRefreshingHint>(() => ({
   maps: new Set(Object.keys(refreshing.value)),
   queued: new Set(Object.keys(queued.value)),
   sources: new Set(Object.keys(refreshingSources.value)),
+  sourceOrder: sourceNodes.value.map(node => node.id),
 }))
 
 /**
@@ -195,7 +196,7 @@ async function syncDependencySnapshots() {
  * 和「写回哪个对象」，其余（标志、写回时机、并发、结果收集）都在
  * `releaseRefresh` / `refreshState` 里。
  */
-function mapReleaseSpec(passId: string, force = false): ReleaseFetchSpec<MapInfo> {
+function mapReleaseSpec(passId: string, force = false): ReleaseFetchSpec<MapInfo, MapInfo> {
   const skipped = new Set<string>()
   return {
     // Only the floating full-refresh button bypasses TTL; same-pass reads still coalesce.
@@ -203,7 +204,7 @@ function mapReleaseSpec(passId: string, force = false): ReleaseFetchSpec<MapInfo
     fetch: (item) => {
       if (demoActive.value || isDemoId(item.id)) {
         skipped.add(item.id)
-        return Promise.resolve(item.cached_releases ?? [])
+        return Promise.resolve(item)
       }
       return api.refreshMapReleases(item.id, force, passId)
     },
@@ -211,16 +212,10 @@ function mapReleaseSpec(passId: string, force = false): ReleaseFetchSpec<MapInfo
      * 成功写回只替换这一张图，不等整批结束重载列表：`latest_tag` 取自缓存的
      * 第一条，与后端 `map_to_info` 完全同一条规则（所以不必在前端另立判定）。
      */
-    apply: (item, releases) => {
+    apply: (item, snapshot) => {
       if (skipped.has(item.id)) return
-      patchMap(item.id, {
-        cached_releases: releases,
-        latest_release: releases[0] ?? null,
-        latest_tag: releases[0]?.tag_name ?? null,
-        cached_release_count: releases.length,
-        cached_at: Date.now(),
-        last_error: null,
-      })
+      // The declaration, relationships and releases belong to one API snapshot.
+      replaceMap(item.id, snapshot)
     },
     /* 与后端 Err 分支同一规则：清缓存 + 置错，卡片当场显示「刷新失败」 */
     fail: (item, message) => patchMap(item.id, {
@@ -242,6 +237,15 @@ function mapReleaseSpec(passId: string, force = false): ReleaseFetchSpec<MapInfo
  * 所以「刷一张回来一张」必须在这里就地落地；整批结束的 `loadMaps()` 只负责
  * 补齐依赖快照这类派生数据。
  */
+function replaceMap(mapId: string, snapshot: MapInfo) {
+  const index = maps.value.findIndex(map => map.id === mapId)
+  if (index < 0) return
+  mapsRevision += 1
+  const next = maps.value.slice()
+  next[index] = snapshot
+  maps.value = next
+}
+
 function patchMap(mapId: string, patch: Partial<MapInfo>) {
   const index = maps.value.findIndex((map) => map.id === mapId)
   if (index < 0) return
@@ -270,17 +274,14 @@ async function refreshReleases(
 ): Promise<RefreshOutcome> {
   if (demoActive.value) return { trigger: options.trigger ?? 'partial', refreshed: 0, updated: 0, errors: [], finishedAt: Date.now() }
   const priorityIds = options.priorityIds ?? new Set(
-    useLevelSetScan().levelSets.value.flatMap((set) => {
-      const map = mapForLevelSet(set, maps.value)
-      return map ? [map.id] : []
-    }),
+    useLevelSetScan().levelSets.value.flatMap(set => mapsForLevelSet(set, maps.value).map(map => map.id)),
   )
   const passId = options.passId ?? newPassId()
   const available = list.filter((map) => !isDemoId(map.id) && !installing.value[map.id])
   // Source expansion has already published these cards' declarations, versions
   // and errors. Do not fan them out into a second IPC or reactive write queue.
   const prepared = options.sourcePrepared ? available.filter(map => map.release_derived) : []
-  const result = await runReleaseBatch<MapInfo>({
+  const result = await runReleaseBatch<MapInfo, MapInfo>({
     state,
     // 正在安装的不能同时刷：安装要替换目录，刷新会读它的元数据
     items: available.filter(map => !options.sourcePrepared || !map.release_derived),
@@ -291,7 +292,6 @@ async function refreshReleases(
       : undefined,
     finalize: async () => {
       await syncDependencySnapshots()
-      await loadMaps({ force: true })
     },
     countUpdated: options.countUpdated,
   })
@@ -341,12 +341,12 @@ async function refreshBoundMaps(
 ): Promise<MapBoundRefreshSummary> {
   if (demoActive.value || anyRefreshing.value) return { refreshed: 0, updated: 0, errors: [] }
   const passId = newPassId()
-  const ids = new Set(targets.map((map) => map.id))
+  const installed = useLevelSetScan().levelSets.value.filter(set => mapsForLevelSet(set, targets).length > 0)
   const result = await runSourceReleaseRefresh({
     state,
     trigger: 'bound',
     prepare: () => prepareMapSources(passId),
-    refresh: () => refreshReleases(maps.value.filter((map) => ids.has(map.id)), {
+    refresh: () => refreshReleases(maps.value.filter(map => installed.some(set => mapsForLevelSet(set, [map]).length > 0)), {
       trigger: 'single', passId, sourcePrepared: true, ...options,
     }),
   })
@@ -356,6 +356,7 @@ async function refreshBoundMaps(
 async function refreshSource(node: { id: string }) {
   if (demoActive.value || isDemoId(node.id) || anyRefreshing.value) return
   const passId = newPassId()
+  const sourceIds = sourceTree.descendants(node.id)
   const removed = sourceTree.begin(node.id)
   mapsRevision += 1
   maps.value = maps.value.filter(map => !map.source_id || !removed.has(map.source_id))
@@ -363,8 +364,10 @@ async function refreshSource(node: { id: string }) {
     state,
     trigger: 'partial',
     prepare: () => state.runSource(node.id, () => prepareMapSources(passId, false, node.id)),
-    refresh: () => refreshReleases(maps.value.filter((map) =>
-      sourceTree.descendants(node.id).has(map.source_id || '__none__')), { trigger: 'single', passId, sourcePrepared: true }),
+    refresh: () => {
+      const targets = maps.value.filter((map) => sourceIds.has(map.source_id || '__none__'))
+      return refreshReleases(targets, { trigger: 'single', passId, sourcePrepared: true })
+    },
   })
   if (result.errors.length) message?.error(result.errors[0])
 }

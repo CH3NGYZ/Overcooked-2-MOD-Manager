@@ -43,6 +43,7 @@ import type {
 interface PendingBatch {
   path: string
   sets: ZipLevelSet[]
+  previousVersions: Record<string, string[]>
 }
 
 export function useLevelSetImport(onImported?: () => void | Promise<void>) {
@@ -129,6 +130,7 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
   const detail = computed<InstallDetailModel | null>(() =>
     pending.value
       ? levelSetImportDetail(pending.value.path, pending.value.sets, {
+          previousVersions: set => pending.value?.previousVersions[set.dir_name] ?? [],
           /*
            * 弹窗里不做依赖跳转：跳走会把「等用户确认」的导入流程留在原地，
            * 回来还得重新识别一遍 ZIP。状态列只答「够不够」，不引导离开。
@@ -154,8 +156,10 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
   }
 
   /** 打开详情弹窗，等用户点「立即安装」或放弃。 */
-  function askApproval(path: string, sets: ZipLevelSet[]) {
-    pending.value = { path, sets }
+  function askApproval(path: string, sets: ZipLevelSet[], originalSets: readonly ZipLevelSet[] = sets) {
+    // Preserve the version change after the preflight has recycled old copies.
+    const previousVersions = Object.fromEntries(originalSets.map(set => [set.dir_name, (set.conflicts ?? []).map(conflict => conflict.version)]))
+    pending.value = { path, sets, previousVersions }
     previewOpen.value = true
     return new Promise<boolean>((resolve) => { settleApproval = resolve })
   }
@@ -280,7 +284,7 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
      */
     const sets = await resolveConflicts(staged.sets, options.targetLabel)
     if (!sets) return false
-    if (!(await askApproval(staged.path, sets))) return false
+    if (!(await askApproval(staged.path, sets, staged.sets))) return false
     if (blockModChanges(sets)) return false
     /*
      * 用户表态后先收起弹窗再导入：写盘期间进度由页面按钮转圈，弹窗留着

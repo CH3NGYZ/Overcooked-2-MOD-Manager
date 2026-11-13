@@ -146,7 +146,7 @@ test('map engine publishes channel snapshots immediately, keeps successful sibli
   const nodes=[{...node('root',null,'ready'),note_i18n:{en:'Root source'}},{...node('child','root','loading'),note_i18n:{ja:'子ソース'}},node('failed','root')]
   globalThis.__loadingApi={
     refreshMapSources:async(pass,force,onProgress,id)=>{requests.push(['toml',force,id]);progress=onProgress;await source.promise;return[first,nested]},
-    refreshMapReleases:async(id,force)=>{requests.push(['api',id,force]);return[]},
+    refreshMapReleases:async(id,force)=>{requests.push(['api',id,force]);return{...[first,nested].find(map=>map.id===id),builtin:false,latest_release:null,latest_tag:null,cached_release_count:0,cached_at:123,last_error:null}},
     syncDependencySnapshots:async()=>{},maps:async()=>e.maps.value,
   }
   const pending=e.refreshAll();await tick()

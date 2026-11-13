@@ -23,7 +23,6 @@ import HeaderSearch from '../components/HeaderSearch.vue'
 import { prefetchAvatars } from '../avatars'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
-import { versionDisplay } from '../modStatus'
 import { markdownSummary } from '../markdown'
 import { formatVersionSpec } from '../versionSpec'
 import { modRepositoryIsAvailable } from '../repositoryAvailability'
@@ -36,7 +35,7 @@ import {
   mapRelationStatuses,
   type FrameworkState,
 } from '../levelSetStatus'
-import { mapCardAction, mapCardStatus, type MapCardState } from '../mapCardStatus'
+import { mapCardAction, mapCardActionLabel, mapCardStatus, mapCardVersion, type MapCardState } from '../mapCardStatus'
 import OnlineCard, { type CardAction, type CardDependencyTag } from '../components/OnlineCard.vue'
 import SourceGroupSlot from '../components/SourceGroupSlot.vue'
 import SourceDirectory from '../components/SourceDirectory.vue'
@@ -384,7 +383,7 @@ function isInstalling(map: MapInfo): boolean {
  * 翻译与着色 —— 页面不再自己拼状态字符串，避免两处规则漂移。
  */
 function statusOf(map: MapInfo): { key: MapCardState; text: string; tone: TagTone } {
-  const status = mapCardStatus(map, sets.value)
+  const status = mapCardStatus(map, sets.value, maps.value)
   return { key: status.key, text: t(status.text), tone: status.tone }
 }
 
@@ -446,9 +445,7 @@ const detailStatus = computed(() =>
 
 /** 版本号展示：与 MOD 卡片同一套两段式规则。 */
 function versionOf(map: MapInfo) {
-  const release = map.latest_release
-  if (!release) return versionDisplay(null)
-  return versionDisplay(release.tag_name || release.version, release.prerelease, t('modsOnline.t'))
+  return mapCardVersion(map, t('modsOnline.t'))
 }
 
 /** 下载量：与 MOD 卡片同一算法（最新 Release 全部资产之和）。 */
@@ -513,14 +510,6 @@ function openDependencyJump(row: DependencyRow) {
   if (row.jump) linkToModRepository(row.jump.id)
 }
 
-/** 主按钮文案：与 MOD 安装页共用同一批 key。 */
-const ACTION_LABELS: Record<CardAction['kind'], string> = {
-  install: 'modsOnline.install',
-  reinstall: 'overview.reinstall',
-  update: 'dialogs.update',
-  refresh: 'modsOnline.refresh',
-}
-
 /**
  * 主按钮。
  *
@@ -528,10 +517,10 @@ const ACTION_LABELS: Record<CardAction['kind'], string> = {
  * 本地没装是安装，本地版本低是更新，已经装了是重装 —— 与 MOD 安装页一致。
  */
 function actionOf(map: MapInfo): CardAction {
-  const kind = mapCardAction(map, sets.value)
+  const kind = mapCardAction(map, sets.value, maps.value)
   return {
     kind,
-    label: t(ACTION_LABELS[kind]),
+    label: t(mapCardActionLabel(map, sets.value, maps.value)),
     loading: kind === 'refresh' ? isRefreshing(map) : isInstalling(map),
     disabled: isRefreshing(map) || isInstalling(map),
   }
@@ -654,7 +643,7 @@ function refreshDetail() {
 
 /** 主按钮点击：刷新就走刷新，其余动作都落到安装入口。 */
 function runAction(map: MapInfo) {
-  if (mapCardAction(map, sets.value) === 'refresh') {
+  if (mapCardAction(map, sets.value, maps.value) === 'refresh') {
     void refresh(map)
     return
   }
@@ -751,9 +740,9 @@ const pageLoading = computed(() => loading.value && tree.value.length === 0)
                     :note="mapNote(map)"
                     :status-text="statusOf(map).text" :status-tone="statusOf(map).tone"
                     :status-clickable="hasLocalMap(map)"
-                    :status-title="hasLocalMap(map) ? t('levelSet.viewInMapManager') : undefined"
+                    :status-title="t('mapVersion.sourceLatest', { version: map.latest_tag || '—' })"
                     :dependency="dependencyOf(map)"
-                    :version="versionOf(map)" :refreshing="isRefreshing(map)"
+                    :version="versionOf(map)" :version-label="t('mapVersion.sourceLatestLabel')" :refreshing="isRefreshing(map)"
                     :downloads="downloadCount(map)"
                     :action="actionOf(map)"
                     :error="map.last_error"

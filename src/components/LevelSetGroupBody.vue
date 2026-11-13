@@ -173,7 +173,7 @@ function actionsOf(set: LevelSetInfo): LevelSetCardAction[] {
           <div class="detail-section-title">{{ t('levelSet.bindStatusSection') }}</div>
           <div class="detail-grid">
             <div class="detail-row detail-row--wide">
-              <span class="detail-label">{{ t('levelSet.boundMap') }}</span>
+              <span class="detail-label">{{ t(ctx.actionOf(set)?.kind === 'update' ? 'mapVersion.defaultSource' : 'levelSet.boundMap') }}</span>
               <span class="detail-value">
                 <template v-if="ctx.bindingOf(set)">
                   {{ ctx.bindingOf(set)?.name }}
@@ -185,6 +185,15 @@ function actionsOf(set: LevelSetInfo): LevelSetCardAction[] {
                   </n-button>
                 </template>
                 <template v-else>—</template>
+              </span>
+            </div>
+            <div v-if="ctx.updateSourcesOf(set).length" class="detail-row detail-row--wide">
+              <span class="detail-label">{{ t('mapVersion.otherSources') }}</span>
+              <span class="detail-value">
+                <n-button v-for="source in ctx.updateSourcesOf(set)" :key="source.mapId" size="tiny" text type="primary"
+                  class="bound-link" @click.stop="ctx.linkToMap(source.mapId)">
+                  {{ source.name }} · {{ source.tag }}
+                </n-button>
               </span>
             </div>
             <!-- 解析失败：原因放在详情里，卡片行只留标签 -->

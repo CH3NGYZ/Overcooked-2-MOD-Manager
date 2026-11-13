@@ -1,4 +1,5 @@
 import { levelPreview } from './levelPreview.ts'
+import { mapVersion } from './mapVersion.ts'
 import { diychef } from './diychef/index.ts'
 import { startup } from './startup.ts'
 import { common } from './common.ts'
@@ -109,6 +110,7 @@ interface DomainTable {
 export const TABLES: DomainTable[] = [
   { domain: 'diychef', messages: diychef },
   { domain: 'levelPreview', messages: levelPreview },
+  { domain: 'mapVersion', messages: mapVersion },
   { domain: 'startup', messages: startup },
   { domain: 'common', messages: common },
   { domain: 'config', messages: config },

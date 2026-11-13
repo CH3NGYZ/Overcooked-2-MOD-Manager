@@ -46,6 +46,7 @@ export type DomainMessages = Record<string, Localized>
 export const DOMAINS = [
   'diychef',
   'levelPreview',
+  'mapVersion',
   'startup',     // 启动地区与源可达性预检
   // —— 界面域：按页面/区域归属 ——
   'common',      // 通用：确定/取消/保存/删除 等跨页面复用的词

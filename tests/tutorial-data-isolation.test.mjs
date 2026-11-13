@@ -151,7 +151,7 @@ test('a queued real Release batch stops issuing IPC after tutorial starts', asyn
   const mapList = Array.from({ length: 6 }, (_, index) => ({ id: `real-map-${index}`, level_set_name: `Real ${index}`, author: 'Real author', cached_releases: [], last_error: 'original-error' }))
   globalThis.__tutorialApi = {
     refreshModRepository: () => first.promise,
-    refreshMapReleases: () => second.promise,
+    refreshMapReleases: id => second.promise.then(() => ({ ...mapList.find(map => map.id === id), last_error: null })),
     config: async () => realConfig(),
     rebindLocalMods: async mods => mods,
     syncDependencySnapshots: async () => {},
@@ -171,7 +171,7 @@ test('a queued real Release batch stops issuing IPC after tutorial starts', asyn
   resetCalls()
   try {
     first.resolve({ cached_releases: [], release_prerelease_metadata: {} })
-    second.resolve([])
+    second.resolve()
     await Promise.all([repoBatch, mapBatch])
     await tick()
     assert.deepEqual(globalThis.__tutorialCalls, [], 'queued workers and finalizers stay offline')

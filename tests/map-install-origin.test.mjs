@@ -35,6 +35,6 @@ test('两张地图各用自己的版本空间，更新提示与安装按钮一�
   assert.equal(mapCardAction(pear, [bundled, newPear]), 'reinstall')
   assert.equal(mapCardState(music, [newPear, bundled]), 'latest')
   assert.equal(mapCardAction(music, [newPear, bundled]), 'reinstall')
-  // 错误的主包记录确实会覆盖 info 等值，这条断言锁住本次故障条件。
-  assert.equal(levelSetState({ ...bundled, installed_mapset_version: '10.5' }, mapVersionRefs([music])[0]), 'update_available')
+  // 不属于此地图的随包记录不能覆盖可信info；缺共同表时不能报更新。
+  assert.equal(levelSetState({ ...bundled, installed_mapset_version: '10.5' }, mapVersionRefs([music])[0]), 'latest')
 })

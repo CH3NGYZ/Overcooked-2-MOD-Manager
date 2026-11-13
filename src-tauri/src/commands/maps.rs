@@ -1,6 +1,6 @@
 use crate::app_state::AppState;
 use crate::map_sources::view::map_to_info;
-use crate::models::{MapInfo, Provider, ReleaseInfo};
+use crate::models::{MapInfo, Provider};
 use crate::release_cache::freshness::RELEASE_CACHE_TTL_MS;
 use crate::release_cache::freshness::cache_is_fresh;
 use crate::release_cache::freshness::now_millis;
@@ -160,7 +160,7 @@ pub async fn refresh_map_releases(
     map_id: String,
     force: Option<bool>,
     pass_id: Option<String>,
-) -> Result<Vec<ReleaseInfo>, String> {
+) -> Result<MapInfo, String> {
     let snapshot = state.config.load_or_default();
     let policy = snapshot
         .network_policy
@@ -193,7 +193,7 @@ pub async fn refresh_map_releases(
                 map.name,
                 map.cached_releases.len()
             );
-            return Ok(map.cached_releases.clone());
+            return Ok(map_to_info(&map));
         }
 
         let client = releases::build_client(config.network.timeout_seconds)
@@ -235,7 +235,7 @@ pub async fn refresh_map_releases(
         }
         match fetched {
             Ok(refreshed) => {
-                let releases = refreshed.cached_releases.clone();
+                let info = map_to_info(&refreshed);
                 // release-tags declarations (version table, dependencies, labels)
                 // belong to the same API snapshot as the asset projection.
                 *target = refreshed;
@@ -243,7 +243,7 @@ pub async fn refresh_map_releases(
                     .config
                     .save(&latest)
                     .map_err(|error| error.to_string())?;
-                Ok(releases)
+                Ok(info)
             }
             Err(error) => {
                 log::error!("地图 Release 刷新失败：地图={}，原因={}", map.name, error);

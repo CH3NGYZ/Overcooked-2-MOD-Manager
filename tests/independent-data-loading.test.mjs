@@ -37,6 +37,12 @@ const { useLevelSetScan } = await import('../src/composables/useLevelSetScan.ts'
 const { levelSetIsRefreshing } = await import('../src/levelSetStatus.ts')
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
 function deferred() { let resolve, reject; const promise = new Promise((r, j) => { resolve = r; reject = j }); return { promise, resolve, reject } }
+function mapSnapshot(map, tag) {
+  const releases = tag ? [{ tag_name: tag, name: tag, body: '', prerelease: false, draft: false, assets: [] }] : []
+  return { name: map.id, provider: 'github', username: 'u', repository: map.id, enabled: true, builtin: false,
+    ...map, cached_releases: releases, latest_release: releases[0] ?? null, latest_tag: tag ?? null,
+    cached_release_count: releases.length, cached_at: 123, last_error: null }
+}
 
 test('online MOD/map results publish while local scans remain pending; local scans single-flight', async () => {
   const mods = deferred(), sets = deferred()
@@ -91,11 +97,12 @@ test('map engine honors cache on cards/checks, forces only full refresh, and upd
   const slow = deferred()
   const source = deferred()
   const requests = []
+  const fastSnapshot = { ...mapSnapshot(singleMap, 'v2'), latest_info_version: '2.0', note: 'Refreshed declaration' }
   globalThis.__loadingApi = {
     refreshMapSources: async (pass, force) => { requests.push(['source', force, pass]); await source.promise; return [singleMap, slowMap] },
     refreshMapReleases: async (id, force, pass) => {
       requests.push([id, force, pass])
-      return id === 'slow' ? slow.promise : [{ tag_name: 'v2', assets: [] }]
+      return id === 'slow' ? slow.promise : fastSnapshot
     },
     syncDependencySnapshots: async () => {},
     maps: async () => engine.maps.value,
@@ -106,13 +113,16 @@ test('map engine honors cache on cards/checks, forces only full refresh, and upd
   source.resolve()
   await tick()
   assert.equal(engine.maps.value[0].latest_tag, 'v2')
+  assert.equal(engine.maps.value[0].latest_info_version, '2.0')
+  assert.equal(engine.maps.value[0].note, 'Refreshed declaration')
+  assert.equal(engine.maps.value[0].cached_at, 123, 'the backend snapshot owns the cache timestamp')
   assert.equal(engine.refreshingAll.value, true)
   assert.equal(levelSetIsRefreshing({ name: 'Fast', author: 'A' }, engine.maps.value, engine.refreshingHint.value), false)
   assert.equal(levelSetIsRefreshing({ name: 'Slow', author: 'B' }, engine.maps.value, engine.refreshingHint.value), true)
   assert.equal(engine.refreshing.value.slow, true)
   assert.ok(requests.every(r => r[1] === true))
   assert.equal(new Set(requests.map(r => r[2])).size, 1)
-  slow.resolve([])
+  slow.resolve(mapSnapshot(slowMap))
   await refresh
   requests.length = 0
   await engine.refreshReleases([singleMap], { trigger: 'single' })
@@ -127,8 +137,9 @@ test('a late initial map snapshot cannot overwrite a newer source/Release result
   const stale = deferred()
   globalThis.__loadingApi.maps = () => stale.promise
   const initial = engine.loadMaps()
-  globalThis.__loadingApi.refreshMapSources = async () => [{ id: 'new-map', level_set_name: 'New', author: 'A' }]
-  globalThis.__loadingApi.refreshMapReleases = async () => [{ tag_name: 'v3', assets: [] }]
+  const newMap = { id: 'new-map', level_set_name: 'New', author: 'A' }
+  globalThis.__loadingApi.refreshMapSources = async () => [newMap]
+  globalThis.__loadingApi.refreshMapReleases = async () => mapSnapshot(newMap, 'v3')
   globalThis.__loadingApi.maps = async () => engine.maps.value
   await engine.refreshAll()
   stale.resolve([{ id: 'stale-map' }])
@@ -178,7 +189,7 @@ test('release-tags source results are already update evidence and do not fan out
   const requests = []
   globalThis.__loadingApi = {
     refreshMapSources: async (_pass, force) => {requests.push(['source',force]); return [derived,ordinary]},
-    refreshMapReleases: async (id,force) => {requests.push([id,force]);return [{tag_name:'3.0',assets:[]}]},
+    refreshMapReleases: async (id,force) => {requests.push([id,force]);return mapSnapshot(id === derived.id ? derived : ordinary, '3.0')},
     maps: async () => engine.maps.value,
     syncDependencySnapshots: async () => {},
   }

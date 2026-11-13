@@ -56,13 +56,11 @@ pub(crate) fn map_to_info(map: &crate::models::MapRepositoryConfig) -> MapInfo {
         source_name: map.source_name.clone(),
         source_name_i18n: map.source_name_i18n.clone(),
         source_note_i18n: map.source_note_i18n.clone(),
-        /*
-         * 作者钉死的版本号：有值时前端只比等值（本地更高也提示更新），
-         * 因为版本号是作者手写的自由文本，`0.7 > 0.69` 这种大小关系
-         * 不代表作者认为 0.7 更新。判定实现只有前端的 `mapUpdateState` 一处。
-         */
+        // Scalars remain for legacy consumers. The frontend compares complete
+        // author-ordered histories or same-identity info, never package inequality.
         latest_mapset_version: map.latest_mapset_version.clone(),
         latest_info_version: map.latest_info_version.clone(),
+        asset_versions: map.asset_versions.clone(),
         latest_tag: map
             .cached_releases
             .first()

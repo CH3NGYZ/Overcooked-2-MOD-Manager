@@ -787,9 +787,11 @@ export interface MapInfo {
    * 定义；这一份是包内 info 自己写的版本。两者平时相同，作者升了包版本却忘了
    * 改 info 里的版本号时才会不同 —— 此时拿本地 info 版本与它比，才能认出
    * 「装的已经是最新」（见 `levelSetStatus.ts::mapUpdateState`）。老地图源没有
-   * 这个字段时判定自动退回包版本比较。
+   * 这个字段时，只能依赖完整共同版本表；不能按包号或 tag 猜测更新。
    */
   latest_info_version?: string | null
+  /** Complete author-declared history, oldest first; caches never replace it. */
+  asset_versions?: AssetVersionEntry[]
   /**
    * 缓存里最新的那一条 Release。
    *

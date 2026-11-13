@@ -67,6 +67,7 @@ export interface LevelSetGroupContext {
   runCardAction(set: LevelSetInfo): void | Promise<void>
   authorNamesOf(set: LevelSetInfo): LevelSetAuthorNames
   bindingOf(set: LevelSetInfo): { map: MapInfo; name: string; tag: string } | undefined
+  updateSourcesOf(set: LevelSetInfo): { mapId: string; name: string; tag: string }[]
   hintOf(set: LevelSetInfo): string
   focusIdOf(set: LevelSetInfo): string | undefined
   removeSet(set: LevelSetInfo): void | Promise<void>

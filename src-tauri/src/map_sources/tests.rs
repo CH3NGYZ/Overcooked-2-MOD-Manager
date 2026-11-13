@@ -385,3 +385,40 @@ fn fresh_empty_api_snapshot_replaces_previous_map_cache() {
     assert_eq!(merged[0].releases_cached_at, Some(456));
     assert_eq!(merged[0].last_error, None);
 }
+
+#[test]
+fn map_info_preserves_full_declared_history_beyond_cached_release_limit() {
+    let mut map = parse_document(&minimal("M", "A", "S"), &bundled(), &Default::default())
+        .unwrap()
+        .maps
+        .remove(0);
+    map.asset_versions = vec![
+        crate::models::AssetVersionEntry {
+            mapset_version: "0.69".into(),
+            info_version: "1".into(),
+        },
+        crate::models::AssetVersionEntry {
+            mapset_version: "0.7".into(),
+            info_version: "1".into(),
+        },
+        crate::models::AssetVersionEntry {
+            mapset_version: "0.7-fix".into(),
+            info_version: "1".into(),
+        },
+    ];
+    map.cached_releases = vec![
+        serde_json::from_value(serde_json::json!({
+            "tag_name": "0.7", "name": "available target", "body": "", "prerelease": false,
+            "draft": false, "assets": []
+        }))
+        .unwrap(),
+    ];
+    let projected = super::view::map_to_info(&map);
+    assert_eq!(projected.asset_versions, map.asset_versions);
+    assert_eq!(projected.cached_release_count, 1);
+    assert_eq!(projected.latest_tag.as_deref(), Some("0.7"));
+    let serialized = serde_json::to_value(projected).unwrap();
+    assert_eq!(serialized["asset_versions"].as_array().unwrap().len(), 3);
+    assert_eq!(serialized["asset_versions"][0]["mapset_version"], "0.69");
+    assert_eq!(serialized["asset_versions"][2]["mapset_version"], "0.7-fix");
+}

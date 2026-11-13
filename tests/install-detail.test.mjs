@@ -325,3 +325,15 @@ test('路径归一：Windows 反斜杠与 POSIX 斜杠都取到文件名', () =>
   assert.equal(fileNameOf(''), '')
   assert.equal(dllDisplayName('plugins/Author.Thing.DLL'), 'Author.Thing', '只去掉 .dll 后缀，不动名字里的点')
 })
+
+
+test('地图主动选择旧版时详情显示当前到目标，预检回收后仍保留版本快照', () => {
+  const target = levelSet({ version: '0.70', conflicts: [conflict({ version: '0.89' })] })
+  assert.equal(levelSetImportDetail('/tmp/older.zip', [target]).entries[0].meta, '0.89 → 0.70')
+  const recycled = { ...target, conflicts: [] }
+  const model = levelSetImportDetail('/tmp/older.zip', [recycled], { previousVersions: () => ['0.89', '0.89'] })
+  assert.equal(model.entries[0].meta, '0.89 → 0.70')
+  assert.deepEqual(model.conflicts, [])
+  assert.equal(model.confirmLabel, '立即安装')
+  assert.equal(levelSetImportDetail('/tmp/new.zip', [recycled]).entries[0].meta, '0.70')
+})

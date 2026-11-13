@@ -60,16 +60,15 @@ import {
 import {
   levelSetAuthorNames,
   levelSetCardAction,
-  levelSetIsRefreshing,
   levelSetCardTags,
   levelSetDisplayName,
   levelSetGroup,
   levelSetRelationStatuses,
-  levelSetState,
+  levelSetAggregateState,
+  aggregateLevelSetVersion,
+  mapsForLevelSet,
   mapForLevelSet,
   mapRelationSubject,
-  mapVersionForLevelSet,
-  mapVersionRefs,
   type LevelSetCardAction,
   type LevelSetCardTag,
 } from '../levelSetStatus.ts'
@@ -259,7 +258,7 @@ const emptyDescription = computed(() =>
  * 只有刷新过 Release 的地图才有 tag —— 没刷新的地图不该让本地关卡集显示
  * 「最新版」，那是无根据的结论（见 `levelSetStatus.ts` 的 `mapVersionRefs`）。
  */
-const versionRefs = computed(() => mapVersionRefs(maps.value))
+const versionsOf = (set: LevelSetInfo) => aggregateLevelSetVersion(set, maps.value, refreshingHint.value)
 
 /** 地图域复用唯一的身份分组规则；页面只负责给出响应式数据与文案。 */
 const groups = computed(() => buildLevelSetGroups(
@@ -459,7 +458,10 @@ function boundMapOf(set: LevelSetInfo): MapInfo | undefined {
 
 /** 跨页定位锚点：绑定的地图 id（未绑定时没有锚点）。 */
 function focusIdOf(set: LevelSetInfo): string | undefined {
-  return boundMapOf(set)?.id
+  const candidates = versionsOf(set).candidates
+  const requested = highlightId.value
+  return candidates.some(candidate => candidate.mapId === requested) ? requested!
+    : versionsOf(set).primaryTarget?.mapId ?? candidates[0]?.mapId
 }
 
 /**
@@ -468,7 +470,8 @@ function focusIdOf(set: LevelSetInfo): string | undefined {
  * 名称按当前语言取；tag 可能还没刷新到 Release（空串表示待检查）。
  */
 function bindingOf(set: LevelSetInfo) {
-  const map = boundMapOf(set)
+  const aggregate = versionsOf(set)
+  const map = aggregate.primaryTarget?.map ?? boundMapOf(set)
   if (!map) return undefined
   return {
     map,
@@ -477,9 +480,17 @@ function bindingOf(set: LevelSetInfo) {
   }
 }
 
+function updateSourcesOf(set: LevelSetInfo) {
+  const aggregate = versionsOf(set)
+  const primary = aggregate.primaryTarget
+  return aggregate.updateCandidates.filter(candidate => candidate.mapId !== primary?.mapId).map(candidate => ({
+    mapId: candidate.mapId, tag: candidate.tag,
+    name: pickI18n(candidate.map.source_name_i18n ?? {}, candidate.map.source_name ?? '') || candidate.map.name || candidate.mapId,
+  }))
+}
+
 function stateOf(set: LevelSetInfo) {
-  if (levelSetIsRefreshing(set, maps.value, refreshingHint.value)) return 'unknown'
-  return levelSetState(set, mapVersionForLevelSet(set, versionRefs.value))
+  return levelSetAggregateState(set, versionsOf(set))
 }
 
 /**
@@ -569,9 +580,9 @@ async function runCardAction(set: LevelSetInfo) {
     return
   }
 
-  const map = mapForLevelSet(set, maps.value)
-  if (!map) return
-  const release = cachedInstallRelease(map.cached_releases, map.latest_tag ?? undefined)
+  const map = maps.value.find(map => map.id === action.mapId)
+  if (!map || !action.tag) return
+  const release = cachedInstallRelease(map.cached_releases, action.tag)
   if (!release) {
     message.error(t('mapSource.releaseMissing'))
     return
@@ -628,7 +639,7 @@ function hintOf(set: LevelSetInfo): string {
   const state = stateOf(set)
   if (state === 'unbound') return t('levelSet.unboundHint')
   if (state === 'update_available') {
-    const tag = boundMapOf(set)?.latest_tag
+    const tag = versionsOf(set).primaryTarget?.tag
     return tag ? t('levelSet.updateAvailableHint', { version: tag }) : ''
   }
   return ''
@@ -879,8 +890,7 @@ async function checkUpdates() {
   if (checkingBound.value) return
   const targets = new Map<string, MapInfo>()
   for (const set of sets.value) {
-    const map = boundMapOf(set)
-    if (map) targets.set(map.id, map)
+    for (const map of mapsForLevelSet(set, maps.value)) targets.set(map.id, map)
   }
   if (!targets.size) {
     message.warning(t('levelSet.noBoundMaps'))
@@ -892,7 +902,7 @@ async function checkUpdates() {
      * 本地地图里几个有新版本」必须读关卡集，那是本页的数据。
      */
     const summary = await refreshBoundMaps([...targets.values()], {
-      countUpdated: () => sets.value.filter((set) => levelSetState(set, mapVersionForLevelSet(set, versionRefs.value)) === 'update_available').length,
+      countUpdated: () => sets.value.filter(set => stateOf(set) === 'update_available').length,
     })
     // 逐条弹错：一次刷几十张图时合并成一句会把「哪张失败了」吞掉
     summary.errors.forEach((error) => message.error(error))
@@ -932,6 +942,7 @@ provide(
     onTagClick,
     authorNamesOf,
     bindingOf,
+    updateSourcesOf,
     hintOf,
     focusIdOf,
     actionOf,

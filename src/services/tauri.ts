@@ -353,7 +353,7 @@ export const api = {
    * 仓库的多个版本各要一次资产列表，后端按它把同批请求合并成一次。
    */
   refreshMapReleases: (mapId: string, force = false, passId?: string) =>
-    invoke<ReleaseInfo[]>('refresh_map_releases', { mapId, force, passId }),
+    invoke<MapInfo>('refresh_map_releases', { mapId, force, passId }),
   /**
    * 暂存一次地图 Release 安装（下载资产并识别其中的关卡集）。
    *

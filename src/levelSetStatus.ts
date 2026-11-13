@@ -1,5 +1,6 @@
 import type { RelationSubject } from './modRelations'
-import { compareVersions } from './modStatus.ts'
+import { aggregateLevelSetVersion, isSameLevelSet, mapUpdateState, mapVersionRef, type MapVersionRef } from './mapVersion.ts'
+export { aggregateLevelSetVersion, isSameLevelSet, mapsForLevelSet, mapUpdateState, type MapVersionRef, type MapVersionOrder } from './mapVersion.ts'
 import {
   dependencyTagFor, relationsForMapRelease, resolveRelation, resolveRelations,
   type RelationStatus,
@@ -54,153 +55,6 @@ export type LevelSetState =
  */
 export type LevelSetTone = 'accent' | 'moderate' | 'muted' | 'critical'
 
-/** 地图仓库对某个关卡集的版本声明。 */
-export interface MapVersionRef {
-  /** Release tag（例如 `v0.73`）。 */
-  tag: string
-  /**
-   * 源文档钉死的地图包版本（`[[maps]].latest_mapset_version`）。
-   *
-   * 非空时不做大小比较，只问「本地装的是不是这一版」—— 见 `mapUpdateState`。
-   */
-  latestMapsetVersion?: string | null
-  /**
-   * 最新 Release 里 **`info` 文件内的版本号**（来自 `MapInfo.latest_info_version`）。
-   *
-   * `latestMapsetVersion` 是地图包（Release）的版本，由作者定义；这一份是包内 info
-   * 自己写的版本，两者平时相同，作者升级包版本却忘了改 info 时才不同 ——
-   * 见 `mapUpdateState`（info 版本优先于包版本比较）。
-   */
-  latestInfoVersion?: string
-  /** 关卡集名（与 info 的 `levelSetName` 比对）。 */
-  levelSetName: string
-  /** 中文名（与 info 的 `levelSetNameZH` 比对）；老地图源没有这个字段。 */
-  nameZh?: string
-  /** 作者（与 info 的 `author` 比对）。 */
-  author: string
-}
-
-/**
- * 判断两个关卡集是否是「同一个地图」。
- *
- * 身份是 `author + levelSetName`，填了中文名（`levelSetNameZH`）时再加一段，
- * **不用 uid**：uid 是 `MD5(baseUID + version)`，每发一版就变，拿它当身份
- * 会把每次更新都认成新地图。
- *
- * 必须带中文名，否则同一个作者的两张不同地图会互相认领 —— 实测「胡闹糕中」
- * 与「胡闹达学」在 info 里都写 `GAODA / GAODA`，只靠英文集名与作者分不开。
- * 中文名**两边都有才比较**：老地图源不写这个字段，此时退回前两段，行为与
- * 加入中文名之前完全一致。
- *
- * 比较忽略大小写与首尾空白 —— 作者在不同工具里导出时大小写常不一致。
- */
-export function isSameLevelSet(
-  left: { name: string; author: string; nameZh?: string | null },
-  right: { name: string; author: string; nameZh?: string | null },
-): boolean {
-  const normalize = (value: string) => value.trim().toLowerCase()
-  if (normalize(left.name) !== normalize(right.name)) return false
-  if (normalize(left.author) !== normalize(right.author)) return false
-  const leftZh = normalize(left.nameZh ?? '')
-  const rightZh = normalize(right.nameZh ?? '')
-  return !leftZh || !rightZh || leftZh === rightZh
-}
-
-/**
- * 本地版本与线上声明比较后的结论。
- *
- * 与 `LevelSetState` 的版本分支同名同义（`update_available` / `latest` /
- * `ahead`），多一个 `unknown` 表示「比不出来」：管理页状态、下载页卡片状态、
- * 下载页按钮三处都从这里取结论，不允许各写一份比较。
- */
-export type MapVersionOrder = 'latest' | 'update_available' | 'ahead' | 'unknown'
-
-/**
- * 「本地版本 vs 线上声明」的唯一判定。
- *
- * ## info 版本 vs 包版本
- *
- * `latest_mapset_version`（以及 Release tag）描述的是**地图包**的版本，由作者定义；
- * 而本地扫描出来的 `LevelSetInfo.version` 读的是包内 **info 文件**自己写的
- * 版本号。两者平时相同，但作者升了包版本（tag `0.7`）却忘了改 info 里的
- * 版本号（还是 `0.69`）时，拿本地 `0.69` 去比 tag 会永远显示「可更新」。
- * 所以源文档声明了 `latest_info_version`（最新 Release 的 info 版本）时，
- * 先拿它与本地 info 版本比 —— 同一套版本空间，结论才是「装的到底是不是最新」。
- * （曾试过比 info 内容哈希，已废弃：info 版本本身就在 `version` 里，不需要
- * 额外算哈希，作者改不改版本号都能直接比。）
- *
- * 判定顺序：
- *
- * 1. 本地记录了安装时的资产版本、线上也声明了 `latest_mapset_version` →
- *    只比等值（见「资产版本」一节）；
- * 2. 否则 `latestInfoVersion` 与本地版本都非空 → 按大小比 info 版本（相等 = 最新）；
- * 3. 否则 `latest_mapset_version` 非空 → 只比等值（见下）；
- * 4. 否则与 Release tag 比大小。
- *
- * ## 资产版本
- *
- * `3.4.1-fix` 与 `3.4.1` 包里的 info 版本都是 `3.4.1`，但 `-fix` 确实是新版
- * （针对 3.4.1 的修复）。只看 info 版本会把装了 `3.4.1` 的用户判成「最新」，
- * 永远收不到修复版。所以安装/更新地图时把当时的资产版本记进
- * `map-relations.json` 快照，判定先拿它与线上最新资产版本**比等值**：
- *
- * - 相等 = 已经是最新资产；
- * - 不等 = 可更新。
- *
- * 这里**不比大小**：谁是最新由作者的版本排序表决定，而不是版本号本身。
- * `3.4.1-fix` 在 semver 里是 `3.4.1` 的预发布（按大小比更低），比大小会把
- * 修复版判成旧版，正好反了。老用户没有记录时退回 info 版本比较，不会凭空
- * 报「有更新」。
- *
- * ## 钉死版本（`latest_mapset_version`）
- *
- * 源文档写了 `latest_mapset_version` 时规则换成**等值**：作者已经指定「这就是最新版」，
- * 不再比大小 —— 资产名里的版本号是手写的，`0.7` 按数字段比反而小于 `0.69`，
- * 比大小会得出反的结论；本地更高也只说明作者要用户回退到这一版。
- * 等值仍走 `compareVersions`：`v0.7`、`0.7.0` 与源文档写的 `0.7` 是同一版，
- * 字符串直比会让用户被反复提示更新。
- *
- * 本地版本为空或不可解析时：钉死版本模式下算 `update_available`（没装上指定
- * 版本就是没到位），普通模式仍是 `unknown`（不把「不知道」说成「有更新」）。
- */
-export function mapUpdateState(
-  localVersion: string | null | undefined,
-  remote: Pick<MapVersionRef, 'tag' | 'latestMapsetVersion' | 'latestInfoVersion'> | null | undefined,
-  localAssetVersion?: string | null,
-): MapVersionOrder {
-  if (!remote) return 'unknown'
-  const assetVersion = localAssetVersion?.trim()
-  const latestAsset = remote.latestMapsetVersion?.trim()
-  if (assetVersion && latestAsset) {
-    // 资产版本与 info 版本使用同一套宽松版本语义：`v1.5.1`、`1.5.1.0`
-    // 和 `1.5.1` 是同一版。这里不能直接字符串比较，否则已安装的同一资产
-    // 也会被误报为可更新，并且会跳过后面的 info 版本判定。
-    const assetOrder = compareVersions(assetVersion.toLowerCase(), latestAsset.toLowerCase())
-    if (assetOrder === null) return 'unknown'
-    return assetOrder === 0 ? 'latest' : 'update_available'
-  }
-  const infoVersion = remote.latestInfoVersion?.trim()
-  const local = localVersion?.trim()
-  if (infoVersion && local) {
-    const infoOrder = compareVersions(local, infoVersion)
-    // 比不出来（info 版本号不合法）就到此为止：再退回包版本比较会拿两个不同
-    // 版本空间的数字互相比，结论比「不知道」更容易骗人
-    if (infoOrder === null) return 'unknown'
-    if (infoOrder < 0) return 'update_available'
-    if (infoOrder > 0) return 'ahead'
-    return 'latest'
-  }
-  const forced = remote.latestMapsetVersion?.trim()
-  if (forced) {
-    return compareVersions(localVersion, forced) === 0 ? 'latest' : 'update_available'
-  }
-  const order = compareVersions(localVersion, remote.tag)
-  if (order === null) return 'unknown'
-  if (order < 0) return 'update_available'
-  if (order > 0) return 'ahead'
-  return 'latest'
-}
-
 /**
  * 从一个关卡集与其绑定的仓库版本，算出展示状态。
  *
@@ -218,6 +72,16 @@ export function levelSetState(
   // 除 `unknown` 外，版本结论与 `LevelSetState` 的版本分支同名，直接透传
   if (order === 'unknown') return 'unknown'
   return order
+}
+
+/** Local state uses all matching sources; dependency binding remains first-source. */
+export function levelSetAggregateState(
+  set: Pick<LevelSetInfo, 'enabled' | 'error'>,
+  aggregate: ReturnType<typeof aggregateLevelSetVersion>,
+): LevelSetState {
+  if (!set.enabled) return aggregate.order === 'update_available' ? 'update_available' : 'disabled'
+  if (set.error) return 'unreadable'
+  return aggregate.order === 'refreshing' ? 'unknown' : aggregate.order
 }
 
 /** 状态 → 展示用的 tag（与 `modsLocal.*` 的命名保持同一套语义）。 */
@@ -247,9 +111,8 @@ export const LEVEL_SET_STATE_TONES: Record<LevelSetState, LevelSetTone> = {
 /**
  * 找一个关卡集对应的仓库版本声明。
  *
- * 返回第一个身份匹配的仓库的 tag。多个仓库声明同一个关卡集属于配置错误，
- * 这里不猜哪个「更对」，按传入顺序取第一个 —— 与 MOD 侧 `repositoryForMod`
- * 的行为保持一致。
+ * 兼容旧单源调用，返回第一个直接匹配本地身份的声明。多源版本、动作和总览
+ * 统一使用 aggregateLevelSetVersion；依赖与分组继续保留原绑定顺序。
  */
 export function mapVersionForLevelSet(
   set: Pick<LevelSetInfo, 'name' | 'author'> & { name_zh?: string | null },
@@ -271,24 +134,25 @@ export function mapVersionForLevelSet(
  * 说成「已是最新」是错的结论，用户会因此错过真实更新。
  *
  * 源文档钉死的 `latest_mapset_version` 与最新 Release 的 info 版本号随声明一起带出：
- * 怎么比由 `mapUpdateState` 一处决定，调用方不需要知道这次是比 info 版本、
- * 比等值还是比大小。
+ * 完整历史与同身份 info 的可信判定由 mapVersion 模块唯一实现。
  */
 export function mapVersionRefs(maps: readonly MapInfo[]): MapVersionRef[] {
   return maps
     .filter((map) => !!map.latest_tag)
     .map((map) => {
+      const projected = mapVersionRef(map)
       const ref: MapVersionRef = {
         tag: map.latest_tag as string,
         levelSetName: map.level_set_name,
         author: map.author,
       }
       // 钉死版本只在有值时带上，理由同下面的中文名：空字段只会给快照加噪音
-      const forced = map.latest_mapset_version?.trim()
+      if (map.asset_versions?.length) ref.assetVersions = map.asset_versions
+      const forced = projected.latestMapsetVersion?.trim()
       if (forced) ref.latestMapsetVersion = forced
-      // 最新 Release 的 info 版本同理：空值（老地图源 / 块里没写）不塞，
-      // 判定侧按「有值才优先」处理，缺了自动退回包版本比较
-      const infoVersion = map.latest_info_version?.trim()
+      // 空的 info 版本不塞；缺失时由 mapVersion 依据完整共同版本表判断，
+      // 不把包号或 tag 当作 info 版本。
+      const infoVersion = projected.latestInfoVersion?.trim()
       if (infoVersion) ref.latestInfoVersion = infoVersion
       // 老地图源没有中文名时**不塞空字段**：下游按「两边都有才比较」判定，
       // 塞个 undefined 只会让相等性比较与快照多出一层噪音
@@ -487,6 +351,8 @@ export interface LevelSetRefreshingHint {
    * 盖住所有卡片，逐个返回的结果会被压成整批一起返回。
    */
   entryStateUnavailable?: boolean
+  /** 源树声明顺序，用于不可比更新目标的稳定选择。 */
+  sourceOrder?: readonly string[]
   /** 正在重抓 Release 的地图 id。 */
   maps: ReadonlySet<string>
   /**
@@ -506,15 +372,7 @@ export function levelSetIsRefreshing(
   maps: readonly MapInfo[],
   refreshing?: LevelSetRefreshingHint,
 ): boolean {
-  const bound = mapForLevelSet(set, maps)
-  return !!refreshing && (
-    refreshing.entryStateUnavailable === true
-    || (!!bound && (
-      refreshing.maps.has(bound.id)
-      || !!refreshing.queued?.has(bound.id)
-      || (!!bound.source_id && refreshing.sources.has(bound.source_id))
-    ))
-  )
+  return aggregateLevelSetVersion(set, maps, refreshing).order === 'refreshing'
 }
 
 /**
@@ -560,8 +418,9 @@ export function levelSetCardTags(
     }
   }
 
-  const refreshingNow = levelSetIsRefreshing(set, maps, refreshing)
-  const state = refreshingNow ? undefined : levelSetState(set, mapVersionForLevelSet(set, mapVersionRefs(maps)))
+  const aggregate = aggregateLevelSetVersion(set, maps, refreshing)
+  const refreshingNow = aggregate.order === 'refreshing'
+  const state = refreshingNow ? undefined : levelSetAggregateState(set, aggregate)
   tags.push({
     text: refreshingNow ? 'tools.refreshing' : LEVEL_SET_STATE_TAGS[state!],
     tone: refreshingNow ? 'muted' : LEVEL_SET_STATE_TONES[state!],
@@ -569,7 +428,7 @@ export function levelSetCardTags(
     // 只要这个集绑定了地图，状态标签就允许跳回下载页并高亮那张卡 ——
     // 与 MOD 管理页一致：「最新版」和「有更新」都是「去下载页看看」的入口。
     // 未绑定（或没匹配上地图）没有目标，自然不可点。
-    mapId: bound?.id,
+    mapId: aggregate.primaryTarget?.mapId ?? aggregate.candidates[0]?.mapId ?? bound?.id,
   })
   return tags
 }
@@ -591,6 +450,8 @@ export interface LevelSetCardAction {
   tone: LevelSetTone
   /** `update` 要装的地图 id。 */
   mapId?: string
+  /** `update` 捕获的实际安装 tag。 */
+  tag?: string
   /** `install-dependency` / `review-conflict` 要跳转的 MOD 仓库 id。 */
   repositoryId?: string
   /** `review-conflict` 命中的 GUID，用来在提示里说清是哪一个依赖。 */
@@ -638,14 +499,15 @@ export function levelSetCardAction(
     }
   }
 
-  const bound = mapForLevelSet(set, maps)
-  const state = levelSetState(set, mapVersionForLevelSet(set, mapVersionRefs(maps)))
-  if (state === 'update_available' && bound?.latest_tag) {
+  const aggregate = aggregateLevelSetVersion(set, maps, refreshing)
+  const target = aggregate.primaryTarget
+  if (target) {
     return {
       kind: 'update',
       label: 'dialogs.update',
       tone: 'moderate',
-      mapId: bound.id,
+      mapId: target.mapId,
+      tag: target.tag,
     }
   }
 

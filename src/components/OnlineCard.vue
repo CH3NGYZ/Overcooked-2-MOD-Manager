@@ -62,6 +62,8 @@ const props = defineProps<{
   statusTitle?: string
   dependency?: CardDependencyTag | null
   version: VersionDisplay
+  /** Scene-specific label for the shared version row. */
+  versionLabel?: string
   /** 该行是否正在刷新（版本号旁转圈）。 */
   refreshing?: boolean
   downloads?: number | null
@@ -154,7 +156,7 @@ function runAction() {
 
     <div class="card-foot">
       <span class="stat stat-version">
-        <span class="muted">{{ t('dialogs.latestVersion') }}</span>
+        <span class="muted">{{ versionLabel || t('dialogs.latestVersion') }}</span>
         <span class="version-line">
           <!--
             两段式：主干用普通色，测试标记用 prerelease 等级色。

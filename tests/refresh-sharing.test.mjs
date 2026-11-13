@@ -37,6 +37,7 @@ const levelsView = read('src/views/LevelsView.vue')
 const mapsOnline = read('src/views/MapsOnlineView.vue')
 const modStatusTags = read('src/components/ModStatusTags.vue')
 const levelSetStatus = read('src/levelSetStatus.ts')
+const mapVersion = read('src/mapVersion.ts')
 const modRuntimeStatusSource = read('src/modRuntimeStatus.ts')
 
 test('刷新状态机只有一处实现，两个域都用它', () => {
@@ -64,7 +65,7 @@ test('「刷一批带 Release 的条目」只有一处实现，两个域共用',
   assert.match(releaseRefresh, /export function prioritizeByIds/)
   // 两个域都得走它，而不是各自 mapWithConcurrency 一遍
   assert.match(repositoryEngine, /runReleaseBatch<ModRepository, ModRepositoryReleaseSnapshot>\(/)
-  assert.match(mapEngine, /runReleaseBatch<MapInfo>\(/)
+  assert.match(mapEngine, /runReleaseBatch<MapInfo, MapInfo>\(/)
   /*
    * 「刷一个条目」的三件事 —— 请求 / 成功写回 / 失败写回 —— 每个域只定义一次
    * （`repositoryReleaseSpec` / `mapReleaseSpec`），单条刷新与批量刷新展开的是
@@ -136,7 +137,7 @@ test('排队中也算「刷新中」：整批一开始所有目标都变灰', ()
   assert.match(refreshState, /writeFlag\(queued/, 'batch 开始时整批入队')
   // 两个域的「要不要显示刷新中」都要把排队算进去
   assert.match(modRuntimeStatusSource, /queued\[repo\.id\]/, 'MOD 侧排队也算刷新中')
-  assert.match(read('src/levelSetStatus.ts'), /refreshing\.queued\?\.has\(/, '地图侧排队也算刷新中')
+  assert.match(mapVersion, /refreshing\.queued\?\.has\(/, '地图侧排队也算刷新中')
   // 页面把队列状态喂进判定
   assert.match(modsLocal, /runtimeState\.value/)
   assert.match(mapEngine, /queued: new Set\(Object\.keys\(queued\.value\)\)/)
@@ -192,10 +193,10 @@ test('两个下载页的忙碌判定都用单例导出的 anyRefreshing', () => 
 
 test('关卡集卡片能显示「刷新中」，并与版本结论互斥', () => {
   assert.match(levelSetStatus, /LevelSetRefreshingHint/)
-  assert.match(levelSetStatus, /refreshing\.maps\.has\(/)
-  assert.match(levelSetStatus, /refreshing\.sources\.has\(/)
+  assert.match(mapVersion, /refreshing\.maps\.has\(/)
+  assert.match(mapVersion, /refreshing\.sources\?\.has\(/)
   // 列表清空重建期间绑定查不到，这时也必须显示「刷新中」而不是「未绑定」
-  assert.match(levelSetStatus, /refreshing\.entryStateUnavailable === true/)
+  assert.match(mapVersion, /refreshing\?\.entryStateUnavailable/)
   assert.match(levelSetStatus, /'tools\.refreshing'/)
   assert.match(levelsView, /refreshingHint/, '页面要把实时刷新状态传进标签判定')
 })
@@ -223,5 +224,5 @@ test('同一动作共享 pass，源准备和 Release 分阶段，只有浮动整
   assert.doesNotMatch(modsOnline + modsLocal, /refreshOne\(repo, true\)/)
   const service = read('src/services/tauri.ts')
   assert.match(service, /invoke<MapInfo\[\]>\('refresh_map_sources', \{ passId, force, onUpdate, sourceId \}\)/)
-  assert.match(service, /invoke<ReleaseInfo\[\]>\('refresh_map_releases', \{ mapId, force, passId \}\)/)
+  assert.match(service, /invoke<MapInfo>\('refresh_map_releases', \{ mapId, force, passId \}\)/)
 })

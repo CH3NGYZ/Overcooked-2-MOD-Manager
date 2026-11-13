@@ -83,6 +83,33 @@ test('cached selection follows explicit tag, pinned tag/version, then first snap
   assert.equal(cachedInstallRelease([], 'v2.0'), undefined)
 })
 
+test('unset Rust Option values select the latest snapshot instead of a null-version release', () => {
+  const releases = [release('v2.0'), release('custom-tag', { version: null })]
+  assert.equal(cachedInstallRelease(releases, null, null), releases[0])
+  assert.equal(cachedInstallRelease(releases, undefined, null), releases[0])
+  assert.equal(cachedInstallRelease(releases, null, 'custom-tag'), releases[1])
+  assert.equal(cachedInstallRelease(releases, '', null), undefined)
+  assert.equal(cachedInstallRelease(releases, null, ''), undefined)
+})
+
+test('MOD refreshed public-config JSON with a null pin reaches download without refreshing Release API', async () => {
+  const state = reset()
+  // ModRepositoryConfig serializes None without skip_serializing_if as null.
+  const source = JSON.parse(JSON.stringify(repo({
+    pinned_version: null,
+    cached_releases: [release('v2.0'), release('custom-tag', { version: null })],
+  })))
+  const prepared = [], previews = []
+  const flow = useModRepositoryPreview(value => previews.push(value), {
+    prepareInstall: async (_, tag) => { prepared.push(tag); return true },
+  })
+  await flow.previewModRepository(source)
+  assert.deepEqual(prepared, ['v2.0'])
+  assert.deepEqual(state.calls, [['installModRepository', 'mod', 'v2.0', true, undefined]])
+  assert.deepEqual(state.errors, [])
+  assert.equal(previews.length, 1)
+})
+
 test('MOD empty/missing snapshots stop before dialogs, dependency handling, busy state or IPC', async () => {
   for (const [source, tag] of [
     [repo({ cached_releases: [] }), undefined],

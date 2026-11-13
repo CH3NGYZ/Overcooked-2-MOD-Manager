@@ -3,11 +3,12 @@ import type { AssetRule, ReleaseAsset, ReleaseInfo } from './types'
 /** Downloads only select an existing snapshot; a missing explicit/pinned version never falls back. */
 export function cachedInstallRelease(
   releases: readonly ReleaseInfo[],
-  tag?: string,
-  pinnedVersion?: string,
+  tag?: string | null,
+  pinnedVersion?: string | null,
 ): ReleaseInfo | undefined {
-  if (tag !== undefined) return releases.find((release) => release.tag_name === tag)
-  if (pinnedVersion !== undefined) {
+  // Rust Option fields arrive as null when unset; only strings select a version.
+  if (tag != null) return releases.find((release) => release.tag_name === tag)
+  if (pinnedVersion != null) {
     return releases.find((release) => release.tag_name === pinnedVersion || release.version === pinnedVersion)
   }
   return releases[0]

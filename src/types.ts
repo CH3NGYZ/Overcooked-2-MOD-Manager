@@ -158,7 +158,7 @@ export interface ModRepository {
   gitee_token_set?: boolean
   enabled: boolean
   builtin: boolean
-  pinned_version?: string
+  pinned_version?: string | null
   ignored_version?: string
   cached_releases: ReleaseInfo[]
   last_error?: string

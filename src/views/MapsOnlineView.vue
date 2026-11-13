@@ -712,7 +712,7 @@ const pageLoading = computed(() => loading.value && tree.value.length === 0)
       → 卡片网格。层级、缩进与刷新按钮的位置都与 MOD 安装页一致 —— 两页在
       用户眼里是同一件事（「把线上这个东西装到本地」），不该是两套长相。
     -->
-    <SourceDirectory v-else data-tutorial="maps-online-page" :nodes="tree" :expanded="sourcesExpanded" :disabled="anyRefreshing"
+    <SourceDirectory v-else data-tutorial="maps-online-page" transparent-root="official-map-index" :nodes="tree" :expanded="sourcesExpanded" :disabled="anyRefreshing"
       :busy="sourceRefreshing" @refresh="refreshSource" @update:expanded="setOpenSources" v-slot="{ node }">
         <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" v-slot="{ node }">
           <n-collapse :expanded-names="groupsExpanded" class="group-collapse"

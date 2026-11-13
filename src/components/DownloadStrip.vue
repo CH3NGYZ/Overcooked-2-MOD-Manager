@@ -5,14 +5,12 @@ import { NButton, NProgress } from 'naive-ui'
 import { CloseOutline } from '@vicons/ionicons5'
 import { api, watchDownloadProgress } from '../services/tauri'
 import type { DownloadProgress } from '../types'
-import { useDashboard } from '../composables/useDashboardStore'
 import { translateBackendMessage } from '../locale/backend'
 import { downloadTaskState, dismissDownloadFailure, retryDownloadTask } from '../downloadTask'
 import { appUpdateState } from '../appUpdateState'
 import DownloadVolumes from './DownloadVolumes.vue'
 import { formatFileSize } from '../repositoryAssets'
 
-const { refresh } = useDashboard()
 const progress = ref<DownloadProgress | null>(null)
 let unlisten: (() => void) | null = null
 
@@ -103,7 +101,8 @@ void watchDownloadProgress((value) => {
   progress.value = value
   if (value.finished) {
     progress.value = null
-    void refresh()
+    // Download completion only means the asset is staged. Installation and
+    // conflict handling own their refresh callbacks after actual disk changes.
   }
 }).then((un) => { unlisten = un })
 
@@ -125,8 +124,6 @@ async function cancel() {
   // 等事件会让用户觉得按钮没反应。
   progress.value = null
   await api.cancelDownload().catch(() => undefined)
-  // 取消后刷新一次，避免界面停在取消前的状态
-  void refresh()
 }
 </script>
 

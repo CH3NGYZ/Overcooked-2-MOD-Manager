@@ -681,7 +681,7 @@ defineExpose({ refreshAll, visibleCount })
     <ContentState v-if="!pageLoading && !tree.length" :description="t('tools.noMatchingRepositories')" />
 
     <template v-else>
-      <SourceDirectory :nodes="normalTree" :expanded="sourcesExpanded" :disabled="anyRefreshing"
+      <SourceDirectory transparent-root="official-repository-index" :nodes="normalTree" :expanded="sourcesExpanded" :disabled="anyRefreshing"
         :busy="node => !!sourceRefreshing[node.id] || node.groups.some(group => group.items.some(repo => refreshing[repo.id]))"
         @refresh="refreshSource" @update:expanded="setOpenSources" v-slot="{ node }">
           <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" v-slot="{ node }">

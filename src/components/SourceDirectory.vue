@@ -14,6 +14,8 @@ const props = defineProps<{
   getTree?: () => SourceGroupSource<T>[]
   expanded: string[]
   parentId?: string
+  /** Keep an index root's content/errors, but display its sources without a heading. */
+  transparentRoot?: string
   disabled?: boolean
   busy: (node: SourceGroupSource<T>) => boolean
 }>()
@@ -24,16 +26,26 @@ const emit = defineEmits<{
 defineSlots<{ default(props: { node: SourceGroupSource<T> }): unknown }>()
 const currentNodes = computed(() => props.getTree?.() ?? props.nodes)
 const getTree = () => currentNodes.value
+const root = computed(() => !props.parentId && props.transparentRoot
+  ? currentNodes.value.find(node => node.id === props.transparentRoot)
+  : undefined)
 const children = computed(() => {
   const known = new Set(currentNodes.value.map(node => node.id))
-  return currentNodes.value.filter(node => props.parentId
+  return currentNodes.value.filter(node => node.id !== root.value?.id && (props.parentId
     ? node.parentId === props.parentId
-    : !node.parentId || !known.has(node.parentId))
+    : !node.parentId || !known.has(node.parentId) || node.parentId === root.value?.id))
 })
 </script>
 
 <template>
-  <n-collapse class="source-collapse" :expanded-names="expanded" @update:expanded-names="emit('update:expanded', $event)">
+  <div class="source-directory">
+  <SourceGroupSlot v-if="root" :get-tree="getTree" :source-id="root.id" v-slot="{ node }">
+    <n-alert v-if="node.error" type="error" :show-icon="true" class="source-error">{{ backendMessageOf(node.error) }}</n-alert>
+    <p v-else-if="node.status === 'ready' && node.count === 0 && !children.length"
+      class="source-empty">{{ t('source.noVisibleRepositories') }}</p>
+    <slot v-else-if="node.groups.length" :node="node" />
+  </SourceGroupSlot>
+  <n-collapse v-if="children.length" class="source-collapse" :expanded-names="expanded" @update:expanded-names="emit('update:expanded', $event)">
     <n-collapse-item v-for="entry in children" :key="entry.id" :name="entry.id">
       <template #header>
         <SourceGroupSlot :get-tree="getTree" :source-id="entry.id" v-slot="{ node }">
@@ -59,10 +71,12 @@ const children = computed(() => {
       </SourceDirectory>
     </n-collapse-item>
   </n-collapse>
+  </div>
 </template>
 
 <style scoped>
 .source-collapse { width: 100%; }
+.source-directory { width: 100%; }
 .source-collapse .source-collapse { margin: -4px 0 0 14px; width: calc(100% - 14px); }
 .source-collapse .source-collapse:empty { display: none; }
 .source-head { display: flex; align-items: center; gap: 8px; min-width: 0; }

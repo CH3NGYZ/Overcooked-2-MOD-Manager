@@ -2,9 +2,8 @@ import { onBeforeUnmount, shallowRef, watch, type Ref } from 'vue'
 import { resolveScrollContainer, scrollInsetTop } from '../expandScroll'
 import { chefDropTarget, type ChefCardBounds } from '../diychef/reorder'
 import type { createChefCardMotion } from '../diychef/cardMotion'
-import { CHEF_LIFT_MS } from '../diychef/cardMotion'
+import { createChefDragStack } from '../diychef/dragStack'
 import { CHEF_POINTER_THRESHOLD } from '../diychef/selection'
-import { EASE_STANDARD, prefersReducedMotion } from '../motion'
 
 interface ReorderOptions {
   root: Readonly<Ref<HTMLElement | null>>
@@ -33,11 +32,11 @@ export function useChefReorder(options: ReorderOptions) {
   const overEnabled = shallowRef(false)
   const overDisabled = shallowRef(false)
   let memberIds: readonly string[] = []
-  let ghosts: Array<{ id: string; element: HTMLElement; offset: number }> = []
+  let ghosts: Array<{ id: string; element: HTMLElement }> = []
+  let stack: ReturnType<typeof createChefDragStack> | null = null
   let sourceId = '', pointerId = -1
   let startX = 0, startY = 0, pointerX = 0, pointerY = 0
-  let tile: HTMLElement | null = null, ghost: HTMLElement | null = null
-  let lift: Animation | null = null
+  let tile: HTMLElement | null = null
   let scroll: HTMLElement | null = null
   let frame = 0
   let scrollBounds: { top: number; bottom: number } | null = null
@@ -90,10 +89,7 @@ export function useChefReorder(options: ReorderOptions) {
     targetId.value = target?.id ?? null
     dropAfter.value = target?.after ?? false
     options.motion.preview(sourceId, overEnabled.value ? targetId.value : null, dropAfter.value, positions, overEnabled.value, memberIds, overDisabled.value)
-    for (const { element, offset } of ghosts) {
-      element.style.transform = `translate3d(${pointerX - startX + offset}px, ${pointerY - startY + offset}px, 0)`
-      element.classList.toggle('is-enabled', overEnabled.value || (!overDisabled.value && (tile?.classList.contains('is-enabled') ?? false)))
-    }
+    stack?.move(pointerX - startX, pointerY - startY, overEnabled.value || (!overDisabled.value && sourceIsEnabled))
     if (scrolling) frame = requestAnimationFrame(tick)
   }
   function cancel(animate = true) {
@@ -111,9 +107,8 @@ export function useChefReorder(options: ReorderOptions) {
     window.removeEventListener('blur', onCancel)
     window.removeEventListener('resize', onCancel)
     try { if (tile?.hasPointerCapture(pointerId)) tile.releasePointerCapture(pointerId) } catch { /* detached source */ }
-    lift?.cancel(); lift = null
-    for (const { element } of ghosts) element.remove()
-    ghosts = []; ghost = null
+    stack?.stop(); stack = null
+    ghosts = []
     options.motion.clearPreview()
     draggingId.value = targetId.value = null
     draggingIds.value = new Set(); memberIds = []
@@ -137,27 +132,8 @@ export function useChefReorder(options: ReorderOptions) {
     if (!pickup) { cancel(); return }
     const rect = pickup.bounds
     sourceBounds = { id: sourceId, left: rect.left, top: rect.top, width: rect.width, height: rect.height, isDefault: tile.classList.contains('is-default') }
-    ghost = pickup.ghost
-    const stack = [sourceId, ...memberIds.filter(id => id !== sourceId)]
-    ghosts = pickup.members.map(({ id, ghost: element }) => {
-      const level = stack.indexOf(id), offset = Math.min(level, 4) * 5
-      element.classList.add('chef-drag-preview')
-      element.dataset.chefMotionState = 'drag'; element.dataset.chefMotionId = id
-      Object.assign(element.style, { position: 'fixed', left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`,
-        height: `${rect.height}px`, zIndex: String(3000 - level), pointerEvents: 'none', opacity: '1', margin: '0',
-        rotate: `${level ? (level % 2 ? -1 : 1) * Math.min(level, 3) * 2 : 0}deg`,
-        boxShadow: '0 12px 32px color-mix(in srgb, var(--oc2-text-1) 18%, transparent)' })
-      document.body.append(element)
-      return { id, element, offset }
-    })
-    if (memberIds.length > 1) {
-      const badge = document.createElement('span'); badge.className = 'chef-drag-count'; badge.textContent = String(memberIds.length)
-      ghost.append(badge)
-    }
-    if (!prefersReducedMotion() && ghost.animate) lift = ghost.animate([
-      { boxShadow: '0 1px 3px color-mix(in srgb, var(--oc2-text-1) 8%, transparent)' },
-      { boxShadow: ghost.style.boxShadow },
-    ], { duration: CHEF_LIFT_MS, easing: EASE_STANDARD })
+    stack = createChefDragStack(pickup, sourceId, pointerX - startX, pointerY - startY)
+    ghosts = stack.members
     const enabled = options.root.value?.querySelector<HTMLElement>('[data-chef-group="enabled"]')
     enabledGroup = enabled ?? null
     const bounds = scroll?.getBoundingClientRect()

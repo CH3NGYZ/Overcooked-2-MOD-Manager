@@ -1,3 +1,5 @@
+import { readonly, shallowRef } from 'vue'
+
 type Job = {
   run: () => Promise<unknown>
   resolve: (value: unknown) => void
@@ -12,6 +14,27 @@ let preparing = 0
 let reading = 0
 let reservations = 0
 let configuredConcurrency = 0
+let pauses = 0
+const paused = shallowRef(false)
+export const previewWorkPaused = readonly(paused)
+
+/** Drag and its settling animations share admission control. Already-started
+ * native calls keep their permits until they finish; releases are nestable. */
+export function pausePreviewWork(): () => void {
+  pauses += 1
+  paused.value = true
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    pauses -= 1
+    if (pauses) return
+    paused.value = false
+    pumpMetadata()
+    pumpPreparations()
+    void pump()
+  }
+}
 
 /** Zero follows all logical cores; running work keeps its permit after a change. */
 export function configurePreviewConcurrency(value: number) {
@@ -33,7 +56,7 @@ export function enqueuePreviewMetadata<T>(run: () => Promise<T>, signal?: AbortS
 
 function pumpMetadata() {
   const limit = Math.min(4, globalThis.navigator?.hardwareConcurrency || 1)
-  while (reading < limit && metadata.length) {
+  while (!pauses && reading < limit && metadata.length) {
     const next = metadata.shift()!
     next.detach()
     reading += 1
@@ -74,7 +97,7 @@ export function enqueuePreviewPreparation<T>(run: () => Promise<T>, signal?: Abo
 }
 
 function pumpPreparations() {
-  while (!reservations && preparing < preparationLimit() && preparations.length) {
+  while (!pauses && !reservations && preparing < preparationLimit() && preparations.length) {
     const next = preparations.shift()!
     next.detach()
     preparing += 1
@@ -91,7 +114,7 @@ export function enqueuePreview<T>(run: () => Promise<T>, signal?: AbortSignal): 
   return enqueue(jobs, run, () => { void pump() }, signal)
 }
 async function pump() {
-  if (running || reservations) return
+  if (running || reservations || pauses) return
   const next = jobs.shift()
   if (!next) return
   next.detach()

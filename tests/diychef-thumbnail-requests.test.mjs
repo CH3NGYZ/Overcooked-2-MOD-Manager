@@ -27,7 +27,7 @@ registerHooks({
 })
 const { clearChefThumbnailCache, requestChefThumbnail } = await import('../src/composables/useDiyChefThumbnails.ts')
 const { thumbnailCacheStats } = await import('../src/diychef/preview/cache.ts')
-const { configurePreviewConcurrency, reservePreviewRenderer } = await import('../src/diychef/preview/queue.ts')
+const { configurePreviewConcurrency, pausePreviewWork, reservePreviewRenderer } = await import('../src/diychef/preview/queue.ts')
 const tick = () => new Promise(resolve => setImmediate(resolve))
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
 let sequence = 0
@@ -579,6 +579,55 @@ test('a PNG being encoded when clear begins cannot be written back afterwards', 
   assert.equal(fresh.state, 'ready')
   assert.equal(boundary.writes.length, 1)
   fresh.release()
+})
+
+test('pausing during PNG encoding avoids stale byte expansion and persistence after cancellation', async t => {
+  const boundary = setup(t, 'complete'), encoding = deferred(), control = new AbortController()
+  const capture = boundary.renderer.capture, from = Array.from
+  let expanded = 0
+  t.mock.method(Array, 'from', (...args) => {
+    if (args[0] instanceof Uint8Array && args[0].byteLength === 3 && args[0][0] === 117) expanded++
+    return from(...args)
+  })
+  boundary.renderer.capture = async () => {
+    const image = await capture()
+    image.arrayBuffer = async () => { await encoding.promise; return new Uint8Array([117, 118, 119]).buffer }
+    return image
+  }
+  const pending = boundary.request(control.signal)
+  await tick()
+  assert.equal(boundary.created.length, 1, 'the capture has entered async PNG persistence')
+  const resume = pausePreviewWork()
+  try {
+    control.abort() // PreviewImage synchronously aborts its consumer at pause.
+    encoding.resolve()
+    const result = await pending
+    assert.equal(result.state, 'error')
+    assert.equal(expanded, 0, 'an aborted PNG cannot expand its bytes on the drag frame')
+    assert.equal(boundary.writes.length, 0)
+  } finally { encoding.resolve(); resume(); await pending }
+})
+
+test('paused real thumbnail requests discard obsolete cards before metadata or PNG admission and resume the survivor', async t => {
+  const boundary = setup(t, 'complete'), resume = pausePreviewWork()
+  boundary.disk = new Uint8Array([0, 137, 80, 78, 71]).buffer
+  const controls = [new AbortController(), new AbortController()]
+  const pending = controls.map((control, index) => requestChefThumbnail('pause-real-session', `obsolete-${index}`, 'hat', control.signal))
+  pending.push(requestChefThumbnail('pause-real-session', 'visible-survivor', 'hat'))
+  try {
+    await tick()
+    assert.equal(boundary.metadata, 0)
+    assert.equal(boundary.reads, 0)
+    assert.equal(boundary.previews, 0)
+    controls.forEach(control => control.abort())
+    await tick()
+  } finally { resume() }
+  const results = await Promise.all(pending)
+  assert.deepEqual(results.map(result => result.state), ['error', 'error', 'ready'])
+  assert.equal(boundary.metadata, 1, 'only the surviving card reaches Rust after release')
+  assert.equal(boundary.reads, 1)
+  assert.equal(boundary.captures, 0, 'the survivor may take its warm disk path without preparing a scene')
+  results.forEach(result => result.release())
 })
 
 test('failed backend cleanup preserves a visible lease and does not leave future requests blocked', async t => {

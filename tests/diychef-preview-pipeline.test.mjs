@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { registerHooks } from 'node:module'
+import { isReadonly, watch } from 'vue'
 
 registerHooks({ resolve(specifier, context, next) {
   if (specifier.startsWith('.') && !/\.[cm]?[jt]s$/.test(specifier)) {
@@ -9,7 +10,8 @@ registerHooks({ resolve(specifier, context, next) {
   return next(specifier, context)
 } })
 const { decodeGeometry } = await import('../src/diychef/preview/geometry.ts')
-const { configurePreviewConcurrency, enqueuePreviewPreparation, enqueuePreview, reservePreviewRenderer } = await import('../src/diychef/preview/queue.ts')
+const { configurePreviewConcurrency, enqueuePreviewMetadata, enqueuePreviewPreparation, enqueuePreview,
+  pausePreviewWork, previewWorkPaused, previewQueueStats, reservePreviewRenderer } = await import('../src/diychef/preview/queue.ts')
 const { acquireThumbnail, clearThumbnailCache, putThumbnail, thumbnailCacheStats } = await import('../src/diychef/preview/cache.ts')
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
 const tick = () => new Promise(resolve => setImmediate(resolve))
@@ -125,6 +127,89 @@ test('a failed capture rejects its caller and releases the lane for subsequent c
   const next = enqueuePreview(async () => 'next')
   await assert.rejects(failed, /bad-model/)
   assert.equal(await next, 'next')
+})
+
+test('nested preview pauses stop all three lanes until the final idempotent release', async () => {
+  const releaseA = pausePreviewWork(), releaseB = pausePreviewWork(), started = []
+  const pending = [
+    enqueuePreviewMetadata(async () => { started.push('metadata') }),
+    enqueuePreviewPreparation(async () => { started.push('preparation') }),
+    enqueuePreview(async () => { started.push('capture') }),
+  ]
+  try {
+    assert.equal(isReadonly(previewWorkPaused), true)
+    assert.equal(previewWorkPaused.value, true)
+    await tick()
+    assert.deepEqual(started, [])
+    assert.deepEqual(previewQueueStats(), { reading: 0, metadataQueued: 1, preparing: 0,
+      preparationQueued: 1, capturing: 0, captureQueued: 1 })
+    releaseA(); releaseA()
+    await tick()
+    assert.equal(previewWorkPaused.value, true)
+    assert.deepEqual(started, [], 'one animation finishing cannot resume another active drag')
+    releaseB(); releaseB()
+    await Promise.all(pending)
+    assert.equal(previewWorkPaused.value, false)
+    assert.deepEqual(started, ['metadata', 'preparation', 'capture'])
+  } finally { releaseA(); releaseB(); await Promise.all(pending) }
+})
+
+test('pausing and cancelling active work retain native permits until completion, without admitting the next job', async t => {
+  t.mock.getter(navigator, 'hardwareConcurrency', () => 1)
+  configurePreviewConcurrency(1)
+  t.after(() => configurePreviewConcurrency(0))
+  const gates = [deferred(), deferred(), deferred()], started = []
+  const controls = gates.map(() => new AbortController())
+  const queues = [enqueuePreviewMetadata, enqueuePreviewPreparation, enqueuePreview]
+  const active = queues.map((enqueue, index) => enqueue(async () => {
+    started.push(`active:${index}`)
+    await gates[index].promise // A Rust invoke already started cannot be aborted.
+  }, controls[index].signal))
+  const release = pausePreviewWork()
+  const pending = queues.map((enqueue, index) => enqueue(async () => { started.push(`next:${index}`) }))
+  try {
+    controls.forEach(control => control.abort())
+    await tick()
+    assert.deepEqual(previewQueueStats(), { reading: 1, metadataQueued: 1, preparing: 1,
+      preparationQueued: 1, capturing: 1, captureQueued: 1 })
+    gates[1].resolve(); gates[2].resolve()
+    await Promise.all(active.slice(1)); await tick()
+    assert.deepEqual(started, ['active:0', 'active:1', 'active:2'])
+    assert.deepEqual(previewQueueStats(), { reading: 1, metadataQueued: 1, preparing: 0,
+      preparationQueued: 1, capturing: 0, captureQueued: 1 })
+    release()
+    await tick()
+    assert.deepEqual(started, ['active:0', 'active:1', 'active:2', 'next:1', 'next:2'])
+    assert.equal(previewQueueStats().reading, 1, 'resuming cannot reuse an unfinished native metadata permit')
+    gates[0].resolve()
+    await Promise.all([...active, ...pending])
+    assert.equal(started.at(-1), 'next:0')
+  } finally { release(); gates.forEach(gate => gate.resolve()); await Promise.all([...active, ...pending]) }
+})
+
+test('queued work in every paused lane is abortable and never runs after resume', async () => {
+  const release = pausePreviewWork(), started = [], abort = new AbortController()
+  const pending = [enqueuePreviewMetadata, enqueuePreviewPreparation, enqueuePreview]
+    .map(enqueue => enqueue(async () => { started.push('unexpected') }, abort.signal))
+  const rejections = pending.map(promise => assert.rejects(promise, { name: 'AbortError' }))
+  try {
+    abort.abort()
+    await Promise.all(rejections)
+    assert.deepEqual(previewQueueStats(), { reading: 0, metadataQueued: 0, preparing: 0,
+      preparationQueued: 0, capturing: 0, captureQueued: 0 })
+  } finally { release() }
+  await tick()
+  assert.deepEqual(started, [])
+})
+
+test('resume notifies synchronous visibility watchers before pumping stale queued work', async () => {
+  const release = pausePreviewWork(), abort = new AbortController()
+  let ran = false
+  const pending = enqueuePreviewMetadata(async () => { ran = true }, abort.signal)
+  const rejection = assert.rejects(pending, { name: 'AbortError' })
+  const stop = watch(previewWorkPaused, value => { if (!value) abort.abort() }, { flush: 'sync' })
+  try { release(); await rejection; assert.equal(ran, false) }
+  finally { stop(); abort.abort(); release() }
 })
 
 test('preview preparation setting one bounds the whole cold pipeline to one job', async t => {

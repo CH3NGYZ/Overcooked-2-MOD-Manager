@@ -127,8 +127,9 @@ export async function requestChefThumbnail(sessionId: string, chefId: string, ha
             }, request.abort.signal)
             if (!current) continue
             if (completeImage) {
-              const bytes = Array.from(new Uint8Array(await completeImage.arrayBuffer()))
+              const buffer = await completeImage.arrayBuffer()
               ensureNeeded()
+              const bytes = Array.from(new Uint8Array(buffer))
               await api.diyChefThumbnail(key, bytes, false).catch(() => undefined)
             }
             return key

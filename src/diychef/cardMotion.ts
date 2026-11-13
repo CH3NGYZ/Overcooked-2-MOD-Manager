@@ -57,8 +57,17 @@ export function createChefCardMotion(root: () => HTMLElement | null) {
   const flights = new Map<string, Flight>()
   const slots = createChefDragLayout(root)
   const adopted = new Map<string, HTMLElement>()
+  const idleWaiters = new Set<() => void>()
   let previewKey = ''
 
+  function notifyIdle() {
+    if (moves.size || flights.size) return
+    for (const resolve of idleWaiters) resolve()
+    idleWaiters.clear()
+  }
+  function whenIdle(): Promise<void> {
+    return moves.size || flights.size ? new Promise(resolve => idleWaiters.add(resolve)) : Promise.resolve()
+  }
   function clearPreview() { slots.clear(); previewKey = '' }
   function stop() {
     clearPreview()
@@ -73,6 +82,7 @@ export function createChefCardMotion(root: () => HTMLElement | null) {
     flights.clear()
     adopted.clear()
     if (root()) root()!.dataset.chefMotion = 'idle'
+    notifyIdle()
   }
   function capture(chefIds: ChefMotionIds): Frames {
     const host = root(), result: Frames = new Map()
@@ -140,6 +150,7 @@ export function createChefCardMotion(root: () => HTMLElement | null) {
         }
         delete moving.dataset.chefMotionState
         if (!moves.size && !flights.size && root()) root()!.dataset.chefMotion = 'idle'
+        notifyIdle()
       }
       animation.onfinish = finish
     }
@@ -187,5 +198,5 @@ export function createChefCardMotion(root: () => HTMLElement | null) {
       return end && origin ? { ...end, left: end.left + origin.left, top: end.top + origin.top } : element.getBoundingClientRect()
     })
   }
-  return { capture, play, stop, adopt, pickup, preview, clearPreview, snapshot, hasAdopted: () => adopted.size > 0 }
+  return { capture, play, stop, adopt, pickup, preview, clearPreview, snapshot, whenIdle, hasAdopted: () => adopted.size > 0 }
 }

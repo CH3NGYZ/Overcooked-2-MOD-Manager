@@ -70,7 +70,9 @@ export class ElementBoundary {
       left = origin.left + (parseFloat(this.style.left) || 0); top = origin.top + (parseFloat(this.style.top) || 0)
       width = parseFloat(this.style.width) || width; height = parseFloat(this.style.height) || height
     }
-    const animation = this.animations.findLast(item => item.effective)
+    // WAAPI effects on different CSS properties compose independently. A shadow
+    // lift on the same card must not hide its active gathering transform.
+    const animation = this.animations.findLast(item => item.effective && item.keyframes.some(frame => frame.transform !== undefined))
     const from = components(animation?.keyframes[0].transform ?? this.style.transform), to = components(animation?.keyframes.at(-1).transform)
     const progress = animation?.progress ?? 0
     const [x, y, sx, sy] = from.map((value, index) => animation ? value + (to[index] - value) * progress : value)

@@ -4,6 +4,7 @@ import { PersonOutline } from '@vicons/ionicons5'
 import { t } from '../../i18n'
 import { requestChefThumbnail } from '../../composables/useDiyChefThumbnails'
 import { acquireThumbnail } from '../../diychef/preview/cache'
+import { previewWorkPaused } from '../../diychef/preview/queue'
 import { diyChefDemoImage, isDiyChefDemoSession } from '../../tutorial/demoDiyChef'
 
 const props = defineProps<{ sessionId: string; chefId: string; hatId: string | null; name: string }>()
@@ -34,6 +35,9 @@ function stop() {
   loading.value = false
 }
 async function load() {
+  // Gate every path, including warm PNG reads and their browser decode. The
+  // visible image keeps its existing lease while dragging settles.
+  if (previewWorkPaused.value) return
   const ticket = ++generation
   abort?.abort()
   abort = null
@@ -51,6 +55,16 @@ async function load() {
   } catch { if (ticket === generation) failed.value = true }
   finally { if (ticket === generation) loading.value = false }
 }
+function settle() {
+  if (!visible || previewWorkPaused.value) return
+  settling = setTimeout(() => { settling = undefined; void load() }, 90)
+}
+watch(previewWorkPaused, paused => {
+  // Abort synchronously so an already-running invoke cannot publish or start
+  // follow-up decoding before the next Vue update flush.
+  stop()
+  if (!paused) settle()
+}, { flush: 'sync' })
 watch(() => [props.sessionId, props.chefId, props.hatId], (next, before) => {
   stop()
   if (next[1] !== before[1] || next[2] !== before[2]) { release(); lastKey = undefined }
@@ -69,7 +83,7 @@ onMounted(() => {
       // Reuse the existing image immediately, then validate live metadata once
       // this card settles. Passing cards never enqueue expensive native work.
       if (!result.value && lastKey) result.value = acquireThumbnail(lastKey)
-      settling = setTimeout(() => { settling = undefined; void load() }, 90)
+      settle()
     } else release()
   // Keep two complete card rows above and below the scrollport. Cards beyond
   // this buffer release their leases; the bounded PNG LRU can still reuse them.

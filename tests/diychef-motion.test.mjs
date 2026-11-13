@@ -6,6 +6,7 @@ import { box, browserBoundary, chef, ElementBoundary } from './helpers/chef-moti
 import { CHEF_MOVE_MS, CHEF_PREVIEW_MS, cloneChefCard, createChefCardMotion } from '../src/diychef/cardMotion.ts'
 import { useChefMotion } from '../src/composables/useChefMotion.ts'
 import { chefDropTarget } from '../src/diychef/reorder.ts'
+import { enqueuePreviewMetadata, previewWorkPaused } from '../src/diychef/preview/queue.ts'
 
 registerHooks({ resolve(specifier, context, next) {
   if (specifier.startsWith('.') && !/\.[cm]?[jt]s$/.test(specifier)) {
@@ -34,6 +35,7 @@ function setup(t) {
   return { ...browser, root, lane }
 }
 const last = element => element.animations.at(-1)
+const transformAnimation = element => element.animations.findLast(animation => animation.keyframes.some(frame => frame.transform !== undefined))
 
 test('cross-grid enable flies the real portrait and shifts following cards across the row boundary', t => {
   const { root, lane } = setup(t), enabled = new ElementBoundary(), disabled = new ElementBoundary()
@@ -202,6 +204,7 @@ for (const type of ['pointercancel', 'blur', 'resize', 'Escape']) test(`real dra
   instance.value.start({ button: 0, isPrimary: true, pointerId: 1, clientX: 350, clientY: 120, target: card, currentTarget: card }, 'fox')
   dispatch('pointermove', { pointerId: 1, clientX: 390, clientY: 130 }); flushFrame()
   assert.ok(document.body.querySelector('.chef-drag-preview')); assert.equal(instance.value.draggingId.value, 'fox')
+  transformAnimation(document.body.querySelector('.chef-drag-preview')).progress = .5
   dispatch(type === 'Escape' ? 'keydown' : type, { key: 'Escape' }); await tick()
   assert.equal(mutations, 0); assert.equal(card.captured, null); assert.equal(instance.value.draggingId.value, null)
   assert.equal(document.body.querySelector('.chef-drag-preview'), null)
@@ -311,6 +314,171 @@ test('dropping a group outside both sections cancels all members and clears ever
   assert.equal(document.body.querySelectorAll('.chef-drag-preview').length, 0)
   assert.equal(enabled.querySelectorAll('[data-chef-drag-source]').length, 0)
   assert.equal(value.draggingIds.value.size, 0)
+})
+
+function gatheringFixture(t, reduced = false) {
+  const browser = dragFixture(t, ['a', 'b', 'c', 'd'], 2)
+  const { root, cards, dispatch, flushFrame, setReduced } = browser
+  setReduced(reduced)
+  const ids = ['a', 'c', 'd'], anchor = cards[3], origins = new Map(cards.map(card => [card.dataset.chefId, card.getBoundingClientRect()]))
+  const calls = [], instance = mounted(t, () => {
+    const motion = useChefMotion(shallowRef(root))
+    return useChefReorder({ root: shallowRef(root), enabled: shallowRef(true), members: () => ids, canBeDefault: () => true,
+      place: (...args) => calls.push(args), disable: () => assert.fail('gathering in the enabled grid cannot disable chefs'), motion })
+  })
+  const start = { x: origins.get('d').left + 64, y: origins.get('d').top + 100 }
+  instance.value.start({ button: 0, isPrimary: true, pointerId: 1, clientX: start.x, clientY: start.y, target: anchor, currentTarget: anchor }, 'd')
+  const pointer = { x: start.x + 20, y: start.y + 15 }
+  dispatch('pointermove', { pointerId: 1, clientX: pointer.x, clientY: pointer.y }); flushFrame()
+  const ghosts = new Map(document.body.querySelectorAll('.chef-drag-preview').map(element => [element.dataset.chefMotionId, element]))
+  assert.deepEqual([...ghosts.keys()].sort(), ids.slice().sort())
+  const layers = [...document.body.querySelectorAll('.chef-drag-layer')]
+  assert.equal(layers.length, ids.length)
+  const animations = [...ghosts.values(), ...layers].flatMap(element => element.animations)
+  return { ...browser, ...instance, ids, origins, start, pointer, ghosts, animations, calls }
+}
+
+test('selected chefs gather from their own viewport positions and keep following the pointer during convergence', t => {
+  const { origins, start, pointer, ghosts, dispatch, flushFrame } = gatheringFixture(t)
+  for (const [id, ghost] of ghosts) {
+    assert.deepEqual(ghost.getBoundingClientRect(), origins.get(id), `${id} must start at its own card, including the anchor`)
+    const animation = transformAnimation(ghost)
+    assert.ok(animation, `${id} has an independent gathering transform`)
+    assert.equal(animation.options.duration, CHEF_MOVE_MS)
+    animation.progress = .5
+  }
+  const half = new Map([...ghosts].map(([id, ghost]) => [id, ghost.getBoundingClientRect()]))
+  pointer.x += 37; pointer.y -= 24
+  dispatch('pointermove', { pointerId: 1, clientX: pointer.x, clientY: pointer.y }); flushFrame()
+  const stack = ['d', 'a', 'c'], anchor = origins.get('d')
+  for (const [id, ghost] of ghosts) {
+    const before = half.get(id), visual = ghost.getBoundingClientRect(), animation = transformAnimation(ghost)
+    assert.equal(visual.left - before.left, 37, `${id} follows horizontal movement immediately`)
+    assert.equal(visual.top - before.top, -24, `${id} follows vertical movement immediately`)
+    assert.equal(animation.progress, .5, `${id} does not restart convergence on pointermove`)
+    assert.equal(ghost.animations.filter(item => item.keyframes.some(frame => frame.transform !== undefined)).length, 1)
+    animation.finish()
+    const settled = ghost.getBoundingClientRect(), offset = stack.indexOf(id) * 5
+    assert.equal(settled.left, anchor.left + pointer.x - start.x + offset)
+    assert.equal(settled.top, anchor.top + pointer.y - start.y + offset)
+    assert.equal(settled.width, origins.get(id).width)
+    assert.equal(settled.height, origins.get(id).height)
+  }
+})
+
+for (const action of ['pointerup', 'Escape']) test(`early ${action} releases every gathering chef from its current visual position`, async t => {
+  const { root, pointer, ghosts, animations, dispatch, flushFrame, calls, value, listenerCount, frameCount } = gatheringFixture(t)
+  for (const ghost of ghosts.values()) transformAnimation(ghost).progress = .35
+  pointer.x -= 140; pointer.y -= 212
+  dispatch('pointermove', { pointerId: 1, clientX: pointer.x, clientY: pointer.y }); flushFrame()
+  const released = new Map([...ghosts].map(([id, ghost]) => [id, ghost.getBoundingClientRect()]))
+  if (action === 'Escape') dispatch('keydown', { key: 'Escape' })
+  else dispatch('pointerup', { pointerId: 1, clientX: pointer.x, clientY: pointer.y })
+  await tick()
+  assert.equal(calls.length, action === 'Escape' ? 0 : 1)
+  assert.equal(value.draggingIds.value.size, 0)
+  assert.equal(document.body.querySelector('.chef-drag-layer'), null)
+  assert.equal(document.body.querySelector('.chef-drag-preview'), null)
+  assert.ok(animations.every(animation => animation.playState === 'idle'), 'gathering and shadow animations stop after capture')
+  const bridges = root.querySelectorAll('.chef-motion-bridge')
+  assert.equal(bridges.length, released.size)
+  for (const bridge of bridges) {
+    assert.deepEqual(bridge.getBoundingClientRect(), released.get(bridge.dataset.chefMotionId), 'release must not jump to the final stack position')
+    transformAnimation(bridge).finish()
+  }
+  if (action === 'Escape') dispatch('pointerup', { pointerId: 1, clientX: pointer.x, clientY: pointer.y })
+  for (const name of ['pointermove', 'pointerup', 'pointercancel', 'blur', 'resize', 'keydown']) assert.equal(listenerCount(name), 0, name)
+  assert.equal(frameCount(), 0)
+  assert.equal(root.querySelector('.chef-motion-bridge'), null)
+})
+
+test('reduced motion group pickup follows the pointer without gathering animations or cancellation residue', async t => {
+  const { root, origins, pointer, start, ghosts, animations, dispatch, flushFrame, calls } = gatheringFixture(t, true)
+  assert.equal(animations.length, 0)
+  pointer.x += 40; pointer.y -= 10
+  dispatch('pointermove', { pointerId: 1, clientX: pointer.x, clientY: pointer.y }); flushFrame()
+  const stack = ['d', 'a', 'c'], anchor = origins.get('d')
+  for (const [id, ghost] of ghosts) {
+    const visual = ghost.getBoundingClientRect(), offset = stack.indexOf(id) * 5
+    assert.equal(visual.left, anchor.left + pointer.x - start.x + offset)
+    assert.equal(visual.top, anchor.top + pointer.y - start.y + offset)
+  }
+  dispatch('keydown', { key: 'Escape' }); await tick()
+  assert.equal(calls.length, 0)
+  assert.equal(document.body.querySelector('.chef-drag-layer'), null)
+  assert.equal(document.body.querySelector('.chef-drag-preview'), null)
+  assert.equal(root.querySelector('.chef-motion-bridge'), null)
+  assert.equal(root.querySelector('[data-chef-placeholder]'), null)
+})
+
+test('unmount during group gathering cancels all animations and removes layers, placeholders, listeners and frames', t => {
+  const { root, ghosts, animations, stop, value, listenerCount, frameCount } = gatheringFixture(t)
+  assert.equal(previewWorkPaused.value, true)
+  for (const ghost of ghosts.values()) transformAnimation(ghost).progress = .4
+  assert.ok(animations.some(animation => animation.playState === 'running'))
+  stop()
+  assert.equal(previewWorkPaused.value, false, 'unmount must release the portrait pause immediately')
+  assert.ok(animations.every(animation => animation.playState === 'idle'))
+  assert.equal(value.draggingIds.value.size, 0)
+  assert.equal(document.body.querySelector('.chef-drag-layer'), null)
+  assert.equal(document.body.querySelector('.chef-drag-preview'), null)
+  assert.equal(root.querySelector('.chef-motion-bridge'), null)
+  assert.equal(root.querySelector('[data-chef-placeholder]'), null)
+  for (const name of ['pointermove', 'pointerup', 'pointercancel', 'blur', 'resize', 'keydown']) assert.equal(listenerCount(name), 0, name)
+  assert.equal(frameCount(), 0)
+})
+
+test('group dragging defers portrait reads until the last real return flight or neighbour move ends', async t => {
+  const { root, ghosts, dispatch } = gatheringFixture(t)
+  const reads = []
+  const pending = enqueuePreviewMetadata(async () => { reads.push('visible portrait') })
+  await tick()
+  assert.equal(previewWorkPaused.value, true)
+  assert.deepEqual(reads, [], 'new portraits must not load while a group follows the pointer')
+  for (const ghost of ghosts.values()) transformAnimation(ghost).progress = .35
+  dispatch('keydown', { key: 'Escape' }); await tick()
+  assert.equal(previewWorkPaused.value, true)
+  assert.deepEqual(reads, [], 'pointer release does not resume reads before the return animation')
+  const elements = [...root.querySelectorAll('[data-chef-id]'), ...root.querySelectorAll('.chef-motion-bridge')]
+  const returning = elements.flatMap(element => element.animations).filter(animation => animation.playState === 'running')
+  assert.ok(returning.length >= 2, 'the test must cover multiple independently finishing animations')
+  returning[0].finish(); await tick()
+  assert.equal(previewWorkPaused.value, true)
+  assert.deepEqual(reads, [], 'finishing one member must not open the queue for the other members')
+  for (const animation of returning.slice(1)) animation.finish()
+  await pending; await tick()
+  assert.equal(previewWorkPaused.value, false)
+  assert.deepEqual(reads, ['visible portrait'])
+})
+
+test('rapidly reversing a card keeps portraits paused until its replacement motion completes', async t => {
+  const { root } = setup(t), card = chef('fox', 30, 500)
+  const { value } = mounted(t, () => useChefMotion(shallowRef(root)))
+  root.append(card)
+  await value.change('fox', () => { card.layout.top = 80 })
+  const first = last(card); first.progress = .4
+  assert.equal(previewWorkPaused.value, true)
+  await value.change('fox', () => { card.layout.top = 500 }); await tick()
+  assert.equal(first.playState, 'idle')
+  assert.equal(previewWorkPaused.value, true, 'cancelled earlier motion cannot release the current pause')
+  first.onfinish?.(); await tick()
+  assert.equal(previewWorkPaused.value, true, 'a late callback cannot release the replacement motion')
+  last(card).finish(); await tick()
+  assert.equal(previewWorkPaused.value, false)
+})
+
+test('failed pickup and reduced motion release portrait admission without waiting for a phantom animation', async t => {
+  const { root, setReduced } = setup(t)
+  const { value } = mounted(t, () => useChefMotion(shallowRef(root)))
+  assert.equal(value.pickup('missing'), null)
+  assert.equal(previewWorkPaused.value, false)
+  const card = chef('fox', 30, 500); root.append(card); setReduced(true)
+  await value.change('fox', () => { card.layout.top = 80 }); await tick()
+  assert.equal(card.animations.length, 0)
+  assert.equal(previewWorkPaused.value, false)
+  await assert.rejects(value.change('fox', () => { throw new Error('rejected draft mutation') }), /rejected draft mutation/)
+  await tick()
+  assert.equal(previewWorkPaused.value, false, 'a draft rejection must not leave portraits suspended')
 })
 
 test('live slot order reverses the same neighbour at 50 percent even before its preview animation finishes', t => {

@@ -365,11 +365,12 @@ async function confirmDisableRecycle() {
 }
 
 /* ===== 官方数据来源（本次启动有效） ===== */
-const dataProvider = computed(() => config.value?.data_provider ?? 'github')
+const dataProvider = computed(() => (demoActive.value ? config.value : dashboard.config.value ?? config.value)?.data_provider ?? 'github')
 const switchingDataProvider = ref(false)
 const dataProviderOptions = computed(() => [
   { value: 'github', label: t('settings.dataProviderGithub') },
   { value: 'gitee', label: t('settings.dataProviderGitee') },
+  { value: 'cloudflare', label: t('settings.dataProviderCloudflare') },
   { value: 'builtin', label: t('settings.dataProviderBuiltin') },
 ])
 
@@ -384,8 +385,8 @@ async function switchDataProvider(value: DataProvider) {
       dashboard.applyConfigSnapshot(config.value)
       message.success(t('settings.dataProviderChanged'))
     } catch {
-      // The selected provider remains active; a failed network refresh keeps
-      // the shipped proxy/plan closure selected by the backend.
+      await dashboard.reloadConfig()
+      // A proxy/plan failure keeps the provider chosen by the MOD root gate.
       message.warning(t('settings.dataProviderNetworkFallback'))
     }
   } catch (reason) {

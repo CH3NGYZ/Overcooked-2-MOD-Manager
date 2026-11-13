@@ -49,6 +49,8 @@ fn bundled_and_raw_plain_paths_use_their_repository_root() {
         "https://raw.githubusercontent.com/kfyangc/Overcooked2-DIYLevelFastInit/master/",
         "https://github.com/owner/repo/raw/refs/tags/v1.0/",
         "https://github.com/owner/repo/raw/refs/heads/feature%2Fmods/",
+        "https://oc2gh.ch3ng.top/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main/",
+        "https://oc2gh.ch3ng.top/owner/repo/raw/refs/tags/v1.0/",
     ] {
         let parent =
             SourceLocation::parse(&format!("{prefix}config/nested/index.toml?raw=true")).unwrap();
@@ -128,6 +130,32 @@ url = "mods/child.toml"
             .address(),
         "https://github.com/kfyangc/Overcooked2-DIYLevelFastInit/raw/refs/heads/master/next.toml"
     );
+}
+
+#[test]
+fn cloudflare_raw_retains_branch_context_after_redirect_and_rejects_escaping_paths() {
+    let requested = Url::parse(
+        "https://oc2gh.ch3ng.top/owner/repo/raw/refs/heads/main/nested/index.toml?raw=true",
+    )
+    .unwrap();
+    let origin = remote_document_location(
+        &requested,
+        Url::parse("https://cdn.example.com/files/index.toml").unwrap(),
+    )
+    .unwrap();
+    assert_eq!(origin.address(), requested.as_str());
+    assert_eq!(
+        SourceLocation::resolve("mods/child.toml", Some(&origin))
+            .unwrap()
+            .address(),
+        "https://oc2gh.ch3ng.top/owner/repo/raw/refs/heads/main/mods/child.toml"
+    );
+    for path in ["../../outside.toml", "%2e%2e/outside.toml"] {
+        assert!(
+            SourceLocation::resolve(path, Some(&origin)).is_err(),
+            "{path}"
+        );
+    }
 }
 
 #[test]

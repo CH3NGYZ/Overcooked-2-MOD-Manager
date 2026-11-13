@@ -11,6 +11,7 @@ mod verified;
 
 pub(crate) use cache::clear_source_cache;
 pub(crate) use diagnostics::{error_category, safe_log_address};
+pub(crate) use document::RepositorySourceDocument;
 #[cfg(test)]
 pub(crate) use document::parse_document;
 pub(crate) use document::{nickname_fallback, source_address_key};

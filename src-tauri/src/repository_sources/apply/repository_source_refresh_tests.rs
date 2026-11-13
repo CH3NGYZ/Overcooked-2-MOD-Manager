@@ -26,16 +26,10 @@ async fn refresh(state: &AppState, source: &RepositorySource) -> Result<ImportPr
 }
 
 #[tokio::test]
-async fn bundled_fallback_keeps_remote_entry_and_rejects_custom_sources() {
+async fn explicit_builtin_selection_is_immediate_and_legacy_forced_fallback_cannot_bypass_gate() {
     let state = test_state();
-    /*
-     * 这条用例验证的是「在线官方根失败 → 回退内置」。默认配置现在只读
-     * 内置索引（`default_config`），所以先显式切回在线入口：只有远端
-     * URL 才能触发 `builtin_fallback_available`。
-     *
-     * 根地址要一起换掉 —— `save` 会把这份配置写进读取缓存，随后的
-     * `load` 不会再跑一遍按开关重建官方根的逻辑。
-     */
+    // A legacy request cannot force bundled content without selecting Builtin;
+    // only the official root gate owns automatic provider fallback.
     let mut online = state.config.load().unwrap();
     crate::config::synchronize_builtin_repository_sources(&mut online);
     state.config.save(&online).unwrap();
@@ -63,8 +57,17 @@ async fn bundled_fallback_keeps_remote_entry_and_rejects_custom_sources() {
         state.config.load().unwrap().repository_sources,
         config.repository_sources
     );
-    let result =
+    assert!(
         import_repository_source_into_config(&state, root.id.clone(), root.url.clone(), true)
+            .await
+            .is_err()
+    );
+    state
+        .config
+        .select_data_provider(crate::models::DataProvider::Builtin);
+    let root = state.config.load().unwrap().repository_sources[0].clone();
+    let result =
+        import_repository_source_into_config(&state, root.id.clone(), root.url.clone(), false)
             .await
             .unwrap();
     assert!(result.preview.unwrap().valid);
@@ -123,7 +126,7 @@ async fn bundled_fallback_keeps_remote_entry_and_rejects_custom_sources() {
 }
 
 #[tokio::test]
-async fn live_index_changes_replace_children_and_failure_keeps_no_old_content() {
+async fn live_index_changes_replace_children_and_failure_keeps_trusted_snapshots() {
     use std::io::{BufRead, BufReader, Write};
     let declaration = |id, nickname: &str| {
         format!(
@@ -147,6 +150,7 @@ async fn live_index_changes_replace_children_and_failure_keeps_no_old_content() 
                 declaration("b", "New source")
             ),
         ),
+        ("/a.toml", "503 Service Unavailable", String::new()),
         ("/a.toml", "200 OK", repository("Changed MOD")),
         ("/index.toml", "200 OK", declaration("b", "New source")),
         ("/b.toml", "200 OK", repository("New MOD")),
@@ -233,7 +237,11 @@ async fn live_index_changes_replace_children_and_failure_keeps_no_old_content() 
     ] {
         refresh(&state, &root).await.unwrap();
         let index_config = state.config.load().unwrap();
-        assert!(index_config.repositories.is_empty());
+        assert_eq!(
+            index_config.repositories.len(),
+            usize::from(installed_repository_ids.contains_key(child_id)),
+            "still-declared children keep their trusted repositories until refreshed"
+        );
         let child = index_config
             .repository_sources
             .iter()
@@ -243,8 +251,16 @@ async fn live_index_changes_replace_children_and_failure_keeps_no_old_content() 
         assert_eq!(child.nickname_i18n["zh-CN"], expected_source_name);
         assert_eq!(child.url, format!("http://{address}/{child_id}.toml"));
         assert_eq!(child.parent_id.as_deref(), Some(root.id.as_str()));
+        if child_id == "a" && installed_repository_ids.contains_key(child_id) {
+            assert!(refresh(&state, child).await.is_err());
+            assert_eq!(
+                serde_json::to_value(state.config.load().unwrap()).unwrap(),
+                serde_json::to_value(&index_config).unwrap(),
+                "parent success plus child failure must preserve active and staged snapshots"
+            );
+        }
         refresh(&state, child).await.unwrap();
-        let loaded = state.config.load().unwrap();
+        let mut loaded = state.config.load().unwrap();
         assert_eq!(loaded.repositories.len(), 1);
         assert_eq!(loaded.repositories[0].name, expected_mod_name);
         assert!(loaded.repository_sources.contains(&unrelated));
@@ -258,8 +274,21 @@ async fn live_index_changes_replace_children_and_failure_keeps_no_old_content() 
         }
         if child_id == "b" {
             assert!(!loaded.repository_sources.iter().any(|s| s.id == "a"));
+            let old_id = &installed_repository_ids["a"];
+            assert_eq!(
+                loaded.staged_release_cache[old_id]
+                    .release_prerelease_metadata
+                    .get("v1.0.0-beta"),
+                Some(&false)
+            );
         }
+        loaded.repositories[0]
+            .release_prerelease_metadata
+            .insert("v1.0.0-beta".into(), false);
+        loaded.repositories[0].releases_cached_at = Some(123);
+        state.config.save(&loaded).unwrap();
     }
+    let trusted = state.config.load().unwrap();
     let inaccessible =
         import_repository_source_into_config(&state, root.id.clone(), root.url.clone(), false)
             .await
@@ -270,17 +299,20 @@ async fn live_index_changes_replace_children_and_failure_keeps_no_old_content() 
         !inaccessible.builtin_fallback_available,
         "custom sources cannot fallback"
     );
+    assert_eq!(
+        serde_json::to_value(state.config.load().unwrap()).unwrap(),
+        serde_json::to_value(&trusted).unwrap(),
+        "HTTP failure must not publish a new config"
+    );
     assert!(
         refresh(&state, &root).await.is_err(),
         "invalid TOML remains a content error"
     );
     let failed = state.config.load().unwrap();
-    assert!(failed.repositories.is_empty());
-    assert!(
-        !failed
-            .repository_sources
-            .iter()
-            .any(|s| s.parent_id.as_deref() == Some(root.id.as_str()))
+    assert_eq!(
+        serde_json::to_value(&failed).unwrap(),
+        serde_json::to_value(&trusted).unwrap(),
+        "invalid TOML must keep the trusted tree too"
     );
     assert!(failed.repository_sources.contains(&root));
     assert!(failed.repository_sources.contains(&unrelated));
@@ -289,6 +321,19 @@ async fn live_index_changes_replace_children_and_failure_keeps_no_old_content() 
     let restarted = AppState::with_config(ConfigService::for_test(
         state.config.config_path().parent().unwrap().to_path_buf(),
     ));
+    let offline = restarted.config.load().unwrap();
+    assert_eq!(
+        offline.repositories[0]
+            .release_prerelease_metadata
+            .get("v1.0.0-beta"),
+        Some(&false)
+    );
+    assert_eq!(
+        offline.staged_release_cache[&installed_repository_ids["a"]]
+            .release_prerelease_metadata
+            .get("v1.0.0-beta"),
+        Some(&false)
+    );
     refresh(&restarted, &root).await.unwrap();
     let restored = restarted.config.load().unwrap();
     let child = restored
@@ -301,6 +346,13 @@ async fn live_index_changes_replace_children_and_failure_keeps_no_old_content() 
     assert_eq!(restored.repositories[0].id, installed_repository_ids["b"]);
     assert_eq!(restored.repositories[0].name, "Recovered MOD");
     assert!(restored.repositories[0].cached_releases.is_empty());
+    assert_eq!(
+        restored.repositories[0]
+            .release_prerelease_metadata
+            .get("v1.0.0-beta"),
+        Some(&false)
+    );
+    assert_eq!(restored.repositories[0].releases_cached_at, Some(123));
     server.join().unwrap();
     fs::remove_dir_all(state.config.config_path().parent().unwrap()).unwrap();
 }
@@ -317,11 +369,16 @@ async fn official_remote_index_loads_each_declared_child() {
     let config = state.config.load().unwrap();
     let root = config.repository_sources[0].clone();
     assert_eq!(root.url, config.data_provider.document("mods.toml"));
-    // Simulate a previous offline run, then ensure an ordinary refresh
-    // returns to the live URL and replaces the bundled children.
-    import_repository_source_into_config(&state, root.id.clone(), root.url.clone(), true)
+    // Simulate an explicit bundled selection in this process, then return to
+    // the regional provider using the same runtime selector as Settings.
+    state
+        .config
+        .select_data_provider(crate::models::DataProvider::Builtin);
+    let bundled_root = state.config.load().unwrap().repository_sources[0].clone();
+    import_repository_source_into_config(&state, bundled_root.id, bundled_root.url, false)
         .await
         .unwrap();
+    state.config.select_data_provider(config.data_provider);
     refresh(&state, &root).await.unwrap();
     let mut pending = state
         .config

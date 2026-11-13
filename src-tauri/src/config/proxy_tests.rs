@@ -114,6 +114,42 @@ fn config_error_fallback_uses_current_runtime_snapshot() {
 }
 
 #[test]
+fn cloudflare_runtime_survives_stale_writes_and_external_edits_but_not_restart() {
+    use crate::models::DataProvider;
+    let root = std::env::temp_dir().join(format!("oc2-cloudflare-provider-{}", Uuid::new_v4()));
+    let service = ConfigService::for_test(root.clone());
+    let stale = service.load().unwrap();
+    service.select_data_provider(DataProvider::Cloudflare);
+    service.save(&stale).unwrap();
+    let active = service.load().unwrap();
+    assert_eq!(active.data_provider, DataProvider::Cloudflare);
+    assert_eq!(
+        active.repository_sources[0].url,
+        DataProvider::Cloudflare.document("mods.toml")
+    );
+    assert_eq!(
+        service.public_config(&stale).data_provider,
+        DataProvider::Cloudflare
+    );
+    let mut external = toml::Value::try_from(&stale).unwrap();
+    external
+        .as_table_mut()
+        .unwrap()
+        .insert("data_provider".into(), "gitee".into());
+    fs::write(service.config_path(), toml::to_string(&external).unwrap()).unwrap();
+    assert_eq!(
+        service.clone().load().unwrap().data_provider,
+        DataProvider::Cloudflare
+    );
+    let restarted = ConfigService::for_test(root.clone());
+    assert_eq!(
+        restarted.load().unwrap().data_provider,
+        DataProvider::default()
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn provider_is_initialized_once_per_session_and_never_restored_by_disk_reads() {
     use crate::models::DataProvider;
     let root = std::env::temp_dir().join(format!("oc2-session-provider-{}", Uuid::new_v4()));

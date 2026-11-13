@@ -461,7 +461,11 @@ fn serve_policy(
 async fn typed_provider_loads_the_complete_closure_and_failed_refresh_keeps_snapshot() {
     use crate::models::{DataProvider, NetworkPlanSelection, Provider, RepositoryKind};
     use crate::network_policy::NetworkPolicy;
-    for provider in [DataProvider::Github, DataProvider::Gitee] {
+    for provider in [
+        DataProvider::Github,
+        DataProvider::Gitee,
+        DataProvider::Cloudflare,
+    ] {
         let (base, server) = serve_policy(false, 9);
         let runtime = ProxyRuntime::new(provider);
         let before = runtime.snapshot();

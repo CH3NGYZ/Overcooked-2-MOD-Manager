@@ -36,113 +36,121 @@ pub async fn refresh_map_sources(
     source_id: Option<String>,
     on_update: tauri::ipc::Channel<crate::map_sources::progress::MapTreeProgress>,
 ) -> Result<Vec<MapInfo>, String> {
+    state.config.official_root(false).await?;
+    let selection = state.config.data_selection();
     let snapshot = state.config.load_or_default();
     let policy = snapshot
         .network_policy
         .clone()
         .map(Ok)
         .unwrap_or_else(|| crate::network_policy::NetworkPolicy::active())?;
-    crate::network_policy::NetworkPolicy::in_snapshot(policy, async {
-        let config = state.config.load_or_default();
-        let provider = config.data_provider;
-        let region = crate::config::current_user_region().to_string();
-        log::info!("开始刷新地图源：来源={:?}，地区={}", provider, region);
-        /*
-         * 源文档可以放在 Release 资产里，那时要先向同一个仓库的 API 取 size/sha256
-         * 才能校验。客户端与令牌在这里建一次、整棵源树共用；`pass_id` 是这次用户
-         * 动作的批次身份，让同一批里同一个仓库只请求一次列表 —— 索引里挂十几个
-         * 第三方源、其中几个指着同一个仓库时，这个去重就是匿名限流（60 次/小时）
-         * 下的生死线。
-         */
-        let client = releases::build_client(config.network.timeout_seconds)
-            .map_err(|error| error.to_string())?;
-        let github_token = state.config.api_token(&config, &Provider::Github);
-        let gitee_token = state.config.api_token(&config, &Provider::Gitee);
-        let gitcode_token = state.config.api_token(&config, &Provider::Gitcode);
-        let observer = crate::map_sources::progress::SourceObserver::with_registry(
-            move |progress| {
-                let _ = on_update.send(progress);
-            },
-            state.map_source_registry.clone(),
-            format!("{region}/{provider:?}"),
-        );
-        let loaded = {
-            let ctx = crate::map_sources::MapSourceContext {
-                observer: Some(&observer),
-                cache: &state.release_cache,
-                client: &client,
-                config: &config,
-                github_token: github_token.as_deref(),
-                gitee_token: gitee_token.as_deref(),
-                gitcode_token: gitcode_token.as_deref(),
-                pass_id: pass_id.as_deref(),
-                force: force.unwrap_or(false),
-                // 保留未刷分支，并给 Release 派生源提供已安装优先级。
-                previous: &config.map_repositories,
-            };
-            if let Some(id) = source_id
-                .as_deref()
-                .filter(|id| *id != "official-map-index")
-            {
-                crate::map_sources::load_map_branch(id, &ctx, &region).await
-            } else {
-                crate::map_sources::load_map_tree(&region, provider, &ctx).await
-            }
-        };
-        // Failed root documents publish an empty error node and clear their old cards.
-        let failure = loaded.as_ref().err().map(ToString::to_string);
-        if source_id
-            .as_deref()
-            .is_some_and(|id| id != "official-map-index")
-            && failure.is_some()
-        {
-            return Err(failure.unwrap());
-        }
-        let mut maps = loaded.unwrap_or_default();
-        // Paused discovery data remains stored, but cannot participate in the tree or APIs.
-        maps.extend(
-            config
-                .map_repositories
-                .iter()
-                .filter(|map| {
-                    map.source_id
+    state
+        .config
+        .in_data_selection(
+            selection,
+            crate::network_policy::NetworkPolicy::in_snapshot(policy, async {
+                let config = state.config.load_or_default();
+                let provider = config.data_provider;
+                let region = crate::config::current_user_region().to_string();
+                log::info!("开始刷新地图源：来源={:?}，地区={}", provider, region);
+                /*
+                 * 源文档可以放在 Release 资产里，那时要先向同一个仓库的 API 取 size/sha256
+                 * 才能校验。客户端与令牌在这里建一次、整棵源树共用；`pass_id` 是这次用户
+                 * 动作的批次身份，让同一批里同一个仓库只请求一次列表 —— 索引里挂十几个
+                 * 第三方源、其中几个指着同一个仓库时，这个去重就是匿名限流（60 次/小时）
+                 * 下的生死线。
+                 */
+                let client = releases::build_client(config.network.timeout_seconds)
+                    .map_err(|error| error.to_string())?;
+                let github_token = state.config.api_token(&config, &Provider::Github);
+                let gitee_token = state.config.api_token(&config, &Provider::Gitee);
+                let gitcode_token = state.config.api_token(&config, &Provider::Gitcode);
+                let observer = crate::map_sources::progress::SourceObserver::with_registry(
+                    move |progress| {
+                        let _ = on_update.send(progress);
+                    },
+                    state.map_source_registry.clone(),
+                    format!("{region}/{provider:?}"),
+                );
+                let loaded = {
+                    let ctx = crate::map_sources::MapSourceContext {
+                        observer: Some(&observer),
+                        cache: &state.release_cache,
+                        client: &client,
+                        config: &config,
+                        github_token: github_token.as_deref(),
+                        gitee_token: gitee_token.as_deref(),
+                        gitcode_token: gitcode_token.as_deref(),
+                        pass_id: pass_id.as_deref(),
+                        force: force.unwrap_or(false),
+                        // 保留未刷分支，并给 Release 派生源提供已安装优先级。
+                        previous: &config.map_repositories,
+                    };
+                    if let Some(id) = source_id
                         .as_deref()
-                        .is_some_and(crate::community::is_source)
-                })
-                .cloned(),
-        );
-        let source = format!("{provider:?}");
+                        .filter(|id| *id != "official-map-index")
+                    {
+                        crate::map_sources::load_map_branch(id, &ctx, &region).await
+                    } else {
+                        crate::map_sources::load_map_tree(&region, provider, &ctx).await
+                    }
+                };
+                // Failed root documents publish an empty error node and clear their old cards.
+                let failure = loaded.as_ref().err().map(ToString::to_string);
+                if source_id
+                    .as_deref()
+                    .is_some_and(|id| id != "official-map-index")
+                    && failure.is_some()
+                {
+                    return Err(failure.unwrap());
+                }
+                let mut maps = loaded.unwrap_or_default();
+                // Paused discovery data remains stored, but cannot participate in the tree or APIs.
+                maps.extend(
+                    config
+                        .map_repositories
+                        .iter()
+                        .filter(|map| {
+                            map.source_id
+                                .as_deref()
+                                .is_some_and(crate::community::is_source)
+                        })
+                        .cloned(),
+                );
+                let source = format!("{provider:?}");
 
-        let _guard = state
-            .operation
-            .lock()
-            .map_err(|_| "lock.poisoned".to_string())?;
-        let mut config = state.config.load_or_default();
-        if config.data_provider != provider {
-            return Err("source.addressMismatch".into());
-        }
-        let changed = crate::map_sources::replace_maps_keeping_runtime_state(&mut config, maps);
-        if changed {
-            state
-                .config
-                .save(&config)
-                .map_err(|error| error.to_string())?;
-        }
-        log::info!(
-            "地图源刷新完成：来源={}，地图={}，配置已更新={}",
-            source,
-            config.map_repositories.len(),
-            changed
-        );
-        if let Some(error) = failure {
-            return Err(error);
-        }
-        Ok(crate::map_sources::available_maps(&config, &region)
-            .iter()
-            .map(map_to_info)
-            .collect())
-    })
-    .await
+                let _guard = state
+                    .operation
+                    .lock()
+                    .map_err(|_| "lock.poisoned".to_string())?;
+                let mut config = state.config.load_or_default();
+                if state.config.data_selection() != selection {
+                    return Err("source.addressMismatch".into());
+                }
+                let changed =
+                    crate::map_sources::replace_maps_keeping_runtime_state(&mut config, maps);
+                if changed {
+                    state
+                        .config
+                        .save(&config)
+                        .map_err(|error| error.to_string())?;
+                }
+                log::info!(
+                    "地图源刷新完成：来源={}，地图={}，配置已更新={}",
+                    source,
+                    config.map_repositories.len(),
+                    changed
+                );
+                if let Some(error) = failure {
+                    return Err(error);
+                }
+                Ok(crate::map_sources::available_maps(&config, &region)
+                    .iter()
+                    .map(map_to_info)
+                    .collect())
+            }),
+        )
+        .await
 }
 
 /// 刷新一个地图仓库的 Release（5 分钟缓存，与 MOD 仓库同一套 TTL）。

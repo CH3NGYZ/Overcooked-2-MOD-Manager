@@ -14,14 +14,19 @@ use std::sync::RwLock;
 pub(crate) struct ProxyRuntime {
     current: RwLock<RuntimeSnapshot>,
     refresh: tokio::sync::Mutex<()>,
+    root_refresh: tokio::sync::Mutex<()>,
     selection_changed: tokio::sync::watch::Sender<u64>,
+    #[cfg(test)]
+    official_addresses: RwLock<Vec<(DataProvider, String)>>,
 }
 
 struct RuntimeSnapshot {
     provider: DataProvider,
     revision: u64,
+    manual_revision: u64,
     groups: GitHubProxyConfig,
     policy: Option<std::sync::Arc<crate::network_policy::NetworkPolicy>>,
+    official_root: Option<crate::repository_sources::RepositorySourceDocument>,
 }
 
 impl Default for ProxyRuntime {
@@ -36,11 +41,16 @@ impl ProxyRuntime {
             current: RwLock::new(RuntimeSnapshot {
                 provider,
                 revision: 0,
+                manual_revision: 0,
                 groups: github_proxies::bundled_defaults(),
                 policy: None,
+                official_root: None,
             }),
             refresh: tokio::sync::Mutex::new(()),
+            root_refresh: tokio::sync::Mutex::new(()),
             selection_changed: tokio::sync::watch::channel(0).0,
+            #[cfg(test)]
+            official_addresses: RwLock::new(Vec::new()),
         }
     }
 
@@ -59,8 +69,10 @@ impl ProxyRuntime {
             *snapshot = RuntimeSnapshot {
                 provider,
                 revision: snapshot.revision + 1,
+                manual_revision: snapshot.revision + 1,
                 groups: github_proxies::bundled_defaults(),
                 policy: None,
+                official_root: None,
             };
             self.selection_changed.send_replace(snapshot.revision);
         }
@@ -98,23 +110,35 @@ impl ProxyRuntime {
         if self.provider() == DataProvider::Builtin {
             return Ok(());
         }
+        let selection = self.selection();
+        let root = match self.official_root(false).await {
+            Ok(root) => root,
+            Err(_) if self.selection() != selection => return Ok(()),
+            Err(error) => return Err(error),
+        };
         let mut changed = self.selection_changed.subscribe();
+        // A selection between the gate result and subscription must not load
+        // another provider's policy without validating that provider's MOD root.
+        if self.selection() != root.selection {
+            return Ok(());
+        }
         let _guard = tokio::select! {
             biased;
             _ = changed.changed() => return Ok(()),
             guard = self.refresh.lock() => guard,
         };
-        let (provider, revision) = {
-            let snapshot = self.current.read().unwrap_or_else(|e| e.into_inner());
-            (snapshot.provider, snapshot.revision)
-        };
+        let (provider, revision) = root.selection;
         if provider == DataProvider::Builtin {
             return Ok(());
         }
         let fresh = tokio::select! {
             biased;
             _ = changed.changed() => return Ok(()),
-            result = crate::network_policy::NetworkPolicy::refresh_remote(provider) => result?,
+            result = async {
+                let base = crate::repository_sources::SourceLocation::parse(&self.official_address(provider))
+                    .map_err(|_| "proxy.validationFailed")?;
+                crate::network_policy::NetworkPolicy::refresh_from(&base).await
+            } => result?,
         };
         self.publish_policy(fresh, provider, revision)
     }
@@ -259,8 +283,10 @@ fn manifest_routes(
     Ok(routes)
 }
 
+mod official_root;
 #[cfg(test)]
 mod test_support;
+pub(crate) use official_root::OfficialRootSnapshot;
 #[cfg(test)]
 #[path = "github_proxy_runtime_tests.rs"]
 mod tests;

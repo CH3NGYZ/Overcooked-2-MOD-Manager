@@ -505,6 +505,11 @@ export function watchGameState(callback: (game: GameInfo) => void): Promise<Unli
   })
 }
 
+/** Re-read the authoritative runtime projection after selection or fallback. */
+export function watchDataProvider(callback: () => void): Promise<UnlistenFn> {
+  return listen('data-provider-changed', () => callback())
+}
+
 /**
  * 关卡集扫描进度（`get_level_sets` 执行期间逐份上报）。
  *

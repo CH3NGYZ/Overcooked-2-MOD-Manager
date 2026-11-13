@@ -22,8 +22,8 @@ import type { ModRepository, ModRepositoryReleaseSnapshot, RepositorySource } fr
  * 页面每次进入只读数据，刷新只由手动按钮或启动流程触发一次。
  *
  * 刷新顺序固定为：父源文档（raw TOML）→ 它声明的子源文档 → 全部仓库 Release（并发 4）。
- * 父源文档只声明子源、仓库在各子源文档里，所以必须递归加载子源，
- * 否则父源清空旧内容后不会补回任何仓库。
+ * 父源文档可以只声明子源、仓库在各子源文档里，所以必须递归加载子源。
+ * 读取成功才替换该源内容；失败保留上次可信配置与 Release 快照。
  *
  * ## 状态从哪来
  *
@@ -60,11 +60,11 @@ const sourceRefreshing = state.refreshingSources
 /** 整批刷新进行中（只有「刷新全部」这一条入口会置真）。 */
 const refreshingAll = state.refreshingAll
 /**
- * 条目集合正在清空/重建（「刷新全部」的源文档与社区发现阶段）。
+ * 条目集合正在刷新（「刷新全部」的源文档阶段）。
  *
- * 卡片标签只认这个、不认 `refreshingAll`：整批刷新会 `clearRepositorySourceCache`
- * 把仓库列表清空，那段时间按仓库 id 的状态一个都匹配不上，只能靠它兜住；
- * 而列表一填回来（`reloadConfig` 之后、Release 阶段开始前）就必须关掉，
+ * 卡片标签只认这个、不认 `refreshingAll`：文档成功前保留可信列表，
+ * 声明变更应用后条目身份仍可能变化，所以文档阶段统一兜住；
+ * 最终列表确定后（Release 阶段开始前）就必须关掉，
  * 让条目级的 `refreshing` / `queued` 逐个接管 —— 否则整批标志会把「刷一个
  * 回来一个」压成「整批一起回来」。
  */
@@ -319,12 +319,9 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>())
     id: item.id, parent_id: item.parent_id, label: item.nickname, label_i18n: item.nickname_i18n, note_i18n: item.note_i18n,
     url: item.url, status: 'pending' as const,
   })))
-  const removed = sourceTree.begin(sourceId)
-  const snapshot = store().config.value
-  if (snapshot) store().applyConfigSnapshot({ ...snapshot,
-    repositories: snapshot.repositories.filter(repo => !repo.source_id || !removed.has(repo.source_id)),
-    repository_sources: snapshot.repository_sources.filter(item => item.id === sourceId || !removed.has(item.id)),
-  })
+  sourceTree.begin(sourceId)
+  // Keep the trusted config while the source is loading. The backend replaces
+  // this source atomically only after a complete successful document read.
   /* 源级标志也走共享状态机：地图侧用的是同一套写入规则 */
   const importErrors = await state.runSource(sourceId, async () => {
     try {
@@ -334,6 +331,7 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>())
       await reloadConfig({ throwOnError: true })
       return []
     } catch (reason) {
+      await reloadConfig()
       return [sourceError(source, reason instanceof Error ? reason.message : String(reason))]
     }
   })
@@ -379,25 +377,12 @@ async function refreshSourceDocuments(): Promise<string[]> {
  */
 async function prepareRepositorySources(clearEntries: boolean): Promise<string[]> {
     if (demoActive.value) return []
-    const { loadBase, reloadConfig, applyConfigSnapshot, repositories, sources, region } = store()
+    const { loadBase, reloadConfig, repositories, sources } = store()
     // 启动时 Dashboard 可能还没读过：先读一次才有源和仓库可刷
     if (!sources.value.length && !repositories.value.length) await loadBase()
     if (demoActive.value) return []
     if (clearEntries) {
       sourceTree.replace([])
-      const refreshable = sources.value.filter(
-        (source) => !COMMUNITY_SOURCE_IDS.has(source.id) && sourceMatchesRegion(source, region.value, sources.value),
-      )
-      if (refreshable.length) {
-        try {
-          const cleared = await api.clearRepositorySourceCache(refreshable.map((source) => source.id))
-          applyConfigSnapshot(cleared)
-        } catch (reason) {
-          // 清空失败不阻塞刷新：后面每个源文档应用时也会各自清一次
-          // 这条会被 message.error 直接显示，原因可能是后端 tag
-          lastErrors.value.push(backendMessageOf(reason))
-        }
-      }
     }
     const sourceErrors = await refreshSourceDocuments()
     // 源文档阶段用的是 reloadConfig（只更新配置）；

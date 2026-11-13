@@ -28,12 +28,10 @@ pub(crate) async fn import_repository_source_into_config(
         return Err("source.communityManaged".into());
     }
     log::info!("开始刷新仓库源：源={}", source_id);
-    // Clear this source and all descendants before loading. The lock is
-    // deliberately released during the network request so other sources can
-    // download and apply their own files concurrently. Keep the source itself
-    // so the UI can show its error state, but remove stale descendants and
-    // repositories instead of restoring them after a failed request.
-    let (source_url, builtin_fallback_available, parent_plan) = {
+    // Keep the trusted source tree until the complete document is available.
+    // No configuration mutation or lock spans the network request.
+    let selection = state.config.data_selection();
+    let (mut source_url, official_root, parent_plan) = {
         let _cache_guard = state.repository_cache.lock().await;
         let _operation_guard = state
             .operation
@@ -51,19 +49,20 @@ pub(crate) async fn import_repository_source_into_config(
         if !crate::config::repository_source_is_available(&original_config, source, crate::config::current_user_region()) {
             return Err("source.sourceMissing".into());
         }
-        if !source.url.trim().eq_ignore_ascii_case(source_url.trim()) {
+        let official_root = source.id == repository_sources::DEFAULT_INDEX_ID
+            && source.url == original_config.data_provider.document("mods.toml")
+            && source.builtin
+            && source.parent_id.is_none();
+        let official_address = official_root && [
+            crate::models::DataProvider::Github, crate::models::DataProvider::Gitee,
+            crate::models::DataProvider::Cloudflare, crate::models::DataProvider::Builtin,
+        ].iter().any(|provider| provider.document("mods.toml") == source_url);
+        if !source.url.trim().eq_ignore_ascii_case(source_url.trim()) && !official_address {
             log::warn!("刷新仓库源失败：请求地址与当前配置不一致，源={}", source_id);
             return Err("source.addressMismatch".into());
         }
-        let builtin_fallback_available = source.id == repository_sources::DEFAULT_INDEX_ID
-            && [
-                crate::models::DataProvider::Gitee.document("mods.toml"),
-                crate::models::DataProvider::Github.document("mods.toml"),
-            ]
-            .contains(&source.url)
-            && source.builtin
-            && source.parent_id.is_none();
-        if builtin_fallback && !builtin_fallback_available {
+        // Legacy callers cannot bypass the official root failure gate.
+        if builtin_fallback {
             return Err("source.noBuiltinFallback".into());
         }
         let source_url = source.url.clone();
@@ -73,43 +72,23 @@ pub(crate) async fn import_repository_source_into_config(
             repository_sources::safe_log_address(&source_url),
             source.parent_id.as_deref().unwrap_or("无")
         );
-        let mut cleared_config = original_config.clone();
-        let (removed_repository_count, removed_child_source_count) =
-            repository_sources::clear_source_cache(
-                &mut cleared_config,
-                std::slice::from_ref(&source_id),
-            );
-        state.config.save(&cleared_config).map_err(|error| {
-            log::error!(
-                "刷新仓库源前清理旧内容失败：源={}，原因={}",
-                source_id,
-                error
-            );
-            error.to_string()
-        })?;
-        log::info!(
-            "刷新仓库源前已清理旧内容：源={}，子源={}，仓库={}",
-            source_id,
-            removed_child_source_count,
-            removed_repository_count
-        );
         (
             source_url,
-            builtin_fallback_available && !builtin_fallback,
+            official_root,
             source.network_plan.clone(),
         )
     };
-    let document_url = if builtin_fallback {
-        log::warn!(
-            "官方远程源不可用，开始加载内置仓库源：源={}，文件={}",
-            source_id,
-            repository_sources::BUILTIN_INDEX
-        );
-        repository_sources::BUILTIN_INDEX
+    let (document, selection) = if official_root {
+        let root = state.config.official_root(true).await?;
+        source_url = root.selection.0.document("mods.toml");
+        if root.selection != selection && state.config.refresh_proxies().await.is_err() {
+            // A valid MOD root owns the provider. An incomplete network closure
+            // keeps its trusted/bundled policy and cannot trigger another fallback.
+            log::warn!("切源后的网络配置不可用，保留当前完整网络快照");
+        }
+        (root.document, root.selection)
     } else {
-        &source_url
-    };
-    let location = SourceLocation::parse(document_url).map_err(|error| {
+    let location = SourceLocation::parse(&source_url).map_err(|error| {
         log::error!(
             "仓库源地址解析失败：源={}，错误类别={}",
             source_id,
@@ -118,7 +97,9 @@ pub(crate) async fn import_repository_source_into_config(
         error.to_string()
     })?;
     // 超时由 load_document 内部固定为 SOURCE_DOCUMENT_TIMEOUT（30 秒）
-    let document = match repository_sources::load_document(&location, &parent_plan).await {
+    let document = match state.config.in_data_selection(selection, async {
+        Ok(repository_sources::load_document(&location, &parent_plan).await)
+    }).await? {
         Ok(document) => document,
         Err(error) => {
             log::error!(
@@ -126,17 +107,17 @@ pub(crate) async fn import_repository_source_into_config(
                 source_id,
                 repository_sources::error_category(&error)
             );
-            // Read failures use access_error; invalid content stays Err. The
-            // frontend decides fallback independently of this result shape.
+            // Preserve the IPC distinction for custom/child sources. Neither
+            // error kind can change the provider outside the official gate.
             if matches!(error, crate::config::ConfigError::Read(_)) {
                 return Ok(RepositorySourceImportResult {
-                    preview: None,
-                    access_error: Some(error.to_string()),
-                    builtin_fallback_available,
+                    preview: None, access_error: Some(error.to_string()), builtin_fallback_available: false,
                 });
             }
             return Err(error.to_string());
         }
+    };
+    (document, selection)
     };
     let repositories = document
         .repositories
@@ -167,9 +148,18 @@ pub(crate) async fn import_repository_source_into_config(
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
     let mut config = state.config.load_or_default();
-    config
-        .repositories
-        .retain(|repo| repo.source_id.as_deref() != Some(source_id.as_str()));
+    if state.config.data_selection() != selection {
+        return Err("source.addressMismatch".into());
+    }
+    // Recheck after the request: another action may have removed or replaced
+    // this source while the network was in flight.
+    let current_source = config.repository_sources.iter()
+        .find(|source| source.id == source_id)
+        .ok_or("source.sourceMissing")?;
+    if !current_source.url.trim().eq_ignore_ascii_case(source_url.trim()) {
+        return Err("source.addressMismatch".into());
+    }
+    super::cache::clear_source_repositories(&mut config, &HashSet::from([source_id.clone()]));
     let parent_url = config
         .repository_sources
         .iter()
@@ -217,12 +207,10 @@ pub(crate) async fn import_repository_source_into_config(
         config
             .repository_sources
             .retain(|source| !removed_child_ids.iter().any(|id| id == &source.id));
-        config.repositories.retain(|repo| {
-            repo.source_id
-                .as_ref()
-                .map(|id| !removed_child_ids.iter().any(|child_id| child_id == id))
-                .unwrap_or(true)
-        });
+        super::cache::clear_source_repositories(
+            &mut config,
+            &removed_child_ids.iter().cloned().collect(),
+        );
     }
     for child in child_sources {
         if crate::community::is_source(&child.id) {
@@ -345,7 +333,7 @@ pub(crate) async fn import_repository_source_into_config(
     Ok(RepositorySourceImportResult {
         preview: Some(preview),
         access_error: None,
-        builtin_fallback_available,
+        builtin_fallback_available: false,
     })
     }).await
 }

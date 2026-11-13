@@ -22,14 +22,6 @@ impl NetworkPolicy {
         ACTIVE.scope(policy, work).await
     }
 
-    pub(crate) async fn refresh_remote(
-        provider: crate::models::DataProvider,
-    ) -> Result<Self, String> {
-        let base = SourceLocation::parse(&provider.document("mods.toml"))
-            .map_err(|_| "proxy.validationFailed")?;
-        Self::refresh_from(&base).await
-    }
-
     pub(crate) async fn refresh_from(base: &SourceLocation) -> Result<Self, String> {
         async fn read(base: &SourceLocation, path: &str) -> Result<String, String> {
             let location =

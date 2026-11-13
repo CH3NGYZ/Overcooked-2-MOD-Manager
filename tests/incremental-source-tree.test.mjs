@@ -168,7 +168,7 @@ test('map engine publishes channel snapshots immediately, keeps successful sibli
   assert.deepEqual(requests,[['retry',false,'child'],['api','nested-map',false]])
 })
 
-test('MOD source config read failure is attached to its cleared group, never reported ready and blank', async () => {
+test('MOD source config read failure keeps the trusted config and attaches the source error', async () => {
   const config={repositories:[repo('before','snapshot-failure')],repository_sources:[{id:'snapshot-failure',nickname:'snapshot-failure',url:'child.toml'}],region:'international',platform:'windows'}
   let fail=false
   globalThis.__loadingApi={
@@ -184,6 +184,43 @@ test('MOD source config read failure is attached to its cleared group, never rep
   const source=e.sourceNodes.value.find(n=>n.id==='snapshot-failure')
   assert.equal(source.status,'error')
   assert.match(source.error,/snapshot read failed/)
+  assert.equal(d.config.value.repositories[0].id,'before')
+})
+
+test('MOD full refresh failure retains exact platform verdicts and never clears backend source snapshots', async () => {
+  const trusted = { ...repo('promoted', 'trusted-source'), cached_releases: [],
+    release_prerelease_metadata: { 'v1.0.0-beta': false }, releases_cached_at: 123 }
+  const config = { repositories: [trusted], repository_sources: [
+    { id: 'trusted-source', nickname: 'Trusted', url: 'trusted.toml' },
+  ], region: 'international', platform: 'windows' }
+  const requests = []
+  let clears = 0, scans = 0
+  globalThis.__loadingApi = {
+    dashboard: async () => ({ config: structuredClone(config), game: { kitchen_running: false } }),
+    localMods: async () => { scans++; return { generation: 10, mods: [] } },
+    modUpdates: async () => [], config: async () => structuredClone(config),
+    clearRepositorySourceCache: async () => { clears++; config.repositories = []; return structuredClone(config) },
+    importRepositorySource: async () => {
+      assert.deepEqual(useDashboard().config.value.repositories, [trusted])
+      throw Error('source offline')
+    },
+    refreshModRepository: async (id, force) => {
+      requests.push([id, force]); throw Error('API offline')
+    },
+    syncDependencySnapshots: async () => {},
+  }
+  const d = useDashboard(), e = useModRepositoryRefresh()
+  await d.load()
+  const previousScans = scans
+  const errors = await e.refreshEverything({ force: true })
+  assert.ok(errors.some(error => error.includes('source offline')))
+  assert.ok(errors.some(error => error.includes('API offline')))
+  assert.equal(clears, 0)
+  assert.equal(scans, previousScans, 'source refresh must not rescan DLLs')
+  assert.deepEqual(requests, [['promoted', true]])
+  assert.deepEqual(d.config.value.repositories[0].release_prerelease_metadata, trusted.release_prerelease_metadata)
+  assert.equal(d.config.value.repositories[0].releases_cached_at, 123)
+  assert.equal(e.sourceNodes.value.find(node => node.id === 'trusted-source').status, 'error')
 })
 
 test('MOD source refresh never requests or declares a child whose ancestor excludes the current region', async () => {

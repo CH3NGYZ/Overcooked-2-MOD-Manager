@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { NConfigProvider, NDialogProvider, NMessageProvider, NScrollbar } from 'naive-ui'
 import { getVersion } from '@tauri-apps/api/app'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { CloudUploadOutline } from '@vicons/ionicons5'
 import AppSidebar from './components/AppSidebar.vue'
@@ -16,12 +16,12 @@ import { startupPreflightState, useStartupPreflight } from './composables/useSta
 import TutorialOverlay from './components/TutorialOverlay.vue'
 import { acceptLabel } from './dropAccept'
 import { dragActive, dropAcceptTypes, dropHintSource } from './composables/useFileDrop'
-import { startGameWatch } from './composables/useDashboardStore'
+import { startGameWatch, useDashboard } from './composables/useDashboardStore'
 import { requestMapSourcesStartupRefresh } from './composables/useMapSources'
 import { useModRepositoryRefresh } from './composables/useModRepositoryRefresh'
 import { endNavigation, expectPageScroll, pageAnimation } from './pageTransition'
 import { pageTitleOverride, resetPageHeader } from './pageHeader'
-import { api } from './services/tauri'
+import { api, watchDataProvider } from './services/tauri'
 import { isTauri } from './runtime'
 import type { PublicConfig } from './types'
 import { appUpdateState, requireAppUpdate } from './appUpdateState'
@@ -115,8 +115,14 @@ function onPageBeforeEnter() {
   pageScrollRef.value?.scrollTo(0, 0)
 }
 
+let providerUnlisten: (() => void) | undefined
+let providerDisposed = false
+onBeforeUnmount(() => { providerDisposed = true; providerUnlisten?.() })
 onMounted(() => {
   startGameWatch()
+  if (isTauri()) void watchDataProvider(() => { void useDashboard().reloadConfig() })
+    .then(unlisten => { if (providerDisposed) unlisten(); else providerUnlisten = unlisten })
+    .catch(() => undefined)
   /*
    * 教程进度写回 config.toml：引擎只负责「哪些步骤看过了」，落盘在这里接。
    * 写失败不影响播放 —— 进度是新版教程的体验优化，不是启动前提。

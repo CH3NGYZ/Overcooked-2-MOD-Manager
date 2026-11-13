@@ -19,6 +19,7 @@
  */
 import { computed, ref } from 'vue'
 import { api } from '../services/tauri'
+import { useDashboard } from './useDashboardStore'
 import { createSourceTreeState } from '../sourceTreeState'
 import { createRefreshState, type RefreshOutcome, type RefreshTrigger } from '../refreshState'
 import { prioritizeByIds, runReleaseBatch, runSourceReleaseRefresh, type ReleaseFetchSpec } from '../releaseRefresh'
@@ -328,6 +329,9 @@ async function prepareMapSources(passId: string, force = false, sourceId?: strin
     return sourceTree.nodes.value.flatMap(node => node.error ? [backendMessageOf(node.error)] : [])
   } catch (reason) {
     return [backendMessageOf(reason)]
+  } finally {
+    // The MOD root gate may have changed the active provider before map loading.
+    await useDashboard().reloadConfig()
   }
 }
 

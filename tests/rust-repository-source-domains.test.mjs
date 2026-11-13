@@ -6,7 +6,7 @@ import { readText, sourceFiles } from './helpers/source-scan.mjs'
 const root = resolve('src-tauri/src/repository_sources')
 const read = path => readText(resolve(root, path))
 const owners = {
-  cache: ['clear_source_cache'],
+  cache: ['clear_source_cache', 'clear_source_repositories'],
   diagnostics: ['safe_log_address', 'error_category'],
   document: ['nickname_fallback', 'normalize_source_nickname', 'deserialize_builtin', 'source_address_key', 'parse_document'],
   embedded: ['bundled_repository_configs', 'bundled_document', 'parse_bundled_document', 'bundled_text'],
@@ -83,7 +83,10 @@ test('MOD and map sources retain shared reading, verified failure and cache appl
   const apply = read('apply.rs')
   assert.equal([...apply.matchAll(/let _cache_guard = state\.repository_cache\.lock\(\)\.await;/g)].length, 2)
   assert.equal([...apply.matchAll(/let _operation_guard = state\s*\.operation\s*\.lock\(\)/g)].length, 2)
-  ordered(apply, ['let _cache_guard', 'let _operation_guard', '};\n    let document_url', 'repository_sources::load_document(&location, &parent_plan).await', 'let _cache_guard', 'let _operation_guard', 'config.staged_release_cache.remove(previous_id)', 'sync_manifest_groups(&state, &config)'])
+  ordered(apply, ['let _cache_guard', 'let _operation_guard', '};\n    let (document, selection) = if official_root', 'state.config.official_root(true).await?', 'repository_sources::load_document(&location, &parent_plan).await', 'let _cache_guard', 'let _operation_guard', 'config.staged_release_cache.remove(previous_id)', 'sync_manifest_groups(&state, &config)'])
+  assert.match(apply, /state\.config\.data_selection\(\) != selection/)
+  ordered(apply, ['repository_sources::load_document(&location, &parent_plan).await', 'super::cache::clear_source_repositories(', 'state.config.save(&config)'])
+  assert.doesNotMatch(apply.slice(0, apply.indexOf('repository_sources::load_document(&location, &parent_plan).await')), /clear_source_cache\(|clear_source_repositories\(|state\.config\.save\(/)
   assert.doesNotMatch(apply, /staged_release_cache\.clear\(/)
   assert.match(apply, /let child_builtin = parent_builtin && child\.builtin\.unwrap_or\(true\);/)
   assert.match(read('../commands/repository_sources.rs'), /use crate::repository_sources::apply::import_repository_source_into_config;/)

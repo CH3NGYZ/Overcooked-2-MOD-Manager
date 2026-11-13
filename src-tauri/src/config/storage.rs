@@ -89,6 +89,29 @@ impl ConfigService {
         self.proxies.select_provider(provider);
     }
 
+    pub(crate) fn data_selection(&self) -> (DataProvider, u64) {
+        self.proxies.selection()
+    }
+
+    pub(crate) fn data_selection_changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.proxies.selection_changes()
+    }
+
+    pub(crate) async fn official_root(
+        &self,
+        force: bool,
+    ) -> Result<crate::github_proxy_runtime::OfficialRootSnapshot, String> {
+        self.proxies.official_root(force).await
+    }
+
+    pub(crate) async fn in_data_selection<T>(
+        &self,
+        selection: (DataProvider, u64),
+        work: impl std::future::Future<Output = Result<T, String>>,
+    ) -> Result<T, String> {
+        self.proxies.in_selection(selection, work).await
+    }
+
     pub(crate) async fn refresh_proxies(&self) -> Result<(), String> {
         self.proxies.refresh_policy().await
     }

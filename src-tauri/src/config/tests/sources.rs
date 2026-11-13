@@ -227,6 +227,7 @@ fn all_providers_select_the_official_root_and_preserve_custom_sources() {
     for provider in [
         DataProvider::Github,
         DataProvider::Gitee,
+        DataProvider::Cloudflare,
         DataProvider::Builtin,
     ] {
         let mut config = default_config();

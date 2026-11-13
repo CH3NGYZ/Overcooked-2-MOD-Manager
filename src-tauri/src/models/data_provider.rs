@@ -8,6 +8,7 @@ pub enum DataProvider {
     #[default]
     Github,
     Gitee,
+    Cloudflare,
     Builtin,
 }
 
@@ -27,9 +28,20 @@ impl DataProvider {
                 "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main/"
             }
             Self::Gitee => "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Repos/raw/main/",
+            Self::Cloudflare => {
+                "https://oc2gh.ch3ng.top/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main/"
+            }
             Self::Builtin => "",
         };
         format!("{root}{path}")
+    }
+
+    pub(crate) fn fallback(self) -> Option<Self> {
+        match self {
+            Self::Github | Self::Gitee => Some(Self::Cloudflare),
+            Self::Cloudflare => Some(Self::Builtin),
+            Self::Builtin => None,
+        }
     }
 }
 
@@ -57,6 +69,12 @@ mod tests {
                 format!("https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Repos/raw/main/{path}")
             );
             assert_eq!(DataProvider::Builtin.document(path), path);
+            assert_eq!(
+                DataProvider::Cloudflare.document(path),
+                format!(
+                    "https://oc2gh.ch3ng.top/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main/{path}"
+                )
+            );
         }
     }
 
@@ -69,6 +87,7 @@ mod tests {
         for (value, provider) in [
             ("github", DataProvider::Github),
             ("gitee", DataProvider::Gitee),
+            ("cloudflare", DataProvider::Cloudflare),
             ("builtin", DataProvider::Builtin),
         ] {
             assert_eq!(serde_json::to_value(provider).unwrap(), value);
@@ -78,5 +97,17 @@ mod tests {
             );
         }
         assert!(serde_json::from_value::<DataProvider>("custom-url".into()).is_err());
+    }
+
+    #[test]
+    fn cloudflare_entry_matches_the_existing_oc2gh_raw_proxy_template() {
+        let groups = crate::github_proxies::bundled_defaults();
+        let routes = crate::github_proxies::proxy_urls(
+            &groups.raw_proxies,
+            &DataProvider::Github.document("mods.toml"),
+            true,
+            None,
+        );
+        assert!(routes.contains(&DataProvider::Cloudflare.document("mods.toml")));
     }
 }

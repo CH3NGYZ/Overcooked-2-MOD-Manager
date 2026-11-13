@@ -21,6 +21,23 @@ pub(crate) fn clear_source_cache(config: &mut AppConfig, source_ids: &[String]) 
             break;
         }
     }
+    let repository_count = clear_source_repositories(config, &descendants);
+    let source_count = config.repository_sources.len();
+    config
+        .repository_sources
+        .retain(|source| roots.contains(&source.id) || !descendants.contains(&source.id));
+    (
+        repository_count,
+        source_count - config.repository_sources.len(),
+    )
+}
+
+/// Stage and remove only these sources' repositories. A successfully refreshed
+/// parent must leave still-declared children intact until their own reads succeed.
+pub(super) fn clear_source_repositories(
+    config: &mut AppConfig,
+    source_ids: &HashSet<String>,
+) -> usize {
     let repository_count = config.repositories.len();
     /*
      * 清空这些源的仓库，但把 Release 缓存**暂存下来**。
@@ -38,7 +55,7 @@ pub(crate) fn clear_source_cache(config: &mut AppConfig, source_ids: &[String]) 
         let Some(source_id) = repo.source_id.as_ref() else {
             continue;
         };
-        if !descendants.contains(source_id) {
+        if !source_ids.contains(source_id) {
             continue;
         }
         let key = crate::config::source_repository_key(source_id, &crate::config::repo_key(repo));
@@ -52,6 +69,12 @@ pub(crate) fn clear_source_cache(config: &mut AppConfig, source_ids: &[String]) 
             config.staged_release_cache.insert(
                 repo.id.clone(),
                 crate::models::StagedReleaseCache {
+                    repository_key: Some(crate::releases::repository_cache_key(
+                        repo.provider.clone(),
+                        &repo.username,
+                        &repo.repository,
+                    )),
+                    release_prerelease_metadata: repo.release_prerelease_metadata.clone(),
                     releases: repo.cached_releases.clone(),
                     cached_at: repo.releases_cached_at,
                     last_error: repo.last_error.clone(),
@@ -62,22 +85,9 @@ pub(crate) fn clear_source_cache(config: &mut AppConfig, source_ids: &[String]) 
     config.repositories.retain(|repo| {
         repo.source_id
             .as_ref()
-            .is_none_or(|id| !descendants.contains(id))
+            .is_none_or(|id| !source_ids.contains(id))
     });
-    let source_count = config.repository_sources.len();
-    config
-        .repository_sources
-        .retain(|source| roots.contains(&source.id) || !descendants.contains(&source.id));
-    (
-                    repository_key: Some(crate::releases::repository_cache_key(
-                        repo.provider.clone(),
-                        &repo.username,
-                        &repo.repository,
-                    )),
-                    release_prerelease_metadata: repo.release_prerelease_metadata.clone(),
-        repository_count - config.repositories.len(),
-        source_count - config.repository_sources.len(),
-    )
+    repository_count - config.repositories.len()
 }
 
 #[cfg(test)]

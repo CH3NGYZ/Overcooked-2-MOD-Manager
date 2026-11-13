@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-/** 源失败只显示错误；内置开关控制离线树，子源仍递归展开。 */
+/** 子源失败保留可信快照；官方根降级由后端统一处理。 */
 
 /*
  * 读到的是磁盘原文：Windows 上带 CRLF，所以所有匹配都先归一化。
@@ -47,10 +47,12 @@ test('源刷新复用递归加载，先发布父源再读取子源', () => {
   assert.match(body, /sourceTree\.settle\(sourceId\)/)
 })
 
-test('文档失败保留错误节点并停止递归，不恢复旧卡', () => {
+test('文档失败保留错误节点并停止递归，读取期间保留可信卡片', () => {
   const body = sourceBody()
   assert.match(body, /if \(importErrors\.length\) \{ sourceTree\.settle\(sourceId, importErrors\[0\]\); return importErrors \}/)
-  assert.ok(body.indexOf('const removed = sourceTree.begin') < body.indexOf('api.importRepositorySource'))
+  assert.ok(body.indexOf('sourceTree.begin(sourceId)') >= 0)
+  assert.ok(body.indexOf('sourceTree.begin(sourceId)') < body.indexOf('api.importRepositorySource'))
+  assert.doesNotMatch(body, /clearRepositorySourceCache|repositories\.value\s*=/)
   assert.doesNotMatch(refresh, /fallbackToBuiltinIfOffline/)
 })
 

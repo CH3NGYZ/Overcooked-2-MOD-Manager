@@ -155,6 +155,7 @@ fn raw_repository_root(url: &Url) -> Option<Url> {
         | "gitee.com"
         | "www.gitee.com"
         | "raw.giteeusercontent.com"
+        | "oc2gh.ch3ng.top"
             if segments.get(2) == Some(&"raw") =>
         {
             3

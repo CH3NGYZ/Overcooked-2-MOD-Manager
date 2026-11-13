@@ -67,7 +67,7 @@ use chrono::Utc;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 
 pub fn run() {
@@ -140,6 +140,13 @@ pub fn run() {
                 std::io::Error::other(error.to_string())
             })?;
             let proxy_config = state.config.clone();
+            let mut provider_changes = state.config.data_selection_changes();
+            let provider_events = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                while provider_changes.changed().await.is_ok() {
+                    let _ = provider_events.emit("data-provider-changed", ());
+                }
+            });
             app.manage(state.clone());
             tauri::async_runtime::spawn(async move {
                 if proxy_config.refresh_proxies().await.is_err() {

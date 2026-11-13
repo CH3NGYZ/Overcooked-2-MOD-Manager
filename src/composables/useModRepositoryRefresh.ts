@@ -1,6 +1,6 @@
 import { computed, ref, watch } from 'vue'
 import { api } from '../services/tauri'
-import { createSourceTreeState } from '../sourceTreeState'
+import { createSourceTreeState, replaceScopedItems, sourceActivity, sourceDescendantIds } from '../sourceTreeState'
 import type { RuntimeRefreshState } from '../modRuntimeStatus'
 import { modUpdateAvailable } from '../statusTags'
 import { createRefreshState, type RefreshOutcome, type RefreshTrigger } from '../refreshState'
@@ -13,7 +13,7 @@ import { demoActive, isDemoId } from '../tutorial/demo'
 import {
   modRepositoryIsAvailable, sourceMatchesRegion,
 } from '../repositoryAvailability'
-import type { ModRepository, ModRepositoryReleaseSnapshot, RepositorySource } from '../types'
+import type { ModRepository, ModRepositoryReleaseSnapshot, PublicConfig, RepositorySource } from '../types'
 
 /**
  * 仓库刷新引擎（模块级单例）。
@@ -23,13 +23,14 @@ import type { ModRepository, ModRepositoryReleaseSnapshot, RepositorySource } fr
  *
  * 刷新顺序固定为：父源文档（raw TOML）→ 它声明的子源文档 → 全部仓库 Release（并发 4）。
  * 父源文档可以只声明子源、仓库在各子源文档里，所以必须递归加载子源。
- * 读取成功才替换该源内容；失败保留上次可信配置与 Release 快照。
+ * 读取成功才替换该源内容；失败保留可信配置与 Release 快照，但本轮失败子源
+ * 的在线投影保持空白和错误标题，不恢复旧卡片。
  *
  * ## 状态从哪来
  *
  * 标志、并发、结果全部来自 `createRefreshState` —— 与地图侧
  * （`useMapSources`）用的是同一份实现。这个文件只保留**仓库域特有**的东西：
- * 源文档递归链、内置快照回退、社区仓库发现、已安装优先排序。
+ * 源文档递归链、在线展示投影、已安装优先排序。
  */
 
 /** 社区仓库源由自动搜索管理，不参与文档刷新。 */
@@ -56,7 +57,7 @@ const refreshing = state.refreshing
 /** 排队中（已在这一批里、还没轮到）：界面上与「刷新中」同等对待。 */
 const queued = state.queued
 /** 源文档正在刷新（按源 id，含父源与子源）。 */
-const sourceRefreshing = state.refreshingSources
+const sourceRefreshing = computed(() => sourceActivity(dashboardStore.config.value?.repository_sources ?? [], state.refreshingSources.value))
 /** 整批刷新进行中（只有「刷新全部」这一条入口会置真）。 */
 const refreshingAll = state.refreshingAll
 /**
@@ -73,9 +74,8 @@ const entryStateUnavailable = state.entryStateUnavailable
  * 「检查更新」批次进行中（只刷新与本地已安装条目绑定的仓库）。
  *
  * 与 `refreshingAll` 分开是因为两者的**副作用范围**不同：
- * `refreshingAll` 会先清空源缓存、让安装页整页进入加载态；
- * 检查更新会重读源文档但不清空列表，再刷新已绑定仓库的 Release。
- * 混用一个标志会让 MOD 管理页点一下「检查」就把 MOD 安装页刷成白屏。
+ * `refreshingAll` 在主文件成功后逐源重建在线展示；
+ * 检查更新保留列表，再刷新已绑定仓库的 Release。
  *
  * 放在模块作用域（而不是页面里的 `ref`）的原因与其它状态相同：
  * 刷新中切走再切回来，按钮要还是 loading，否则用户会以为已经结束。
@@ -87,35 +87,27 @@ const outcome = state.outcome
 /** 任一刷新活动：按钮 loading/禁用统一看它。 */
 const anyRefreshing = state.anyRefreshing
 
-/**
- * 「有仓库正在加载」——只用于决定刷新按钮的图标要不要转。
- *
- * 语义与 `anyRefreshing` 不同，两者不能合并：
- *
- *   · `anyRefreshing` 是「整条刷新流水线忙不忙」，含**源文档**阶段
- *     （拉索引、递归子源）。它用于禁用按钮，防止重复触发。
- *   · `repositoriesLoading` 只关心**仓库本身**是否在加载。源文档阶段一个
- *     仓库都还没开始刷，图标不该转 —— 用户看到的应当是「点了之后马上转、
- *     一直转到最后一个仓库完成或失败」。
- *
- * 所以这里看的是「当前有几个仓库在刷」（`inFlight`），而不是
- * `refreshingAll`（它在源文档阶段就已经是 true，会持续几十秒）。
- *
- * 它是模块级单例派生，所以「启动时正在刷新」「在 MOD 管理页点了刷新」
- * 都会让 MOD 安装页的同一个按钮转起来 —— 与从哪个页面发起无关。
- */
-const repositoriesLoading = computed(() => state.inFlight.value > 0)
+/** 全量按钮从主文件准备持续转到 Release 队列结束，局部刷新不带动它。 */
+const repositoriesLoading = computed(() => refreshingAll.value)
 
 const runtimeState = computed<RuntimeRefreshState>(() => ({
   refreshing: refreshing.value,
   queued: queued.value,
   sourceRefreshing: sourceRefreshing.value,
-  entryStateUnavailable: !demoActive.value && (entryStateUnavailable.value || state.preparingSources.value),
+  entryStateUnavailable: !demoActive.value && (entryStateUnavailable.value || state.preparingAllSources.value),
 }))
 
 // Card comparisons are incremental (runtimeState). This is only the final
 // aggregate summary over the same local snapshot; it never fetches Releases.
 const dashboardStore = useDashboard()
+// Source reconstruction is a view projection. Trusted repository bindings stay
+// in Dashboard/config even when a child fails and its online group stays empty.
+const hiddenSourceIds = ref<Set<string>>(new Set())
+const hiddenNodeIds = ref<Set<string>>(new Set())
+const visibleSources = computed(() => (dashboardStore.config.value?.repository_sources ?? [])
+  .filter(source => !hiddenNodeIds.value.has(source.id)))
+const visibleRepositories = computed(() => (dashboardStore.config.value?.repositories ?? [])
+  .filter(repo => !repo.source_id || !hiddenSourceIds.value.has(repo.source_id)))
 watch([anyRefreshing, dashboardStore.modsStatus, dashboardStore.mods, dashboardStore.config],
   ([busy, status]) => {
     dashboardStore.invalidateModUpdates()
@@ -223,7 +215,7 @@ function patchRepository(repositoryId: string, patch: Partial<ModRepository>) {
 /**
  * 一次批量刷新（本域唯一的实现，四个入口都走它）。
  *
- * 单条结果立即写回；已安装绑定优先，收尾只重读配置，不重新扫描本地文件。
+ * 单条结果立即写回；已安装绑定优先，不用整份配置回读覆盖未选分组。
  */
 async function runRepositoryBatch(
   repos: ModRepository[],
@@ -242,7 +234,6 @@ async function runRepositoryBatch(
     ...repositoryReleaseSpec({ force: options.force }),
     trigger: options.trigger ?? 'partial',
     prioritize: (items) => prioritizeInstalledModRepositories([...items], mods.value),
-    finalize: () => store().reloadConfig(),
     // Summarize the same local snapshot and Release results; no second API pass.
     countUpdated: () => store().mods.value.filter((mod) => modUpdateAvailable(mod, store().repositories.value)).length,
   })
@@ -307,7 +298,39 @@ function sourceError(source: RepositorySource, reason: string): string {
  * 不重新探测游戏目录、不重新扫描 DLL。一次刷新要经过父源 + 多个子源，
  * 用 load() 会把全量扫描重复十几次，这是刷新期间卡顿的主要来源。
  */
-async function refreshSourceChain(sourceId: string, visited = new Set<string>()): Promise<string[]> {
+interface SourceRefreshPass { successful: Set<string>; rebuild: boolean; rootIds?: Set<string> }
+
+function sourceConfigProjection(rootId: string, sourceId: string, pass?: SourceRefreshPass) {
+  return (current: PublicConfig, received: PublicConfig): PublicConfig => {
+    const ids = sourceDescendantIds([...current.repository_sources, ...received.repository_sources], rootId)
+    const repositories = replaceScopedItems(current.repositories, received.repositories, repo => !!repo.source_id && ids.has(repo.source_id))
+    const repository_sources = replaceScopedItems(current.repository_sources, received.repository_sources, source => ids.has(source.id))
+    const hidden = new Set(hiddenSourceIds.value)
+    if (pass?.rebuild) for (const id of ids) {
+      if (pass.successful.has(id)) hidden.delete(id)
+      else hidden.add(id)
+    }
+    else hidden.delete(sourceId)
+    hiddenSourceIds.value = hidden
+    if (pass?.rebuild) {
+      const hiddenNodes = new Set(hiddenNodeIds.value)
+      for (const source of repository_sources) if (ids.has(source.id)) {
+        if (source.id === rootId || !!source.parent_id && pass.successful.has(source.parent_id)) hiddenNodes.delete(source.id)
+        else hiddenNodes.add(source.id)
+      }
+      hiddenNodeIds.value = hiddenNodes
+    } else {
+      const hiddenNodes = new Set(hiddenNodeIds.value)
+      for (const source of repository_sources) if (source.id === sourceId || source.parent_id === sourceId) hiddenNodes.delete(source.id)
+      hiddenNodeIds.value = hiddenNodes
+    }
+    // Provider fallback is a global network fact, independent of the source's
+    // repository slice. Other config fields and source rows keep their objects.
+    return { ...current, data_provider: received.data_provider, repositories, repository_sources }
+  }
+}
+
+async function refreshSourceChain(sourceId: string, visited = new Set<string>(), rootId = sourceId, pass?: SourceRefreshPass): Promise<string[]> {
   if (demoActive.value || isDemoId(sourceId)) return []
   if (visited.has(sourceId)) return []
   visited.add(sourceId)
@@ -315,11 +338,11 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>())
   const source = sources.value.find((entry) => entry.id === sourceId)
   if (!source || !sourceMatchesRegion(source, region.value, sources.value)) return []
 
-  sourceTree.declare(sources.value.filter(item => !COMMUNITY_SOURCE_IDS.has(item.id) && sourceMatchesRegion(item, region.value, sources.value)).map(item => ({
+  sourceTree.declare(visibleSources.value.filter(item => !COMMUNITY_SOURCE_IDS.has(item.id) && sourceMatchesRegion(item, region.value, sources.value)).map(item => ({
     id: item.id, parent_id: item.parent_id, label: item.nickname, label_i18n: item.nickname_i18n, note_i18n: item.note_i18n,
     url: item.url, status: 'pending' as const,
-  })))
-  sourceTree.begin(sourceId)
+  })), rootId)
+  sourceTree.begin(sourceId, !!pass?.rebuild)
   // Keep the trusted config while the source is loading. The backend replaces
   // this source atomically only after a complete successful document read.
   /* 源级标志也走共享状态机：地图侧用的是同一套写入规则 */
@@ -328,20 +351,26 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>())
       const result = await api.importRepositorySource(source.id, source.url)
       if (result.access_error) return [sourceError(source, result.access_error)]
       // 配置回读也是这份源的应用阶段：失败必须留在源分组，不能以空列表报成功。
-      await reloadConfig({ throwOnError: true })
+      pass?.successful.add(sourceId)
+      await reloadConfig({ throwOnError: true, project: sourceConfigProjection(rootId, sourceId, pass) })
       return []
     } catch (reason) {
-      await reloadConfig()
+      pass?.successful.delete(sourceId)
+      // A failed child retains its backend cache and binding, but does not
+      // reappear in the online tree or join this pass's Release queue.
       return [sourceError(source, reason instanceof Error ? reason.message : String(reason))]
     }
   })
   // 父源没读出来时它的子源无从谈起：直接返回，别拿旧 `sources` 递归
   if (importErrors.length) { sourceTree.settle(sourceId, importErrors[0]); return importErrors }
 
-  sourceTree.declare(sources.value.filter(item => !COMMUNITY_SOURCE_IDS.has(item.id) && sourceMatchesRegion(item, region.value, sources.value)).map(item => ({
+  // A successful parent owns fresh direct-child declarations. Clear only this
+  // branch now so old child errors/readiness cannot leak into its new pass.
+  if (pass?.rebuild) sourceTree.begin(sourceId)
+  sourceTree.declare(visibleSources.value.filter(item => !COMMUNITY_SOURCE_IDS.has(item.id) && sourceMatchesRegion(item, region.value, sources.value)).map(item => ({
     id: item.id, parent_id: item.parent_id, label: item.nickname, label_i18n: item.nickname_i18n, note_i18n: item.note_i18n,
     url: item.url, status: 'pending' as const,
-  })))
+  })), rootId)
   sourceTree.settle(sourceId)
   // 子源同样按地区过滤：父源是通用的，但它可以声明地区专属子源
   const children = sources.value.filter(
@@ -349,11 +378,11 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>())
   )
   if (!children.length) return []
   const childErrors: string[] = []
-  for (const child of children) childErrors.push(...await refreshSourceChain(child.id, visited))
+  for (const child of children) childErrors.push(...await refreshSourceChain(child.id, visited, rootId, pass))
   return childErrors
 }
 
-async function refreshSourceDocuments(): Promise<string[]> {
+async function refreshSourceDocuments(pass?: SourceRefreshPass): Promise<string[]> {
   if (demoActive.value) return []
   const { sources, region } = store()
   const refreshable = sources.value.filter(
@@ -362,12 +391,13 @@ async function refreshSourceDocuments(): Promise<string[]> {
   const known = new Set(refreshable.map((source) => source.id))
   // Available sources retain their full ancestry; refresh each root once.
   const roots = refreshable.filter((source) => !source.parent_id || !known.has(source.parent_id))
+  if (pass) pass.rootIds = new Set(roots.map(source => source.id))
   if (!roots.length) return []
   const visited = new Set<string>()
   // Apply each declaration before descending. Concurrent config snapshots can
   // discard a just-created child and leave its node pending forever.
   const errors: string[] = []
-  for (const source of roots) errors.push(...await refreshSourceChain(source.id, visited))
+  for (const source of roots) errors.push(...await refreshSourceChain(source.id, visited, source.id, pass))
   return errors
 }
 
@@ -375,31 +405,26 @@ async function refreshSourceDocuments(): Promise<string[]> {
  * 完整刷新：源文档（父→子）→ 全部启用仓库的 Release（并发 4）。
  * 返回失败清单；调用方决定是否提示。
  */
-async function prepareRepositorySources(clearEntries: boolean): Promise<string[]> {
+async function prepareRepositorySources(rebuild: boolean, pass?: SourceRefreshPass): Promise<string[]> {
     if (demoActive.value) return []
-    const { loadBase, reloadConfig, repositories, sources } = store()
+    const { loadBase, repositories, sources } = store()
     // 启动时 Dashboard 可能还没读过：先读一次才有源和仓库可刷
     if (!sources.value.length && !repositories.value.length) await loadBase()
     if (demoActive.value) return []
-    if (clearEntries) {
-      sourceTree.replace([])
-    }
-    const sourceErrors = await refreshSourceDocuments()
-    // 源文档阶段用的是 reloadConfig（只更新配置）；
-    // 这里再读一次配置拿到最终仓库列表，Release 阶段结束时只重读配置，不扫描 DLL。
-    await reloadConfig()
-    return sourceErrors
+    // Keep the previous tree until its main document commits. Each successful
+    // import publishes the new declarations and its own rows before descending.
+    return refreshSourceDocuments(rebuild ? pass : undefined)
 }
 
 async function refreshSource(sourceId: string): Promise<string[]> {
   if (demoActive.value || isDemoId(sourceId) || anyRefreshing.value) return []
+  const pass: SourceRefreshPass = { successful: new Set(), rebuild: false }
   const result = await runSourceReleaseRefresh({
     state, trigger: 'partial',
-    prepare: () => refreshSourceChain(sourceId),
+    prepare: () => refreshSourceChain(sourceId, new Set(), sourceId, pass),
     refresh: () => {
       const { repositories, sources, region, platform } = store()
-      const ids = sourceTree.descendants(sourceId)
-      return runRepositoryBatch(repositories.value.filter(repo => !!repo.source_id && ids.has(repo.source_id)
+      return runRepositoryBatch(repositories.value.filter(repo => !!repo.source_id && pass.successful.has(repo.source_id)
         && modRepositoryIsAvailable(repo, sources.value, region.value, platform.value)), { trigger: 'single' })
     },
   })
@@ -409,15 +434,18 @@ async function refreshSource(sourceId: string): Promise<string[]> {
 async function refreshEverything(options: { force?: boolean } = {}): Promise<string[]> {
   if (demoActive.value || anyRefreshing.value) return []
   lastErrors.value = []
+  const pass: SourceRefreshPass = { successful: new Set(), rebuild: true }
   state.setEntryStateUnavailable(true)
   const result = await runSourceReleaseRefresh({
     state,
     trigger: 'full',
-    prepare: () => prepareRepositorySources(true),
+    prepare: () => prepareRepositorySources(true, pass),
     refresh: async () => {
       const { repositories, sources, region, platform } = store()
+      const allowUnsourced = !pass.rootIds?.size || [...pass.rootIds].some(id => pass.successful.has(id))
       const available = repositories.value.filter((repo) =>
-        modRepositoryIsAvailable(repo, sources.value, region.value, platform.value))
+        (repo.source_id ? pass.successful.has(repo.source_id) : allowUnsourced)
+        && modRepositoryIsAvailable(repo, sources.value, region.value, platform.value))
       const result = await runRepositoryBatch(available, { trigger: 'single', force: options.force })
       if (!demoActive.value) await api.syncDependencySnapshots().catch(() => undefined)
       return result
@@ -458,7 +486,9 @@ const startupRefreshPending = computed(() => startupState === 'deferred' || star
 export function useModRepositoryRefresh() {
   return {
     sourceNodes: sourceTree.nodes,
-    preparingSources: computed(() => !demoActive.value && state.preparingSources.value),
+    visibleRepositories,
+    visibleSources,
+    preparingSources: computed(() => !demoActive.value && state.preparingAllSources.value),
     refreshing, queued, sourceRefreshing,
     refreshingAll: computed(() => !demoActive.value && refreshingAll.value), entryStateUnavailable, runtimeState,
     checkingBound: computed(() => !demoActive.value && checkingBound.value),

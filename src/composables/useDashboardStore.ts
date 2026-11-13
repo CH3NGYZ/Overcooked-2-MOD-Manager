@@ -294,24 +294,38 @@ export function useDashboard() {
    * 但游戏状态和已安装 MOD 并没有变化，重新全量扫描纯属浪费
    * （一次刷新要经过父源 + 多个子源，全量扫描会被重复十几次）。
    */
-  async function reloadConfig(options: { throwOnError?: boolean } = {}) {
+  async function reloadConfig(options: {
+    throwOnError?: boolean
+    /** A local source operation may publish only its own slice of a full IPC snapshot. */
+    project?: (current: PublicConfig, received: PublicConfig) => PublicConfig
+  } = {}) {
     if (demoActive.value) return
-    const revision = ++configRevision
     try {
-      const config = await api.config()
-      if (revision !== configRevision) return
-      const current = dashboard.value
-      if (!current) {
-        // 还没有任何快照：走完整读取
-        await loadBase()
+      for (;;) {
+        // Independent source/provider projections must not invalidate one
+        // another merely by starting. Only a published projection advances the
+        // revision; an overtaken read retries against fresh backend state.
+        const revision = options.project ? configRevision : ++configRevision
+        const received = await api.config()
+        if (revision !== configRevision) {
+          if (options.project && !demoActive.value) continue
+          return
+        }
+        const current = dashboard.value
+        if (!current) {
+          await loadBase()
+          return
+        }
+        const config = options.project?.(current.config, received) ?? received
+        if (configGameChanged(current.config, config)) {
+          invalidateLocalMods()
+          gameIdentity = undefined
+        }
+        if (options.project) configRevision += 1
+        dashboard.value = { ...dashboard.value!, config }
+        await rebindLocalMods()
         return
       }
-      if (configGameChanged(current.config, config)) {
-        invalidateLocalMods()
-        gameIdentity = undefined
-      }
-      dashboard.value = { ...dashboard.value!, config }
-      await rebindLocalMods()
     } catch (reason) {
       error.value = backendMessageOf(reason)
       if (options.throwOnError) throw reason

@@ -8,19 +8,17 @@
  * 就全丢了：回来只剩一个旧列表，用户完全不知道后台那次刷新还在跑，
  * 也看不到任何加载反馈。
  *
- * MOD 安装页没有这个问题，因为它的刷新状态在 `useModRepositoryRefresh` 里同样
- * 是模块级单例。这里与之对齐：数据与状态都在模块作用域，页面只是渲染它们。
+ * MOD 与地图两域都在模块级保留刷新状态，切页后继续订阅同一批任务。
  *
  * ## 与 `useModRepositoryRefresh` 的差别
  *
- * MOD 侧的数据源是 Dashboard（`game`/`mods`/`config`），刷新引擎只持有
- * 「谁在刷」。地图侧的数据是独立的一份（`maps`），没有对应的 store，
- * 所以数据和引擎一起放在这里。
+ * MOD 使用 Dashboard 的可信配置及引擎在线展示投影；地图列表与进度快照独立
+ * 存放在这里。两域共用刷新状态机、源树状态与局部替换规则。
  */
 import { computed, ref } from 'vue'
 import { api } from '../services/tauri'
 import { useDashboard } from './useDashboardStore'
-import { createSourceTreeState } from '../sourceTreeState'
+import { createSourceTreeState, replaceScopedItems, sourceActivity, sourceDescendantIds } from '../sourceTreeState'
 import { createRefreshState, type RefreshOutcome, type RefreshTrigger } from '../refreshState'
 import { prioritizeByIds, runReleaseBatch, runSourceReleaseRefresh, type ReleaseFetchSpec } from '../releaseRefresh'
 import { backendMessageOf } from '../locale/backend'
@@ -84,14 +82,14 @@ const refreshing = state.refreshing
 /** 排队中（已在这一批里、还没轮到）：界面上与「刷新中」同等对待。 */
 const queued = state.queued
 /** 每个地图源的刷新状态（源树重拉 + 该源下全部 Release）。 */
-const refreshingSources = state.refreshingSources
-/** 整源刷新进行中（浮动按钮的转圈与整页遮罩都用它）。 */
+const refreshingSources = computed(() => sourceActivity(sourceTree.nodes.value, state.refreshingSources.value))
+/** 整源刷新进行中（浮动按钮持续到源准备与 Release 队列结束）。 */
 const refreshingAll = state.refreshingAll
 /**
- * 列表正在清空/重建（整源刷新的源树阶段）。
+ * 列表正在重建（主文档成功后的源树阶段）。
  *
- * 卡片标签只认这个、不认 `refreshingAll`：`refreshAll` 会把共享的 `maps`
- * 清空再重建，那段时间所有关卡集都查不到绑定，只能靠它兜住；而列表一填回来
+ * 卡片标签只认这个、不认 `refreshingAll`；主文档读取期间保留可信列表，成功后
+ * 按源进度重新填入，那段时间用它兜住绑定状态；而列表一填回来
  * （`refreshReleases` 之前）就必须关掉，让条目级状态逐个接管 —— 否则整源
  * 标志会把「刷一个回来一个」压成「整批一起回来」。
  */
@@ -99,8 +97,8 @@ const entryStateUnavailable = state.entryStateUnavailable
 /**
  * 「检查更新」批次进行中（只刷新本地已装地图绑定的那几张）。
  *
- * 与 `refreshingAll` 分开：整源刷新会清空列表并让下载页整页进入加载态，
- * 检查更新会重读源树但不清空列表。两个页面读同一个标志，
+ * 与 `refreshingAll` 分开：整源刷新在主文档成功后逐源重建展示，
+ * 检查更新保留列表。两个页面读同一个标志，
  * 所以从地图管理页点「检查更新」时，下载页的刷新按钮也会跟着禁用。
  */
 const checkingBound = state.checkingBound
@@ -110,7 +108,7 @@ const outcome = state.outcome
 /** 任一刷新活动：两个页面的按钮 loading / 禁用统一看它。 */
 const anyRefreshing = state.anyRefreshing
 const refreshingHint = computed<LevelSetRefreshingHint>(() => ({
-  entryStateUnavailable: !demoActive.value && (entryStateUnavailable.value || state.preparingSources.value),
+  entryStateUnavailable: !demoActive.value && (entryStateUnavailable.value || state.preparingAllSources.value),
   maps: new Set(Object.keys(refreshing.value)),
   queued: new Set(Object.keys(queued.value)),
   sources: new Set(Object.keys(refreshingSources.value)),
@@ -138,10 +136,8 @@ function setFlag(flags: typeof refreshing, id: string, value: boolean) {
  * 读一次地图列表（后端缓存，只读不联网）。
  *
  * `force` 区分两种调用方：
- *   · 页面挂载时读 —— 整源刷新进行中就**跳过**。否则切走再切回来时，这里会用
- *     旧缓存把刚清空的列表填回去，遮罩随之提前消失，用户看到的是「还在刷新
- *     但看起来已经好了」。
- *   · 刷新流程自己收尾时读 —— 必须强制，那时列表正等着换成新数据。
+ *   · 页面挂载时读 —— 源准备或全量刷新中跳过，避免旧缓存覆盖本轮进度投影。
+ *   · 明确要求读取时允许 force；revision 仍拒绝期间已被新条目写回淘汰的快照。
  */
 async function loadMaps(options: { force?: boolean } = {}) {
   if (demoActive.value) return
@@ -233,9 +229,8 @@ function mapReleaseSpec(passId: string, force = false): ReleaseFetchSpec<MapInfo
 /**
  * 只替换列表里的一行（不动其它地图的引用）。
  *
- * 地图没有 Dashboard 那样的外部 store，`maps` 就是唯一的真源，
- * 所以「刷一张回来一张」必须在这里就地落地；整批结束的 `loadMaps()` 只负责
- * 补齐依赖快照这类派生数据。
+ * `maps` 是页面共同使用的列表，每张 Release 返回后立即写回。批次结束仅同步
+ * 依赖快照，避免整表回读覆盖无关分组或刚完成的条目。
  */
 function replaceMap(mapId: string, snapshot: MapInfo) {
   const index = maps.value.findIndex(map => map.id === mapId)
@@ -315,23 +310,54 @@ export interface MapBoundRefreshSummary {
 /** Load all map declarations first. Bundle entries project their versions from
  * the shared repository snapshot; ordinary single-map sources use the same API
  * refresh queue. Failed nodes stay empty and never roll successful siblings back. */
-async function prepareMapSources(passId: string, force = false, sourceId?: string): Promise<string[]> {
+async function prepareMapSources(passId: string, force = false, sourceId?: string, preparedIds?: Set<string>): Promise<string[]> {
   if (demoActive.value) return []
   mapsRevision += 1
+  const branch = sourceId && sourceId !== 'official-map-index' ? sourceId : undefined
+  let rootReady = !!branch
+  let acceptProgress = true
+  const scope = branch ? sourceTree.descendants(branch) : undefined
+  const apply = (incoming: MapInfo[]) => {
+    mapsRevision += 1
+    if (scope) maps.value = replaceScopedItems(maps.value, incoming, map => !!map.source_id && scope.has(map.source_id))
+    else maps.value = incoming
+    if (preparedIds) {
+      preparedIds.clear()
+      for (const map of incoming) if (!scope || !!map.source_id && scope.has(map.source_id)) preparedIds.add(map.id)
+    }
+  }
   try {
     const result = await api.refreshMapSources(passId, force, progress => {
+      if (!acceptProgress) return
       mapsRevision += 1
-      sourceTree.replace(progress.nodes)
-      maps.value = progress.maps
+      if (branch && scope) {
+        for (const id of sourceDescendantIds(progress.nodes, branch)) scope.add(id)
+        sourceTree.replace(replaceScopedItems(sourceTree.nodes.value, progress.nodes, node => scope.has(node.id)))
+      } else {
+        const root = progress.nodes.find(node => !node.parent_id)
+        rootReady ||= root?.status === 'ready'
+        if (!rootReady) {
+          // Main-file failure preserves the previous tree and cards. Its own
+          // pending/error declaration is still visible and retryable.
+          if (root) sourceTree.replace(replaceScopedItems(sourceTree.nodes.value, [root], node => node.id === root.id))
+          return
+        }
+        sourceTree.replace(progress.nodes)
+      }
+      apply(progress.maps)
     }, sourceId)
-    mapsRevision += 1
-    maps.value = result
-    return sourceTree.nodes.value.flatMap(node => node.error ? [backendMessageOf(node.error)] : [])
+    acceptProgress = false
+    // A successful IPC result also covers a cache hit without intermediate events.
+    apply(result)
+    return sourceTree.nodes.value.flatMap(node => node.error && (!scope || scope.has(node.id)) ? [backendMessageOf(node.error)] : [])
   } catch (reason) {
     return [backendMessageOf(reason)]
   } finally {
+    acceptProgress = false
     // The MOD root gate may have changed the active provider before map loading.
-    await useDashboard().reloadConfig()
+    await useDashboard().reloadConfig({
+      project: (current, received) => ({ ...current, data_provider: received.data_provider }),
+    })
   }
 }
 
@@ -356,16 +382,16 @@ async function refreshBoundMaps(
 async function refreshSource(node: { id: string }) {
   if (demoActive.value || isDemoId(node.id) || anyRefreshing.value) return
   const passId = newPassId()
-  const sourceIds = sourceTree.descendants(node.id)
+  const preparedIds = new Set<string>()
   const removed = sourceTree.begin(node.id)
   mapsRevision += 1
   maps.value = maps.value.filter(map => !map.source_id || !removed.has(map.source_id))
   const result = await runSourceReleaseRefresh({
     state,
     trigger: 'partial',
-    prepare: () => state.runSource(node.id, () => prepareMapSources(passId, false, node.id)),
+    prepare: () => state.runSource(node.id, () => prepareMapSources(passId, false, node.id, preparedIds)),
     refresh: () => {
-      const targets = maps.value.filter((map) => sourceIds.has(map.source_id || '__none__'))
+      const targets = maps.value.filter((map) => preparedIds.has(map.id))
       return refreshReleases(targets, { trigger: 'single', passId, sourcePrepared: true })
     },
   })
@@ -377,17 +403,16 @@ async function refreshAll(
 ) {
   if (demoActive.value || anyRefreshing.value) return
   const passId = newPassId()
+  const preparedIds = new Set<string>()
   state.setEntryStateUnavailable(true)
-  maps.value = []
-  sourceTree.replace([])
   const result = await runSourceReleaseRefresh({
     state,
     trigger: 'full',
     prepare: async () => {
-      const errors = await prepareMapSources(passId, options.force)
+      const errors = await prepareMapSources(passId, options.force, undefined, preparedIds)
       return errors
     },
-    refresh: () => refreshReleases(maps.value, { ...options, trigger: 'single', passId, sourcePrepared: true }),
+    refresh: () => refreshReleases(maps.value.filter(map => preparedIds.has(map.id)), { ...options, trigger: 'single', passId, sourcePrepared: true }),
   })
   result.errors.forEach((error) => message?.error(error))
 }
@@ -400,7 +425,7 @@ export function useMapSources() {
     sourceNodes,
     refreshing,
     queued,
-    preparingSources: computed(() => !demoActive.value && state.preparingSources.value),
+    preparingSources: computed(() => !demoActive.value && state.preparingAllSources.value),
     refreshingSources,
     installing,
     refreshingAll: computed(() => !demoActive.value && refreshingAll.value),

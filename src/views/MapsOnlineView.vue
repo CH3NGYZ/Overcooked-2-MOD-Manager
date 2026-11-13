@@ -370,6 +370,7 @@ function mapNote(map: MapInfo): string {
 
 function isRefreshing(map: MapInfo): boolean {
   return preparingSources.value || !!refreshing.value[map.id] || !!queued.value[map.id]
+    || !!map.source_id && !!refreshingSources.value[map.source_id]
 }
 
 function isInstalling(map: MapInfo): boolean {
@@ -676,12 +677,8 @@ async function refreshGroup(group: SourceGroupLeaf<MapInfo>) {
 
 
 /**
- * 整页遮罩的显示条件，与 MOD 安装页同一条判据：
- * 「正在刷新 **且** 列表是空的」。
- *
- * 刷新一开始就把列表清空（见 `refreshAll`），所以这条在这里是有意义的；
- * 反过来，源树回来、第一张卡片能渲染时 `visibleCount` 立刻大于 0，遮罩当场
- * 消失 —— 不需要在几个中间状态之间切换，也就不会有「遮罩闪两下」的抖动。
+ * 首次读取且没有树时才遮罩。手动刷新保留旧内容至主文件成功，之后逐源
+ * 展示真实进度，不用整页遮罩盖住增量过程。
  */
 const pageLoading = computed(() => loading.value && tree.value.length === 0)
 

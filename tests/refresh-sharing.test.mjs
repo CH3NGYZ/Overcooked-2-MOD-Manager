@@ -217,7 +217,7 @@ test('同一动作共享 pass，源准备和 Release 分阶段，只有浮动整
   assert.match(mapEngine, /api\.refreshMapReleases\(item\.id, force, passId\)/)
   assert.match(mapEngine, /api\.refreshMapSources\(passId, force, progress =>/)
   assert.match(mapEngine, /prepare: \(\) => prepareMapSources\(passId\)/)
-  assert.match(mapEngine, /prepareMapSources\(passId, options\.force\)/)
+  assert.match(mapEngine, /prepareMapSources\(passId, options\.force, undefined, preparedIds\)/)
   assert.match(repositoryEngine, /prepare: \(\) => prepareRepositorySources\(false\)/)
   assert.match(mapsOnline, /@click="refreshAll\(\{ force: true \}\)"/)
   assert.match(modsOnline, /engine\.refreshEverything\(\{ force: true \}\)/)

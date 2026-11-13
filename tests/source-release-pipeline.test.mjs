@@ -77,3 +77,21 @@ test('source failure releases phase and batch flags so the next refresh can retr
   assert.equal(state.preparingSources.value, false)
   assert.equal(state.anyRefreshing.value, false)
 })
+
+test('a partial source preparation keeps the API barrier without making every card busy', async () => {
+  const state = createRefreshState(1), source = deferred()
+  const pending = runSourceReleaseRefresh({
+    state, trigger: 'partial',
+    prepare: () => state.runSource('chosen', () => source.promise),
+    refresh: () => runReleaseBatch({ state, items: [], trigger: 'single', fetch: async () => [], errorText: String }),
+  })
+  try {
+    assert.equal(state.preparingSources.value, true, 'source preparation still blocks API admission')
+    assert.equal(state.preparingAllSources?.value, false, 'partial preparation cannot mark every source busy')
+    assert.deepEqual(state.refreshingSources.value, { chosen: true })
+  } finally {
+    source.resolve([])
+    await pending
+  }
+  assert.equal(state.anyRefreshing.value, false)
+})

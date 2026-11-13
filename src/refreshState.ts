@@ -22,9 +22,8 @@ import { mapWithConcurrency } from './concurrency.ts'
  * - **源级** `refreshingSources[id]`：某个仓库源 / 地图源正在重拉文档
  *   （这一层必须先有：源文档阶段一个条目都还没开始刷，只靠条目级状态时，
  *   界面上什么都看不出来）；
- * - **批次级** `refreshingAll`（整批，会清空列表）与 `checkingBound`
- *   （检查更新，不动列表）。两者分开是因为副作用范围不同：
- *   整批刷新会让下载页整页进入加载态，检查更新不会。
+ * - **批次级** `refreshingAll`（主成功后逐源重建在线展示）与 `checkingBound`
+ *   （保留展示、检查已安装项）。两者共享源准备屏障，但刷新范围不同。
  *
  * ## 结果
  *
@@ -37,7 +36,7 @@ import { mapWithConcurrency } from './concurrency.ts'
 
 /** 刷新来源：决定点亮哪个批次标志、以及结果怎么措辞。 */
 export type RefreshTrigger =
-  /** 刷新全部：清空列表 → 重拉源文档 → 刷全部条目。 */
+  /** 刷新全部：读主文档 → 成功后逐源重建展示 → 刷本轮成功条目。 */
   | 'full'
   /** 检查更新：只刷与本地已安装内容绑定的条目，不动列表。 */
   | 'bound'
@@ -71,7 +70,7 @@ export interface RefreshBatch<T> {
    */
   worker: (item: T) => Promise<string | null>
   trigger: RefreshTrigger
-  /** 批次收尾（通常是重读 Dashboard / 地图列表），完成后才算结果。 */
+  /** 批次收尾（例如同步依赖快照），完成后才算结果。 */
   finalize?: () => Promise<void>
   /** 统计「有新版」的条目数：必须在 `finalize` 之后读，否则读到的是旧数据。 */
   countUpdated?: () => number
@@ -80,6 +79,8 @@ export interface RefreshBatch<T> {
 export interface RefreshState {
   /** All source documents must settle before scheduling release comparisons. */
   preparingSources: Ref<boolean>
+  /** Only whole-page/source-check passes may mark every item as preparing. */
+  preparingAllSources: ComputedRef<boolean>
   /** 条目级：按 id。 */
   refreshing: Ref<Record<string, boolean>>
   /**
@@ -96,14 +97,13 @@ export interface RefreshState {
   /** 整批刷新进行中。 */
   refreshingAll: Ref<boolean>
   /**
-   * 条目集合正在被清空/重建：这段空窗期里**条目级状态无法表达进度**。
+   * 在线条目集合正在重建，条目级标志还无法表达完整进度。
    *
-   * 整批刷新先清空条目（仓库源缓存 / 地图列表），再逐个填回来。清空之后
-   * 条目本身就不存在了，`refreshing` / `queued` / `refreshingSources` 一个都
-   * 匹配不上 —— 卡片此时只有两种错误选择：显示马上会被推翻的旧结论，或者
-   * 退化成「未绑定」。所以这段窗口由这个标志统一兜住。
+   * 主文档成功后展示集合逐源替换，可信配置和本地绑定继续保留。新条目尚未
+   * 到达时，局部 `refreshing` / `queued` 无法表达整棵树的准备阶段，所以
+   * 由这个标志兜住本地版本/绑定结论，避免短暂退化成「未绑定」。
    *
-   * **它不能等同于 `refreshingAll`**：后者覆盖整批（源文档 → 社区发现 →
+   * **它不能等同于 `refreshingAll`**：后者覆盖整批（源文档 →
    * 全部条目），要一直亮到按钮恢复可点为止；而条目一填回来，条目级状态就是
    * 准确的，这时再拿批次标志盖住所有条目，等于把「刷一个回来一个」压成
    * 「整批一起回来」—— 用户看到所有卡片一起转、一起停，正是要避免的。
@@ -165,6 +165,8 @@ export function createRefreshState(concurrency: number): RefreshState {
   const entryStateUnavailable = ref(false)
   const checkingBound = ref(false)
   const outcome = ref<RefreshOutcome | null>(null)
+  const preparingAllSources = computed(() => preparingSources.value
+    && (refreshingAll.value || checkingBound.value))
 
   /*
    * 两个记录都整体替换而不是就地增删：它们是 `ref` 的对象值，
@@ -229,7 +231,7 @@ export function createRefreshState(concurrency: number): RefreshState {
       const id = batch.idOf(item)
       if (!id || seen.has(id)) return false
       seen.add(id)
-      return !refreshing.value[id]
+      return !refreshing.value[id] && !queued.value[id]
     })
 
     /*
@@ -284,6 +286,7 @@ export function createRefreshState(concurrency: number): RefreshState {
 
   return {
     preparingSources,
+    preparingAllSources,
     refreshing,
     queued,
     refreshingSources,

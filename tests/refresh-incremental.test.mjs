@@ -131,3 +131,17 @@ test('同一目标已经在刷时，重复请求直接跳过而不是并发两�
   assert.equal(await first, null)
   assert.equal(state.refreshing.value.r, undefined)
 })
+
+test('overlapping batches cannot consume or clear another batch\'s queued entries', async () => {
+  const state = createRefreshState(1), gate = deferred(), calls = []
+  const fetch = async item => { calls.push(item.id); if (item.id === 'first') await gate.promise; return [] }
+  const first = runReleaseBatch({ state, items: [{ id: 'first' }, { id: 'queued' }], fetch })
+  await tick()
+  const duplicate = await runReleaseBatch({ state, items: [{ id: 'queued' }], fetch })
+  assert.equal(duplicate.refreshed, 0)
+  assert.equal(state.queued.value.queued, true, 'the original queue owns this flag until its worker starts')
+  assert.deepEqual(calls, ['first'])
+  gate.resolve(); await first
+  assert.deepEqual(calls, ['first', 'queued'])
+  assert.deepEqual(state.queued.value, {})
+})

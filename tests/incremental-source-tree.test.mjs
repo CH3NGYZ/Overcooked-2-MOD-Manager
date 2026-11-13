@@ -16,7 +16,7 @@ registerHooks({
   load(url, context, next) {
     if (url.endsWith('/src/services/tauri.ts')) return {
       format: 'module', shortCircuit: true,
-      source: `export const api = new Proxy({}, {get: (_, key) => (...args) => key === 'rebindLocalMods' && !globalThis.__loadingApi[key] ? Promise.resolve(args[0]) : globalThis.__loadingApi[key](...args)})
+      source: `export const api = new Proxy({}, {get: (_, key) => async (...args) => key === 'rebindLocalMods' && !globalThis.__loadingApi[key] ? args[0] : globalThis.__loadingApi[key](...args)})
         export const watchGameState = async () => () => {}
         export const watchLevelSetCompression = async callback => { globalThis.__compressionEvent = callback; return () => {} }
         export const watchLevelSetScan = async () => () => {}`,
@@ -95,7 +95,7 @@ test('MOD engine publishes root and pending child titles, waits for every TOML, 
       if(id==='failed') { if(!retry) await failed.promise; else config.repositories.push(repo('recovered','failed')) }
       return {access_error:null}
     },
-    refreshModRepository:async(id,force)=>{calls.push(['api',id,force]);return[]},
+    refreshModRepository:async(id,force)=>{calls.push(['api',id,force]);return{cached_releases:[],release_prerelease_metadata:{}}},
     discoverCommunityRepositories:async()=>{throw Error('discovery must stay paused')},
     syncDependencySnapshots:async()=>{},
   }
@@ -190,7 +190,8 @@ test('MOD source config read failure keeps the trusted config and attaches the s
 test('MOD full refresh failure retains exact platform verdicts and never clears backend source snapshots', async () => {
   const trusted = { ...repo('promoted', 'trusted-source'), cached_releases: [],
     release_prerelease_metadata: { 'v1.0.0-beta': false }, releases_cached_at: 123 }
-  const config = { repositories: [trusted], repository_sources: [
+  const manual = repo('manual-without-source')
+  const config = { repositories: [trusted, manual], repository_sources: [
     { id: 'trusted-source', nickname: 'Trusted', url: 'trusted.toml' },
   ], region: 'international', platform: 'windows' }
   const requests = []
@@ -201,7 +202,7 @@ test('MOD full refresh failure retains exact platform verdicts and never clears 
     modUpdates: async () => [], config: async () => structuredClone(config),
     clearRepositorySourceCache: async () => { clears++; config.repositories = []; return structuredClone(config) },
     importRepositorySource: async () => {
-      assert.deepEqual(useDashboard().config.value.repositories, [trusted])
+      assert.deepEqual(useDashboard().config.value.repositories, [trusted, manual])
       throw Error('source offline')
     },
     refreshModRepository: async (id, force) => {
@@ -214,10 +215,10 @@ test('MOD full refresh failure retains exact platform verdicts and never clears 
   const previousScans = scans
   const errors = await e.refreshEverything({ force: true })
   assert.ok(errors.some(error => error.includes('source offline')))
-  assert.ok(errors.some(error => error.includes('API offline')))
+  assert.ok(!errors.some(error => error.includes('API offline')), 'a failed main file cannot start this pass with stale Release targets')
   assert.equal(clears, 0)
   assert.equal(scans, previousScans, 'source refresh must not rescan DLLs')
-  assert.deepEqual(requests, [['promoted', true]])
+  assert.deepEqual(requests, [])
   assert.deepEqual(d.config.value.repositories[0].release_prerelease_metadata, trusted.release_prerelease_metadata)
   assert.equal(d.config.value.repositories[0].releases_cached_at, 123)
   assert.equal(e.sourceNodes.value.find(node => node.id === 'trusted-source').status, 'error')
@@ -244,4 +245,298 @@ test('MOD source refresh never requests or declares a child whose ancestor exclu
   assert.deepEqual(requests, ['available'])
   assert.deepEqual(e.sourceNodes.value.map(node => node.id), ['available'])
   assert.deepEqual(e.sourceNodes.value[0].note_i18n, { en: 'Global note' })
+})
+
+test('map branch progress only publishes its scope, including newly declared descendants', async () => {
+  const e = useMapSources(), gate = deferred(), requests = []
+  const first = { ...repo('scope-a', 'scope'), level_set_name: 'A', latest_tag: '1' }
+  const other = { ...repo('scope-b', 'other-scope'), level_set_name: 'B', latest_tag: '1' }
+  const nodes = [node('scope', null, 'ready'), node('other-scope', null, 'ready')]
+  globalThis.__loadingApi = {
+    refreshMapSources: async (_pass, _force, progress) => { progress({ nodes, maps: [first, other] }); return [first, other] },
+    refreshMapReleases: async id => [first, other].find(map => map.id === id),
+    syncDependencySnapshots: async () => {}, config: async () => useDashboard().config.value,
+  }
+  await e.refreshAll()
+  const untouched = e.maps.value.find(map => map.id === other.id)
+  const untouchedNode = e.sourceNodes.value.find(node => node.id === 'other-scope')
+  const added = { ...repo('scope-child', 'new-scope-child'), level_set_name: 'Child' }
+  const updated = { ...first, latest_tag: '2' }
+  const staleSibling = { ...other, latest_tag: '999' }
+  globalThis.__loadingApi.refreshMapSources = async (_pass, _force, progress, sourceId) => {
+    assert.equal(sourceId, 'scope')
+    progress({ nodes: [...nodes, node('new-scope-child', 'scope', 'ready')], maps: [updated, staleSibling, added] })
+    await gate.promise
+    return [updated, staleSibling, added]
+  }
+  globalThis.__loadingApi.refreshMapReleases = async id => { requests.push(id); return [updated, added].find(map => map.id === id) }
+  const pending = e.refreshSource({ id: 'scope' })
+  await tick()
+  const evidence = {
+    globalBusy: e.preparingSources.value,
+    untouched: e.maps.value.find(map => map.id === other.id),
+    untouchedNode: e.sourceNodes.value.find(node => node.id === 'other-scope'),
+  }
+  gate.resolve(); await pending
+  assert.equal(evidence.globalBusy, false, 'unrelated source buttons must not inherit source preparation')
+  assert.equal(evidence.untouched, untouched, 'channel snapshots cannot publish another source even when API cache changed')
+  assert.equal(evidence.untouchedNode, untouchedNode, 'unrelated declaration/status references stay stable')
+  assert.equal(e.maps.value.find(map => map.id === other.id), untouched, 'final snapshot must obey the same projection')
+  assert.deepEqual(requests.sort(), ['scope-a', 'scope-child'], 'a new descendant joins only this branch Release queue')
+})
+
+test('MOD group Release refresh does not publish unrelated repositories from a final config reread', async () => {
+  const a = repo('group-a', 'same-source'), b = { ...repo('group-b', 'same-source'), name: 'Unselected' }
+  let config = { repositories: [a, b], repository_sources: [{ id: 'same-source', nickname: 'Source', url: 'source.toml' }], region: 'global', platform: 'windows' }
+  const requests = [], d = useDashboard(), e = useModRepositoryRefresh()
+  globalThis.__loadingApi = {
+    dashboard: async () => ({ config: structuredClone(config), game: { kitchen_running: false } }),
+    localMods: async () => ({ generation: 30, mods: [] }), modUpdates: async () => [],
+    config: async () => structuredClone(config),
+    refreshModRepository: async id => {
+      requests.push(id)
+      config = { ...config, repositories: [{ ...a, name: 'Refreshed A' }, { ...b, name: 'Backend B changed' }] }
+      return { cached_releases: [{ tag_name: '2', assets: [] }], release_prerelease_metadata: {} }
+    },
+  }
+  await d.load()
+  const untouched = d.config.value.repositories[1]
+  assert.deepEqual(await e.refreshMany([d.config.value.repositories[0]]), [])
+  assert.deepEqual(requests, ['group-a'])
+  assert.equal(d.config.value.repositories[1], untouched, 'group refresh cannot replace an unrelated row at finalize')
+  assert.equal(d.config.value.repositories[1].name, 'Unselected')
+  assert.equal(d.config.value.repositories[0].cached_releases[0].tag_name, '2')
+})
+
+test('MOD local source reload applies new children without replacing unrelated source data or marking it pending', async () => {
+  const source = (id, parent_id) => ({ id, parent_id, nickname: id, url: id + '.toml' })
+  let config = { repositories: [repo('local-a', 'local-source'), { ...repo('local-b', 'unselected-source'), name: 'Trusted B' }],
+    repository_sources: [source('local-source'), source('unselected-source')], region: 'global', platform: 'windows' }
+  const d = useDashboard(), e = useModRepositoryRefresh(), requests = []
+  globalThis.__loadingApi = {
+    dashboard: async () => ({ config: structuredClone(config), game: { kitchen_running: false } }),
+    localMods: async () => ({ generation: 31, mods: [] }), modUpdates: async () => [],
+    config: async () => structuredClone(config),
+    importRepositorySource: async id => {
+      requests.push('source:' + id)
+      if (id === 'local-source') config = { ...config,
+        repository_sources: [source('local-source'), source('unselected-source'), source('local-child', 'local-source')],
+        repositories: [repo('local-a', 'local-source'), { ...repo('local-b', 'unselected-source'), name: 'Backend B changed' }, repo('child-map', 'local-child')],
+      }
+      return { access_error: null }
+    },
+    refreshModRepository: async id => { requests.push(id); return { cached_releases: [], release_prerelease_metadata: {} } },
+  }
+  await d.load()
+  const untouched = d.config.value.repositories[1], untouchedSource = d.config.value.repository_sources[1]
+  assert.deepEqual(await e.refreshSource('local-source'), [])
+  assert.equal(d.config.value.repositories.find(repo => repo.id === 'local-b'), untouched)
+  assert.equal(d.config.value.repository_sources.find(source => source.id === 'unselected-source'), untouchedSource)
+  assert.equal(e.sourceNodes.value.find(node => node.id === 'unselected-source').status, 'ready', 'an untouched declared source is never scheduled as pending')
+  assert.deepEqual(requests, ['source:local-source', 'source:local-child', 'local-a', 'child-map'])
+})
+
+test('MOD full pass rebuilds only the online projection after main success, hiding stale grandchildren until their parent commits', async () => {
+  const root = deferred(), child = deferred(), leaf = deferred(), release = deferred(), calls = []
+  const source = (id, parent_id) => ({ id, parent_id, nickname: id, url: id + '.toml' })
+  const oldChild = repo('projection-old-child', 'projection-child'), oldGrand = repo('projection-old-grand', 'projection-old-grand-source')
+  const main = repo('projection-main', 'projection-root'), nextChild = repo('projection-new-child', 'projection-child')
+  let config = { repositories: [oldChild, oldGrand], repository_sources: [source('projection-root'), source('projection-child', 'projection-root'), source('projection-old-grand-source', 'projection-child')], region: 'global', platform: 'windows' }
+  globalThis.__loadingApi = {
+    dashboard: async () => ({ config: structuredClone(config), game: { kitchen_running: false } }),
+    localMods: async () => ({ generation: 32, mods: [] }), modUpdates: async () => [], config: async () => structuredClone(config),
+    importRepositorySource: async id => {
+      calls.push('source:' + id)
+      if (id === 'projection-root') { await root.promise; config = { ...config, repositories: [main, oldChild, oldGrand] } }
+      if (id === 'projection-child') { await child.promise; config = { ...config, repositories: [main, nextChild], repository_sources: [source('projection-root'), source('projection-child', 'projection-root'), source('projection-leaf', 'projection-child')] } }
+      if (id === 'projection-leaf') await leaf.promise
+      return { access_error: null }
+    },
+    refreshModRepository: async id => { calls.push('api:' + id); await release.promise; return { cached_releases: [], release_prerelease_metadata: {} } },
+    syncDependencySnapshots: async () => {},
+  }
+  const d = useDashboard(), e = useModRepositoryRefresh()
+  await d.load()
+  const before = e.visibleRepositories.value
+  const pending = e.refreshEverything()
+  await tick()
+  assert.equal(e.repositoriesLoading.value, true, 'full spinner starts with the main document')
+  assert.deepEqual(e.visibleRepositories.value, before, 'pending main cannot clear trusted old online cards')
+  root.resolve(); await tick(); await tick()
+  assert.deepEqual(e.visibleRepositories.value.map(row => row.id), [main.id])
+  assert.deepEqual(e.visibleSources.value.map(row => row.id), ['projection-root', 'projection-child'])
+  assert.ok(!e.sourceNodes.value.some(row => row.id === 'projection-old-grand-source'), 'old deep headings cannot appear before their parent document succeeds')
+  assert.ok(d.config.value.repositories.some(row => row.id === oldChild.id), 'online clearing must preserve global trusted bindings')
+  assert.ok(d.config.value.repositories.some(row => row.id === oldGrand.id))
+  assert.ok(!calls.some(call => call.startsWith('api:')))
+  child.resolve(); await tick(); await tick()
+  assert.deepEqual(e.visibleRepositories.value.map(row => row.id), [main.id, nextChild.id])
+  assert.deepEqual(e.visibleSources.value.map(row => row.id), ['projection-root', 'projection-child', 'projection-leaf'])
+  assert.ok(!calls.some(call => call.startsWith('api:')))
+  leaf.reject(Error('leaf offline')); await tick(); await tick()
+  assert.equal(e.sourceNodes.value.find(row => row.id === 'projection-leaf').status, 'error')
+  assert.equal(e.repositoriesLoading.value, true, 'full spinner covers the final Release queue too')
+  assert.deepEqual(calls.filter(call => call.startsWith('api:')).sort(), ['api:' + main.id, 'api:' + nextChild.id].sort())
+  release.resolve(); const errors = await pending
+  assert.equal(errors.length, 1)
+  assert.equal(e.repositoriesLoading.value, false)
+  assert.equal(e.anyRefreshing.value, false)
+})
+
+test('map main failure preserves the old tree/cards and starts zero ordinary Release calls or unrelated MOD publication', async () => {
+  const e = useMapSources(), d = useDashboard(), gate = deferred(), calls = []
+  const old = { ...repo('failure-map', 'failure-map-child'), level_set_name: 'Old' }
+  const nodes = [node('failure-map-root', null, 'ready'), node('failure-map-child', 'failure-map-root', 'ready')]
+  let progress
+  const trustedConfig = { repositories: [repo('do-not-publish', 'other-mod-source')], repository_sources: [{ id: 'other-mod-source', nickname: 'Other', url: 'other.toml' }], region: 'global', platform: 'windows', data_provider: 'github' }
+  globalThis.__loadingApi = {
+    dashboard: async () => ({ config: structuredClone(trustedConfig), game: { kitchen_running: false } }),
+    localMods: async () => ({ generation: 33, mods: [] }), modUpdates: async () => [],
+    config: async () => ({ ...structuredClone(trustedConfig), data_provider: 'cloudflare', repositories: [{ ...trustedConfig.repositories[0], name: 'Unexpected changed MOD' }] }),
+    maps: async () => [old], syncDependencySnapshots: async () => {},
+    refreshMapSources: async (_pass, _force, callback) => { callback({ nodes, maps: [old] }); return [old] },
+    refreshMapReleases: async id => { calls.push(id); return old },
+  }
+  await d.load(); await e.refreshAll()
+  const trustedMod = d.config.value.repositories[0], oldMap = e.maps.value[0], oldChild = e.sourceNodes.value[1]
+  calls.length = 0
+  globalThis.__loadingApi.refreshMapSources = async (_pass, _force, callback) => {
+    progress = callback
+    callback({ nodes: [node('failure-map-root', null, 'loading')], maps: [] })
+    await gate.promise
+    callback({ nodes: [node('failure-map-root', null, 'error', 'main offline')], maps: [] })
+    throw Error('main offline')
+  }
+  const pending = e.refreshAll(); await tick()
+  assert.equal(e.refreshingAll.value, true)
+  assert.equal(e.maps.value[0], oldMap)
+  assert.equal(e.sourceNodes.value.find(row => row.id === oldChild.id), oldChild)
+  gate.resolve(); await pending
+  assert.deepEqual(calls, [], 'preserved old cards are not this failed pass\'s Release targets')
+  assert.equal(e.maps.value[0], oldMap)
+  assert.equal(e.sourceNodes.value.find(row => row.id === oldChild.id), oldChild)
+  assert.equal(d.config.value.repositories[0], trustedMod, 'provider reread cannot replace unrelated MOD objects')
+  assert.equal(d.config.value.data_provider, 'cloudflare')
+  assert.equal(e.anyRefreshing.value, false)
+  progress({ nodes, maps: [{ ...old, latest_tag: 'stale-after-failure' }] })
+  assert.equal(e.maps.value[0], oldMap, 'a closed source pass rejects late Channel callbacks')
+})
+
+test('map full pass switches at root ready, fills successful children and rejects late source snapshots after Release publication', async () => {
+  const e = useMapSources(), treeGate = deferred(), releaseGate = deferred(), calls = []
+  const main = { ...repo('timed-main', 'timed-root'), level_set_name: 'Main' }
+  const nested = { ...repo('timed-child-map', 'timed-child'), level_set_name: 'Child' }
+  const fresh = { ...main, latest_tag: 'new-release' }
+  let progress
+  globalThis.__loadingApi = {
+    config: async () => useDashboard().config.value,
+    refreshMapSources: async (_pass, _force, callback) => { progress = callback; callback({ nodes: [node('timed-root', null, 'loading')], maps: [] }); await treeGate.promise; return [main, nested] },
+    refreshMapReleases: async id => { calls.push(id); await releaseGate.promise; return id === main.id ? fresh : nested },
+    syncDependencySnapshots: async () => {},
+  }
+  const before = e.maps.value, pending = e.refreshAll(); await tick()
+  assert.equal(e.maps.value, before)
+  const nodes = [node('timed-root', null, 'ready'), node('timed-child', 'timed-root', 'loading'), node('timed-failure', 'timed-root', 'pending')]
+  progress({ nodes, maps: [main] }); await tick()
+  assert.deepEqual(e.maps.value.map(row => row.id), [main.id])
+  assert.deepEqual(e.sourceNodes.value.map(row => row.id), nodes.map(row => row.id))
+  assert.deepEqual(calls, [])
+  nodes[1] = node('timed-child', 'timed-root', 'ready'); nodes[2] = node('timed-failure', 'timed-root', 'error', 'child offline')
+  progress({ nodes, maps: [main, nested] }); await tick()
+  assert.deepEqual(e.maps.value.map(row => row.id), [main.id, nested.id])
+  assert.deepEqual(calls, [])
+  treeGate.resolve(); await tick(); await tick()
+  assert.deepEqual(calls.sort(), [main.id, nested.id].sort())
+  assert.equal(e.refreshingAll.value, true)
+  releaseGate.resolve(); await pending
+  assert.equal(e.maps.value.find(row => row.id === main.id).latest_tag, 'new-release')
+  progress({ nodes, maps: [main] })
+  assert.deepEqual(e.maps.value.map(row => row.id), [main.id, nested.id])
+  assert.equal(e.maps.value.find(row => row.id === main.id).latest_tag, 'new-release', 'late source snapshot cannot roll back a fresher Release result')
+  assert.equal(e.refreshingAll.value, false)
+})
+
+test('map provider reread cannot supersede a pending MOD source projection and lose newly declared children', async () => {
+  const firstRead = deferred(), secondRead = deferred(), requests = []
+  const source = (id, parent_id) => ({ id, parent_id, nickname: id, url: id + '.toml' })
+  const initial = { repositories: [repo('cross-old', 'cross-root')], repository_sources: [source('cross-root')], region: 'global', platform: 'windows', data_provider: 'github' }
+  const next = { ...initial, data_provider: 'cloudflare', repositories: [repo('cross-fresh', 'cross-root'), repo('cross-child-repo', 'cross-child')], repository_sources: [source('cross-root'), source('cross-child', 'cross-root')] }
+  let reads = 0
+  globalThis.__loadingApi = {
+    dashboard: async () => ({ config: structuredClone(initial), game: { kitchen_running: false } }),
+    localMods: async () => ({ generation: 34, mods: [] }), modUpdates: async () => [],
+    config: async () => { reads++; if (reads === 1) return firstRead.promise; if (reads === 2) return secondRead.promise; return structuredClone(next) },
+    importRepositorySource: async id => { requests.push('source:' + id); return { access_error: null } },
+    refreshMapSources: async () => [], syncDependencySnapshots: async () => {},
+    refreshModRepository: async id => { requests.push('api:' + id); return { cached_releases: [], release_prerelease_metadata: {} } },
+  }
+  const d = useDashboard(), e = useModRepositoryRefresh()
+  await d.load()
+  const mod = e.refreshSource('cross-root'); await tick()
+  assert.equal(reads, 1)
+  const map = useMapSources().refreshAll(); await tick()
+  firstRead.resolve(structuredClone(next)); await tick(); await tick()
+  secondRead.resolve(structuredClone(next)); await Promise.all([mod, map])
+  assert.ok(requests.includes('source:cross-child'), 'the source must apply its own successful config read before descending')
+  assert.deepEqual(requests.filter(id => id.startsWith('api:')).sort(), ['api:cross-child-repo', 'api:cross-fresh'])
+  assert.deepEqual(d.config.value.repository_sources.map(row => row.id), ['cross-root', 'cross-child'])
+  assert.equal(d.config.value.data_provider, 'cloudflare')
+})
+
+test('a failed MOD root keeps its child status when another root succeeds, and a successful root still refreshes manual repositories', async () => {
+  const otherRoot = deferred()
+  const source = (id, parent_id) => ({ id, parent_id, nickname: id, url: id + '.toml' })
+  const config = { repositories: [repo('multi-a-card', 'multi-a-child'), repo('multi-b-card', 'multi-b'), repo('multi-manual')],
+    repository_sources: [source('multi-a'), source('multi-a-child', 'multi-a'), source('multi-b')], region: 'global', platform: 'windows' }
+  let fail = false
+  const requests = []
+  globalThis.__loadingApi = {
+    dashboard: async () => ({ config: structuredClone(config), game: { kitchen_running: false } }),
+    localMods: async () => ({ generation: 35, mods: [] }), modUpdates: async () => [], config: async () => structuredClone(config),
+    importRepositorySource: async id => { requests.push('source:' + id); if (fail && id === 'multi-a') throw Error('root A offline'); if (fail && id === 'multi-b') await otherRoot.promise; return { access_error: null } },
+    refreshModRepository: async id => { requests.push('api:' + id); return { cached_releases: [], release_prerelease_metadata: {} } },
+    syncDependencySnapshots: async () => {},
+  }
+  const d = useDashboard(), e = useModRepositoryRefresh()
+  await d.load(); await e.refreshSourceChain('multi-a'); await e.refreshSourceChain('multi-b')
+  const oldChild = e.sourceNodes.value.find(row => row.id === 'multi-a-child')
+  assert.equal(oldChild.status, 'ready')
+  fail = true; requests.length = 0
+  const pending = e.refreshEverything(); await tick()
+  const failedBranchChild = e.sourceNodes.value.find(row => row.id === oldChild.id)
+  assert.deepEqual(failedBranchChild, oldChild)
+  otherRoot.resolve(); const errors = await pending
+  assert.equal(errors.length, 1)
+  assert.equal(e.sourceNodes.value.find(row => row.id === oldChild.id), failedBranchChild, 'another root cannot redeclare an unscheduled stale child as pending')
+  assert.equal(e.anyRefreshing.value, false)
+  assert.deepEqual(requests, ['source:multi-a', 'source:multi-b', 'api:multi-b-card', 'api:multi-manual'])
+})
+
+test('a successful MOD parent resets stale child errors to pending while preserving unrelated source status', async () => {
+  const gate = deferred(), nextChild = deferred()
+  const source = (id, parent_id) => ({ id, parent_id, nickname: id, url: id + '.toml' })
+  const config = { repositories: [], repository_sources: [source('reset-parent'), source('reset-child', 'reset-parent'), source('reset-sibling', 'reset-parent')], region: 'global', platform: 'windows' }
+  let round = 0
+  globalThis.__loadingApi = {
+    dashboard: async () => ({ config: structuredClone(config), game: { kitchen_running: false } }),
+    localMods: async () => ({ generation: 36, mods: [] }), modUpdates: async () => [], config: async () => structuredClone(config),
+    importRepositorySource: async id => {
+      if (!round && id !== 'reset-parent') throw Error('old child error')
+      if (round && id === 'reset-parent') await gate.promise
+      if (round && id === 'reset-child') await nextChild.promise
+      return { access_error: null }
+    }, syncDependencySnapshots: async () => {},
+  }
+  const d = useDashboard(), e = useModRepositoryRefresh()
+  await d.load(); await e.refreshSourceChain('reset-parent')
+  assert.equal(e.sourceNodes.value.find(row => row.id === 'reset-sibling').status, 'error')
+  round = 1
+  const pending = e.refreshEverything(); await tick()
+  gate.resolve(); await tick(); await tick()
+  assert.equal(e.sourceNodes.value.find(row => row.id === 'reset-child').status, 'loading')
+  const sibling = e.sourceNodes.value.find(row => row.id === 'reset-sibling')
+  assert.equal(sibling.status, 'pending')
+  assert.equal(sibling.error, undefined, 'a new parent declaration cannot carry a previous pass\'s child failure')
+  nextChild.resolve(); await pending
+  assert.equal(e.anyRefreshing.value, false)
 })

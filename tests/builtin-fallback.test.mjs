@@ -42,7 +42,11 @@ test('内置索引只声明子源、自身没有仓库', () => {
 
 test('源刷新复用递归加载，先发布父源再读取子源', () => {
   const body = sourceBody()
-  assert.ok(body.indexOf('await reloadConfig()') < body.indexOf('refreshSourceChain(child.id'))
+  const publication = body.indexOf('await reloadConfig({ throwOnError: true, project: sourceConfigProjection(rootId, sourceId, pass) })')
+  const recursion = body.indexOf('refreshSourceChain(child.id, visited, rootId, pass)')
+  assert.ok(publication >= 0, 'successful source applies its scoped config snapshot')
+  assert.ok(recursion >= 0, 'children reuse the recursive production entry with the same pass')
+  assert.ok(publication < recursion, 'parent publication precedes every child request')
   assert.match(body, /sourceTree\.declare\(/)
   assert.match(body, /sourceTree\.settle\(sourceId\)/)
 })
@@ -50,8 +54,12 @@ test('源刷新复用递归加载，先发布父源再读取子源', () => {
 test('文档失败保留错误节点并停止递归，读取期间保留可信卡片', () => {
   const body = sourceBody()
   assert.match(body, /if \(importErrors\.length\) \{ sourceTree\.settle\(sourceId, importErrors\[0\]\); return importErrors \}/)
-  assert.ok(body.indexOf('sourceTree.begin(sourceId)') >= 0)
-  assert.ok(body.indexOf('sourceTree.begin(sourceId)') < body.indexOf('api.importRepositorySource'))
+  const begin = body.indexOf('sourceTree.begin(sourceId, !!pass?.rebuild)')
+  const request = body.indexOf('api.importRepositorySource')
+  const commit = body.indexOf('if (pass?.rebuild) sourceTree.begin(sourceId)')
+  assert.ok(begin >= 0 && request >= 0 && commit >= 0)
+  assert.ok(begin < request, 'the source becomes busy before HTTP while a full pass preserves descendants')
+  assert.ok(commit > body.indexOf('if (importErrors.length)'), 'only a successful parent resets old descendant state')
   assert.doesNotMatch(body, /clearRepositorySourceCache|repositories\.value\s*=/)
   assert.doesNotMatch(refresh, /fallbackToBuiltinIfOffline/)
 })

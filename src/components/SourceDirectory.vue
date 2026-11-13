@@ -43,7 +43,7 @@ const children = computed(() => {
     <n-alert v-if="node.error" type="error" :show-icon="true" class="source-error">{{ backendMessageOf(node.error) }}</n-alert>
     <p v-else-if="node.status === 'ready' && node.count === 0 && !children.length"
       class="source-empty">{{ t('source.noVisibleRepositories') }}</p>
-    <slot v-else-if="node.groups.length" :node="node" />
+    <slot v-if="node.groups.length" :node="node" />
   </SourceGroupSlot>
   <n-collapse v-if="children.length" class="source-collapse" :expanded-names="expanded" @update:expanded-names="emit('update:expanded', $event)">
     <n-collapse-item v-for="entry in children" :key="entry.id" :name="entry.id">
@@ -63,7 +63,7 @@ const children = computed(() => {
         <n-alert v-if="node.error" type="error" :show-icon="true" class="source-error">{{ backendMessageOf(node.error) }}</n-alert>
         <p v-else-if="node.status === 'ready' && node.count === 0 && !currentNodes.some(child => child.parentId === node.id)"
           class="source-empty">{{ t('source.noVisibleRepositories') }}</p>
-        <slot v-else :node="node" />
+        <slot v-if="node.groups.length" :node="node" />
       </SourceGroupSlot>
       <SourceDirectory :nodes="currentNodes" :get-tree="getTree" :expanded="expanded" :parent-id="entry.id" :disabled="disabled" :busy="busy"
         @refresh="emit('refresh', $event)" @update:expanded="emit('update:expanded', $event)">

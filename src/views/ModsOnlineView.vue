@@ -53,7 +53,7 @@ const mods = computed(() => withDemoMods(realMods.value))
 const engine = useModRepositoryRefresh()
 /**
  * `anyRefreshing`：禁用按钮用（源文档阶段也算忙，避免重复触发）。
- * `repositoriesLoading`：只决定图标转不转 —— 只有仓库真的在加载时才转。
+ * `repositoriesLoading`：只跟随全量操作，贯穿主文件、子源与 Release 队列。
  */
 const { refreshing, queued, preparingSources, sourceRefreshing, anyRefreshing, repositoriesLoading } = engine
 /** 状态标签跳转：点标签跳到 MOD 管理页，并高亮绑定该仓库的 MOD 卡片 3 秒。 */
@@ -226,7 +226,7 @@ function cardAction(repo: ModRepository): CardAction {
     kind: installActionOf(repo),
     label: installLabel(repo),
     loading: !!installing.value[repo.id],
-    disabled: preparingSources.value || !!refreshing.value[repo.id] || !!queued.value[repo.id],
+    disabled: isRefreshing(repo),
   }
 }
 
@@ -270,12 +270,12 @@ const regionLabel = computed(() => repositoryRegionLabel(currentRegion.value))
  */
 const sources = computed<RepositorySource[]>(() =>
   withDemoSources(
-    (config.value?.repository_sources ?? []).filter((source) => sourceMatchesRegion(source, currentRegion.value, config.value?.repository_sources)),
+    (demoActive.value ? config.value?.repository_sources ?? [] : engine.visibleSources.value).filter((source) => sourceMatchesRegion(source, currentRegion.value, config.value?.repository_sources)),
   ),
 )
 const repositories = computed<ModRepository[]>(() =>
   withDemoRepositories(
-    (config.value?.repositories ?? []).filter((repo) =>
+    (demoActive.value ? config.value?.repositories ?? [] : engine.visibleRepositories.value).filter((repo) =>
       modRepositoryIsAvailable(repo, sources.value, currentRegion.value, config.value?.platform),
     ),
   ),
@@ -581,21 +581,8 @@ async function refreshSource(node: { id: string }) {
 }
 
 /**
- * 整页遮罩的显示条件，与地图安装页同一条判据：
- * 「正在整源刷新 **且** 列表是空的」。
- *
- * 首次加载：Dashboard 还在读（`loading`）。
- * 整源刷新：`refreshEverything()` 会先清空源缓存让列表当场变空，这段时间没有
- * 任何内容可看，必须显示加载态；第一张卡回来立刻收起。
- *
- * 为什么用引擎的 `refreshingAll` 而不是页面自己的标志：它在
- * `useModRepositoryRefresh` 里是模块级单例，刷新中切走再切回来时仍然是 true ——
- * 页面级 ref 熬不过一次切页，那样用户切回来只会看到一个空列表加「没有仓库」，
- * 完全不知道后台那次刷新还在跑。
- *
- * 为什么不能只看 `loading`：它只在应用第一次读 Dashboard 时为真，之后整源
- * 刷新走的是 `backgroundLoading`（不显示整页遮罩）。实测点刷新后 852 帧采样
- * 里遮罩一次都没出现。
+ * 首次读取且没有树时才遮罩。手动刷新保留旧内容至主文件成功，再逐源
+ * 重建标题和卡片，让用户直接看到数据到达；不遮住中间进度。
  */
 const pageLoading = computed(() => loading.value && tree.value.length === 0)
 
@@ -619,7 +606,12 @@ async function refreshGroup(group: SourceGroupLeaf<ModRepository>) {
 
 /** 该组是否有仓库正在刷新（决定分组按钮的转圈）。 */
 function groupRefreshing(group: SourceGroupLeaf<ModRepository>) {
-  return group.items.some((repo) => refreshing.value[repo.id] || queued.value[repo.id])
+  return group.items.some(isRefreshing)
+}
+
+function isRefreshing(repo: ModRepository): boolean {
+  return preparingSources.value || !!refreshing.value[repo.id] || !!queued.value[repo.id]
+    || !!repo.source_id && !!sourceRefreshing.value[repo.source_id]
 }
 
 
@@ -682,7 +674,7 @@ defineExpose({ refreshAll, visibleCount })
 
     <template v-else>
       <SourceDirectory transparent-root="official-repository-index" :nodes="normalTree" :expanded="sourcesExpanded" :disabled="anyRefreshing"
-        :busy="node => !!sourceRefreshing[node.id] || node.groups.some(group => group.items.some(repo => refreshing[repo.id]))"
+        :busy="node => !!sourceRefreshing[node.id] || node.groups.some(groupRefreshing)"
         @refresh="refreshSource" @update:expanded="setOpenSources" v-slot="{ node }">
           <SourceGroupSlot :get-tree="() => tree" :source-id="node.id" v-slot="{ node }">
             <n-collapse :expanded-names="groupsExpanded" class="group-collapse"
@@ -712,7 +704,7 @@ defineExpose({ refreshAll, visibleCount })
                       :status-clickable="hasLocalInstall(repo)"
                       :status-title="hasLocalInstall(repo) ? t('modsOnline.viewInModManager') : undefined"
                       :dependency="cardDependency(repo)"
-                      :version="versionParts(repo)" :refreshing="preparingSources || !!refreshing[repo.id] || !!queued[repo.id]"
+                      :version="versionParts(repo)" :refreshing="isRefreshing(repo)"
                       :downloads="downloadCount(repo)"
                       :action="cardAction(repo)"
                       :error="repo.last_error" :active="detailId === repo.id"
@@ -760,7 +752,7 @@ defineExpose({ refreshAll, visibleCount })
                   :status-clickable="hasLocalInstall(repo)"
                   :status-title="hasLocalInstall(repo) ? t('modsOnline.viewInModManager') : undefined"
                   :dependency="cardDependency(repo)"
-                  :version="versionParts(repo)" :refreshing="preparingSources || !!refreshing[repo.id] || !!queued[repo.id]"
+                  :version="versionParts(repo)" :refreshing="isRefreshing(repo)"
                   :downloads="downloadCount(repo)"
                   :action="cardAction(repo)"
                   :error="repo.last_error" :active="detailId === repo.id"
@@ -780,9 +772,8 @@ defineExpose({ refreshAll, visibleCount })
   <!--
     整源刷新入口。
     - 禁用看 `anyRefreshing`：源文档阶段也算忙，防止重复点。
-    - 图标旋转看 `repositoriesLoading`：只要有仓库在加载就一直转，
-      包括「刚启动切到本页时启动刷新正在跑」和「在 MOD 管理页点了刷新」——
-      引擎是模块级单例，两个页面看到的是同一份状态。
+    - 图标只随全量刷新旋转，从主文件读取持续到最后一个 Release 返回；
+      局部源/分组刷新仅点亮对应标题和条目。
   -->
   <n-float-button position="fixed" bottom="28" right="32" :disabled="anyRefreshing"
     :tooltip="t('tools.reloadSourceDocumentsThenRefreshRepositoriesInParallel')" @click="refreshAll">

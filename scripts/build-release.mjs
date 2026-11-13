@@ -71,7 +71,7 @@ export function main(args = process.argv.slice(2)) {
   const targetRoot = resolve(process.env.CARGO_TARGET_DIR || 'src-tauri/target')
   const artifacts = updateFiles(join(targetRoot, target, 'release/bundle'), target, version, requiredKeys)
   for (const [key, asset] of artifacts) {
-    // DEB/RPM are supported by the updater, but not all CLI builds sign them.
+    // Bind every supported Windows/macOS update package to this release version.
     runTauri(['signer', 'sign', '--app-version', version, asset.path])
     const signature = readFileSync(`${asset.path}.sig`, 'utf8').trim()
     verifyUpdateSignature(readFileSync(asset.path), signature, publicKey, version)

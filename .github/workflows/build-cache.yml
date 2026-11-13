@@ -1,4 +1,4 @@
-name: Refresh four platform build caches
+name: Refresh Windows and macOS build caches
 run-name: Refresh shared platform caches (${{ github.ref_name }})
 
 on:
@@ -43,11 +43,6 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
-      - name: Install dependencies (Ubuntu only)
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2
       - uses: actions/setup-node@v5
         with:
           node-version: '24'

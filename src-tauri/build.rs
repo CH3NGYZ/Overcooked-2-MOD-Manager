@@ -1,4 +1,9 @@
 fn main() {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").expect("Cargo target OS is required");
+    assert!(
+        matches!(target_os.as_str(), "windows" | "macos"),
+        "OC2 MOD Manager only supports Windows and macOS (target OS: {target_os})"
+    );
     embed_repository_sources();
     embed_publish_config();
     embed_gitcode_oauth();

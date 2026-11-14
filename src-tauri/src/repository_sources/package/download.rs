@@ -61,7 +61,12 @@ async fn browser_bytes(
             timeout: std::time::Duration::from_secs(120),
             allowed_download_hosts: hosts.into_iter().map(str::to_owned).collect(),
             allowed_download_paths: if provider == DataProvider::Gitee {
-                vec!["/ch3ngyz/Overcooked-2-MOD-Manager-Repos/repository/download".to_owned()]
+                vec![
+                    "/ch3ngyz/Overcooked-2-MOD-Manager-Repos/repository/download".to_owned(),
+                    // Verified archive requests redirect to this signed endpoint.
+                    "/ch3ngyz/Overcooked-2-MOD-Manager-Repos/repository/blazearchive/main.zip"
+                        .to_owned(),
+                ]
             } else {
                 Vec::new()
             },

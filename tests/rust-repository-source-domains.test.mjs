@@ -111,6 +111,7 @@ test('archive HTTP and native verification share the exact application user agen
   assert.match(download, /max_bytes:\s*MAX_ARCHIVE_BYTES/)
   assert.match(download, /timeout:\s*std::time::Duration::from_secs\(120\)/)
   assert.match(download, /allowed_download_paths:\s*if\s+provider\s*==\s*DataProvider::Gitee\s*\{\s*vec!\[\s*"\/ch3ngyz\/Overcooked-2-MOD-Manager-Repos\/repository\/download"\.to_owned\(\)/)
+  assert.match(download, /"\/ch3ngyz\/Overcooked-2-MOD-Manager-Repos\/repository\/blazearchive\/main\.zip"\s*\.to_owned\(\)/, 'Gitee redirects verified archives to its signed blazearchive endpoint')
 })
 
 test('official child documents read the captured immutable package through the shared transport', () => {

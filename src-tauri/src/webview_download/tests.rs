@@ -8,7 +8,10 @@ fn request() -> Request {
         title: "Download".into(),
         timeout: Duration::from_secs(120),
         allowed_download_hosts: vec!["gitee.com".into()],
-        allowed_download_paths: vec!["/owner/repo/repository/download".into()],
+        allowed_download_paths: vec![
+            "/owner/repo/repository/download".into(),
+            "/owner/repo/repository/blazearchive/main.zip".into(),
+        ],
     }
 }
 
@@ -107,6 +110,40 @@ fn requested_downloads_require_trusted_https_and_reject_unrelated_origins() {
         "https://user@download.gitee.com/archive.zip",
         "https://download.gitee.com:8443/archive.zip",
         "data:application/zip,bytes",
+    ] {
+        assert!(
+            !policy.download(&Url::parse(candidate).unwrap()),
+            "{candidate}"
+        );
+    }
+}
+
+#[test]
+fn verified_gitee_archive_redirect_reaches_the_download_and_completion_phases() {
+    let state = DownloadState::new();
+    let policy = Policy::new(&request()).unwrap();
+    let verified = Url::parse(
+        "https://gitee.com/owner/repo/repository/archive/main.zip?ref=main&captcha_type=baidu&stk=opaque",
+    ).unwrap();
+    let signed = Url::parse(
+        "https://gitee.com/owner/repo/repository/blazearchive/main.zip?Expires=1&Signature=opaque",
+    )
+    .unwrap();
+    assert!(policy.navigation(&verified));
+    assert!(policy.navigation(&signed));
+    assert!(
+        state.requested(&signed, &policy),
+        "the verified redirect must not remain waiting until timeout"
+    );
+    assert!(matches!(*state.phase.borrow(), Phase::Downloading(_)));
+    state.finished(&signed, true);
+    assert!(matches!(*state.phase.borrow(), Phase::Finished(true)));
+    for candidate in [
+        "https://gitee.com/other/repo/repository/blazearchive/main.zip",
+        "https://gitee.com/owner/repo/repository/blazearchive/other.zip",
+        "https://gitee.com/owner/repo/repository/blazearchive/main.zip/",
+        "https://gitee.com:444/owner/repo/repository/blazearchive/main.zip",
+        "https://gitee.com.evil.test/owner/repo/repository/blazearchive/main.zip",
     ] {
         assert!(
             !policy.download(&Url::parse(candidate).unwrap()),

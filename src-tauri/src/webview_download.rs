@@ -169,13 +169,18 @@ impl DownloadState {
     }
 
     fn finished(&self, url: &Url, success: bool) {
-        self.phase.send_if_modified(|phase| {
+        let matched = self.phase.send_if_modified(|phase| {
             if !matches!(&*phase, Phase::Downloading(expected) if expected == url) {
                 return false;
             }
             *phase = Phase::Finished(success);
             true
         });
+        log::info!(
+            "网页下载结束：域名={:?}，路径={}，成功={success}，匹配当前任务={matched}",
+            url.host_str(),
+            url.path()
+        );
     }
 
     fn cancel(&self) {
@@ -377,8 +382,16 @@ pub(crate) async fn download<R: Runtime>(
     .visible(false)
     .focused(false)
     .on_navigation(move |url| {
-        (initial_blank.load(Ordering::Acquire) && url.as_str() == "about:blank")
-            || navigation.navigation(url)
+        let allowed = (initial_blank.load(Ordering::Acquire) && url.as_str() == "about:blank")
+            || navigation.navigation(url);
+        if !allowed {
+            log::warn!(
+                "网页下载导航被拒绝：域名={:?}，HTTPS={}",
+                url.host_str(),
+                safe_https(url)
+            );
+        }
+        allowed
     })
     .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
     .on_permission_request(|_, _| tauri::webview::PermissionResponse::Deny)
@@ -390,8 +403,20 @@ pub(crate) async fn download<R: Runtime>(
             } => {
                 if !MAIN_CLOSED.load(Ordering::Acquire) && events.requested(&url, &policy) {
                     *actual = destination.clone();
+                    log::info!(
+                        "已接管网页下载：域名={:?}，路径={}",
+                        url.host_str(),
+                        url.path()
+                    );
                     return true;
                 }
+                log::warn!(
+                    "网页下载请求被拒绝：域名={:?}，路径={}，地址匹配={}，主窗口已关闭={}",
+                    url.host_str(),
+                    url.path(),
+                    policy.download(&url),
+                    MAIN_CLOSED.load(Ordering::Acquire)
+                );
             }
             tauri::webview::DownloadEvent::Finished { url, success, .. } => {
                 events.finished(&url, success)
@@ -431,7 +456,13 @@ pub(crate) async fn download<R: Runtime>(
     tokio::select! {
         biased;
         _ = cancelled(state.phase.subscribe()) => Err(CANCELLED.into()),
-        result = tokio::time::timeout(request.timeout, receive(&path, &state, request.max_bytes)) => result.map_err(|_| TIMED_OUT.to_string())?,
+        result = tokio::time::timeout(request.timeout, receive(&path, &state, request.max_bytes)) => match result {
+            Ok(result) => result,
+            Err(_) => {
+                log::warn!("网页下载超时：仍在等待下载请求={}", matches!(*state.phase.borrow(), Phase::Waiting));
+                Err(TIMED_OUT.into())
+            }
+        },
     }
 }
 

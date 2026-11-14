@@ -30,9 +30,51 @@ fn allows_normal_locations_and_similarly_named_directories() {
         "BepInExManager",
         "OtherBepInEx/Manager",
         "plugins/Manager",
+        "OC2ModManager/.",
     ] {
         assert!(validate_install_dir(&root.join(suffix)).is_ok(), "{suffix}");
     }
+}
+
+#[test]
+fn installer_distinguishes_a_forbidden_directory_from_an_unavailable_check() {
+    let root = std::env::temp_dir();
+    let forbidden = validate_install_dir(&root.join("game/BepInEx/OC2ModManager")).unwrap_err();
+    assert_eq!(forbidden.exit_code(), 1);
+    assert!(matches!(forbidden, InstallDirectoryError::Forbidden));
+
+    // Filesystem resolution can fail independently of BepInEx containment.
+    // Such a failure must not authorize the installer's legacy-path migration.
+    let unavailable =
+        validate_install_dir(&root.join("invalid\0directory/OC2ModManager")).unwrap_err();
+    assert_eq!(unavailable.exit_code(), 2);
+    assert!(matches!(unavailable, InstallDirectoryError::Unavailable(_)));
+    assert!(unavailable.to_string().contains("cannot resolve"));
+    let tag: String = unavailable.into();
+    assert_eq!(
+        tag, ERROR,
+        "ordinary app callers retain the existing error tag"
+    );
+}
+
+#[test]
+fn installer_messages_cover_all_five_languages_without_showing_app_tags() {
+    for language in ["2052", "1028", "1033", "1042", "1041"] {
+        let forbidden = error_message(language, &InstallDirectoryError::Forbidden);
+        let unavailable = error_message(
+            language,
+            &InstallDirectoryError::Unavailable("OS error".into()),
+        );
+        assert!(forbidden.contains("BepInEx"), "{language}");
+        assert!(!forbidden.contains("plugins"), "{language}");
+        assert!(!forbidden.starts_with("config."), "{language}");
+        assert!(!unavailable.contains("BepInEx"), "{language}");
+        assert_ne!(forbidden, unavailable, "{language}");
+    }
+    assert_ne!(
+        error_message("1041", &InstallDirectoryError::Forbidden),
+        error_message("1033", &InstallDirectoryError::Forbidden),
+    );
 }
 
 /// 只要路径里出现 `BepInEx` 目录就拒绝：框架备份/恢复按整树快照，

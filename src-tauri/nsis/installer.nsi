@@ -400,6 +400,7 @@ Var OC2MigrationTarget
 Function OC2ValidateInstallDirectory
   Push $0
   Push $1
+  Push $2
   InitPluginsDir
   IfFileExists "$PLUGINSDIR\OC2InstallGuard.exe" oc2_guard_ready
   File "/oname=$PLUGINSDIR\OC2InstallGuard.exe" "${MAINBINARYSRCPATH}"
@@ -408,7 +409,13 @@ Function OC2ValidateInstallDirectory
   nsExec::ExecToStack /TIMEOUT=10000 '"$PLUGINSDIR\OC2InstallGuard.exe" --validate-manager-install-dir "$INSTDIR\."'
   Pop $0
   Pop $1
-  ${If} $0 != 0
+  StrCpy $2 "$(OC2InstallDirectoryValidationFailed)"
+  ${If} $0 == 1
+    StrCpy $2 "$(OC2InvalidInstallDirectory)"
+  ${EndIf}
+  ; Only an explicit path rejection can migrate an old installation. A helper
+  ; launch error, timeout, or OS exit code does not establish an unsafe path.
+  ${If} $0 == 1
   ${AndIf} $UpdateMode = 1
   ${AndIf} $OC2MigrationPlan == ""
     ; Older clients pass their original directory. Preserve their data before
@@ -424,18 +431,23 @@ Function OC2ValidateInstallDirectory
       StrCpy $OC2MigrationPlan "$PLUGINSDIR\migration.json"
       StrCpy $INSTDIR $OC2MigrationTarget
     ${Else}
+      StrCpy $2 "$(OC2MigrationFailed)"
       DetailPrint "$1"
     ${EndIf}
   ${EndIf}
   ${If} $0 != 0
-    DetailPrint "$(OC2InvalidInstallDirectory)"
-    MessageBox MB_OK|MB_ICONSTOP "$(OC2InvalidInstallDirectory)" /SD IDOK
+    DetailPrint "Install directory validation: directory=$INSTDIR; status=$0"
+    DetailPrint "$1"
+    DetailPrint "$2"
+    MessageBox MB_OK|MB_ICONSTOP "$2" /SD IDOK
     SetErrorLevel 1
+    Pop $2
     Pop $1
     Pop $0
     Abort
   ${EndIf}
   SetErrorLevel 0
+  Pop $2
   Pop $1
   Pop $0
 FunctionEnd

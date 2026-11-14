@@ -1,11 +1,17 @@
 !include LogicLib.nsh
 !include FileFunc.nsh
 
-LangString OC2InvalidInstallDirectory 2052 "无法验证此安装目录。管理器不能安装到 BepInEx/plugins 或其子目录，请选择游戏目录外的位置。"
-LangString OC2InvalidInstallDirectory 1028 "無法驗證此安裝目錄。管理器不能安裝到 BepInEx/plugins 或其子目錄，請選擇遊戲目錄外的位置。"
-LangString OC2InvalidInstallDirectory 1033 "Cannot validate this installation directory. The manager cannot be installed in BepInEx/plugins or its subfolders. Choose a location outside the game directory."
-LangString OC2InvalidInstallDirectory 1042 "이 설치 폴더를 확인할 수 없습니다. 관리자를 BepInEx/plugins 또는 그 하위 폴더에 설치할 수 없습니다. 게임 폴더 밖의 위치를 선택하세요."
-LangString OC2InvalidInstallDirectory 1041 "このインストール先を確認できません。マネージャーを BepInEx/plugins またはそのサブフォルダーにはインストールできません。ゲームフォルダー外の場所を選択してください。"
+LangString OC2InvalidInstallDirectory 2052 "管理器不能安装到 BepInEx 文件夹或其子目录，请选择游戏目录外的位置。"
+LangString OC2InvalidInstallDirectory 1028 "管理器不能安裝到 BepInEx 資料夾或其子目錄，請選擇遊戲目錄外的位置。"
+LangString OC2InvalidInstallDirectory 1033 "The manager cannot be installed in the BepInEx folder or its subfolders. Choose a location outside the game directory."
+LangString OC2InvalidInstallDirectory 1042 "관리자를 BepInEx 폴더 또는 그 하위 폴더에 설치할 수 없습니다. 게임 폴더 밖의 위치를 선택하세요."
+LangString OC2InvalidInstallDirectory 1041 "マネージャーを BepInEx フォルダーまたはそのサブフォルダーにはインストールできません。ゲームフォルダー外の場所を選択してください。"
+
+LangString OC2InstallDirectoryValidationFailed 2052 "安装目录校验程序未能完成（状态：$0）。请查看安装详情中的具体错误后重试。"
+LangString OC2InstallDirectoryValidationFailed 1028 "安裝目錄驗證程式未能完成（狀態：$0）。請查看安裝詳細資料中的具體錯誤後重試。"
+LangString OC2InstallDirectoryValidationFailed 1033 "The installation directory validator could not complete (status: $0). Check the installation details for the error and try again."
+LangString OC2InstallDirectoryValidationFailed 1042 "설치 폴더 확인 프로그램이 완료되지 않았습니다(상태: $0). 설치 세부 정보에서 오류를 확인한 후 다시 시도하세요."
+LangString OC2InstallDirectoryValidationFailed 1041 "インストール先の確認プログラムを完了できませんでした（状態：$0）。インストールの詳細でエラーを確認してから再試行してください。"
 
 LangString OC2MigrationFailed 2052 "自动迁移未完成，已保留原管理器或恢复副本。请查看安装详情后重试。"
 LangString OC2MigrationFailed 1028 "自動遷移未完成，已保留原管理器或復原副本。請查看安裝詳細資料後重試。"
@@ -20,8 +26,8 @@ LangString OC2Migrating 1042 "관리자를 기본 설치 폴더로 이전하는 
 LangString OC2Migrating 1041 "マネージャーを既定のインストール先へ移動しています…"
 
 !macro NSIS_HOOK_PREINSTALL
-  ; The installer runs elevated (perMachine), so it can close an elevated
-  ; manager process before replacing the installed executable.
+  ; The installer runs as the current user. Close the ordinary manager process
+  ; before replacing its executable; elevated file users stay protected below.
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM OC2ModManager.exe'
   Pop $0
   ; CheckIfAppIsRunning in the template waits for remaining file users.

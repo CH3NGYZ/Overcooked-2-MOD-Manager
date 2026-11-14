@@ -3,6 +3,38 @@ use std::path::{Component, Path};
 const CHECK_FLAG: &str = "--validate-manager-install-dir";
 const ERROR: &str = "config.installGuardBepInEx";
 
+#[derive(Debug)]
+pub(crate) enum InstallDirectoryError {
+    Forbidden,
+    Unavailable(String),
+}
+
+impl InstallDirectoryError {
+    fn exit_code(&self) -> i32 {
+        match self {
+            Self::Forbidden => 1,
+            Self::Unavailable(_) => 2,
+        }
+    }
+}
+
+impl std::fmt::Display for InstallDirectoryError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Forbidden => formatter.write_str("invalid directory or directory inside BepInEx"),
+            Self::Unavailable(error) => {
+                write!(formatter, "cannot resolve installation directory: {error}")
+            }
+        }
+    }
+}
+
+impl From<InstallDirectoryError> for String {
+    fn from(_: InstallDirectoryError) -> Self {
+        ERROR.into()
+    }
+}
+
 /// 校验管理器安装目录。
 ///
 /// 禁止范围是**整个 `BepInEx` 树**：管理器备份与恢复框架时按整棵树快照，
@@ -11,21 +43,22 @@ const ERROR: &str = "config.installGuardBepInEx";
 ///
 /// 这条规则与数据根无关 —— 数据已经放在用户文档目录（macOS 是
 /// `~/Library/Application Support`），不再跟着安装目录走。
-pub(crate) fn validate_install_dir(directory: &Path) -> Result<(), String> {
+pub(crate) fn validate_install_dir(directory: &Path) -> Result<(), InstallDirectoryError> {
     if directory.as_os_str().is_empty() || !directory.is_absolute() {
-        return Err(ERROR.into());
+        return Err(InstallDirectoryError::Forbidden);
     }
     if is_inside_bepinex(directory)? {
-        return Err(ERROR.into());
+        return Err(InstallDirectoryError::Forbidden);
     }
     Ok(())
 }
 
 /// 目录是否位于任意 `BepInEx` 目录内（含其本身）。
-pub(crate) fn is_inside_bepinex(directory: &Path) -> Result<bool, String> {
-    let absolute = std::path::absolute(directory).map_err(|_| ERROR.to_string())?;
-    let resolved =
-        crate::game::resolve_existing_ancestor(&absolute).map_err(|_| ERROR.to_string())?;
+pub(crate) fn is_inside_bepinex(directory: &Path) -> Result<bool, InstallDirectoryError> {
+    let absolute = std::path::absolute(directory)
+        .map_err(|error| InstallDirectoryError::Unavailable(error.to_string()))?;
+    let resolved = crate::game::resolve_existing_ancestor(&absolute)
+        .map_err(InstallDirectoryError::Unavailable)?;
     Ok(inside_bepinex(&absolute) || inside_bepinex(&resolved))
 }
 
@@ -67,35 +100,59 @@ pub(crate) fn run_if_requested() {
         return;
     }
     let directory = arguments.next().unwrap_or_default();
-    if validate_install_dir(Path::new(&directory)).is_ok() {
-        std::process::exit(0);
-    }
+    let error = match validate_install_dir(Path::new(&directory)) {
+        Ok(()) => std::process::exit(0),
+        Err(error) => error,
+    };
+    eprintln!("Install directory validation failed: {error}");
     let options = arguments.collect::<Vec<_>>();
     if options.iter().any(|argument| argument == "--show-error") {
         let language = options
             .windows(2)
             .find(|pair| pair[0] == "--language")
             .map(|pair| pair[1].to_string_lossy());
-        show_error(language.as_deref().unwrap_or("1033"));
+        show_error(language.as_deref().unwrap_or("1033"), &error);
     }
-    std::process::exit(1);
+    std::process::exit(error.exit_code());
 }
 
-fn show_error(language: &str) {
+#[cfg(any(windows, test))]
+fn error_message(language: &str, error: &InstallDirectoryError) -> &'static str {
+    match (language, error) {
+        ("2052", InstallDirectoryError::Forbidden) => {
+            "管理器不能安装到 BepInEx 文件夹或其子目录，请选择游戏目录外的位置。"
+        }
+        ("1028", InstallDirectoryError::Forbidden) => {
+            "管理器不能安裝到 BepInEx 資料夾或其子目錄，請選擇遊戲目錄外的位置。"
+        }
+        ("1042", InstallDirectoryError::Forbidden) => {
+            "관리자를 BepInEx 폴더 또는 그 하위 폴더에 설치할 수 없습니다. 게임 폴더 밖의 위치를 선택하세요."
+        }
+        ("1041", InstallDirectoryError::Forbidden) => {
+            "マネージャーを BepInEx フォルダーまたはそのサブフォルダーにはインストールできません。ゲームフォルダー外の場所を選択してください。"
+        }
+        (_, InstallDirectoryError::Forbidden) => {
+            "The manager cannot be installed in the BepInEx folder or any of its subfolders. Choose a location outside the game directory."
+        }
+        ("2052", _) => "无法完成安装目录校验，请查看安装详情中的错误原因后重试。",
+        ("1028", _) => "無法完成安裝目錄驗證，請查看安裝詳細資料中的錯誤原因後重試。",
+        ("1042", _) => {
+            "설치 폴더 확인을 완료하지 못했습니다. 설치 세부 정보에서 오류를 확인한 후 다시 시도하세요."
+        }
+        ("1041", _) => {
+            "インストール先の確認を完了できませんでした。インストールの詳細でエラーを確認してから再試行してください。"
+        }
+        _ => {
+            "Installation directory validation could not be completed. Check the error in the installation details and try again."
+        }
+    }
+}
+
+fn show_error(language: &str, error: &InstallDirectoryError) {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
-        let message = match language {
-            "2052" => ERROR,
-            "1028" => "config.installGuardBepInExTraditional",
-            "1042" => {
-                "관리자를 BepInEx 폴더 또는 그 하위 폴더에 설치할 수 없습니다. 게임 폴더 밖의 위치를 선택하세요."
-            }
-            _ => {
-                "The manager cannot be installed in the BepInEx folder or any of its subfolders. Choose a location outside the game directory."
-            }
-        };
-        let message = std::ffi::OsStr::new(message)
+        let message = std::ffi::OsStr::new(error_message(language, error))
             .encode_wide()
             .chain(Some(0))
             .collect::<Vec<_>>();
@@ -113,7 +170,7 @@ fn show_error(language: &str) {
         }
     }
     #[cfg(not(windows))]
-    let _ = language;
+    let _ = (language, error);
 }
 
 #[cfg(test)]

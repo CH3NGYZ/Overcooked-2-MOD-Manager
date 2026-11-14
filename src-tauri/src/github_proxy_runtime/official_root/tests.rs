@@ -318,10 +318,10 @@ async fn every_official_document_alias_reads_the_captured_package_without_http()
         Reply::zip(archive(&documents())),
     )]);
     let runtime = ProxyRuntime::new(DataProvider::Github);
-    let root = runtime
-        .official_root_from(false, |provider| routes(&base, provider))
-        .await
-        .unwrap();
+    for provider in [DataProvider::Github, DataProvider::Cloudflare] {
+        runtime.set_official_address_for_test(provider, routes(&base, provider));
+    }
+    let root = runtime.official_root(false).await.unwrap();
     let child = SourceLocation::parse(&root.document.repository_sources[0].url).unwrap();
     let loaded = runtime
         .in_selection(root.selection, async {

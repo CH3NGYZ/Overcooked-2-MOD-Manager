@@ -9,6 +9,9 @@ use std::sync::Arc;
 pub(crate) struct OfficialRootSnapshot {
     pub(crate) selection: (DataProvider, u64),
     pub(crate) document: RepositorySourceDocument,
+    // Production readers capture the package through in_selection; tests also
+    // inspect the returned Arc to verify reuse and generation isolation.
+    #[cfg(test)]
     pub(crate) package: Arc<SourcePackage>,
 }
 
@@ -144,13 +147,14 @@ impl ProxyRuntime {
                     return Err("source.addressMismatch".into());
                 }
                 if (!force || (snapshot.provider, snapshot.revision) != selection)
-                    && let (Some(document), Some(package)) =
+                    && let (Some(document), Some(_package)) =
                         (&snapshot.official_root, &snapshot.package)
                 {
                     return Ok(OfficialRootSnapshot {
                         selection: (snapshot.provider, snapshot.revision),
                         document: document.clone(),
-                        package: package.clone(),
+                        #[cfg(test)]
+                        package: _package.clone(),
                     });
                 }
                 if (snapshot.provider, snapshot.revision) != expected {
@@ -206,6 +210,7 @@ impl ProxyRuntime {
                     return Ok(OfficialRootSnapshot {
                         selection: (snapshot.provider, snapshot.revision),
                         document,
+                        #[cfg(test)]
                         package,
                     });
                 }

@@ -1,11 +1,11 @@
-//! Metadata-only invalidation. Never reads resource contents to detect changes.
+//! Metadata and observed-change invalidation, without reading resource contents.
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 const MAX_MANIFEST_BYTES: usize = 2 * 1024 * 1024;
 
-pub(crate) fn directory(path: &Path) -> Result<String, String> {
+pub(crate) fn directory(path: &Path, resources_revision: u64) -> Result<String, String> {
     let root = path
         .canonicalize()
         .map_err(|_| "diychef.previewUnavailable")?;
@@ -48,7 +48,18 @@ pub(crate) fn directory(path: &Path) -> Result<String, String> {
         }
     }
     rows.sort_by(|a, b| a.0.cmp(&b.0));
-    manifest(format_args!("{}|{:?}", root.display(), rows))
+    if resources_revision == 0 {
+        // Preserve the legacy manifest for explicit zero-revision contexts.
+        manifest(format_args!("{}|{:?}", root.display(), rows))
+    } else {
+        // The watcher persists this stamp: same-size/mtime edits stay invalidated
+        // across restarts without rereading model contents for every preview.
+        manifest(format_args!(
+            "{}|{:?}|observed:{resources_revision}",
+            root.display(),
+            rows
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -216,10 +227,11 @@ mod tests {
         let expected = legacy_files(&paths);
         assert_eq!(files(&paths).unwrap(), expected);
         assert_eq!(metadata_files(&rows).unwrap(), expected);
-        assert_eq!(directory(&chef).unwrap(), legacy_directory(&chef));
-        assert_eq!(directory(&hat).unwrap(), legacy_directory(&hat));
+        assert_eq!(directory(&chef, 0).unwrap(), legacy_directory(&chef));
+        assert_eq!(directory(&hat, 0).unwrap(), legacy_directory(&hat));
         let context = crate::diychef::session::PreviewContext {
             session_id: "legacy-key-fixture".into(),
+            resources_revision: 0,
             game_root: root.clone(),
             chef_name: "猫咪 chef 😀".into(),
             chef_directory: Some(chef),
@@ -274,7 +286,7 @@ mod tests {
         let chef = resources.join("00-Fox");
         let hat = resources.join("HATS/Wizardhat");
         for dir in [&chef, &hat] {
-            let manifest = directory(dir).unwrap();
+            let manifest = directory(dir, 0).unwrap();
             assert_eq!(manifest, legacy_directory(dir));
             eprintln!(
                 "legacy directory {}: manifest_bytes={} identical=true",
@@ -289,6 +301,7 @@ mod tests {
         ] {
             let context = crate::diychef::session::PreviewContext {
                 session_id: "legacy-real-key-fixture".into(),
+                resources_revision: 0,
                 game_root: game.to_owned(),
                 chef_name: name.into(),
                 chef_directory,
@@ -306,13 +319,13 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("chef-stamp-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join("nested")).unwrap();
         std::fs::write(dir.join("Head.obj"), "abc").unwrap();
-        let first = directory(&dir).unwrap();
-        assert_eq!(first, directory(&dir).unwrap());
+        let first = directory(&dir, 0).unwrap();
+        assert_eq!(first, directory(&dir, 0).unwrap());
         std::fs::write(dir.join("nested/extra.bin"), "x").unwrap();
-        let extra = directory(&dir).unwrap();
+        let extra = directory(&dir, 0).unwrap();
         assert_ne!(first, extra);
         std::fs::rename(dir.join("Head.obj"), dir.join("Head1.obj")).unwrap();
-        assert_ne!(extra, directory(&dir).unwrap());
+        assert_ne!(extra, directory(&dir, 0).unwrap());
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
@@ -324,29 +337,29 @@ mod tests {
         std::fs::write(&path, b"abc").unwrap();
         let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
         let modified = file.metadata().unwrap().modified().unwrap();
-        let before = directory(&dir).unwrap();
+        let before = directory(&dir, 0).unwrap();
         file.set_len(4).unwrap();
         file.set_times(std::fs::FileTimes::new().set_modified(modified))
             .unwrap();
-        let resized = directory(&dir).unwrap();
+        let resized = directory(&dir, 0).unwrap();
         assert_ne!(before, resized, "size alone invalidates");
         file.set_len(3).unwrap();
         file.set_times(std::fs::FileTimes::new().set_modified(modified))
             .unwrap();
         assert_eq!(
             before,
-            directory(&dir).unwrap(),
+            directory(&dir, 0).unwrap(),
             "same metadata identity is restored"
         );
         file.set_times(
             std::fs::FileTimes::new().set_modified(modified + std::time::Duration::from_secs(60)),
         )
         .unwrap();
-        let retimed = directory(&dir).unwrap();
+        let retimed = directory(&dir, 0).unwrap();
         assert_ne!(before, retimed, "mtime alone invalidates");
         drop(file);
         std::fs::remove_file(&path).unwrap();
-        assert_ne!(retimed, directory(&dir).unwrap(), "deletion invalidates");
+        assert_ne!(retimed, directory(&dir, 0).unwrap(), "deletion invalidates");
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

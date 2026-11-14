@@ -224,6 +224,7 @@ pub(crate) fn validate(
 #[derive(Clone, Debug)]
 pub(crate) struct PreviewContext {
     pub session_id: String,
+    pub resources_revision: u64,
     pub game_root: PathBuf,
     pub chef_name: String,
     pub chef_directory: Option<PathBuf>,
@@ -236,26 +237,28 @@ pub(crate) fn resolve_preview_context(
     chef_id: &str,
     hat_id: &str,
 ) -> Result<PreviewContext, String> {
-    let (game_root, mod_root, chef, hat) = with_preview_session(state, session_id, |s| {
-        let chef = s
-            .catalog
-            .chefs
-            .iter()
-            .find(|x| x.id == chef_id)
-            .ok_or("diychef.invalidResource")?;
-        let hat = s
-            .catalog
-            .hats
-            .iter()
-            .find(|x| x.id == hat_id)
-            .ok_or("diychef.invalidResource")?;
-        Ok((
-            s.game_root.clone(),
-            s.mod_root.clone(),
-            chef.clone(),
-            hat.clone(),
-        ))
-    })?;
+    let (game_root, mod_root, resources_revision, chef, hat) =
+        with_preview_session(state, session_id, |s| {
+            let chef = s
+                .catalog
+                .chefs
+                .iter()
+                .find(|x| x.id == chef_id)
+                .ok_or("diychef.invalidResource")?;
+            let hat = s
+                .catalog
+                .hats
+                .iter()
+                .find(|x| x.id == hat_id)
+                .ok_or("diychef.invalidResource")?;
+            Ok((
+                s.game_root.clone(),
+                s.mod_root.clone(),
+                s.resources_revision,
+                chef.clone(),
+                hat.clone(),
+            ))
+        })?;
     if chef.resource_state == "invalid" || hat.resource_state == "invalid" {
         return Err("diychef.invalidResource".into());
     }
@@ -279,6 +282,7 @@ pub(crate) fn resolve_preview_context(
     };
     Ok(PreviewContext {
         session_id: session_id.into(),
+        resources_revision,
         game_root,
         chef_name: if chef.source_kind == "custom" {
             chef.config_name.clone()

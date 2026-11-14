@@ -15,6 +15,7 @@ pub(super) enum CacheDirectory {
     Thumbnails,
     Native,
     Assets,
+    ResourcesRevisions,
 }
 
 pub(super) fn directory() -> Result<PathBuf, String> {
@@ -26,11 +27,12 @@ pub(super) fn fixed_directory(kind: CacheDirectory) -> Result<PathBuf, String> {
     directory_under(&root, kind)
 }
 
-fn directory_under(root: &Path, kind: CacheDirectory) -> Result<PathBuf, String> {
+pub(super) fn directory_under(root: &Path, kind: CacheDirectory) -> Result<PathBuf, String> {
     let leaf = match kind {
         CacheDirectory::Thumbnails => "diychef-thumbnails",
         CacheDirectory::Native => "diychef-native",
         CacheDirectory::Assets => "diychef-assets",
+        CacheDirectory::ResourcesRevisions => "diychef-resource-revisions",
     };
     let directory = root.join("cache").join(leaf);
     // The system's data root may itself be redirected. Disposable child

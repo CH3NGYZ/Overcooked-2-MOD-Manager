@@ -16,7 +16,7 @@ pub(super) fn scene(context: &PreviewContext, epoch: u64) -> Result<Prepared, St
         .as_deref()
         .ok_or("diychef.previewUnavailable")?;
     native::with_store(&context.game_root, epoch, |store| {
-        let stamp = super::fingerprint::directory(dir)?;
+        let stamp = super::fingerprint::directory(dir, context.resources_revision)?;
         let (template, body_warning) = body(dir, store)?;
         let tree = native::tree(store, &template)?;
         if let Some(cached) = store.custom_models.get(&stamp) {

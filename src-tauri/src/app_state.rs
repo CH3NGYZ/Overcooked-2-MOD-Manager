@@ -66,11 +66,12 @@ impl AppState {
     }
 
     pub(crate) fn with_config(config: ConfigService) -> Self {
+        let diychef_watch = Arc::new(crate::diychef::watch::ChefWatcher::new(config.cache_dir()));
         Self {
             config,
             local_mod_snapshot: Arc::default(),
             diychef_sessions: Arc::default(),
-            diychef_watch: Arc::default(),
+            diychef_watch,
             operation: Arc::new(Mutex::new(())),
             repository_cache: Arc::new(tokio::sync::Mutex::new(())),
             community: Arc::new(crate::community::CommunitySearch::default()),

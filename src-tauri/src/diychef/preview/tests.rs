@@ -15,6 +15,7 @@ fn scene_fingerprint_is_stable_across_sessions_and_tracks_selected_hat_files() {
     std::fs::write(hat.join("Test.obj"), b"deliberately not a valid OBJ").unwrap();
     let context = crate::diychef::session::PreviewContext {
         session_id: "first".into(),
+        resources_revision: 0,
         game_root: root.clone(),
         chef_name: "Fox".into(),
         chef_directory: Some(chef),
@@ -107,6 +108,7 @@ fn real_chef_previews() {
         let start = std::time::Instant::now();
         let context = crate::diychef::session::PreviewContext {
             session_id: "fixture".into(),
+            resources_revision: 0,
             game_root: game.clone(),
             chef_name: name.into(),
             chef_directory: custom.then(|| root.join("Resources").join(name)),

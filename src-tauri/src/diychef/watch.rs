@@ -1,12 +1,12 @@
 //! Observe only files belonging to the backend-authorized selected DIYChef.
 use crate::{directory_watch::DirectoryWatcher, models::ChefTarget};
 use std::{
-    path::{Component, Path},
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    path::{Component, Path, PathBuf},
+    sync::{Arc, atomic::Ordering},
 };
+
+mod revisions;
+use revisions::ResourceRevisions;
 
 pub(crate) const FILES_CHANGED_EVENT: &str = "diychef-files-changed";
 
@@ -17,13 +17,19 @@ pub(crate) struct FilesChanged {
     pub resources_changed: bool,
 }
 
-#[derive(Default)]
 pub(crate) struct ChefWatcher {
     directory: DirectoryWatcher<(String, u64)>,
-    resources_revision: Arc<AtomicU64>,
+    resources_revision: Arc<ResourceRevisions>,
 }
 
 impl ChefWatcher {
+    pub(crate) fn new(cache_directory: PathBuf) -> Self {
+        Self {
+            directory: DirectoryWatcher::default(),
+            resources_revision: Arc::new(ResourceRevisions::new(cache_directory)),
+        }
+    }
+
     /// Register before the first catalog/TXT read; the caller only supplies the
     /// path returned by target::mod_root, never a frontend-selected path.
     pub(crate) fn watch(
@@ -40,11 +46,22 @@ impl ChefWatcher {
         };
         let accept_root = root.to_path_buf();
         let emit_root = accept_root.clone();
+        let pending = self.resources_revision.pending_flag(root);
         let resources_revision = self.resources_revision.clone();
         self.directory.watch(
             key,
             vec![root.to_path_buf()],
             move |event| {
+                if event
+                    .paths
+                    .iter()
+                    .any(|path| classify(&accept_root, path) == Some(true))
+                {
+                    // The debounced worker can be replaced before it emits.
+                    // Keep receipt independently, without doing IO in notify.
+                    pending.store(true, Ordering::Release);
+                    return true;
+                }
                 event
                     .paths
                     .iter()
@@ -55,19 +72,29 @@ impl ChefWatcher {
                 payload.resources_changed = paths
                     .iter()
                     .any(|path| classify(&emit_root, path) == Some(true));
-                // Catalog identity excludes OBJ/texture bytes. Advance before
-                // notifying so the next read refreshes the preview session too.
+                // Persist before notifying: metadata can remain unchanged, and
+                // a restarted process must not revive the previous PNG key.
                 if payload.resources_changed {
-                    resources_revision.fetch_add(1, Ordering::AcqRel);
+                    resources_revision.current(&emit_root);
                 }
                 emit(payload);
             },
         );
-        self.resources_revision.load(Ordering::Acquire)
+        // watch joins the old worker before this read; never hold the revision
+        // lock across registration, since that worker may still be advancing.
+        self.resources_revision.flush_pending();
+        self.resources_revision.current(root)
     }
 
     pub(crate) fn stop(&self) {
         self.directory.stop();
+        self.resources_revision.flush_pending();
+    }
+}
+
+impl Drop for ChefWatcher {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 

@@ -33,6 +33,7 @@ impl Temporary {
     fn context(&self, session: &str) -> PreviewContext {
         PreviewContext {
             session_id: session.into(),
+            resources_revision: 0,
             game_root: self.0.clone(),
             chef_name: "immutable-range-fixture".into(),
             chef_directory: None,
@@ -101,6 +102,48 @@ fn missing_disk_assets_invalidate_only_the_authorized_entry_and_normal_preparati
 }
 
 #[test]
+fn observed_resource_edits_rebuild_assets_and_keep_unchanged_or_native_previews_reusable() {
+    let _guard = preview::TEST_CACHE_ACCESS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    clear();
+    let root = Temporary::new();
+    let directory = root.0.join("diychef-assets");
+    let resource = root.0.join("Resources/Fox");
+    std::fs::create_dir_all(&resource).unwrap();
+    std::fs::write(resource.join("Head.obj"), b"fixture").unwrap();
+    let epoch = preview::cache_epoch();
+    let native = root.context("native-editor");
+    let mut context = root.context("custom-editor");
+    context.chef_directory = Some(resource);
+    let original = get_or_prepare(&context, epoch, &directory, || Ok(prepared(1.))).unwrap();
+    context.resources_revision = 1;
+    let changed = get_or_prepare(&context, epoch, &directory, || Ok(prepared(2.))).unwrap();
+    assert_ne!(original.fingerprint, changed.fingerprint);
+    assert_eq!(
+        read_asset(&context.session_id, &changed.meshes[0].geometry_asset).unwrap(),
+        prepared(2.).parts[0].geometry.bytes()
+    );
+    context.session_id = "reopened-after-prefer-edit".into();
+    let reused = get_or_prepare(&context, epoch, &directory, || {
+        panic!("TXT-only reopening must reuse the prepared preview")
+    })
+    .unwrap();
+    assert_eq!(changed.fingerprint, reused.fingerprint);
+    let mut native_after_edit = native.clone();
+    native_after_edit.resources_revision = 1;
+    assert_eq!(
+        preview::context_fingerprint(&native).unwrap(),
+        preview::context_fingerprint(&native_after_edit).unwrap()
+    );
+    context.hat_directory = context.chef_directory.take();
+    let custom_hat = preview::context_fingerprint(&context).unwrap();
+    context.resources_revision = 2;
+    assert_ne!(custom_hat, preview::context_fingerprint(&context).unwrap());
+    clear();
+}
+
+#[test]
 fn concurrent_preparations_keep_exact_asset_authorization_for_both_live_editors() {
     let _guard = preview::TEST_CACHE_ACCESS
         .lock()
@@ -150,6 +193,7 @@ fn clearing_invalidates_scene_assets_and_queued_png_writes_without_old_completio
     let asset_directory = root.join("diychef-assets");
     let context = PreviewContext {
         session_id: "cache-clear-fixture".into(),
+        resources_revision: 0,
         game_root: root.clone(),
         chef_name: "initial".into(),
         chef_directory: None,

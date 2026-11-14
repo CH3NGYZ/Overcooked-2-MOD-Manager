@@ -103,10 +103,10 @@ fn context_fingerprint(context: &super::session::PreviewContext) -> Result<Strin
     digest.update(prefix.as_bytes());
     digest.update(metadata::game(&context.game_root)?.manifest.as_bytes());
     if let Some(dir) = &context.chef_directory {
-        digest.update(fingerprint::directory(dir)?.as_bytes());
+        digest.update(fingerprint::directory(dir, context.resources_revision)?.as_bytes());
     }
     if let Some(dir) = &context.hat_directory {
-        digest.update(fingerprint::directory(dir)?.as_bytes());
+        digest.update(fingerprint::directory(dir, context.resources_revision)?.as_bytes());
     }
     // Stream the original manifest bytes to preserve existing PNG identities.
     // Resource contents are never read, and no combined manifest is allocated.

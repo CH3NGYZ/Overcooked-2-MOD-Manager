@@ -30,6 +30,7 @@ const SESSION: &str = "twelve-real-model-export";
 fn context(game: &Path, name: &str) -> PreviewContext {
     PreviewContext {
         session_id: SESSION.into(),
+        resources_revision: 0,
         game_root: game.to_owned(),
         chef_name: name.into(),
         chef_directory: None,

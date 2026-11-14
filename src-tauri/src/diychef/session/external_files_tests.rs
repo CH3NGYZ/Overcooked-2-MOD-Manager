@@ -24,7 +24,7 @@ fn real_resource_content_notification_rotates_session_and_rechecks_preview_witho
     fs::write(resource.join("m_Head.txt"), b"fixture material").unwrap();
     let prefer = mod_root.join("prefer.txt");
     fs::write(&prefer, b"Chef_Black_cat\nFox HAT=None\n").unwrap();
-    let installed = serde_json::from_value(serde_json::json!({
+    let installed: InstalledMod = serde_json::from_value(serde_json::json!({
         "name":"DIYChef", "guid":target::GUID, "version":"2.2.0", "dll_file":"BepInEx/plugins/DIYChef/DIYChef.dll",
         "enabled":true, "version_source":"plugin", "update_available":false, "duplicate_guid":false, "status":"unknown"
     })).unwrap();
@@ -33,7 +33,7 @@ fn real_resource_content_notification_rotates_session_and_rechecks_preview_witho
         .local_mod_snapshot
         .lock()
         .unwrap()
-        .publish(generation, Some(&root), vec![installed])
+        .publish(generation, Some(&root), vec![installed.clone()])
         .unwrap();
     let (tx, rx) = mpsc::channel();
     let subscribe = |selected: Option<(&Path, &ChefTarget)>| {
@@ -50,12 +50,42 @@ fn real_resource_content_notification_rotates_session_and_rechecks_preview_witho
     let fingerprint = |session: &str| {
         super::super::preview::fingerprint(&state, session, "custom:Fox", "hat:None").unwrap()
     };
+    let native_fingerprint = |session: &str| {
+        super::super::preview::fingerprint(&state, session, "native:Chef_Black_cat", "hat:None")
+            .unwrap()
+    };
     let old_fingerprint = fingerprint(&first.session_id);
-    fs::write(
-        resource.join("t_Head.png"),
-        b"replacement texture with another size",
-    )
-    .unwrap();
+    let old_native_fingerprint = native_fingerprint(&first.session_id);
+    let thumbnails = state.config.cache_dir().join("diychef-thumbnails");
+    let png = |color| {
+        let mut bytes = std::io::Cursor::new(vec![]);
+        image::RgbaImage::from_pixel(512, 640, image::Rgba(color))
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        bytes.into_inner()
+    };
+    let first_png = png([255, 0, 0, 255]);
+    let changed_png = png([0, 0, 255, 255]);
+    let cache = |fingerprint: &str, png: Option<&[u8]>| {
+        super::super::thumbnail_cache::access_at(
+            &thumbnails,
+            &format!("watch-restart:{fingerprint}"),
+            png,
+            false,
+            super::super::preview::cache_epoch(),
+        )
+        .unwrap()
+    };
+    cache(&old_fingerprint, Some(&first_png));
+    let texture = resource.join("t_Head.png");
+    let original_time = fs::metadata(&texture).unwrap().modified().unwrap();
+    fs::write(&texture, b"other texture").unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&texture)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(original_time))
+        .unwrap();
     assert!(
         rx.recv_timeout(Duration::from_secs(5))
             .unwrap()
@@ -68,7 +98,15 @@ fn real_resource_content_notification_rotates_session_and_rechecks_preview_witho
     assert_eq!(first.catalog_revision, changed.catalog_revision);
     assert_eq!(first.source.revision, changed.source.revision);
     assert_ne!(first.session_id, changed.session_id);
-    assert_ne!(old_fingerprint, fingerprint(&changed.session_id));
+    let new_fingerprint = fingerprint(&changed.session_id);
+    assert_ne!(old_fingerprint, new_fingerprint);
+    assert!(cache(&new_fingerprint, None).is_empty());
+    cache(&new_fingerprint, Some(&changed_png));
+    assert_eq!(cache(&old_fingerprint, None)[1..], first_png);
+    assert_eq!(
+        old_native_fingerprint,
+        native_fingerprint(&changed.session_id)
+    );
     // A later prefer-only save echo must keep this preview session alive.
     fs::write(&prefer, fs::read(&prefer).unwrap()).unwrap();
     assert!(
@@ -81,7 +119,47 @@ fn real_resource_content_notification_rotates_session_and_rechecks_preview_witho
         .snapshot
         .unwrap();
     assert_eq!(changed.session_id, echo.session_id);
+    assert_eq!(new_fingerprint, fingerprint(&echo.session_id));
     state.diychef_watch.stop();
+
+    // Recreate all application state against the same isolated manager data.
+    // The original A PNG remains on disk; restarting must keep B's identity.
+    let restarted = AppState::with_config(ConfigService::for_test(workspace.0.join("manager")));
+    let generation = restarted
+        .local_mod_snapshot
+        .lock()
+        .unwrap()
+        .begin(Some(&root));
+    restarted
+        .local_mod_snapshot
+        .lock()
+        .unwrap()
+        .publish(generation, Some(&root), vec![installed])
+        .unwrap();
+    let subscribe = |selected: Option<(&Path, &ChefTarget)>| {
+        let (root, target) = selected.unwrap();
+        restarted.diychef_watch.watch(root, target, |_| {})
+    };
+    let reopened = open(&restarted, generation, None, &subscribe)
+        .unwrap()
+        .snapshot
+        .unwrap();
+    let restored = super::super::preview::fingerprint(
+        &restarted,
+        &reopened.session_id,
+        "custom:Fox",
+        "hat:None",
+    )
+    .unwrap();
+    assert_eq!(restored, new_fingerprint);
+    assert_eq!(cache(&restored, None)[1..], changed_png);
+    assert_eq!(cache(&old_fingerprint, None)[1..], first_png);
+    let unchanged = open(&restarted, generation, None, &subscribe)
+        .unwrap()
+        .snapshot
+        .unwrap();
+    assert_eq!(unchanged.session_id, reopened.session_id);
+    restarted.diychef_watch.stop();
 }
 
 #[test]

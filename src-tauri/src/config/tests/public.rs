@@ -82,11 +82,7 @@ fn public_discovery_hides_late_official_descendants_without_erasing_saved_bindin
 
 #[test]
 fn structured_repository_fields_survive_storage_and_public_config_without_urls() {
-    let service = ConfigService {
-        root: std::env::temp_dir(),
-        cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
-        proxies: Default::default(),
-    };
+    let service = ConfigService::for_test(std::env::temp_dir());
     let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
     let export = crate::repository_sources::parse_document(
         REGION_REPOSITORY,

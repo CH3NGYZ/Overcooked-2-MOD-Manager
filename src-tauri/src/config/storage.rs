@@ -13,12 +13,15 @@ use chrono::Utc;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
-use uuid::Uuid;
+use std::sync::MutexGuard;
 
 const CONFIG_FILE: &str = "config.toml";
 
 #[cfg(test)]
 mod test_support;
+#[cfg(test)]
+mod tests;
+mod transaction;
 
 impl ConfigService {
     pub fn new() -> Result<Self, ConfigError> {
@@ -32,6 +35,7 @@ impl ConfigService {
         log::debug!("配置服务初始化完成：目录={}", root.display());
         Ok(Self {
             root,
+            storage_lock: Default::default(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
             proxies: std::sync::Arc::new(crate::github_proxy_runtime::ProxyRuntime::new(
                 DataProvider::for_region(super::availability::current_user_region()),
@@ -60,13 +64,21 @@ impl ConfigService {
     }
 
     pub fn load(&self) -> Result<AppConfig, ConfigError> {
+        // Keep the fingerprint/read/cache update in the same transaction as save:
+        // otherwise readers can observe the gap between target and previous.
+        let guard = self
+            .storage_lock
+            .lock()
+            .map_err(|_| ConfigError::Read("lock.poisoned".into()))?;
         let path = self.config_path();
         // 文件指纹没变 → 直接返回缓存副本，避免重复读盘与 TOML 解析
         if let Some(cached) = self.cached_if_fresh(&path) {
+            drop(guard);
             return Ok(self.with_runtime(cached));
         }
-        let config = self.load_from_disk()?;
+        let config = self.load_from_disk(&guard)?;
         self.store_cache(&path, &config);
+        drop(guard);
         Ok(self.with_runtime(config))
     }
 
@@ -142,7 +154,7 @@ impl ConfigService {
         }
     }
 
-    fn load_from_disk(&self) -> Result<AppConfig, ConfigError> {
+    fn load_from_disk(&self, guard: &MutexGuard<'_, ()>) -> Result<AppConfig, ConfigError> {
         let path = self.config_path();
         let previous = self.root.join("config.previous.toml");
         log::debug!(
@@ -159,7 +171,7 @@ impl ConfigService {
         } else {
             log::info!("未找到配置文件，创建默认配置");
             let config = self.with_runtime(default_config());
-            self.save(&config)?;
+            self.save_locked(&config, guard)?;
             return Ok(config);
         };
         let text = fs::read_to_string(&source).map_err(|e| {
@@ -190,7 +202,7 @@ impl ConfigService {
                 }
                 if changed {
                     log::info!("配置需要迁移或同步，保存更新后的配置");
-                    self.save(&config)?;
+                    self.save_locked(&config, guard)?;
                 }
                 // 走到这里说明真的读了盘：用 info 记录一次，便于排查迁移/同步问题。
                 // 命中缓存的高频读取不再重复打印（见 load()）。
@@ -211,7 +223,7 @@ impl ConfigService {
                 ));
                 let _ = fs::rename(&source, backup);
                 let config = self.with_runtime(default_config());
-                self.save(&config)?;
+                self.save_locked(&config, guard)?;
                 Err(ConfigError::Parse(error.to_string()))
             }
         }
@@ -225,6 +237,20 @@ impl ConfigService {
     }
 
     pub fn save(&self, config: &AppConfig) -> Result<(), ConfigError> {
+        let guard = self
+            .storage_lock
+            .lock()
+            .map_err(|_| ConfigError::Write("lock.poisoned".into()))?;
+        self.save_locked(config, &guard)
+    }
+
+    // load owns the same transaction while it migrates or creates defaults;
+    // accepting its guard prevents accidentally trying to acquire it twice.
+    fn save_locked(
+        &self,
+        config: &AppConfig,
+        _guard: &MutexGuard<'_, ()>,
+    ) -> Result<(), ConfigError> {
         log::debug!(
             "开始保存配置：仓库={}，仓库源={}",
             config.repositories.len(),
@@ -238,45 +264,9 @@ impl ConfigService {
             log::error!("序列化配置失败：原因={}", e);
             ConfigError::Write(e.to_string())
         })?;
-        let temp = self.root.join(format!("config.{}.tmp", Uuid::new_v4()));
-        fs::write(&temp, text).map_err(|e| {
-            log::error!("写入配置临时文件失败：原因={}", e);
-            ConfigError::Write(e.to_string())
-        })?;
         let target = self.config_path();
-        let previous = self.root.join("config.previous.toml");
-        if target.exists() {
-            if let Err(error) = fs::remove_file(&previous)
-                && error.kind() != std::io::ErrorKind::NotFound
-            {
-                log::warn!("删除旧配置备份失败，将继续覆盖：原因={}", error);
-            }
-            fs::rename(&target, &previous).map_err(|e| {
-                log::error!("备份旧配置失败：原因={}", e);
-                ConfigError::Write(e.to_string())
-            })?;
-        }
-        if let Err(error) = fs::rename(&temp, &target) {
-            if let Err(cleanup_error) = fs::remove_file(&temp)
-                && cleanup_error.kind() != std::io::ErrorKind::NotFound
-            {
-                log::warn!("替换配置失败后清理临时文件失败：原因={}", cleanup_error);
-            }
-            if previous.exists() {
-                if let Err(rollback_error) = fs::rename(&previous, &target) {
-                    log::error!("替换配置失败且恢复旧配置失败：恢复原因={}", rollback_error);
-                } else {
-                    log::warn!("替换配置失败，已恢复旧配置");
-                }
-            }
-            log::error!("替换配置文件失败：原因={}", error);
-            return Err(ConfigError::Write(error.to_string()));
-        }
-        if let Err(error) = fs::remove_file(previous)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            log::warn!("配置保存成功但旧备份清理失败：原因={}", error);
-        }
+        transaction::write_config(&self.root, &target, text.as_bytes())
+            .map_err(|error| ConfigError::Write(error.to_string()))?;
         log::info!("配置保存完成");
         // 自己刚写入的内容就是最新值：同步缓存，避免下一次 load 再次读盘
         self.store_cache(&target, config);

@@ -11,11 +11,7 @@ use super::REGION_REPOSITORY;
 
 #[test]
 fn source_nickname_translations_survive_config_and_bundle_round_trips() {
-    let service = ConfigService {
-        root: std::env::temp_dir(),
-        cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
-        proxies: Default::default(),
-    };
+    let service = ConfigService::for_test(std::env::temp_dir());
     let legacy: RepositorySource = toml::from_str(
         r#"
 id = "custom-translated-source"
@@ -58,13 +54,11 @@ url = "https://example.com/mods.toml"
 
 #[test]
 fn legacy_repository_metadata_migrates_into_chinese_maps_and_persists_empty_fields() {
-    let service = ConfigService {
-        root: Path::new(env!("CARGO_MANIFEST_DIR"))
+    let service = ConfigService::for_test(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target/test-config-load")
             .join(Uuid::new_v4().to_string()),
-        cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
-        proxies: Default::default(),
-    };
+    );
     let location = crate::repository_sources::SourceLocation::parse("fixture.toml").unwrap();
     let mut config = default_config();
     let export = crate::repository_sources::parse_document(
@@ -123,13 +117,11 @@ fn legacy_repository_metadata_migrates_into_chinese_maps_and_persists_empty_fiel
 
 #[test]
 fn japanese_repository_metadata_survives_import_export_and_config_reload() {
-    let service = ConfigService {
-        root: Path::new(env!("CARGO_MANIFEST_DIR"))
+    let service = ConfigService::for_test(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target/test-config-load")
             .join(Uuid::new_v4().to_string()),
-        cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
-        proxies: Default::default(),
-    };
+    );
     let location = crate::repository_sources::SourceLocation::parse("fixture.toml").unwrap();
     let text = r#"
 [[repositories]]
@@ -183,11 +175,7 @@ value = "Japan.dll"
 
 #[test]
 fn repository_bundle_requires_chinese_metadata_and_ignores_raw_fields() {
-    let service = ConfigService {
-        root: std::env::temp_dir(),
-        cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
-        proxies: Default::default(),
-    };
+    let service = ConfigService::for_test(std::env::temp_dir());
     let bundle_for = |metadata: &str| {
         format!(
             r#"format = "{BUNDLE_FORMAT}"

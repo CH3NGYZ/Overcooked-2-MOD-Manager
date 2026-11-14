@@ -73,6 +73,8 @@ impl std::error::Error for ConfigError {}
 #[derive(Clone)]
 pub struct ConfigService {
     root: PathBuf,
+    /// Clone 共用读写事务；外层 operation → storage_lock → cache，不跨 await。
+    storage_lock: std::sync::Arc<std::sync::Mutex<()>>,
     /// 上次读取的配置快照 + 文件指纹（Arc 让 Clone 共享同一份缓存）。
     ///
     /// 一次启动里同一份配置会被读上百次（每个仓库刷新、每次 Dashboard 读取都要读一次），

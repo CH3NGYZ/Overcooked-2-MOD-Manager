@@ -10,11 +10,7 @@ use super::REGION_REPOSITORY;
 
 #[test]
 fn bundle_round_trip_is_toml() {
-    let service = ConfigService {
-        root: std::env::temp_dir(),
-        cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
-        proxies: Default::default(),
-    };
+    let service = ConfigService::for_test(std::env::temp_dir());
     let config = default_config();
     let text = service.export_bundle(&config, None).unwrap();
     assert!(text.contains("format = \"oc2-mod-repository-bundle\""));
@@ -25,11 +21,7 @@ fn bundle_round_trip_is_toml() {
 
 #[test]
 fn platform_prerelease_verdicts_roundtrip_without_changing_repository_identity() {
-    let service = ConfigService {
-        root: std::env::temp_dir(),
-        cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
-        proxies: Default::default(),
-    };
+    let service = ConfigService::for_test(std::env::temp_dir());
     let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
     let template = crate::repository_sources::parse_document(
         REGION_REPOSITORY,
@@ -74,11 +66,7 @@ fn platform_prerelease_verdicts_roundtrip_without_changing_repository_identity()
 
 #[test]
 fn export_includes_builtin_disabled_and_other_region_repositories_with_their_sources() {
-    let service = ConfigService {
-        root: std::env::temp_dir(),
-        cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
-        proxies: Default::default(),
-    };
+    let service = ConfigService::for_test(std::env::temp_dir());
     let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
     let template = crate::repository_sources::parse_document(
         REGION_REPOSITORY,
@@ -160,11 +148,7 @@ fn export_includes_builtin_disabled_and_other_region_repositories_with_their_sou
 
 #[test]
 fn repository_bundle_export_follows_editor_order_and_roundtrips() {
-    let service = ConfigService {
-        root: std::env::temp_dir(),
-        cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
-        proxies: Default::default(),
-    };
+    let service = ConfigService::for_test(std::env::temp_dir());
     let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
     let mut release = crate::repository_sources::parse_document(
         REGION_REPOSITORY,

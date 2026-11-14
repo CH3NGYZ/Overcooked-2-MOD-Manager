@@ -11,11 +11,7 @@ use super::REGION_REPOSITORY;
 
 #[test]
 fn regional_repository_variants_coexist_and_export_all_channels() {
-    let service = ConfigService {
-        root: std::env::temp_dir(),
-        cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
-        proxies: Default::default(),
-    };
+    let service = ConfigService::for_test(std::env::temp_dir());
     let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
     let document = crate::repository_sources::parse_document(
         REGION_REPOSITORY,
@@ -87,11 +83,7 @@ fn regional_repository_variants_coexist_and_export_all_channels() {
 
 #[test]
 fn channel_variants_of_one_repository_coexist_with_distinct_stable_ids() {
-    let service = ConfigService {
-        root: std::env::temp_dir(),
-        cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
-        proxies: Default::default(),
-    };
+    let service = ConfigService::for_test(std::env::temp_dir());
     let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
     let document = crate::repository_sources::parse_document(
         REGION_REPOSITORY,

@@ -257,13 +257,11 @@ fn all_providers_select_the_official_root_and_preserve_custom_sources() {
 #[test]
 fn first_load_synchronizes_builtin_sources_even_when_removing_legacy_proxy_fields() {
     for has_legacy_proxy_fields in [false, true] {
-        let service = ConfigService {
-            root: Path::new(env!("CARGO_MANIFEST_DIR"))
+        let service = ConfigService::for_test(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("target/test-config-load")
                 .join(Uuid::new_v4().to_string()),
-            cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            proxies: Default::default(),
-        };
+        );
         let mut config = default_config();
         let mut expected_sources = config.repository_sources.clone();
         let old_root = RepositorySource {

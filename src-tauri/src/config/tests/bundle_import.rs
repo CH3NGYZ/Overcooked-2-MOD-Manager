@@ -10,11 +10,7 @@ use super::REGION_REPOSITORY;
 
 #[test]
 fn imported_repositories_follow_bundle_order() {
-    let service = ConfigService {
-        root: std::env::temp_dir(),
-        cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
-        proxies: Default::default(),
-    };
+    let service = ConfigService::for_test(std::env::temp_dir());
     let text = r#"
 format = "oc2-mod-repository-bundle"
 schema_version = 1

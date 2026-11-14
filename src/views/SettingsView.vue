@@ -370,6 +370,7 @@ const switchingDataProvider = ref(false)
 const dataProviderOptions = computed(() => [
   { value: 'github', label: t('settings.dataProviderGithub') },
   { value: 'gitee', label: t('settings.dataProviderGitee') },
+  { value: 'gitcode', label: t('settings.dataProviderGitcode') },
   { value: 'cloudflare', label: t('settings.dataProviderCloudflare') },
   { value: 'builtin', label: t('settings.dataProviderBuiltin') },
 ])

@@ -71,7 +71,7 @@ fn community_merge_checks_official_source_tree_before_addition() {
             let mut configured = official.clone();
             configured.source_id = Some(source.into());
             config.repositories = vec![configured.clone()];
-            let keys = official_repository_keys(&config);
+            let keys = official_repository_keys(&config, true);
             assert_eq!(
                 keys.contains(&identity(&configured)),
                 expected,
@@ -106,7 +106,7 @@ fn community_search_avoids_bundled_repositories_missing_from_config() {
     }))
     .unwrap();
     assert!(config.repositories.is_empty());
-    let keys = official_repository_keys(&config);
+    let keys = official_repository_keys(&config, true);
     for repo in &bundled {
         // 内置快照里的每个仓库都必须被回避，即便 config 里一个都没有。
         let key = (
@@ -116,4 +116,56 @@ fn community_search_avoids_bundled_repositories_missing_from_config() {
         );
         assert!(keys.contains(&key), "{}/{}", repo.username, repo.repository);
     }
+}
+
+#[test]
+fn paused_discovery_projection_keeps_records_without_reading_the_bundled_catalogue() {
+    assert!(!super::super::DISCOVERY_ENABLED);
+    let bundled = crate::repository_sources::bundled_repository_configs()
+        .into_iter()
+        .next()
+        .unwrap();
+    let community = repository_from_coordinates(
+        &bundled.provider,
+        &bundled.username,
+        &bundled.repository,
+        "main",
+        "saved discovery",
+    )
+    .unwrap();
+    let mut config: AppConfig = serde_json::from_value(serde_json::json!({
+        "schema_version": 1, "ui_zoom": 1.5,
+        "game": { "path": "" },
+        "network": { "timeout_seconds": 5, "download_threads": 1, "max_retry_count": 3 },
+        "launch": { "ask_user_to_start_from_steam": false, "auto_restore_winhttp": false },
+        "auth": { "github_token": "", "gitee_token": "", "official_api_only": true },
+        "repository_sources": [],
+        "repositories": [community.clone()]
+    }))
+    .unwrap();
+    let discovery = CommunityDiscovery {
+        repository_ids: vec![community.id.clone()],
+        total_count: 7,
+        incomplete_results: true,
+        ..Default::default()
+    };
+    match bundled.provider {
+        Provider::Github => config.community_discovery = Some(discovery),
+        Provider::Gitee => config.gitee_community_discovery = Some(discovery),
+        Provider::Gitcode => config.gitcode_community_discovery = Some(discovery),
+    }
+    let before = serde_json::to_value(&config).unwrap();
+    let visible = visible_discoveries(&config);
+    let visible = match bundled.provider {
+        Provider::Github => visible.0,
+        Provider::Gitee => visible.1,
+        Provider::Gitcode => visible.2,
+    }
+    .unwrap();
+    assert_eq!(visible.repository_ids, [community.id.clone()]);
+    assert_eq!(visible.total_count, 7);
+    assert!(visible.incomplete_results);
+    assert!(!official_repository_keys(&config, false).contains(&identity(&community)));
+    assert!(official_repository_keys(&config, true).contains(&identity(&community)));
+    assert_eq!(serde_json::to_value(&config).unwrap(), before);
 }

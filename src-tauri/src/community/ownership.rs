@@ -17,7 +17,10 @@ pub(super) fn identity(repo: &ModRepositoryConfig) -> RepositoryIdentity {
     )
 }
 
-pub(super) fn official_repository_keys(config: &AppConfig) -> HashSet<RepositoryIdentity> {
+pub(super) fn official_repository_keys(
+    config: &AppConfig,
+    include_bundled: bool,
+) -> HashSet<RepositoryIdentity> {
     let mut children: HashMap<&str, Vec<&str>> = HashMap::new();
     let mut pending = vec![crate::repository_sources::DEFAULT_INDEX_ID];
     for source in &config.repository_sources {
@@ -58,7 +61,9 @@ pub(super) fn official_repository_keys(config: &AppConfig) -> HashSet<Repository
      * 就会重新出现在社区搜索结果里。内置快照是没有地区过滤的完整清单，
      * 因此把它的全部仓库身份也并入回避集合。
      */
-    keys.extend(bundled_official_repository_keys());
+    if include_bundled {
+        keys.extend(bundled_official_repository_keys());
+    }
     keys
 }
 
@@ -83,11 +88,34 @@ pub(crate) fn visible_discoveries(
     Option<CommunityDiscovery>,
     Option<CommunityDiscovery>,
 ) {
-    let official = official_repository_keys(config);
+    let discovered_ids = [
+        &config.community_discovery,
+        &config.gitee_community_discovery,
+        &config.gitcode_community_discovery,
+    ]
+    .into_iter()
+    .flatten()
+    .flat_map(|discovery| &discovery.repository_ids)
+    .collect::<HashSet<_>>();
+    let has_candidates = config
+        .repositories
+        .iter()
+        .any(|repo| is_repository(repo) && discovered_ids.contains(&repo.id));
+    // A paused catalogue keeps saved bindings and config-based deduplication,
+    // but must not parse the entire bundled business tree on every snapshot.
+    let official = if has_candidates {
+        official_repository_keys(config, super::DISCOVERY_ENABLED)
+    } else {
+        HashSet::new()
+    };
     let visible_ids = config
         .repositories
         .iter()
-        .filter(|repo| is_repository(repo) && !official.contains(&identity(repo)))
+        .filter(|repo| {
+            discovered_ids.contains(&repo.id)
+                && is_repository(repo)
+                && !official.contains(&identity(repo))
+        })
         .map(|repo| &repo.id)
         .collect::<HashSet<_>>();
     // Filter only the public snapshot; saved records still support installed Tag/channel bindings.

@@ -73,16 +73,9 @@ pub(crate) fn default_config() -> AppConfig {
         community_map_repositories: Vec::new(),
         source_repository_ids: Default::default(),
         staged_release_cache: Default::default(),
-        /*
-         * 新配置直接带上内置地图快照。
-         *
-         * 放在这里而不是「第一次读地图列表时补」：`get_maps` 是只读命令，
-         * 在里面写盘会绕开短操作锁，与「整份配置读取、修改与保存须持锁」
-         * 的边界冲突。内置快照是编译期资源，同步构造没有副作用。
-         *
-         * 后续刷新统一按本次运行选择的 DataProvider 读取官方入口。
-         */
-        map_repositories: crate::map_sources::bundled_map_tree(),
+        // Business documents belong to the selected package. A new config
+        // waits for that tree instead of eagerly parsing a second builtin tree.
+        map_repositories: Vec::new(),
         data_provider: DataProvider::default(),
         network_policy: None,
         github_proxies: crate::github_proxies::bundled_defaults(),

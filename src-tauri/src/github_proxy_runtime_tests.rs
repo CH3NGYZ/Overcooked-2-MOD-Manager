@@ -231,7 +231,7 @@ fn routes_are_official_sibling_documents_with_direct_github_first() {
     assert_eq!(mainland[0].len(), 1);
     assert_eq!(
         mainland[0][0].url,
-        crate::models::DataProvider::Gitee
+        crate::models::DataProvider::Gitcode
             .document("mods.toml")
             .replace("mods.toml", "repositories-proxies.toml")
     );
@@ -578,7 +578,7 @@ fn switching_provider_resets_the_snapshot_and_rejects_late_results_including_a_b
 async fn changing_provider_cancels_waiting_refresh_and_bundled_mode_never_waits_for_network() {
     use crate::models::DataProvider;
     let runtime = std::sync::Arc::new(ProxyRuntime::new(DataProvider::Github));
-    let guard = runtime.refresh.lock().await;
+    let guard = runtime.root_refresh.lock().await;
     let (started, ready) = tokio::sync::oneshot::channel();
     let pending = runtime.clone();
     let task = tokio::spawn(async move {
@@ -587,11 +587,14 @@ async fn changing_provider_cancels_waiting_refresh_and_bundled_mode_never_waits_
     });
     ready.await.unwrap();
     runtime.select_provider(DataProvider::Gitee);
-    tokio::time::timeout(Duration::from_millis(200), task)
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_millis(200), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err(),
+        "source.addressMismatch"
+    );
     runtime.select_provider(DataProvider::Builtin);
     tokio::time::timeout(Duration::from_millis(200), runtime.refresh_policy())
         .await

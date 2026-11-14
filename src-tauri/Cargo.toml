@@ -47,6 +47,7 @@ sha2 = "0.10"
 zip = "9.0.5"
 walkdir = "2"
 same-file = "1"
+tempfile = "3.27"
 # 地图目录可能被资源管理器直接改（增删集目录、替换 info）：轮询大目录太贵，
 # 用系统的目录变更通知（Windows ReadDirectoryChangesW / macOS FSEvents）。
 notify = "8"

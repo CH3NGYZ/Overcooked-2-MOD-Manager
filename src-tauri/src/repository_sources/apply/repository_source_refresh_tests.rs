@@ -14,9 +14,14 @@ fn test_state() -> AppState {
 }
 
 async fn refresh(state: &AppState, source: &RepositorySource) -> Result<ImportPreview, String> {
-    let result =
-        import_repository_source_into_config(state, source.id.clone(), source.url.clone(), false)
-            .await?;
+    let result = import_repository_source_into_config(
+        state,
+        source.id.clone(),
+        source.url.clone(),
+        false,
+        false,
+    )
+    .await?;
     if let Some(error) = result.access_error {
         return Err(error);
     }
@@ -49,27 +54,44 @@ async fn explicit_builtin_selection_is_immediate_and_legacy_forced_fallback_cann
     config.repository_sources.push(custom.clone());
     state.config.save(&config).unwrap();
     assert!(
-        import_repository_source_into_config(&state, custom.id.clone(), custom.url.clone(), true)
-            .await
-            .is_err()
+        import_repository_source_into_config(
+            &state,
+            custom.id.clone(),
+            custom.url.clone(),
+            true,
+            false
+        )
+        .await
+        .is_err()
     );
     assert_eq!(
         state.config.load().unwrap().repository_sources,
         config.repository_sources
     );
     assert!(
-        import_repository_source_into_config(&state, root.id.clone(), root.url.clone(), true)
-            .await
-            .is_err()
+        import_repository_source_into_config(
+            &state,
+            root.id.clone(),
+            root.url.clone(),
+            true,
+            false
+        )
+        .await
+        .is_err()
     );
     state
         .config
         .select_data_provider(crate::models::DataProvider::Builtin);
     let root = state.config.load().unwrap().repository_sources[0].clone();
-    let result =
-        import_repository_source_into_config(&state, root.id.clone(), root.url.clone(), false)
-            .await
-            .unwrap();
+    let result = import_repository_source_into_config(
+        &state,
+        root.id.clone(),
+        root.url.clone(),
+        false,
+        false,
+    )
+    .await
+    .unwrap();
     assert!(result.preview.unwrap().valid);
     assert!(result.access_error.is_none());
     assert!(!result.builtin_fallback_available);
@@ -289,10 +311,15 @@ async fn live_index_changes_replace_children_and_failure_keeps_trusted_snapshots
         state.config.save(&loaded).unwrap();
     }
     let trusted = state.config.load().unwrap();
-    let inaccessible =
-        import_repository_source_into_config(&state, root.id.clone(), root.url.clone(), false)
-            .await
-            .unwrap();
+    let inaccessible = import_repository_source_into_config(
+        &state,
+        root.id.clone(),
+        root.url.clone(),
+        false,
+        false,
+    )
+    .await
+    .unwrap();
     assert!(inaccessible.access_error.is_some());
     assert!(inaccessible.preview.is_none());
     assert!(
@@ -375,7 +402,7 @@ async fn official_remote_index_loads_each_declared_child() {
         .config
         .select_data_provider(crate::models::DataProvider::Builtin);
     let bundled_root = state.config.load().unwrap().repository_sources[0].clone();
-    import_repository_source_into_config(&state, bundled_root.id, bundled_root.url, false)
+    import_repository_source_into_config(&state, bundled_root.id, bundled_root.url, false, false)
         .await
         .unwrap();
     state.config.select_data_provider(config.data_provider);

@@ -1,6 +1,19 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { createStartupPreflight } from '../src/startupPreflight.ts'
+
+test('startup diagnostics shares the selected official snapshot instead of a separate Raw request', () => {
+  const source = readFileSync('src-tauri/src/repository_sources/preflight.rs', 'utf8')
+  const production = source.slice(0, source.indexOf('struct ActiveGuard'))
+  const command = readFileSync('src-tauri/src/commands/system.rs', 'utf8')
+  assert.ok(production.includes('config.official_root(false)'))
+  assert.ok(command.includes('probe_startup_source(&state.config).await'))
+  assert.ok(!production.includes('DataProvider::Github'))
+  assert.ok(!production.includes('SourceLocation::parse'))
+  assert.ok(production.includes('Duration::from_secs(10)'))
+  assert.ok(production.includes('cancelled.changed()'))
+})
 
 const deferred = () => {
   let resolve

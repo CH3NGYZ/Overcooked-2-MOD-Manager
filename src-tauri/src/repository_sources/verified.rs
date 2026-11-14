@@ -35,6 +35,9 @@ pub(crate) async fn load_verified_text_document<T>(
     verified: &VerifiedDocument,
     parse: impl Fn(&str, &SourceLocation) -> Result<T, ConfigError>,
 ) -> Result<T, ConfigError> {
+    if super::transport::package_document_path(location).is_some() {
+        return load_text_document(location, parse).await;
+    }
     let SourceLocation::Remote(url) = location else {
         return load_text_document(location, parse).await;
     };

@@ -540,3 +540,97 @@ test('a successful MOD parent resets stale child errors to pending while preserv
   nextChild.resolve(); await pending
   assert.equal(e.anyRefreshing.value, false)
 })
+
+
+// Keep the production recursive refresh and projection; observe only the IPC boundary.
+async function sourceForceFixture(prefix, includeOther = false) {
+  const ids = Object.fromEntries(['root', 'child', 'leaf', 'other'].map(key => [key, `${prefix}-${key}`]))
+  const source = (key, parent) => ({ id: ids[key], parent_id: parent && ids[parent], nickname: key, url: `${ids[key]}.toml`, enabled: true })
+  const config = {
+    repositories: [repo(ids.root + '-repo', ids.root), repo(ids.child + '-repo', ids.child), repo(ids.leaf + '-repo', ids.leaf)],
+    repository_sources: [source('root'), source('child', 'root'), source('leaf', 'child')],
+    region: 'global', platform: 'windows',
+  }
+  if (includeOther) {
+    config.repositories.push(repo(ids.other + '-repo', ids.other))
+    config.repository_sources.push(source('other'))
+  }
+  const imports = [], releases = [], failed = new Set()
+  const fixture = { ids, config, imports, releases, failed, onImport: () => {} }
+  globalThis.__loadingApi = {
+    dashboard: async () => ({ config: structuredClone(config), game: { kitchen_running: false } }),
+    localMods: async () => ({ generation: 37, mods: [] }), modUpdates: async () => [],
+    config: async () => structuredClone(config),
+    importRepositorySource: async (...args) => {
+      imports.push(args)
+      if (failed.has(args[0])) throw Error('source offline')
+      fixture.onImport(args[0])
+      return { access_error: null }
+    },
+    refreshModRepository: async (...args) => {
+      releases.push(args)
+      return { cached_releases: [], release_prerelease_metadata: {} }
+    },
+    syncDependencySnapshots: async () => {},
+  }
+  fixture.dashboard = useDashboard()
+  fixture.engine = useModRepositoryRefresh()
+  await fixture.dashboard.load()
+  return fixture
+}
+
+for (const force of [false, true]) test(`MOD ${force ? 'user-forced' : 'startup'} full refresh forces the package only at the root`, async () => {
+  const f = await sourceForceFixture(force ? 'force-user' : 'force-startup')
+  const errors = await (force ? f.engine.refreshEverything({ force: true }) : f.engine.refreshEverything())
+  assert.deepEqual(errors, [])
+  assert.deepEqual(f.imports, [
+    [f.ids.root, `${f.ids.root}.toml`, false, force],
+    [f.ids.child, `${f.ids.child}.toml`, false, false],
+    [f.ids.leaf, `${f.ids.leaf}.toml`, false, false],
+  ], 'every document has an explicit fourth argument; descendants always reuse the root package')
+  assert.deepEqual(f.releases.map(([id]) => id).sort(), f.config.repositories.map(repo => repo.id).sort())
+  assert.ok(f.releases.every(([, requestedForce]) => requestedForce === force))
+  assert.equal(f.engine.anyRefreshing.value, false)
+})
+
+test('MOD child source refresh reuses its package and isolates unrelated backend config changes', async () => {
+  const f = await sourceForceFixture('force-partial', true)
+  await f.engine.refreshSourceChain(f.ids.other)
+  const untouchedRepo = f.dashboard.config.value.repositories.find(repo => repo.source_id === f.ids.other)
+  const untouchedSource = f.dashboard.config.value.repository_sources.find(source => source.id === f.ids.other)
+  const untouchedRoot = f.dashboard.config.value.repositories.find(repo => repo.source_id === f.ids.root)
+  f.imports.length = 0
+  f.onImport = () => {
+    f.config.repositories = f.config.repositories.map(repo => [f.ids.root, f.ids.other].includes(repo.source_id) ? { ...repo, name: 'unrelated backend change' } : repo)
+    f.config.repository_sources = f.config.repository_sources.map(source => source.id === f.ids.other ? { ...source, nickname: 'unrelated backend source' } : source)
+  }
+  assert.deepEqual(await f.engine.refreshSource(f.ids.child), [])
+  assert.deepEqual(f.imports, [
+    [f.ids.child, `${f.ids.child}.toml`, false, false],
+    [f.ids.leaf, `${f.ids.leaf}.toml`, false, false],
+  ], 'a child group must neither force nor request the official root')
+  assert.deepEqual(f.releases.map(([id]) => id).sort(), [f.ids.child + '-repo', f.ids.leaf + '-repo'].sort())
+  assert.ok(f.releases.every(([, requestedForce]) => requestedForce === false))
+  assert.equal(f.dashboard.config.value.repositories.find(repo => repo.source_id === f.ids.other), untouchedRepo)
+  assert.equal(f.dashboard.config.value.repository_sources.find(source => source.id === f.ids.other), untouchedSource)
+  assert.equal(f.dashboard.config.value.repositories.find(repo => repo.source_id === f.ids.root), untouchedRoot)
+})
+
+test('MOD failed child package read stops descendants and Release checks without disturbing another source', async () => {
+  const f = await sourceForceFixture('force-failure', true)
+  await f.engine.refreshSourceChain(f.ids.other)
+  const untouchedRepo = f.dashboard.config.value.repositories.find(repo => repo.source_id === f.ids.other)
+  const untouchedSource = f.dashboard.config.value.repository_sources.find(source => source.id === f.ids.other)
+  f.imports.length = 0
+  f.failed.add(f.ids.child)
+  const errors = await f.engine.refreshSource(f.ids.child)
+  assert.equal(errors.length, 1)
+  assert.match(errors[0], /source offline/)
+  assert.deepEqual(f.imports, [[f.ids.child, `${f.ids.child}.toml`, false, false]])
+  assert.deepEqual(f.releases, [], 'a failed scope cannot check stale repositories or unrelated groups')
+  assert.equal(f.dashboard.config.value.repositories.find(repo => repo.source_id === f.ids.other), untouchedRepo)
+  assert.equal(f.dashboard.config.value.repository_sources.find(source => source.id === f.ids.other), untouchedSource)
+  assert.equal(f.engine.sourceNodes.value.find(node => node.id === f.ids.other).status, 'ready')
+  assert.equal(f.engine.sourceNodes.value.find(node => node.id === f.ids.child).status, 'error')
+  assert.equal(f.engine.anyRefreshing.value, false)
+})

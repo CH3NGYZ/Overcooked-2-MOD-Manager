@@ -63,12 +63,14 @@ pub async fn import_repository_source(
     source_id: String,
     source_url: String,
     builtin_fallback: Option<bool>,
+    force: Option<bool>,
 ) -> Result<RepositorySourceImportResult, String> {
     import_repository_source_into_config(
         &state,
         source_id,
         source_url,
         builtin_fallback.unwrap_or(false),
+        force.unwrap_or(false),
     )
     .await
 }

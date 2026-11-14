@@ -13,8 +13,10 @@ use std::sync::RwLock;
 /// A process-local snapshot, shared by ConfigService clones but never serialized.
 pub(crate) struct ProxyRuntime {
     current: RwLock<RuntimeSnapshot>,
+    #[cfg(test)]
     refresh: tokio::sync::Mutex<()>,
     root_refresh: tokio::sync::Mutex<()>,
+    source_browser: RwLock<Option<tauri::AppHandle>>,
     selection_changed: tokio::sync::watch::Sender<u64>,
     #[cfg(test)]
     official_addresses: RwLock<Vec<(DataProvider, String)>>,
@@ -27,6 +29,7 @@ struct RuntimeSnapshot {
     groups: GitHubProxyConfig,
     policy: Option<std::sync::Arc<crate::network_policy::NetworkPolicy>>,
     official_root: Option<crate::repository_sources::RepositorySourceDocument>,
+    package: Option<std::sync::Arc<crate::repository_sources::SourcePackage>>,
 }
 
 impl Default for ProxyRuntime {
@@ -45,9 +48,12 @@ impl ProxyRuntime {
                 groups: github_proxies::bundled_defaults(),
                 policy: None,
                 official_root: None,
+                package: None,
             }),
+            #[cfg(test)]
             refresh: tokio::sync::Mutex::new(()),
             root_refresh: tokio::sync::Mutex::new(()),
+            source_browser: RwLock::new(None),
             selection_changed: tokio::sync::watch::channel(0).0,
             #[cfg(test)]
             official_addresses: RwLock::new(Vec::new()),
@@ -73,6 +79,7 @@ impl ProxyRuntime {
                 groups: github_proxies::bundled_defaults(),
                 policy: None,
                 official_root: None,
+                package: None,
             };
             self.selection_changed.send_replace(snapshot.revision);
         }
@@ -105,44 +112,20 @@ impl ProxyRuntime {
         Ok((snapshot.provider, snapshot.groups.clone(), policy))
     }
 
-    pub(crate) async fn refresh_policy(&self) -> Result<(), String> {
-        // Bundled mode must remain immediate even if an old remote is stalled.
-        if self.provider() == DataProvider::Builtin {
-            return Ok(());
-        }
-        let selection = self.selection();
-        let root = match self.official_root(false).await {
-            Ok(root) => root,
-            Err(_) if self.selection() != selection => return Ok(()),
-            Err(error) => return Err(error),
-        };
-        let mut changed = self.selection_changed.subscribe();
-        // A selection between the gate result and subscription must not load
-        // another provider's policy without validating that provider's MOD root.
-        if self.selection() != root.selection {
-            return Ok(());
-        }
-        let _guard = tokio::select! {
-            biased;
-            _ = changed.changed() => return Ok(()),
-            guard = self.refresh.lock() => guard,
-        };
-        let (provider, revision) = root.selection;
-        if provider == DataProvider::Builtin {
-            return Ok(());
-        }
-        let fresh = tokio::select! {
-            biased;
-            _ = changed.changed() => return Ok(()),
-            result = async {
-                let base = crate::repository_sources::SourceLocation::parse(&self.official_address(provider))
-                    .map_err(|_| "proxy.validationFailed")?;
-                crate::network_policy::NetworkPolicy::refresh_from(&base).await
-            } => result?,
-        };
-        self.publish_policy(fresh, provider, revision)
+    pub(crate) fn set_source_browser(&self, browser: tauri::AppHandle) {
+        *self
+            .source_browser
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(browser);
     }
 
+    pub(crate) async fn refresh_policy(&self) -> Result<(), String> {
+        // The package, MOD root and complete network closure are a single
+        // publication. Startup/settings consumers share the same download.
+        self.official_root(false).await.map(|_| ())
+    }
+
+    #[cfg(test)]
     fn publish_policy(
         &self,
         fresh: crate::network_policy::NetworkPolicy,
@@ -264,14 +247,15 @@ fn manifest_routes(
     let proxies = github_proxies::proxy_urls(&snapshot.raw_proxies, &github, true, None);
     let mut routes = Vec::new();
     if region == crate::config::REGION_CHINESE_MAINLAND {
-        let gitee = SourceLocation::parse(&DataProvider::for_region(region).document("mods.toml"))
-            .map_err(|_| "proxy.validationFailed")?;
-        let gitee = SourceLocation::resolve("repositories-proxies.toml", Some(&gitee))
+        let primary =
+            SourceLocation::parse(&DataProvider::for_region(region).document("mods.toml"))
+                .map_err(|_| "proxy.validationFailed")?;
+        let primary = SourceLocation::resolve("repositories-proxies.toml", Some(&primary))
             .map_err(|_| "proxy.validationFailed")?
             .address();
         routes.push(ordered_asset_download_candidates(
             ProxyMode::Direct,
-            &gitee,
+            &primary,
             Vec::new(),
         ));
     }

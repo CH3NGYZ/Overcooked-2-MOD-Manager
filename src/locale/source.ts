@@ -7,6 +7,48 @@ import type { DomainMessages } from './types'
  * 这一域的文案量最大，因为源文档解析、地区判定、仓库身份校验都在后端。
  */
 export const source: DomainMessages = {
+  packageFileMissing: {
+    'zh-CN': '当前数据源的源码包中缺少文件：{path}',
+    'zh-TW': '目前資料來源的原始碼套件中缺少檔案：{path}',
+    en: 'A file is missing from the current source package: {path}',
+    ko: '현재 소스 패키지에 파일이 없습니다: {path}',
+    ja: '現在のソースパッケージにファイルがありません：{path}',
+  },
+  webDownloadFailed: {
+    'zh-CN': '网页验证下载失败，将尝试下一个数据来源。',
+    'zh-TW': '網頁驗證下載失敗，將嘗試下一個資料來源。',
+    en: 'The browser verification download failed. Trying the next data source.',
+    ko: '브라우저 인증 다운로드에 실패했습니다. 다음 데이터 소스를 시도합니다.',
+    ja: 'ブラウザー認証によるダウンロードに失敗しました。次のデータソースを試します。',
+  },
+  webDownloadCancelled: {
+    'zh-CN': '已取消网页验证，将尝试下一个数据来源。',
+    'zh-TW': '已取消網頁驗證，將嘗試下一個資料來源。',
+    en: 'Browser verification was cancelled. Trying the next data source.',
+    ko: '브라우저 인증이 취소되었습니다. 다음 데이터 소스를 시도합니다.',
+    ja: 'ブラウザー認証がキャンセルされました。次のデータソースを試します。',
+  },
+  webDownloadTimeout: {
+    'zh-CN': '网页验证下载超时，将尝试下一个数据来源。',
+    'zh-TW': '網頁驗證下載逾時，將嘗試下一個資料來源。',
+    en: 'The browser verification download timed out. Trying the next data source.',
+    ko: '브라우저 인증 다운로드 시간이 초과되었습니다. 다음 데이터 소스를 시도합니다.',
+    ja: 'ブラウザー認証によるダウンロードがタイムアウトしました。次のデータソースを試します。',
+  },
+  webDownloadTooLarge: {
+    'zh-CN': '网页下载的源码包超过大小限制，将尝试下一个数据来源。',
+    'zh-TW': '網頁下載的原始碼套件超過大小限制，將嘗試下一個資料來源。',
+    en: 'The browser download exceeded the package size limit. Trying the next data source.',
+    ko: '브라우저 다운로드가 패키지 크기 제한을 초과했습니다. 다음 데이터 소스를 시도합니다.',
+    ja: 'ブラウザーでのダウンロードがサイズ制限を超えました。次のデータソースを試します。',
+  },
+  webDownloadAddressInvalid: {
+    'zh-CN': '网页验证下载地址无效，将尝试下一个数据来源。',
+    'zh-TW': '網頁驗證下載位址無效，將嘗試下一個資料來源。',
+    en: 'The browser verification download address is invalid. Trying the next data source.',
+    ko: '브라우저 인증 다운로드 주소가 올바르지 않습니다. 다음 데이터 소스를 시도합니다.',
+    ja: 'ブラウザー認証によるダウンロード先が無効です。次のデータソースを試します。',
+  },
   noVisibleRepositories: {
     'zh-CN': '此源已读取，当前环境下没有可显示的仓库。',
     'zh-TW': '此來源已讀取，目前環境下沒有可顯示的倉庫。',

@@ -15,15 +15,8 @@ pub(crate) async fn import_repository_source_into_config(
     source_id: String,
     source_url: String,
     builtin_fallback: bool,
+    force: bool,
 ) -> Result<RepositorySourceImportResult, String> {
-    let snapshot = state.config.load_or_default();
-    let policy = snapshot
-        .network_policy
-        .clone()
-        .map(Ok)
-        .unwrap_or_else(|| crate::network_policy::NetworkPolicy::active())?;
-    crate::network_policy::NetworkPolicy::in_snapshot(policy, async {
-
     if crate::community::is_source(&source_id) {
         return Err("source.communityManaged".into());
     }
@@ -46,17 +39,27 @@ pub(crate) async fn import_repository_source_into_config(
             log::warn!("刷新仓库源失败：源不存在，源={}", source_id);
             return Err("source.sourceMissing".into());
         };
-        if !crate::config::repository_source_is_available(&original_config, source, crate::config::current_user_region()) {
+        if !crate::config::repository_source_is_available(
+            &original_config,
+            source,
+            crate::config::current_user_region(),
+        ) {
             return Err("source.sourceMissing".into());
         }
         let official_root = source.id == repository_sources::DEFAULT_INDEX_ID
             && source.url == original_config.data_provider.document("mods.toml")
             && source.builtin
             && source.parent_id.is_none();
-        let official_address = official_root && [
-            crate::models::DataProvider::Github, crate::models::DataProvider::Gitee,
-            crate::models::DataProvider::Cloudflare, crate::models::DataProvider::Builtin,
-        ].iter().any(|provider| provider.document("mods.toml") == source_url);
+        let official_address = official_root
+            && [
+                crate::models::DataProvider::Github,
+                crate::models::DataProvider::Gitee,
+                crate::models::DataProvider::Gitcode,
+                crate::models::DataProvider::Cloudflare,
+                crate::models::DataProvider::Builtin,
+            ]
+            .iter()
+            .any(|provider| provider.document("mods.toml") == source_url);
         if !source.url.trim().eq_ignore_ascii_case(source_url.trim()) && !official_address {
             log::warn!("刷新仓库源失败：请求地址与当前配置不一致，源={}", source_id);
             return Err("source.addressMismatch".into());
@@ -72,53 +75,67 @@ pub(crate) async fn import_repository_source_into_config(
             repository_sources::safe_log_address(&source_url),
             source.parent_id.as_deref().unwrap_or("无")
         );
-        (
-            source_url,
-            official_root,
-            source.network_plan.clone(),
-        )
+        (source_url, official_root, source.network_plan.clone())
     };
     let (document, selection) = if official_root {
-        let root = state.config.official_root(true).await?;
+        let root = state.config.official_root(force).await?;
         source_url = root.selection.0.document("mods.toml");
-        if root.selection != selection && state.config.refresh_proxies().await.is_err() {
-            // A valid MOD root owns the provider. An incomplete network closure
-            // keeps its trusted/bundled policy and cannot trigger another fallback.
-            log::warn!("切源后的网络配置不可用，保留当前完整网络快照");
-        }
         (root.document, root.selection)
     } else {
-    let location = SourceLocation::parse(&source_url).map_err(|error| {
-        log::error!(
-            "仓库源地址解析失败：源={}，错误类别={}",
-            source_id,
-            repository_sources::error_category(&error)
-        );
-        error.to_string()
-    })?;
-    // 超时由 load_document 内部固定为 SOURCE_DOCUMENT_TIMEOUT（30 秒）
-    let document = match state.config.in_data_selection(selection, async {
-        Ok(repository_sources::load_document(&location, &parent_plan).await)
-    }).await? {
-        Ok(document) => document,
-        Err(error) => {
+        let location = SourceLocation::parse(&source_url).map_err(|error| {
             log::error!(
-                "仓库源读取失败：源={}，错误类别={}",
+                "仓库源地址解析失败：源={}，错误类别={}",
                 source_id,
                 repository_sources::error_category(&error)
             );
-            // Preserve the IPC distinction for custom/child sources. Neither
-            // error kind can change the provider outside the official gate.
-            if matches!(error, crate::config::ConfigError::Read(_)) {
-                return Ok(RepositorySourceImportResult {
-                    preview: None, access_error: Some(error.to_string()), builtin_fallback_available: false,
-                });
+            error.to_string()
+        })?;
+        let policy = state
+            .config
+            .load_or_default()
+            .network_policy
+            .map(Ok)
+            .unwrap_or_else(crate::network_policy::NetworkPolicy::active)?;
+        let document = match state
+            .config
+            .in_data_selection(
+                selection,
+                crate::network_policy::NetworkPolicy::in_snapshot(policy, async {
+                    Ok(repository_sources::load_document(&location, &parent_plan).await)
+                }),
+            )
+            .await?
+        {
+            Ok(document) => document,
+            Err(error) => {
+                log::error!(
+                    "仓库源读取失败：源={}，错误类别={}",
+                    source_id,
+                    repository_sources::error_category(&error)
+                );
+                // Preserve the IPC distinction for custom/child sources. Neither
+                // error kind can change the provider outside the official gate.
+                if matches!(error, crate::config::ConfigError::Read(_)) {
+                    return Ok(RepositorySourceImportResult {
+                        preview: None,
+                        access_error: Some(error.to_string()),
+                        builtin_fallback_available: false,
+                    });
+                }
+                return Err(error.to_string());
             }
-            return Err(error.to_string());
-        }
+        };
+        (document, selection)
     };
-    (document, selection)
-    };
+    // The root refresh may have replaced the network policy as well as its
+    // package. Import/validation must use that new closure, not the entry copy.
+    let policy = state
+        .config
+        .load_or_default()
+        .network_policy
+        .map(Ok)
+        .unwrap_or_else(crate::network_policy::NetworkPolicy::active)?;
+    crate::network_policy::NetworkPolicy::in_snapshot(policy, async {
     let repositories = document
         .repositories
         .into_iter()

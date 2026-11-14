@@ -138,8 +138,12 @@ pub fn save_settings(
 }
 
 #[tauri::command]
-pub async fn refresh_github_proxies(state: State<'_, AppState>) -> Result<PublicConfig, String> {
+pub async fn refresh_github_proxies(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<PublicConfig, String> {
     let config = state.config.clone();
+    config.set_source_browser(app);
     config.refresh_proxies().await?;
     Ok(config.public_config(&config.load_or_default()))
 }

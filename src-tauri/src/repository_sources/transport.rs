@@ -4,45 +4,46 @@ use super::document::RepositorySourceDocument;
 use super::document::parse_document;
 use super::location::SourceLocation;
 use super::location::remote_document_location;
+use super::package::SourcePackage;
 use crate::config::ConfigError;
 use crate::http_diagnostics::HttpRequestExt;
 use crate::releases;
 
-/// 读取仓库源文档（raw 索引与各级子源）的访问超时。
-///
-/// 固定 30 秒，**不跟随** `network.timeout_seconds`：
-///   · 那个设置是给 Release API / 下载用的，用户为了「下载更快失败」
-///     调到 5 秒时，不该把源文档也一起压到 5 秒 —— 国内访问 Gitee raw
-///     首次握手常常就要好几秒，压到 5 秒会让整棵树随机失败；
-///   · 源文档阶段是串行递归（索引 → 子源），一层的超时过短会让后面
-///     所有子源根本没有机会加载。
-///
-/// 这与仓库说明（README）的 30 秒保持同一量级：两者都是「读一个不大的
-/// 文本文件」，不是大文件下载。
+pub(crate) fn package_document_path(location: &SourceLocation) -> Option<String> {
+    match location {
+        SourceLocation::Bundled(path) => Some(path.clone()),
+        SourceLocation::Remote(url) => {
+            crate::models::DataProvider::official_document_path(url.as_str())
+        }
+    }
+}
+
+/// 官方源码 ZIP 与自定义 HTTP 源共用的请求超时。
+/// 固定 30 秒，不随 Release API 的 `network.timeout_seconds` 缩短。
+/// 官方各级 TOML 从已获取的同一包读取，不再逐份等待网络；
+/// 需要人工操作的 WebView 下载由调用方单独设置交互期限。
 pub const SOURCE_DOCUMENT_TIMEOUT: u64 = 30;
 
 pub(super) const MAX_SOURCE_BYTES: usize = 1024 * 1024;
 
-/// 下载（或读取内置）一个源文档，再交给调用方解析。
-///
-/// 抽出来是因为地图源要读**同样形态**的文本文档（`maps.toml`），而下载这条
-/// 路上每一步都踩过坑：30 秒固定超时、禁缓存头、大小上限、重定向后的相对
-/// 地址解析、错误分类。复制一份只会得到两套迟早各自漂移的规则。
-///
-/// 返回解析后的结果，日志记录尽力而为 —— 解析失败时仍把状态码与字节数写进
-/// 日志，否则远程文档「下载成功但解析失败」这种情况无从区分。
+/// MOD、地图和网络文档共用的读取入口。
+/// 官方/内置逻辑路径从当前不可变源码包读取，缺文件直接失败；
+/// 自定义绝对 HTTP 地址保留有界下载、重定向基准与错误分类。
 pub(crate) async fn load_text_document<T>(
     location: &SourceLocation,
     parse: impl Fn(&str, &SourceLocation) -> Result<T, ConfigError>,
 ) -> Result<T, ConfigError> {
+    if let Some(path) = package_document_path(location) {
+        let package = SourcePackage::active()
+            .or_else(|| matches!(location, SourceLocation::Bundled(_)).then(SourcePackage::bundled))
+            .ok_or_else(|| ConfigError::Read("source.addressMismatch".into()))?;
+        let text = package.read(&path)?;
+        log::debug!("读取当前源码包文档：路径={}，字节={}", path, text.len());
+        return parse(text, location);
+    }
     let timeout_seconds = SOURCE_DOCUMENT_TIMEOUT;
     let SourceLocation::Remote(url) = location else {
-        let text = location.bundled_text()?;
-        log::info!(
-            "内置文档加载完成：地址={}",
-            safe_log_address(&location.address())
-        );
-        return parse(text, location);
+        return Err(ConfigError::Read("source.addressMismatch".into()));
     };
     let started_at = std::time::Instant::now();
     let safe_url = safe_log_address(url.as_str());

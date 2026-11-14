@@ -31,7 +31,9 @@ impl NetworkPolicy {
         async fn read(base: &SourceLocation, path: &str) -> Result<String, String> {
             let location =
                 SourceLocation::resolve(path, Some(base)).map_err(|_| "proxy.validationFailed")?;
-            if let SourceLocation::Remote(url) = &location {
+            if crate::repository_sources::package_document_path(&location).is_none()
+                && let SourceLocation::Remote(url) = &location
+            {
                 if let Some(provider) =
                     crate::download::planning::provider_for_remote_url(url.as_str())
                 {

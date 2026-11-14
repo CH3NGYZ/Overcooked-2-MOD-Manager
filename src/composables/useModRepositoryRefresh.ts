@@ -298,7 +298,7 @@ function sourceError(source: RepositorySource, reason: string): string {
  * 不重新探测游戏目录、不重新扫描 DLL。一次刷新要经过父源 + 多个子源，
  * 用 load() 会把全量扫描重复十几次，这是刷新期间卡顿的主要来源。
  */
-interface SourceRefreshPass { successful: Set<string>; rebuild: boolean; rootIds?: Set<string> }
+interface SourceRefreshPass { successful: Set<string>; rebuild: boolean; rootIds?: Set<string>; force?: boolean }
 
 function sourceConfigProjection(rootId: string, sourceId: string, pass?: SourceRefreshPass) {
   return (current: PublicConfig, received: PublicConfig): PublicConfig => {
@@ -348,7 +348,7 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>(),
   /* 源级标志也走共享状态机：地图侧用的是同一套写入规则 */
   const importErrors = await state.runSource(sourceId, async () => {
     try {
-      const result = await api.importRepositorySource(source.id, source.url)
+      const result = await api.importRepositorySource(source.id, source.url, false, !!pass?.force && sourceId === rootId)
       if (result.access_error) return [sourceError(source, result.access_error)]
       // 配置回读也是这份源的应用阶段：失败必须留在源分组，不能以空列表报成功。
       pass?.successful.add(sourceId)
@@ -434,7 +434,7 @@ async function refreshSource(sourceId: string): Promise<string[]> {
 async function refreshEverything(options: { force?: boolean } = {}): Promise<string[]> {
   if (demoActive.value || anyRefreshing.value) return []
   lastErrors.value = []
-  const pass: SourceRefreshPass = { successful: new Set(), rebuild: true }
+  const pass: SourceRefreshPass = { successful: new Set(), rebuild: true, force: options.force }
   state.setEntryStateUnavailable(true)
   const result = await runSourceReleaseRefresh({
     state,

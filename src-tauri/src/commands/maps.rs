@@ -39,8 +39,12 @@ pub async fn refresh_map_sources(
     source_id: Option<String>,
     on_update: tauri::ipc::Channel<crate::map_sources::progress::MapTreeProgress>,
 ) -> Result<Vec<MapInfo>, String> {
-    state.config.official_root(false).await?;
-    let selection = state.config.data_selection();
+    let refresh_package = force.unwrap_or(false)
+        && source_id
+            .as_deref()
+            .is_none_or(|id| id == "official-map-index");
+    let root = state.config.official_root(refresh_package).await?;
+    let selection = root.selection;
     let snapshot = state.config.load_or_default();
     let policy = snapshot
         .network_policy

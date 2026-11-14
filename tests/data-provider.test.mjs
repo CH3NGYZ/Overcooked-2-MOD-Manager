@@ -14,6 +14,8 @@ test('Settings displays the live active provider after fallback and preserves tu
   const dashboard = { config: ref({ data_provider: 'gitee' }) }
   const active = new Function('computed', 'demoActive', 'config', 'dashboard', `${declaration}; return dataProvider`)(computed, demoActive, config, dashboard)
   assert.equal(active.value, 'gitee')
+  dashboard.config.value = { data_provider: 'gitcode' }
+  assert.equal(active.value, 'gitcode')
   dashboard.config.value = { data_provider: 'cloudflare' }
   assert.equal(active.value, 'cloudflare')
   dashboard.config.value = { data_provider: 'builtin' }
@@ -24,13 +26,24 @@ test('Settings displays the live active provider after fallback and preserves tu
   assert.equal(active.value, 'builtin')
 })
 
-test('all four choices have five-language labels and Cloudflare is a global data source', () => {
-  for (const suffix of ['Github', 'Gitee', 'Cloudflare', 'Builtin']) {
+test('all five choices have five-language labels and GitCode uses the shared provider selection', () => {
+  for (const suffix of ['Github', 'Gitee', 'Gitcode', 'Cloudflare', 'Builtin']) {
     for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) assert.ok(settings[`dataProvider${suffix}`][locale])
     assert.ok(view.includes(`t('settings.dataProvider${suffix}')`))
   }
   assert.equal(settings.dataProviderCloudflare['zh-CN'], 'Cloudflare（全球）')
-  assert.match(read('src/types.ts'), /DataProvider = 'github' \| 'gitee' \| 'cloudflare' \| 'builtin'/)
+  assert.match(view, /\{ value: 'gitcode', label: t\('settings.dataProviderGitcode'\) \}/)
+  for (const label of Object.values(settings.dataProviderGitcode)) assert.equal(label, 'GitCode')
+  assert.match(read('src/types.ts'), /DataProvider = 'github' \| 'gitee' \| 'gitcode' \| 'cloudflare' \| 'builtin'/)
+})
+
+test('five-language source hints describe the current regional archive fallback routes', () => {
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
+    const hint = settings.dataProviderHint[locale]
+    assert.ok(hint.includes('GitCode → Gitee → Cloudflare'), locale)
+    assert.ok(hint.includes('GitHub → Cloudflare'), locale)
+    assert.ok(hint.includes('ZIP'), locale)
+  }
 })
 
 test('runtime selection events re-read shared config and both refresh engines publish the active source', () => {

@@ -19,7 +19,7 @@ pub(super) fn merge_results(
     let source_id = source_id(provider);
     let belongs_to_search =
         |repo: &ModRepositoryConfig| repo.source_id.as_deref() == Some(source_id);
-    let official = official_repository_keys(config);
+    let official = official_repository_keys(config, true);
     let is_installed = |repo: &ModRepositoryConfig| {
         manifests.iter().any(|manifest| {
             manifest.repository_id == repo.id

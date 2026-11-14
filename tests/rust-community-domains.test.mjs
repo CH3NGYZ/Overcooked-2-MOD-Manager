@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import test from 'node:test'
+
+test('public discovery snapshots skip bundled business trees when paused or without visible candidates', () => {
+  const ownership = readFileSync('src-tauri/src/community/ownership.rs', 'utf8')
+  assert.match(ownership, /if include_bundled\s*\{\s*keys\.extend\(bundled_official_repository_keys\(\)\)/)
+  assert.match(ownership, /let official = if has_candidates\s*\{\s*official_repository_keys\(config, super::DISCOVERY_ENABLED\)/)
+  assert.match(ownership, /is_repository\(repo\) && discovered_ids\.contains\(&repo\.id\)/)
+  assert.match(ownership, /discovery\.repository_ids/)
+  assert.match(readFileSync('src-tauri/src/community/merge.rs', 'utf8'), /official_repository_keys\(config, true\)/)
+})
 import { readText, sourceFiles } from './helpers/source-scan.mjs'
 
 const root = resolve('src-tauri/src')

@@ -38,8 +38,7 @@ fn root_source_label() -> SourceLabel {
 ///
 /// 只走编译期嵌入的资源，读取/解析失败跳过，不向调用方返回错误。内置索引只声明
 /// `release-tags` 源时结果必然为空（`collect_bundled_maps` 会跳过联网型源）：
-/// 它仍用于两件事 —— 内置索引里若出现 `repository` / `document` 形式的条目，
-/// 先给地图页一个无需网络的初始列表；根索引读取失败时由调用方决定是否回退。
+/// 保留给离线兼容与回归；正常配置初始化等待所选源码包，不提前预填另一份内置树。
 pub(crate) fn bundled_map_tree() -> Vec<MapRepositoryConfig> {
     bundled_map_snapshot().0
 }
@@ -124,7 +123,7 @@ fn collect_bundled_maps(
 /// 昵称只在加载源树时写进条目，升级本身不会重新加载源树；不补的话地图页
 /// 的源标题会退化成源 ID（`maps-rw`）。内置树来自编译期嵌入的资源，没有
 /// 网络，读取失败跳过；只有缺名字时才查内置条目。调用方负责保存，后续
-/// 配置缓存命中不再执行同步。远程索引独有的子源在刷新时覆盖。
+/// 配置缓存命中不再执行同步。仅内置来源调用；远端来源等待自身包的索引刷新。
 pub(crate) fn fill_missing_source_names(maps: &mut [MapRepositoryConfig]) -> bool {
     let needs_metadata = |map: &MapRepositoryConfig| {
         map.source_id
@@ -172,7 +171,7 @@ const MAX_MAP_SOURCE_DEPTH: usize = 3;
 /// 每份文档先发布自身地图及下级标题，再按声明顺序读取子源。
 /// 源状态通过观察器增量发布，进程内声明表供局部分支重试；地图声明仍跟随条目落盘。
 /// 所有 TOML 完成后再读取 Release 派生源，失败源保持空卡片并保留错误。
-/// DataProvider 仅选择官方索引，不代表离线；严格离线初始化使用 bundled_map_tree。
+/// 官方与内置 TOML 都从本次包读取；release-tags 仍沿原 API 链联网。
 pub async fn load_map_tree(
     region: &str,
     provider: crate::models::DataProvider,

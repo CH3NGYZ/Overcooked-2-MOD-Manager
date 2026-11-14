@@ -89,6 +89,10 @@ impl ConfigService {
         self.proxies.select_provider(provider);
     }
 
+    pub(crate) fn set_source_browser(&self, browser: tauri::AppHandle) {
+        self.proxies.set_source_browser(browser);
+    }
+
     pub(crate) fn data_selection(&self) -> (DataProvider, u64) {
         self.proxies.selection()
     }
@@ -178,10 +182,12 @@ impl ConfigService {
                         changed = true;
                     }
                 }
-                // 地图条目的源昵称是后加的字段：老配置里只有源 ID，
-                // 不补的话地图页的三层标题会显示成 `maps-rw` 这类 ID
-                changed |=
-                    crate::map_sources::fill_missing_source_names(&mut config.map_repositories);
+                // 仅内置来源从随包树补历史昵称；远端等待自身源码包刷新，
+                // 避免启动阶段把两个来源的业务元数据混在一起。
+                if config.data_provider == DataProvider::Builtin {
+                    changed |=
+                        crate::map_sources::fill_missing_source_names(&mut config.map_repositories);
+                }
                 if changed {
                     log::info!("配置需要迁移或同步，保存更新后的配置");
                     self.save(&config)?;

@@ -123,7 +123,7 @@ fn official_index_follows_region_and_preserves_custom_sources() {
     for (region, expected) in [
         (
             REGION_CHINESE_MAINLAND,
-            crate::models::DataProvider::Gitee.document("mods.toml"),
+            crate::models::DataProvider::Gitcode.document("mods.toml"),
         ),
         (
             REGION_INTERNATIONAL,
@@ -131,7 +131,7 @@ fn official_index_follows_region_and_preserves_custom_sources() {
         ),
         (
             REGION_CHINESE_MAINLAND,
-            crate::models::DataProvider::Gitee.document("mods.toml"),
+            crate::models::DataProvider::Gitcode.document("mods.toml"),
         ),
     ] {
         merge_builtin_repository_sources(
@@ -227,6 +227,7 @@ fn all_providers_select_the_official_root_and_preserve_custom_sources() {
     for provider in [
         DataProvider::Github,
         DataProvider::Gitee,
+        DataProvider::Gitcode,
         DataProvider::Cloudflare,
         DataProvider::Builtin,
     ] {

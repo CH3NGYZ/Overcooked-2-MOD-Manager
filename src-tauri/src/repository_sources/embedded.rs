@@ -14,6 +14,10 @@ pub const DEFAULT_INDEX_ID: &str = "official-repository-index";
 
 include!(concat!(env!("OUT_DIR"), "/repository_sources.rs"));
 
+pub(super) fn bundled_files() -> &'static [(&'static str, &'static str)] {
+    BUNDLED_SOURCES
+}
+
 /// 遍历内置仓库快照，返回其中所有的仓库配置（**不做地区过滤**）。
 ///
 /// 用途：社区搜索结果必须回避全部内置/官方仓库，包括因当前地区
@@ -46,8 +50,8 @@ pub(crate) fn bundled_repository_configs() -> Vec<ModRepositoryExport> {
 
 impl SourceLocation {
     pub fn bundled_document(&self) -> Result<RepositorySourceDocument, ConfigError> {
-        // Cache only the immutable embedded index. Real source refreshes use
-        // load_document and always request the remote document again.
+        // Cache only the immutable embedded index. Official refreshes acquire
+        // one complete package; all document reads then share that snapshot.
         static INDEX: OnceLock<Result<RepositorySourceDocument, ConfigError>> = OnceLock::new();
         if matches!(self, Self::Bundled(path) if path.eq_ignore_ascii_case(BUILTIN_INDEX)) {
             return INDEX.get_or_init(|| self.parse_bundled_document()).clone();

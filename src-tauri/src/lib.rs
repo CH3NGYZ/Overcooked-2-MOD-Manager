@@ -56,6 +56,7 @@ mod shell_open;
 mod unity_assets;
 mod update_migration;
 mod user_paths;
+mod webview_download;
 // 版本区间语法（`version = ">=1.8,<2"`）：std-only，工具 `tools/oc2-info` 也复用
 #[cfg(any(target_os = "macos", test))]
 mod user_region;
@@ -100,6 +101,7 @@ pub fn run() {
             // has registered. App confirms drafts, then calls exit_app; that
             // command restores pending map files before allowing process exit.
             gitee_webview::close_with_main(window, event);
+            webview_download::close_with_main(window, event);
         })
         .plugin(
             tauri_plugin_updater::Builder::new()
@@ -140,6 +142,8 @@ pub fn run() {
                 std::io::Error::other(error.to_string())
             })?;
             let proxy_config = state.config.clone();
+            // Bind native downloads before exposing state to startup commands.
+            proxy_config.set_source_browser(app.handle().clone());
             let mut provider_changes = state.config.data_selection_changes();
             let provider_events = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -150,7 +154,7 @@ pub fn run() {
             app.manage(state.clone());
             tauri::async_runtime::spawn(async move {
                 if proxy_config.refresh_proxies().await.is_err() {
-                    log::warn!("启动线上代理清单不可用，继续使用随包清单");
+                    log::warn!("启动数据来源不可用，继续使用随包网络默认");
                 }
             });
             // 迁移发生在日志插件初始化之前，结果在这里补记。

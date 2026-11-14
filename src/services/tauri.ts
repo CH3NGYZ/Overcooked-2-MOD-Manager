@@ -144,9 +144,9 @@ export const api = {
    * 为准。返回实际改写的条数（0 = 本来就一致）。
    */
   syncDependencySnapshots: () => invoke<DependencySyncResult>('sync_dependency_snapshots'),
-  /** 从源文档地址（raw / 远程 TOML）重新拉取并应用该仓库源。 */
-  importRepositorySource: (sourceId: string, sourceUrl: string, builtinFallback = false) =>
-    invoke<RepositorySourceImportResult>('import_repository_source', { sourceId, sourceUrl, builtinFallback }),
+  /** 应用源文档；官方源复用整包，仅显式全量刷新重新获取源码ZIP。 */
+  importRepositorySource: (sourceId: string, sourceUrl: string, builtinFallback = false, force = false) =>
+    invoke<RepositorySourceImportResult>('import_repository_source', { sourceId, sourceUrl, builtinFallback, force }),
   /**
    * 刷新前清空这些源（含后代）下的仓库与子源缓存，返回清理后的配置。
    *

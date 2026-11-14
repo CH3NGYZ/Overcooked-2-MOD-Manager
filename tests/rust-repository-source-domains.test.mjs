@@ -9,9 +9,9 @@ const owners = {
   cache: ['clear_source_cache', 'clear_source_repositories'],
   diagnostics: ['safe_log_address', 'error_category'],
   document: ['nickname_fallback', 'normalize_source_nickname', 'deserialize_builtin', 'source_address_key', 'parse_document'],
-  embedded: ['bundled_repository_configs', 'bundled_document', 'parse_bundled_document', 'bundled_text'],
+  embedded: ['bundled_files', 'bundled_repository_configs', 'bundled_document', 'parse_bundled_document', 'bundled_text'],
   location: ['parse', 'resolve', 'resolve_remote_path', 'remote', 'bundled_path', 'address', 'is_file_relative_path', 'raw_repository_root', 'remote_document_location'],
-  transport: ['load_text_document', 'load_document'],
+  transport: ['package_document_path', 'load_text_document', 'load_document'],
   verified: ['load_verified_text_document', 'fetch_document_bytes'],
   apply: ['import_repository_source_into_config', 'sync_manifest_groups'],
 }
@@ -69,7 +69,8 @@ test('MOD and map sources retain shared reading, verified failure and cache appl
   assert.match(transport, /load_text_document\(location, \|text, origin\|[\s\S]*parse_document\(text, origin, inherited\)/)
   assert.match(document, /document\.network_plan = document\.network_plan\.inherit\(inherited\)/)
   const verified = read('verified.rs')
-  assert.equal([...verified.matchAll(/return load_text_document\(location, parse\)\.await;/g)].length, 2)
+  assert.equal([...verified.matchAll(/return load_text_document\(location, parse\)\.await;/g)].length, 3)
+  ordered(verified, ['package_document_path(location).is_some()', 'let SourceLocation::Remote(url)', 'if verified.candidates.is_empty()'])
   ordered(verified, ['if verified.candidates.is_empty()', 'crate::download::try_download_candidates(', 'let text = String::from_utf8(bytes)', 'parse(&text, location)'])
   assert.doesNotMatch(verified.slice(verified.indexOf('crate::download::try_download_candidates(')), /load_text_document\(/)
   assert.match(verified, /crate::archive::validate_download_bytes\(&content, expected_size, digest\)\?/)
@@ -83,11 +84,90 @@ test('MOD and map sources retain shared reading, verified failure and cache appl
   const apply = read('apply.rs')
   assert.equal([...apply.matchAll(/let _cache_guard = state\.repository_cache\.lock\(\)\.await;/g)].length, 2)
   assert.equal([...apply.matchAll(/let _operation_guard = state\s*\.operation\s*\.lock\(\)/g)].length, 2)
-  ordered(apply, ['let _cache_guard', 'let _operation_guard', '};\n    let (document, selection) = if official_root', 'state.config.official_root(true).await?', 'repository_sources::load_document(&location, &parent_plan).await', 'let _cache_guard', 'let _operation_guard', 'config.staged_release_cache.remove(previous_id)', 'sync_manifest_groups(&state, &config)'])
+  ordered(apply, ['let _cache_guard', 'let _operation_guard', 'let (document, selection) = if official_root', 'state.config.official_root(force).await?', 'repository_sources::load_document(&location, &parent_plan).await', 'let _cache_guard', 'let _operation_guard', 'config.staged_release_cache.remove(previous_id)', 'sync_manifest_groups(&state, &config)'])
   assert.match(apply, /state\.config\.data_selection\(\) != selection/)
   ordered(apply, ['repository_sources::load_document(&location, &parent_plan).await', 'super::cache::clear_source_repositories(', 'state.config.save(&config)'])
   assert.doesNotMatch(apply.slice(0, apply.indexOf('repository_sources::load_document(&location, &parent_plan).await')), /clear_source_cache\(|clear_source_repositories\(|state\.config\.save\(/)
   assert.doesNotMatch(apply, /staged_release_cache\.clear\(/)
   assert.match(apply, /let child_builtin = parent_builtin && child\.builtin\.unwrap_or\(true\);/)
   assert.match(read('../commands/repository_sources.rs'), /use crate::repository_sources::apply::import_repository_source_into_config;/)
+})
+
+
+test('official package dispatch retains native verification and one blocking ZIP parser', () => {
+  const download = read('package/download.rs')
+  assert.match(download, /if\s+provider\s*==\s*DataProvider::Gitee\s*\{\s*browser_bytes\(browser,\s*archive_address,\s*provider\)\.await\?\s*\}/)
+  assert.match(download, /Err\(ArchiveError::Verification\)\s+if\s+provider\s*==\s*DataProvider::Gitcode\s*=>\s*\{\s*browser_bytes\(browser,\s*archive_address,\s*provider\)\.await\?\s*\}/)
+  assert.match(download, /tokio::task::spawn_blocking\(move\s*\|\|\s*SourcePackage::from_zip\(&bytes\)\.map\(Arc::new\)\)/)
+  assert.doesNotMatch(download, /try_download_candidates|bearer_auth|AUTHORIZATION/, 'official archives use the shared native/anonymous download paths')
+})
+
+test('archive HTTP and native verification share the exact application user agent and bounded request', () => {
+  const download = read('package/download.rs')
+  assert.match(download, /const\s+USER_AGENT:\s*&str\s*=\s*concat!\(\s*"Overcooked 2 MOD Manager\/",\s*env!\("CARGO_PKG_VERSION"\),?\s*\)/)
+  assert.match(download, /\.header\(reqwest::header::USER_AGENT,\s*USER_AGENT\)/)
+  assert.match(download, /user_agent:\s*USER_AGENT\.to_owned\(\)/)
+  assert.match(download, /crate::webview_download::download\(\s*app,\s*crate::webview_download::Request\s*\{/)
+  assert.match(download, /max_bytes:\s*MAX_ARCHIVE_BYTES/)
+  assert.match(download, /timeout:\s*std::time::Duration::from_secs\(120\)/)
+  assert.match(download, /allowed_download_paths:\s*if\s+provider\s*==\s*DataProvider::Gitee\s*\{\s*vec!\[\s*"\/ch3ngyz\/Overcooked-2-MOD-Manager-Repos\/repository\/download"\.to_owned\(\)/)
+})
+
+test('official child documents read the captured immutable package through the shared transport', () => {
+  const entry = read('../repository_sources.rs'), archive = read('package.rs')
+  assert.match(entry, /mod\s+package\s*;/)
+  assert.match(entry, /use\s+package::\{\s*SourcePackage,\s*fetch\s+as\s+fetch_source_package\s*\}/)
+  assert.match(archive, /tokio::task_local!\s*\{\s*static\s+ACTIVE:\s*Arc\u003cSourcePackage>;\s*\}/)
+  assert.match(archive, /ACTIVE\.try_with\(Arc::clone\)\.ok\(\)/)
+  assert.match(archive, /"source\.packageFileMissing"/)
+  const transport = read('transport.rs')
+  assert.match(transport, /SourcePackage::active\(\)/)
+  assert.match(transport, /let\s+text\s*=\s*package\.read\(&path\)\?/)
+  const runtime = read('../github_proxy_runtime/official_root.rs')
+  assert.match(runtime, /SourcePackage::in_snapshot\(package,\s*work\)\.await/)
+  assert.match(runtime, /snapshot\.package\s*=\s*Some\(package\.clone\(\)\)/)
+  assert.match(runtime, /snapshot\.revision\s*\+=\s*1/)
+})
+
+test('task-local package and policy wrappers box work before constructing their scoped futures', () => {
+  const archive = read('package.rs'), policy = read('../network_policy/runtime.rs')
+  assert.doesNotMatch(archive, /\basync\s+fn\s+in_snapshot\b/)
+  assert.match(archive, /ACTIVE\.scope\(package,\s*Box::pin\(work\)\)/)
+  assert.doesNotMatch(policy, /\basync\s+fn\s+in_snapshot\b/)
+  assert.match(policy, /ACTIVE\.scope\(policy,\s*Box::pin\(work\)\)/)
+  const runtime = read('../github_proxy_runtime/official_root.rs')
+  assert.doesNotMatch(runtime, /\basync\s+fn\s+(?:in_selection|official_root)\b/)
+  assert.match(runtime, /let\s+work\s*=\s*Box::pin\(work\)/)
+  assert.match(runtime, /Box::pin\(self\.official_root_from\(/)
+  const config = read('../config/storage.rs')
+  assert.match(config, /\bfn\s+in_data_selection\b/)
+  assert.doesNotMatch(config, /\basync\s+fn\s+in_data_selection\b/)
+})
+
+test('startup shares the official root without eagerly expanding builtin map or paused community trees', () => {
+  const defaults = read('../config/defaults.rs')
+  assert.match(defaults, /\bmap_repositories:\s*Vec::new\(\)/)
+  assert.match(defaults, /\bcommunity_map_repositories:\s*Vec::new\(\)/)
+  assert.doesNotMatch(defaults, /bundled_map_tree\s*\(/)
+  assert.match(read('preflight.rs'), /config\.official_root\(false\)/)
+  const ownership = read('../community/ownership.rs')
+  assert.match(ownership, /if\s+include_bundled\s*\{\s*keys\.extend\(bundled_official_repository_keys\(\)\);?\s*\}/)
+  assert.match(ownership, /if\s+has_candidates\s*\{\s*official_repository_keys\(config,\s*super::DISCOVERY_ENABLED\)\s*\}\s*else\s*\{\s*HashSet::new\(\)/)
+  assert.match(read('../community.rs'), /const\s+DISCOVERY_ENABLED:\s*bool\s*=\s*false/)
+})
+
+test('native archive downloads are registered and closed with the main window', () => {
+  const lib = read('../lib.rs'), browser = read('../webview_download.rs')
+  assert.match(lib, /^\s*mod\s+webview_download\s*;/m)
+  assert.match(lib, /webview_download::close_with_main\(window,\s*event\)/)
+  ordered(lib, ['let proxy_config = state.config.clone()', 'proxy_config.set_source_browser(app.handle().clone())', 'app.manage(state.clone())', 'async_runtime::spawn(async move {', 'proxy_config.refresh_proxies().await'])
+  assert.match(browser, /window\.label\(\)\s*!=\s*"main"\s*\|\|\s*!matches!\(event,\s*WindowEvent::Destroyed\)/)
+  assert.match(browser, /label\.starts_with\(WINDOW_PREFIX\)/)
+  assert.match(browser, /webview\.destroy\(\)/)
+  assert.match(browser, /\.on_download\(/)
+  assert.match(browser, /DownloadEvent::Requested/)
+  assert.match(browser, /DownloadEvent::Finished/)
+  assert.match(browser, /Drop\s+for\s+DownloadGuard/)
+  assert.match(browser, /self\.state\.cancel\(\)/)
+  assert.doesNotMatch(browser, /reqwest::|bearer_auth/, 'the native download keeps its verified session instead of replaying a URL')
 })

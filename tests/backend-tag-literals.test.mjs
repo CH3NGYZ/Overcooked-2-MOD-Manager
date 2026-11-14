@@ -63,6 +63,10 @@ const NON_TAG = new Set([
   'dll.disabled',
   // Unity's streamed texture file and the rendered-cache eviction fixtures.
   'resources.assets.resS', 'current.bin', 'old.bin',
+  // 源码 ZIP 完整性测试里的非 TOML 成员，仍须检查加密位和校验和。
+  'ignored.bin',
+  // 原生下载 DNS 标签校验的恶意域名反例，不是后端错误 tag。
+  'gitee.com.evil.test',
   // 拍平测试里的随包资源文件名（作者真的这么命名，不是 tag）
   'shared.assets',
   // 地图源测试里的示例值

@@ -10,14 +10,15 @@ export const settings: DomainMessages = {
   dataSources: { 'zh-CN': '数据来源', 'zh-TW': '資料來源', en: 'Data sources', ko: '데이터 소스', ja: 'データソース' },
   dataProviderGithub: { 'zh-CN': 'GitHub（国际）', 'zh-TW': 'GitHub（國際）', en: 'GitHub (International)', ko: 'GitHub (국제)', ja: 'GitHub（国際）' },
   dataProviderGitee: { 'zh-CN': 'Gitee（中国大陆）', 'zh-TW': 'Gitee（中國大陸）', en: 'Gitee (Mainland China)', ko: 'Gitee (중국 본토)', ja: 'Gitee（中国本土）' },
+  dataProviderGitcode: { 'zh-CN': 'GitCode', 'zh-TW': 'GitCode', en: 'GitCode', ko: 'GitCode', ja: 'GitCode' },
   dataProviderCloudflare: { 'zh-CN': 'Cloudflare（全球）', 'zh-TW': 'Cloudflare（全球）', en: 'Cloudflare (Global)', ko: 'Cloudflare (전 세계)', ja: 'Cloudflare（グローバル）' },
   dataProviderBuiltin: { 'zh-CN': '内置', 'zh-TW': '內建', en: 'Bundled', ko: '내장', ja: '内蔵' },
   dataProviderHint: {
-    'zh-CN': 'MOD 源、地图源、代理和网络计划共用当前来源。每次启动按电脑地区初始化，本次运行可手动更改。官方 MOD 根索引不可用时，依次切换 Cloudflare、内置；此处显示当前实际来源。',
-    'zh-TW': 'MOD 來源、地圖來源、代理與網路計畫共用目前來源。每次啟動依電腦地區初始化，本次執行可手動變更。官方 MOD 根索引無法使用時，依序切換 Cloudflare、內建；此處顯示目前實際來源。',
-    en: 'MODs, maps, proxies and network plans share the active source. Initialized from your computer region at each launch; change it for this session. If the official MOD root index fails, switch to Cloudflare, then bundled data. The current active source is shown here.',
-    ko: 'MOD, 지도, 프록시 및 네트워크 계획은 현재 소스를 공유합니다. 시작할 때 컴퓨터 지역에 따라 초기화되며 이번 실행 중 변경할 수 있습니다. 공식 MOD 루트 인덱스를 읽지 못하면 Cloudflare, 내장 데이터 순서로 전환합니다. 현재 실제 소스를 표시합니다.',
-    ja: 'MOD・マップ・プロキシ・ネットワークプランは現在の取得元を共有します。起動ごとにコンピューターの地域で初期化され、実行中に変更できます。公式 MOD ルートインデックスを取得できない場合は Cloudflare、内蔵の順に切り替えます。ここには実際の取得元を表示します。',
+    'zh-CN': '本次启动有效。中国大陆：GitCode → Gitee → Cloudflare → 内置；国际地区：GitHub → Cloudflare → 内置。Gitee 需在独立原生窗口中完成验证并点击下载。官方文档从同一源码 ZIP 读取，此处显示实际来源。',
+    'zh-TW': '僅在本次啟動有效。中國大陸：GitCode → Gitee → Cloudflare → 內建；國際地區：GitHub → Cloudflare → 內建。Gitee 需在獨立原生視窗中完成驗證並點擊下載。官方文件從同一原始碼 ZIP 讀取，此處顯示實際來源。',
+    en: 'Applies to this session. Mainland China: GitCode → Gitee → Cloudflare → Bundled; international: GitHub → Cloudflare → Bundled. For Gitee, complete verification and click download in a separate native window. Official documents come from one source ZIP; the active source is shown here.',
+    ko: '이번 실행에만 적용됩니다. 중국 본토: GitCode → Gitee → Cloudflare → 내장, 그 외 지역: GitHub → Cloudflare → 내장. Gitee는 별도 네이티브 창에서 인증을 완료한 뒤 다운로드를 클릭해야 합니다. 공식 문서는 동일한 소스 ZIP에서 읽으며 여기에 실제 사용 중인 소스를 표시합니다.',
+    ja: '今回の起動中のみ有効です。中国本土：GitCode → Gitee → Cloudflare → 内蔵、その他の地域：GitHub → Cloudflare → 内蔵。Gitee は独立したネイティブウィンドウで認証を完了し、ダウンロードをクリックしてください。公式ドキュメントは同じソース ZIP から読み込み、ここに実際の取得元を表示します。',
   },
   dataProviderChanged: {
     'zh-CN': '已切换数据来源，刷新 MOD / 地图仓库后应用',
@@ -27,11 +28,11 @@ export const settings: DomainMessages = {
     ja: 'データソースを変更しました。MOD / マップリポジトリを更新すると反映されます。',
   },
   dataProviderNetworkFallback: {
-    'zh-CN': '已切换数据来源；网络配置暂时使用内置数据，刷新 MOD / 地图仓库后应用源变更',
-    'zh-TW': '已切換資料來源；網路設定暫時使用內建資料，重新整理 MOD / 地圖倉庫後套用來源變更',
-    en: 'Data source changed; using bundled network settings for now. Refresh the MOD / map repositories to apply the source change.',
-    ko: '데이터 소스를 변경했습니다. 네트워크 설정은 일시적으로 내장 데이터를 사용합니다. MOD / 지도 저장소를 새로 고쳐 소스 변경을 적용하세요.',
-    ja: 'データソースを変更しました。ネットワーク設定は一時的に内蔵データを使用します。MOD / マップリポジトリを更新すると取得元の変更が反映されます。',
+    'zh-CN': '未能完成数据来源刷新，请查看当前实际来源并重试刷新 MOD / 地图仓库',
+    'zh-TW': '未能完成資料來源重新整理，請查看目前實際來源並重試重新整理 MOD / 地圖倉庫',
+    en: 'Could not finish refreshing the data source. Check the active source and retry refreshing MOD / map repositories.',
+    ko: '데이터 소스 새로 고침을 완료하지 못했습니다. 현재 사용 중인 소스를 확인하고 MOD / 지도 저장소를 다시 새로 고치세요.',
+    ja: 'データソースの更新を完了できませんでした。実際の取得元を確認し、MOD / マップリポジトリの更新を再試行してください。',
   },
   // 路径管理
   paths: {

@@ -1,6 +1,9 @@
-//! Startup diagnostics use the same bounded source reader, without loading children.
+//! Startup diagnostics share the selected official package and its single-flight gate.
+#[cfg(test)]
 use super::{SourceLocation, load_document};
+#[cfg(test)]
 use crate::config::ConfigError;
+use crate::config::ConfigService;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -27,7 +30,7 @@ pub(crate) fn cancel_startup_probe() {
     }
 }
 
-pub(crate) async fn probe_startup_source() -> StartupProbe {
+pub(crate) async fn probe_startup_source(config: &ConfigService) -> StartupProbe {
     let (sender, mut cancelled) = tokio::sync::watch::channel(false);
     {
         let mut active = ACTIVE.lock().unwrap_or_else(|e| e.into_inner());
@@ -36,11 +39,19 @@ pub(crate) async fn probe_startup_source() -> StartupProbe {
         }
         *active = Some(sender);
     }
-    let location =
-        SourceLocation::parse(&crate::models::DataProvider::Github.document("mods.toml"))
-            .expect("official source URL must be valid");
     let _guard = ActiveGuard;
-    let result = probe_location(&location, Duration::from_secs(10), &mut cancelled).await;
+    let result = tokio::select! {
+        biased;
+        _ = cancelled.changed() => StartupProbe::failed("cancelled"),
+        result = tokio::time::timeout(Duration::from_secs(10), config.official_root(false)) => {
+            match result {
+                Err(_) => StartupProbe::failed("timeout"),
+                Ok(Ok(_)) => StartupProbe { reachable: true, failure_kind: None },
+                Ok(Err(error)) if error == "source.addressMismatch" => StartupProbe::failed("cancelled"),
+                Ok(Err(_)) => StartupProbe::failed("network"),
+            }
+        }
+    };
     // Never log raw errors: they can carry URL queries or response content.
     log::info!(
         "启动源预检：可达={}，分类={:?}",
@@ -57,6 +68,7 @@ impl Drop for ActiveGuard {
     }
 }
 
+#[cfg(test)]
 async fn probe_location(
     location: &SourceLocation,
     deadline: Duration,
@@ -76,6 +88,7 @@ async fn probe_location(
     }
 }
 
+#[cfg(test)]
 fn failure_kind(error: &ConfigError) -> &'static str {
     match error {
         ConfigError::Read(message) if message.starts_with("HTTP ") => "http",
@@ -88,6 +101,27 @@ fn failure_kind(error: &ConfigError) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn startup_probe_reuses_the_selected_package_without_loading_config() {
+        let root =
+            std::env::temp_dir().join(format!("oc2-shared-source-probe-{}", uuid::Uuid::new_v4()));
+        let config = ConfigService::for_test(root.clone());
+        config.select_data_provider(crate::models::DataProvider::Builtin);
+        assert!(probe_startup_source(&config).await.reachable);
+        let selection = config.data_selection();
+        assert_eq!(selection.0, crate::models::DataProvider::Builtin);
+        assert!(probe_startup_source(&config).await.reachable);
+        assert_eq!(
+            config.data_selection(),
+            selection,
+            "the second probe must reuse its package"
+        );
+        assert!(
+            !root.exists(),
+            "diagnostics must not read or create a user configuration"
+        );
+    }
 
     fn serve(
         status: &str,

@@ -1,7 +1,11 @@
 #![cfg(target_os = "windows")]
 
+#[path = "gitee-webview/archive.rs"]
+mod archive;
 #[path = "../src/gitee_webview.rs"]
 mod gitee_webview;
+#[path = "../src/webview_download.rs"]
+mod webview_download;
 
 use futures_util::FutureExt;
 use gitee_webview::{BrowserOptions, TopicBrowser};
@@ -332,21 +336,49 @@ async fn verify_windows(app: &AppHandle, directory: &Path, live: bool) -> Result
 #[test]
 #[ignore = "Requires an interactive Windows WebView2 desktop; opt into real Gitee with OC2_GITEE_LIVE_VERIFY=1"]
 fn windows_webview_challenge_isolation_and_lifecycle() {
+    run_native_validation(false);
+}
+
+#[test]
+#[ignore = "One interactive Gitee source-ZIP download; requires OC2_GITEE_LIVE_ARCHIVE=1 and user-ready verification"]
+fn windows_live_gitee_archive_download_and_autoclose() {
+    assert_eq!(
+        std::env::var("OC2_GITEE_LIVE_ARCHIVE").as_deref(),
+        Ok("1"),
+        "the live source-ZIP case requires explicit opt-in"
+    );
+    archive::install_logger();
+    run_native_validation(true);
+}
+
+fn run_native_validation(archive_download: bool) {
+    let started = Instant::now();
     let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("target/verification/gitee-webview-runtime")
         .join(format!(
-            "run-{}",
-            chrono::Utc::now().format("%Y%m%d-%H%M%S")
+            "{}-{}-{}",
+            if archive_download { "archive" } else { "topic" },
+            chrono::Utc::now().format("%Y%m%d-%H%M%S"),
+            std::process::id()
         ));
     std::fs::create_dir_all(&directory).unwrap();
     let live = std::env::var("OC2_GITEE_LIVE_VERIFY").as_deref() == Ok("1");
     let mut context = tauri::generate_context!();
     context.config_mut().app.windows.clear();
+    context.config_mut().identifier =
+        format!("com.ch3ngyz.oc2.validation.run-{}", uuid::Uuid::new_v4());
+    let identifier = context.config().identifier.clone();
+    // This also isolates production webviews that do not set data_directory.
+    context.config_mut().app.app_directories_override =
+        Some(serde_json::from_value(json!(directory.join("profile"))).unwrap());
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     let output = directory.clone();
     let exit_code = tauri::Builder::default()
         .any_thread()
-        .on_window_event(gitee_webview::close_with_main)
+        .on_window_event(|window, event| {
+            gitee_webview::close_with_main(window, event);
+            webview_download::close_with_main(window, event);
+        })
         .invoke_handler(tauri::generate_handler![privileged_probe])
         .setup(move |app| {
             WebviewWindowBuilder::new(
@@ -354,16 +386,37 @@ fn windows_webview_challenge_isolation_and_lifecycle() {
                 "main",
                 WebviewUrl::External(Url::parse("about:blank").unwrap()),
             )
+            .title("OC2 独立原生下载验收（隐藏锚点）")
             .visible(false)
             .focused(false)
-            .data_directory(directory.join("anchor"))
+            // Share only this run's profile so CDP also sees the download window.
+            .data_directory(directory.join(if archive_download {
+                "profile"
+            } else {
+                "anchor"
+            }))
             .build()?;
+            assert_eq!(app.path().app_local_data_dir()?, directory.join("profile"));
+            assert!(!app.get_webview_window("main").unwrap().is_visible()?);
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 // Always stop the event loop, including assertion panics and stalled WebViews.
                 let result = match tokio::time::timeout(
-                    Duration::from_secs(if live { 180 } else { 40 }),
-                    AssertUnwindSafe(verify_windows(&handle, &directory, live)).catch_unwind(),
+                    Duration::from_secs(if archive_download {
+                        120
+                    } else if live {
+                        180
+                    } else {
+                        40
+                    }),
+                    AssertUnwindSafe(async {
+                        if archive_download {
+                            archive::verify(&handle, &directory).await
+                        } else {
+                            verify_windows(&handle, &directory, live).await
+                        }
+                    })
+                    .catch_unwind(),
                 )
                 .await
                 {
@@ -389,10 +442,25 @@ fn windows_webview_challenge_isolation_and_lifecycle() {
             }
         });
     let report = receiver.recv_timeout(Duration::from_secs(3)).unwrap();
-    let evidence = match &report {
+    let mut evidence = match &report {
         Ok(value) => value.clone(),
-        Err(error) => json!({"error":error, "live_requested":live}),
+        Err(error) => json!({"error":error}),
     };
+    evidence["elapsed_ms"] = json!(started.elapsed().as_millis());
+    evidence["live_requested"] = json!(archive_download || live);
+    evidence["scenario"] = json!(if archive_download {
+        "live-gitee-source-zip"
+    } else {
+        "community-topic"
+    });
+    evidence["isolated_profile"] = json!(output.join("profile"));
+    evidence["identifier"] = json!(identifier);
+    evidence["profile_isolation_checked"] = json!(true);
+    evidence["anchor_hidden"] = json!(true);
+    if archive_download {
+        evidence["download_events"] = json!(archive::events());
+        evidence["acceptance_inputs"] = archive::inputs();
+    }
     std::fs::write(
         output.join("report.json"),
         serde_json::to_vec_pretty(&evidence).unwrap(),

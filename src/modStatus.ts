@@ -42,6 +42,8 @@ interface ParsedVersion {
   numbers: number[]
   /** 预发布标识符；空数组表示正式版。 */
   prerelease: string[]
+  /** tag 明确命名 alpha/beta/rc 等预发布线，区别于四段数字的旧式推断。 */
+  explicitPrerelease: boolean
 }
 
 /**
@@ -93,32 +95,34 @@ export function parseVersion(value: string | null | undefined): ParsedVersion | 
     ? [...suffix, ...buildParts]
     : hasBuild ? ['beta', ...buildParts] : []
 
-  return { numbers, prerelease }
+  const explicitPrerelease = match[2].split('+', 1)[0].split(/[-.]/)
+    .some(part => /^(?:alpha|beta|pre|preview|rc|dev|nightly)(?:\d+)?$/i.test(part))
+  return { numbers, prerelease, explicitPrerelease }
 }
 
 /**
  * 是否预发布版本。
  *
- * 明确的平台标记或后端已解析结论优先（包括 false）；仅未知时，
- * 才读取旧快照标记和完整版本后缀。Release 调用传 apiPrerelease 和旧 prerelease，
- * InstalledMod 调用传后端已经按精确绑定解析好的 prerelease。
+ * tag 明确命名 alpha/beta/pre/preview/rc/dev/nightly 时必属预发布。其余版本优先采用平台标记
+ * 或后端已解析结论（包括 false），仅未知时兼容旧快照和四段数字推断。
+ * 因此数字版本取消平台预发布标记后仍能转正式，显式 beta 则不会被误分类。
  *
- * 规则本身只在后端 `releases::is_prerelease_version` 实现一次（四段 =
- * beta 序号、`-` 后缀 = 预发布），前端这里只是同一套规则的镜像，
- * 保证「后端标记优先 + 老数据可判」两点同时成立。
+ * 与后端 `releases::resolve_prerelease` 保持一致，两个页面、关系判定和
+ * 安装确认共用此入口，避免同一个 beta 在不同位置被当作不同发布线。
  *
  * **调用方必须传 `tag_name`，不能传 `version`。** 后端的 `version` 是
- * `parse_version` 归一后的三段文本，第 4 段已经丢了，拿它反推必然得出
- * 「不是预发布」；`tag_name` 才是仓库发的原始版本字符串。
+ * `parse_version` 归一后的文本可能丢失第 4 段，无法用于旧式序号推断；
+ * `tag_name` 才是仓库发的原始版本字符串。
  */
 export function isPrereleaseVersion(
   version: string | null | undefined,
   flag?: boolean | null,
   legacyFlag?: boolean | null,
 ): boolean {
+  const parsed = parseVersion(version)
+  if (parsed?.explicitPrerelease) return true
   if (typeof flag === 'boolean') return flag
   if (legacyFlag) return true
-  const parsed = parseVersion(version)
   return !!parsed && parsed.prerelease.length > 0
 }
 

@@ -373,9 +373,7 @@ fn inspect_dll(
             config,
             repository_binding,
             manifest.is_some_and(|item| item.prerelease),
-            repository_binding
-                .map(|binding| binding.tag.as_str())
-                .or(installed_version.as_deref()),
+            installed_version.as_deref(),
         ),
         /*
          * 依赖快照：仓库还在配置里时前端用线上声明，仓库不在了（源下线/

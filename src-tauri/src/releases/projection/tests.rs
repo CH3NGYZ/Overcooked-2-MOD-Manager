@@ -1,11 +1,11 @@
 use super::*;
 
 #[test]
-fn explicit_api_false_wins_over_beta_tag_and_legacy_cache() {
+fn explicit_api_false_promotes_numeric_beta_and_overrides_legacy_cache() {
     for provider in [Provider::Github, Provider::Gitee, Provider::Gitcode] {
         let releases = parse_release_json(
             &serde_json::json!([
-                {"tag_name": "v1.9.9-beta.2", "prerelease": false},
+                {"tag_name": "v1.9.9.2", "prerelease": false},
                 {"tag_name": "v1.9.9-beta.3"},
                 {"tag_name": "v1.9.9", "prerelease": true}
             ]),
@@ -19,14 +19,14 @@ fn explicit_api_false_wins_over_beta_tag_and_legacy_cache() {
         assert!(releases[2].prerelease);
         let snapshot = project_mod_releases(releases, &Channel::Beta);
         assert_eq!(
-            snapshot.release_prerelease_metadata.get("v1.9.9-beta.2"),
+            snapshot.release_prerelease_metadata.get("v1.9.9.2"),
             Some(&false)
         );
         assert!(
             !snapshot
                 .cached_releases
                 .iter()
-                .any(|release| release.tag_name == "v1.9.9-beta.2")
+                .any(|release| release.tag_name == "v1.9.9.2")
         );
     }
     let legacy: ReleaseInfo = serde_json::from_value(serde_json::json!({
@@ -36,6 +36,26 @@ fn explicit_api_false_wins_over_beta_tag_and_legacy_cache() {
     .unwrap();
     assert_eq!(legacy.api_prerelease, None);
     assert_eq!(filter_channel(vec![legacy], &Channel::Beta).len(), 1);
+}
+
+#[test]
+fn explicit_beta_tag_keeps_its_version_and_channel_when_platform_flag_is_false() {
+    for provider in [Provider::Github, Provider::Gitee, Provider::Gitcode] {
+        for tag in ["v2.0.0-beta.3", "2.0-beta.3"] {
+            let releases = parse_release_json(
+                &serde_json::json!({"tag_name": tag, "prerelease": false}),
+                &provider,
+            )
+            .unwrap();
+            assert_eq!(releases[0].version.as_deref(), Some("2.0.0-beta.3"));
+            assert_eq!(releases[0].api_prerelease, Some(false));
+            assert!(releases[0].prerelease);
+            assert!(filter_channel(releases.clone(), &Channel::Stable).is_empty());
+            let snapshot = project_mod_releases(releases, &Channel::Beta);
+            assert_eq!(snapshot.cached_releases.len(), 1);
+            assert_eq!(snapshot.release_prerelease_metadata.get(tag), Some(&false));
+        }
+    }
 }
 
 #[test]

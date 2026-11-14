@@ -6,17 +6,33 @@ fn manifest_sync_uses_exact_platform_verdict_and_preserves_unknown_history() {
     use crate::models::{ModDownloadMode, Provider};
     use crate::mods::test_support::{config, repository};
     for (case, api, legacy, tag, expected) in [
-        ("metadata-false", Some(false), true, "v1.0.0-beta", false),
-        ("cached-false", Some(false), true, "v1.0.0-beta", false),
+        ("metadata-false", Some(false), true, "v1.0.0.1", false),
+        ("cached-false", Some(false), true, "v1.0.0.1", false),
+        (
+            "metadata-beta-false",
+            Some(false),
+            false,
+            "v2.0.0-beta.3",
+            true,
+        ),
+        (
+            "cached-beta-false",
+            Some(false),
+            false,
+            "v2.0.0-beta.3",
+            true,
+        ),
+        ("short-beta-false", Some(false), false, "2.0-beta.3", true),
+        ("custom-fix-false", Some(false), true, "3.4.1-fix", false),
         ("explicit-true", Some(true), false, "v1.0.0", true),
         ("legacy-true", None, true, "v1.0.0", true),
         ("legacy-suffix", None, false, "v1.0.0-beta", true),
         ("legacy-stable", None, false, "v1.0.0", false),
-        ("other-tag", Some(false), true, "v1.0.0-beta", true),
-        ("other-provider", Some(false), true, "v1.0.0-beta", true),
-        ("other-owner", Some(false), true, "v1.0.0-beta", true),
-        ("other-repository", Some(false), true, "v1.0.0-beta", true),
-        ("missing-binding", Some(false), true, "v1.0.0-beta", false),
+        ("other-tag", Some(false), true, "v1.0.0.1", true),
+        ("other-provider", Some(false), true, "v1.0.0.1", true),
+        ("other-owner", Some(false), true, "v1.0.0.1", true),
+        ("other-repository", Some(false), true, "v1.0.0.1", true),
+        ("missing-binding", Some(false), true, "v1.0.0.1", false),
     ] {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target/test-source-refresh")
@@ -32,7 +48,7 @@ fn manifest_sync_uses_exact_platform_verdict_and_preserves_unknown_history() {
         }
         repo.cached_releases.clear();
         if let Some(api) = api {
-            if case == "cached-false" {
+            if case.starts_with("cached-") {
                 repo.cached_releases.push(
                     serde_json::from_value(serde_json::json!({
                         "tag_name": tag, "name": "", "body": "", "api_prerelease": api,

@@ -95,28 +95,26 @@ fn split_alpha_numeric(part: &str) -> Vec<String> {
     ]
 }
 
+/// 共用宽写版本语法：贪婪读取数字段，余下部分保留 -beta1、.beta4 等写法。
+fn version_parts(value: &str) -> Option<(Vec<u64>, &str)> {
+    let cleaned = value.trim().trim_start_matches(['v', 'V']);
+    let re = Regex::new(r"^(\d+(?:\.\d+)*)(.*)$").ok()?;
+    let caps = re.captures(cleaned)?;
+    let parts = caps
+        .get(1)?
+        .as_str()
+        .split('.')
+        .map(str::parse::<u64>)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    Some((parts, caps.get(2).map_or("", |value| value.as_str())))
+}
+
 impl SegmentVersion {
     fn parse(value: &str) -> Option<Self> {
-        let cleaned = value.trim().trim_start_matches(['v', 'V']);
-        /*
-         * 先切出「前导数字段」和「其余部分」。
-         *
-         * 用 `^(\d+(\.\d+)*)` 而不是找第一个 `-`：本项目的 beta 写法不统一，
-         * 除了标准 semver 的 `-beta.4`，还有 `1.8.7-beta1`（无分隔符）
-         * 和 `1.8.7.beta4`（点号分隔）—— 后者用旧的 `-` 正则会把整个号
-         * 解析失败，于是它既不参与比较也判不出预发布。
-         */
-        let re = Regex::new(r"^(\d+(?:\.\d+)*)(.*)$").ok()?;
-        let caps = re.captures(cleaned)?;
-        let parts = caps
-            .get(1)?
-            .as_str()
-            .split('.')
-            .map(str::parse::<u64>)
-            .collect::<Result<Vec<_>, _>>()
-            .ok()?;
+        let (parts, rest) = version_parts(value)?;
         let numbers = parts.iter().take(3).copied().collect::<Vec<_>>();
-        let suffix = suffix_identifiers(caps.get(2).map_or("", |value| value.as_str()));
+        let suffix = suffix_identifiers(rest);
         /*
          * 第 4 段及以后是前三位的 beta 序号：`1.8.7.23` ≡ `1.8.7-beta.23`。
          * 全 0 视为正式版（1.8.7.0 与 1.8.7 相同）；有非 0 段则拼进预发布标识，
@@ -296,20 +294,26 @@ fn is_valid_identifier_sequence(value: &str) -> bool {
 
 /// 版本号本身是否带预发布标识（`-beta`、`-rc.1` 等）。
 ///
-/// Legacy fallback when platform metadata is unavailable: 作者没勾标记，
-/// 但版本叫 `0.4.0-beta`、`0.4.0.5-beta` 时同样按预发布对待。
+/// 只按版本号推断的兼容入口；已知平台元数据时应使用 resolve_prerelease。
 ///
 /// 四段版本按 semver 的 beta 序号处理：`1.8.7.23` ≡ `1.8.7-beta.23`，
-/// 因此**是预发布**。这条规则必须全局一致，否则同一版本在比较、
-/// 渠道筛选和界面提示里会得到三种答案。
+/// 因此推断为预发布；已知平台元数据可覆盖这种历史推断。
 pub fn is_prerelease_version(version: &str) -> bool {
     SegmentVersion::parse(version).is_some_and(|parsed| !parsed.prerelease.is_empty())
 }
 
-/// Explicit platform metadata wins, including false; legacy snapshots and full
-/// version suffixes are consulted only when that verdict is unknown.
+/// 已知预发布标识优先；数字段、fix 等后缀仍允许平台 false 将版本转为正式版。
+/// 单独 +build 不属于强预发布信号，未知平台元数据继续沿用历史兼容推断。
 pub fn resolve_prerelease(api: Option<bool>, legacy: bool, version: Option<&str>) -> bool {
-    api.unwrap_or_else(|| legacy || version.is_some_and(is_prerelease_version))
+    let explicit = version.and_then(version_parts).is_some_and(|(_, rest)| {
+        let before_build = rest.split('+').next().unwrap_or_default();
+        suffix_identifiers(before_build).iter().any(|part| {
+            ["alpha", "beta", "pre", "preview", "rc", "dev", "nightly"]
+                .iter()
+                .any(|marker| part.eq_ignore_ascii_case(marker))
+        })
+    });
+    explicit || api.unwrap_or_else(|| legacy || version.is_some_and(is_prerelease_version))
 }
 
 #[cfg(test)]

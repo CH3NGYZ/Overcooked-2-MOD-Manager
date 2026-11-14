@@ -572,6 +572,38 @@ test('同 GUID 发布线互斥：只装一边不报冲突', () => {
   assert.deepEqual(unmetRelations(resolveRelations(stable, installed, [stable])), [])
 })
 
+test('显式 beta.3 未勾预发布时不与自身冲突，真正的正式版仍须处理', () => {
+  const beta = repo({
+    id: 'hu-beta', plugin_guid: SAME_GUID,
+    relations: [{ kind: 'conflicts', guid: SAME_GUID, prerelease: false }],
+    cached_releases: [{
+      tag_name: 'v2.0.0-beta.3', version: '2.0.0-beta.3', name: '', body: '',
+      prerelease: false, apiPrerelease: false, draft: false, assets: [],
+    }],
+  })
+  const betaCopy = mod({ name: 'Beta', guid: SAME_GUID, version: '2.0-beta.3', prerelease: false })
+  const statuses = resolveRelations(beta, [betaCopy], [beta])
+  assert.deepEqual(unmetRelations(statuses), [])
+  assert.equal(relationCardTag(primaryRelation(statuses), true), undefined)
+  assert.deepEqual(buildInstallPlan(beta, [betaCopy], [beta]), { uninstall: [], install: [], blocked: [] })
+
+  const stableCopy = mod({ name: 'Stable', guid: SAME_GUID, version: '1.9.9', prerelease: false })
+  const actualConflict = primaryRelation(resolveRelations(beta, [betaCopy, stableCopy], [beta]))
+  assert.equal(actualConflict?.state, 'conflict')
+  assert.equal(actualConflict?.installedMod, stableCopy)
+})
+
+test('依赖自动选源不能把 API false 的显式 beta 选作正式版', () => {
+  const betaOnly = repo({ cached_releases: [{
+    tag_name: 'v2.0.0-beta.3', version: '2.0.0-beta.3', name: '', body: '',
+    prerelease: false, apiPrerelease: false, draft: false, assets: [],
+  }] })
+  assert.equal(resolveRelation(DEP, [], [betaOnly]).state, 'missing')
+  const explicitlyBeta = resolveRelation({ ...DEP, prerelease: true }, [], [betaOnly])
+  assert.equal(explicitlyBeta.state, 'installable')
+  assert.equal(explicitlyBeta.release?.tag_name, 'v2.0.0-beta.3')
+})
+
 /* 发布线互斥只给卸载，不给「换版本」——换发布线不是装同一 GUID 的另一个包。 */
 test('发布线互斥的冲突不进 install 计划，只进 uninstall', () => {
   const stable = repo({

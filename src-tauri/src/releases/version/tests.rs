@@ -26,6 +26,63 @@ fn prerelease_detection_covers_version_suffixes() {
     assert!(!is_prerelease_version("unknown"));
 }
 
+#[test]
+fn explicit_prerelease_suffix_survives_a_cleared_platform_flag() {
+    for version in [
+        "v2.0.0-beta.3",
+        "2.0-beta.3",
+        "v2.0.0.beta3",
+        "2.0.0-rc.1",
+        "2.0.0-pre.01",
+        "2.0.0-alpha1",
+        "2.0.0-preview.1",
+        "2.0.0-dev.1",
+        "2.0.0-NIGHTLY.1",
+        "2.0.0.3-beta",
+        "2.0.0-beta.3+build.9",
+    ] {
+        for legacy in [false, true] {
+            assert!(
+                resolve_prerelease(Some(false), legacy, Some(version)),
+                "{version}"
+            );
+        }
+    }
+    let full = parse_version("v2.0.0-beta.3").unwrap();
+    let short = parse_version("2.0-beta.3").unwrap();
+    assert_eq!(full, short);
+    assert_eq!(short.to_string(), "2.0.0-beta.3");
+    assert_eq!(
+        compare_release_versions("v2.0.0-beta.3", "2.0-beta.3"),
+        Some(std::cmp::Ordering::Equal)
+    );
+}
+
+#[test]
+fn platform_false_preserves_numeric_promotion_and_stable_custom_suffixes() {
+    for version in [
+        "2.0",
+        "v2.0.0",
+        "2.0.0.3",
+        "2.0.0+build.3",
+        "3.4.1-fix",
+        "3.4.1-fix.3",
+        "2.0.0-1",
+    ] {
+        assert!(
+            !resolve_prerelease(Some(false), true, Some(version)),
+            "{version}"
+        );
+        assert!(
+            resolve_prerelease(Some(true), false, Some(version)),
+            "{version}"
+        );
+    }
+    assert!(resolve_prerelease(None, false, Some("2.0.0.3")));
+    assert!(!resolve_prerelease(None, false, Some("2.0")));
+    assert!(!resolve_prerelease(Some(false), true, Some("unknown")));
+}
+
 /*
  * 四条 beta 写法解析出的序号要能比较，否则「beta2 → beta3」
  * 这种升级会被判成「已是最新」。

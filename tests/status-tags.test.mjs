@@ -135,10 +135,16 @@ test('后端已带 prerelease 标签时不重复插入', () => {
   assert.equal(tags[0].key, 'prerelease')
 })
 
-test('明确转正式清除单卡与包头的历史预发布标签和后缀推断', () => {
-  const installed = mod({ version: '1.0.0-beta.1', prerelease: false, labels: ['prerelease', 'latest'] })
+test('纯数字版本明确转正式清除单卡与包头的历史预发布标签', () => {
+  const installed = mod({ version: '1.0.0.1', prerelease: false, labels: ['prerelease', 'latest'] })
   assert.equal(installedModTags(installed).some(tag => tag.key === 'prerelease'), false)
   assert.equal(packageStatuses([installed, { ...installed, dll_file: 'b.dll' }]).some(tag => tag.key === 'prerelease'), false)
+})
+
+test('显式 beta 后缀在历史标记为 false 时仍保留单卡和包头的预发布标签', () => {
+  const installed = mod({ version: '2.0-beta.3', prerelease: false, labels: ['latest'] })
+  assert.equal(installedModTags(installed).filter(tag => tag.key === 'prerelease').length, 1)
+  assert.equal(packageStatuses([installed, { ...installed, dll_file: 'b.dll' }]).filter(tag => tag.key === 'prerelease').length, 1)
 })
 
 test('版本结论类标签互斥：替换后不残留旧结论', () => {

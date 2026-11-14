@@ -172,9 +172,13 @@ fn lower_raw_copy_keeps_its_installation_source_and_never_reports_a_release_upda
 }
 
 #[test]
-fn bound_channel_uses_platform_tristate_before_legacy_flag_and_suffix() {
+fn bound_channel_keeps_explicit_suffix_and_platform_numeric_promotion() {
     for (api, legacy, tag, expected_beta) in [
-        (Some(false), true, "v99.0.0-beta", false),
+        (Some(false), true, "v99.0.0.1", false),
+        (Some(false), false, "v2.0.0-beta.3", true),
+        (Some(false), false, "2.0-beta.3", true),
+        (Some(false), true, "3.4.1-fix", false),
+        (Some(false), true, "2.0.0+build.3", false),
         (Some(true), false, "v99.0.0", true),
         (None, true, "v99.0.0", true),
         (None, false, "v99.0.0-beta", true),

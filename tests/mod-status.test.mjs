@@ -90,12 +90,23 @@ test('formatVersion 只去尾部全 0 段，有数字的段一律保留', () => 
   assert.equal(formatVersion(''), '')
 })
 
-test('预发布判定：明确布尔值权威，未知时兼容旧标记和后缀', () => {
+test('预发布判定：显式后缀优先，纯数字版本保留平台转正式语义', () => {
   // 作者勾了 prerelease → 是
   assert.equal(isPrereleaseVersion('0.4.0', true), true)
-  // 平台明确取消标记，即使历史标记和后缀仍指向 beta 也应清除
-  assert.equal(isPrereleaseVersion('0.4.0-beta', false, true), false)
-  assert.equal(isPrereleaseVersion('0.4.0.5-beta', false), false)
+  // beta/rc 后缀表达发布线，平台未勾选预发布也不能抹掉。
+  assert.equal(isPrereleaseVersion('0.4.0-beta', false, true), true)
+  assert.equal(isPrereleaseVersion('0.4.0.5-beta', false), true)
+  assert.equal(isPrereleaseVersion('v2.0.0-beta.3', false), true)
+  assert.equal(isPrereleaseVersion('2.0-beta.3', false), true)
+  assert.equal(isPrereleaseVersion('2.0.0.beta3', false), true)
+  assert.equal(isPrereleaseVersion('2.0-rc.1', false), true)
+  assert.equal(isPrereleaseVersion('2.0-ALPHA1', false), true)
+  // 无显式后缀时，平台取消标记仍可清除历史/四段推断。
+  assert.equal(isPrereleaseVersion('0.4.0.5', false, true), false)
+  assert.equal(isPrereleaseVersion('0.4.0+build.5', false, true), false)
+  assert.equal(isPrereleaseVersion('3.4.1-fix', false, true), false)
+  assert.equal(isPrereleaseVersion('2.0-1', false), false)
+  assert.equal(isPrereleaseVersion('2.0+beta.3', false), false)
   assert.equal(isPrereleaseVersion('0.4.0', undefined, true), true)
   assert.equal(isPrereleaseVersion('0.4.0-beta', null, false), true)
   assert.equal(isPrereleaseVersion('0.4.0-rc.1', undefined), true)
@@ -305,8 +316,25 @@ test('versionDisplay 主干去掉 v 前缀与第 4 段', () => {
   assert.equal(versionDisplay('v1.9.9.23', true, '测').marker, '23')
 })
 
-test('转正式后所有后缀写法清除展示marker', () => {
-  for (const tag of ['v1.9.9-beta.2', '1.9.9.23', '1.9.9-fix']) {
+test('纯数字版本转正式清除历史测试序号', () => {
+  for (const tag of ['v1.9.9', '1.9.9.23', '1.9.9.0']) {
     assert.equal(versionDisplay(tag, false, '测').marker, null, tag)
   }
+})
+
+test('GitHub 未勾预发布的 beta.3 仍展示完整版本语义和测试序号', () => {
+  for (const tag of ['v2.0.0-beta.3', '2.0-beta.3']) {
+    assert.equal(formatVersion(tag).replace(/^v/, ''), '2.0-beta.3')
+    assert.deepEqual(versionDisplay(tag, false, '测'), {
+      base: '2.0', marker: '3', markerIsNumeric: true,
+    })
+  }
+  assert.equal(compareVersions('2.0-beta.3', 'v2.0.0-beta.3'), 0)
+  assert.equal(compareVersions('2.0-beta.3', '2.0'), -1)
+})
+
+test('地图作者声明的正式 fix 版本不被误标成测试版', () => {
+  assert.deepEqual(versionDisplay('3.4.1-fix', false, '测'), {
+    base: '3.4.1', marker: null, markerIsNumeric: false,
+  })
 })

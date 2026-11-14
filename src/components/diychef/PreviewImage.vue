@@ -52,13 +52,13 @@ async function decode(url: string, signal: AbortSignal) {
     const cancel = () => { finish(new DOMException('Aborted', 'AbortError')); image.src = '' }
     // A load event can precede decode. Only browsers without decode use it as
     // the ready boundary; otherwise it must not bypass the pending pixels.
-    image.onload = image.decode ? null : () => finish()
+    image.onload = typeof image.decode === 'function' ? null : () => finish()
     image.onerror = () => finish(new Error('diychef.previewUnavailable'))
     signal.addEventListener('abort', cancel, { once: true })
     image.src = url
     // decode resolves only when the pixels are presentable, unlike obtaining a
     // Blob URL. Keep the old lease until Vue has installed this decoded URL.
-    if (image.decode) void image.decode().then(() => finish(), finish)
+    if (typeof image.decode === 'function') void image.decode().then(() => finish(), finish)
     if (signal.aborted) cancel()
   })
 }

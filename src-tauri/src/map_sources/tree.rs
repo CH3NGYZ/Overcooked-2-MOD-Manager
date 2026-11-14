@@ -34,11 +34,12 @@ fn root_source_label() -> SourceLabel {
     }
 }
 
-/// 同步加载内置地图源树（索引 → 子源 → 地图）。
+/// 仅供离线回归测试，同步加载内置地图源树（索引 → 子源 → 地图）。
 ///
 /// 只走编译期嵌入的资源，读取/解析失败跳过，不向调用方返回错误。内置索引只声明
 /// `release-tags` 源时结果必然为空（`collect_bundled_maps` 会跳过联网型源）：
-/// 保留给离线兼容与回归；正常配置初始化等待所选源码包，不提前预填另一份内置树。
+/// 正常配置初始化等待所选源码包，不提前预填另一份内置树。
+#[cfg(test)]
 pub(crate) fn bundled_map_tree() -> Vec<MapRepositoryConfig> {
     bundled_map_snapshot().0
 }

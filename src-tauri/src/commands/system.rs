@@ -141,8 +141,9 @@ pub fn refresh_user_region() -> &'static str {
 #[tauri::command]
 pub async fn probe_startup_source(
     state: State<'_, AppState>,
-) -> crate::repository_sources::StartupProbe {
-    crate::repository_sources::probe_startup_source(&state.config).await
+) -> Result<crate::repository_sources::StartupProbe, String> {
+    let config = state.config.clone();
+    Ok(crate::repository_sources::probe_startup_source(&config).await)
 }
 
 #[tauri::command]

@@ -10,6 +10,12 @@ let partialSequence = 0
 let cacheEpoch = 0
 let clearing: Promise<number> | null = null
 
+// Sessions are backend-issued identities for the target and resource revision.
+// The same tuple owns request sharing and cross-grid presentation reacquisition.
+export function chefThumbnailIdentity(sessionId: string, chefId: string, hatId: string) {
+  return JSON.stringify([sessionId, chefId, hatId])
+}
+
 /** Cancel old work before the backend clears its matching caches. New requests
  * wait for that operation, so neither side can refill caches while it runs. */
 export function clearChefThumbnailCache(): Promise<number> {
@@ -36,7 +42,7 @@ export async function requestChefThumbnail(sessionId: string, chefId: string, ha
   while (clearing) await clearing.catch(() => undefined)
   const epoch = cacheEpoch
   const user = Symbol()
-  const requestKey = JSON.stringify([sessionId, chefId, hatId])
+  const requestKey = chefThumbnailIdentity(sessionId, chefId, hatId)
   let pending = requests.get(requestKey)
   if (pending?.abort.signal.aborted) pending = undefined
   if (!pending) {

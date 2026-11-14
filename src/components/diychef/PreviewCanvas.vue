@@ -14,6 +14,8 @@ const emit = defineEmits<{ state: [value: 'loading' | 'ready' | 'partial' | 'err
 const host = shallowRef<HTMLElement | null>(null)
 const state = shallowRef<'loading' | 'ready' | 'partial' | 'error'>('loading')
 const detail = shallowRef('')
+const hasPixels = shallowRef(false)
+let paintedChef: string | null = null
 let renderer: ChefRenderer | null = null
 let releaseReservation: (() => void) | null = null
 let releaseRuntime: (() => void) | null = null
@@ -25,7 +27,7 @@ let frame = 0
 let dragging: { id: number; x: number; y: number } | null = null
 function setState(value: typeof state.value) { state.value = value; emit('state', value) }
 function draw() {
-  if (frame) return
+  if (frame || state.value === 'loading') return
   frame = requestAnimationFrame(() => {
     frame = 0
     try { renderer?.render(yaw, pitch) }
@@ -34,7 +36,7 @@ function draw() {
 }
 function reset() { yaw = DEFAULT_YAW; pitch = DEFAULT_PITCH; draw() }
 function down(event: PointerEvent) {
-  if (event.button !== 0 || !renderer) return
+  if (event.button !== 0 || !renderer || state.value === 'loading') return
   dragging = { id: event.pointerId, x: event.clientX, y: event.clientY }
   host.value?.setPointerCapture(event.pointerId)
 }
@@ -52,12 +54,16 @@ function end() {
 async function load() {
   const epoch = ++generation
   abort?.abort()
+  end()
+  if (frame) { cancelAnimationFrame(frame); frame = 0 }
   const control = new AbortController()
   abort = control
   detail.value = ''
-  // Keep the last rendered pixels under the loading veil while releasing the
-  // old model's textures/geometry before decoding its replacement.
-  renderer?.clear(true)
+  // The existing drawing buffer preserves pixels without retaining a second
+  // 3D model. Another chef must not inherit these pixels while it loads.
+  const preservePixels = paintedChef === props.chefId
+  if (!preservePixels) { hasPixels.value = false; paintedChef = null }
+  renderer?.clear(preservePixels)
   setState('loading')
   let prepared: PreparedChef | null = null
   try {
@@ -65,7 +71,7 @@ async function load() {
     const scene = await enqueuePreviewMetadata(() => api.diyChefPreview(sessionId, chefId, hatId), control.signal)
     if (epoch !== generation || disposed) return
     detail.value = scene.diagnostics.map(backendMessageOf).join(' · ')
-    if (scene.status === 'unavailable' || !scene.meshes.length) { renderer?.clear(); setState('error'); return }
+    if (scene.status === 'unavailable' || !scene.meshes.length) { setState('error'); return }
     const [{ prepareChef }, runtime] = await Promise.all([
       import('../../diychef/preview/scene'), import('../../diychef/preview/runtime'),
     ])
@@ -76,11 +82,13 @@ async function load() {
     renderer.setChef(prepared)
     prepared = null // Renderer owns geometry, materials and textures from here.
     if (host.value) host.value.prepend(renderer.canvas)
-    reset()
+    hasPixels.value = true
+    paintedChef = chefId
     setState(scene.status === 'partial' ? 'partial' : 'ready')
+    reset()
   } catch (reason) {
     prepared?.dispose()
-    if (epoch === generation && !disposed) { renderer?.clear(); detail.value = backendMessageOf(reason); setState('error') }
+    if (epoch === generation && !disposed) { renderer?.clear(hasPixels.value); detail.value = backendMessageOf(reason); setState('error') }
   }
 }
 onMounted(async () => {
@@ -105,7 +113,7 @@ onBeforeUnmount(() => {
     <div ref="host" class="chef-preview-stage" :aria-busy="state === 'loading'"
       :aria-label="t('diychef.rotateHint')" :title="state === 'error' || state === 'partial' ? detail : undefined" @pointerdown="down" @pointermove="move"
       @pointerup="end" @pointercancel="end" @lostpointercapture="end">
-      <div v-if="state === 'loading'" class="chef-preview-loading" @pointerdown.stop>
+      <div v-if="state === 'loading' && !hasPixels" class="chef-preview-loading" @pointerdown.stop>
         <n-spin size="medium" />
       </div>
     </div>

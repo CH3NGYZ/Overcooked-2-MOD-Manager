@@ -12,7 +12,7 @@ registerHooks({ resolve(specifier, context, next) {
 const { decodeGeometry } = await import('../src/diychef/preview/geometry.ts')
 const { configurePreviewConcurrency, enqueuePreviewMetadata, enqueuePreviewPreparation, enqueuePreview,
   pausePreviewWork, previewWorkPaused, previewQueueStats, reservePreviewRenderer } = await import('../src/diychef/preview/queue.ts')
-const { acquireThumbnail, clearThumbnailCache, putThumbnail, thumbnailCacheStats } = await import('../src/diychef/preview/cache.ts')
+const { acquireThumbnail, clearThumbnailCache, presentThumbnail, putThumbnail, thumbnailCacheStats } = await import('../src/diychef/preview/cache.ts')
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
 const tick = () => new Promise(resolve => setImmediate(resolve))
 
@@ -372,6 +372,75 @@ test('putting an existing thumbnail does not replace its active object URL or al
   assert.equal(first.url, second.url)
   assert.equal(second.state, 'ready')
   first.release(); second.release()
+})
+
+test('decoded presentation identities are bounded, never pin evicted PNGs, and survive one synchronous cross-grid patch under pressure', async () => {
+  clearThumbnailCache()
+  const leases = [], identities = []
+  for (let i = 0; i < 30; i++) {
+    const key = `handoff:${i}`, identity = JSON.stringify(['target-session', `chef:${i}`, 'hat'])
+    putThumbnail(key, new Blob(['png']), 'ready', [])
+    leases.push(acquireThumbnail(key)); identities.push(identity)
+    presentThumbnail(identity, key)
+  }
+  assert.ok(thumbnailCacheStats().bytes > 32 * 1024 * 1024, 'the fixture models active buffered portraits exceeding the unleased LRU budget')
+  for (const lease of leases) lease.release()
+  const destinations = identities.map(identity => acquireThumbnail(identity))
+  assert.ok(destinations.every(Boolean), 'all outgoing cards must survive until the incoming grid mounts in the same patch')
+  await tick()
+  assert.equal(thumbnailCacheStats().referenced, 30)
+  for (const lease of destinations) lease.release()
+  await tick()
+  assert.ok(thumbnailCacheStats().bytes <= 32 * 1024 * 1024, 'there is no timer or long-lived handoff pin after the patch')
+  assert.equal(acquireThumbnail(identities[0]), null, 'eviction removes its logical presentation too')
+  const key = 'handoff:29'
+  for (let i = 0; i < 100; i++) presentThumbnail(`session:${i}`, key)
+  assert.equal(acquireThumbnail('session:95'), null, 'unchanged fingerprints cannot retain an unlimited history of session aliases')
+  const latest = acquireThumbnail('session:99')
+  assert.ok(latest); latest.release()
+  clearThumbnailCache()
+  assert.equal(acquireThumbnail('session:99'), null, 'explicit cache clearing invalidates presentations even when a URL might remain leased')
+})
+
+test('mixed ready, partial and retired releases cannot interrupt a synchronous decoded-presentation handoff', async t => {
+  clearThumbnailCache()
+  let created = 0
+  const revoked = [], sources = [], destinations = [], identities = []
+  t.mock.method(URL, 'createObjectURL', () => `blob:mixed-handoff-${++created}`)
+  t.mock.method(URL, 'revokeObjectURL', url => { revoked.push(url) })
+  putThumbnail('mixed-retired', new Blob(['retired']), 'ready', [])
+  const retired = acquireThumbnail('mixed-retired')
+  clearThumbnailCache()
+  for (let i = 0; i < 30; i++) {
+    const key = `mixed-ready:${i}`, identity = JSON.stringify(['mixed-session', `chef:${i}`, 'hat'])
+    putThumbnail(key, new Blob(['ready']), 'ready', [])
+    sources.push(acquireThumbnail(key)); identities.push(identity)
+    presentThumbnail(identity, key)
+  }
+  putThumbnail('mixed-partial', new Blob(['partial']), 'partial', [])
+  const partial = acquireThumbnail('mixed-partial')
+  putThumbnail('mixed-unpresented', new Blob(['pending decode']), 'ready', [])
+  const unpresented = [acquireThumbnail('mixed-unpresented'), acquireThumbnail('mixed-unpresented')]
+  try {
+    assert.ok(thumbnailCacheStats().bytes > 32 * 1024 * 1024)
+    for (const source of sources) source.release()
+    partial.release(); retired.release()
+    for (const lease of unpresented) lease.release()
+    assert.ok(revoked.includes(partial.url), 'partial URLs still revoke synchronously when their final lease releases')
+    assert.ok(revoked.includes(retired.url), 'retired URLs still revoke synchronously when their final lease releases')
+    assert.equal(acquireThumbnail('mixed-partial'), null)
+    assert.equal(thumbnailCacheStats().retired, 0)
+    destinations.push(...identities.map(identity => acquireThumbnail(identity)))
+    assert.ok(destinations.every(Boolean), 'unrelated releases must not trim ready portraits before the destination grid mounts')
+    await tick()
+    assert.equal(thumbnailCacheStats().referenced, 30)
+    for (const destination of destinations) destination.release()
+    await tick()
+    assert.ok(thumbnailCacheStats().bytes <= 32 * 1024 * 1024, 'the deferred trim still reclaims released portraits after the synchronous patch')
+  } finally {
+    for (const lease of [...sources, ...destinations, partial, retired, ...unpresented]) lease?.release()
+    clearThumbnailCache(); await tick()
+  }
 })
 
 test('abandoned captures with no acquired lease still stay inside the thumbnail memory budget', t => {

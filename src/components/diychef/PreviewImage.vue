@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, shallowRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, shallowRef, watch } from 'vue'
 import { PersonOutline } from '@vicons/ionicons5'
 import { t } from '../../i18n'
-import { requestChefThumbnail } from '../../composables/useDiyChefThumbnails'
-import { acquireThumbnail } from '../../diychef/preview/cache'
+import { chefThumbnailIdentity, requestChefThumbnail } from '../../composables/useDiyChefThumbnails'
+import { acquireThumbnail, presentThumbnail } from '../../diychef/preview/cache'
 import { previewWorkPaused } from '../../diychef/preview/queue'
 import { diyChefDemoImage, isDiyChefDemoSession } from '../../tutorial/demoDiyChef'
 
 const props = defineProps<{ sessionId: string; chefId: string; hatId: string | null; name: string }>()
 const host = shallowRef<HTMLElement | null>(null)
-const result = shallowRef<Awaited<ReturnType<typeof requestChefThumbnail>> | null>(null)
+// Cross-grid moves recreate this component. Reacquire the already decoded PNG
+// before its first render, including while drag work remains paused.
+const result = shallowRef<Awaited<ReturnType<typeof requestChefThumbnail>> | null>(
+  props.hatId ? acquireThumbnail(chefThumbnailIdentity(props.sessionId, props.chefId, props.hatId)) : null)
 const loading = shallowRef(false)
 const failed = shallowRef(false)
 const demoImage = computed(() => diyChefDemoImage(props.sessionId, props.chefId, props.hatId))
@@ -34,6 +37,31 @@ function stop() {
   abort = null
   loading.value = false
 }
+async function decode(url: string, signal: AbortSignal) {
+  const image = new Image()
+  await new Promise<void>((resolve, reject) => {
+    let finished = false
+    const finish = (error?: unknown) => {
+      if (finished) return
+      finished = true
+      image.onload = image.onerror = null
+      signal.removeEventListener('abort', cancel)
+      if (error) reject(error)
+      else resolve()
+    }
+    const cancel = () => { finish(new DOMException('Aborted', 'AbortError')); image.src = '' }
+    // A load event can precede decode. Only browsers without decode use it as
+    // the ready boundary; otherwise it must not bypass the pending pixels.
+    image.onload = image.decode ? null : () => finish()
+    image.onerror = () => finish(new Error('diychef.previewUnavailable'))
+    signal.addEventListener('abort', cancel, { once: true })
+    image.src = url
+    // decode resolves only when the pixels are presentable, unlike obtaining a
+    // Blob URL. Keep the old lease until Vue has installed this decoded URL.
+    if (image.decode) void image.decode().then(() => finish(), finish)
+    if (signal.aborted) cancel()
+  })
+}
 async function load() {
   // Gate every path, including warm PNG reads and their browser decode. The
   // visible image keeps its existing lease while dragging settles.
@@ -44,16 +72,24 @@ async function load() {
   if (isDiyChefDemoSession(props.sessionId)) { loading.value = false; failed.value = !demoImage.value; release(); return }
   if (!visible || !props.hatId) { loading.value = false; failed.value = false; release(); return }
   abort = new AbortController()
+  const control = abort
   loading.value = true
   failed.value = false
+  let pending: Awaited<ReturnType<typeof requestChefThumbnail>> | null = null
   try {
-    const next = await requestChefThumbnail(props.sessionId, props.chefId, props.hatId, abort.signal)
-    if (ticket !== generation || !visible) { next.release(); return }
-    release()
-    result.value = next
-    failed.value = next.state === 'error'
-  } catch { if (ticket === generation) failed.value = true }
-  finally { if (ticket === generation) loading.value = false }
+    pending = await requestChefThumbnail(props.sessionId, props.chefId, props.hatId, control.signal)
+    if (ticket !== generation || !visible) return
+    if (pending.state === 'error' || !pending.url) throw new Error('diychef.previewUnavailable')
+    if (pending.url !== imageUrl.value) await decode(pending.url, control.signal)
+    if (ticket !== generation || !visible || control.signal.aborted) return
+    const previous = result.value
+    presentThumbnail(chefThumbnailIdentity(props.sessionId, props.chefId, props.hatId), pending.key)
+    result.value = pending
+    pending = null
+    await nextTick()
+    previous?.release()
+  } catch { if (ticket === generation) failed.value = !imageUrl.value }
+  finally { pending?.release(); if (ticket === generation) loading.value = false }
 }
 function settle() {
   if (!visible || previewWorkPaused.value) return
@@ -67,7 +103,9 @@ watch(previewWorkPaused, paused => {
 }, { flush: 'sync' })
 watch(() => [props.sessionId, props.chefId, props.hatId], (next, before) => {
   stop()
-  if (next[1] !== before[1] || next[2] !== before[2]) { release(); lastKey = undefined }
+  // Hat/session changes replace the same chef's picture in place. A different
+  // chef must never inherit that image or its remembered warm-cache key.
+  if (next[1] !== before[1]) { release(); lastKey = undefined }
   void load()
 })
 onMounted(() => {
@@ -76,7 +114,7 @@ onMounted(() => {
   const root = host.value?.closest<HTMLElement>('.n-scrollbar-container') ?? null
   observer = new IntersectionObserver(([entry]) => {
     const next = entry?.isIntersecting ?? false
-    if (visible === next) return
+    if (visible === next) { if (!next) release(); return }
     visible = next
     stop()
     if (visible) {

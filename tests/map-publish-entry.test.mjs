@@ -7,13 +7,13 @@ import { readPublishProvider, savePublishProvider } from '../src/mapPublishPrefe
 
 const read = path => readFileSync(new URL('../' + path, import.meta.url), 'utf8')
 
-test('工具页在支持开发下方显示独立地图发布分组，并直接进入发布路由',()=>{
+test('工具页在反馈渠道下方显示独立地图发布分组，并直接进入发布路由',()=>{
   const {descriptor} = parse(read('src/views/ToolsView.vue'))
   const groups = baseParse(descriptor.template.content).children.filter(node=>node.type === 1 && node.tag === 'SettingsGroup')
   const title = node=>node.props.find(prop=>prop.type === 7 && prop.name === 'bind' && prop.arg?.content === 'title')?.exp?.content
   const index = groups.findIndex(node=>title(node) === "t('mapPublish.title')")
   assert.ok(index > 0)
-  assert.equal(title(groups[index-1]),"t('tools.supportDevelopment')")
+  assert.equal(title(groups[index-1]),"t('tools.feedbackChannels')")
   assert.equal(groups[index].props.some(prop=>prop.type === 7 && ['if','show'].includes(prop.name)),false)
   const entry = groups[index].children.find(node=>node.type === 1 && node.tag === 'SettingsRow')
   assert.ok(entry)

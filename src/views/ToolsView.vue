@@ -3,7 +3,7 @@ import { t } from '../i18n'
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, NLog, NSelect, NTag, useDialog } from 'naive-ui'
-import { BookOutline, BuildOutline, CloudOfflineOutline, CloudUploadOutline, DocumentTextOutline, MapOutline, PersonOutline, RefreshOutline, ServerOutline, TerminalOutline, TrashOutline } from '@vicons/ionicons5'
+import { BookOutline, BuildOutline, ChatbubblesOutline, CloudOfflineOutline, CloudUploadOutline, DocumentTextOutline, MapOutline, PersonOutline, RefreshOutline, ServerOutline, TerminalOutline, TrashOutline } from '@vicons/ionicons5'
 import sponsorImage from '../assets/collectionCode.jpg'
 import AppModal from '../components/AppModal.vue'
 import { useNotify } from '../useNotify'
@@ -23,6 +23,11 @@ type LogKind = 'rust' | 'frontend' | 'crash'
 const message = useNotify()
 const dialog = useDialog()
 const router = useRouter()
+const feedbackChannels = [
+  { title: 'tools.arcadeModFeedbackGroup1', url: 'https://qm.qq.com/q/Uo7nhlbWiA' },
+  { title: 'tools.arcadeModFeedbackGroup2', url: 'https://qm.qq.com/q/7CpekB9FYc' },
+  { title: 'tools.modManagerFeedbackGroup', url: 'https://qm.qq.com/q/LN93oZTyUg' },
+]
 const working = ref<Record<string, boolean>>({})
 const logOpen = ref(false)
 const tutorialManagerOpen = ref(false)
@@ -236,6 +241,14 @@ async function clearChefs() {
         </div>
       </div>
     </div>
+  </SettingsGroup>
+
+  <SettingsGroup :title="t('tools.feedbackChannels')" data-testid="feedback-channels-group">
+    <SettingsRow v-for="channel in feedbackChannels" :key="channel.url" :icon="ChatbubblesOutline"
+      :title="t(channel.title)" :description="t('tools.qqFeedbackGroupDescription')" clickable role="link" tabindex="0"
+      @click="api.openReleasePage(channel.url).catch(fail)"
+      @keydown.enter.prevent="api.openReleasePage(channel.url).catch(fail)"
+      @keydown.space.prevent="api.openReleasePage(channel.url).catch(fail)" />
   </SettingsGroup>
 
   <SettingsGroup :title="t('mapPublish.title')" data-testid="map-publish-group">

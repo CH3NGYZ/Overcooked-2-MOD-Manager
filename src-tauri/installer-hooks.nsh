@@ -7,11 +7,11 @@ LangString OC2InvalidInstallDirectory 1033 "The manager cannot be installed in t
 LangString OC2InvalidInstallDirectory 1042 "관리자를 BepInEx 폴더 또는 그 하위 폴더에 설치할 수 없습니다. 게임 폴더 밖의 위치를 선택하세요."
 LangString OC2InvalidInstallDirectory 1041 "マネージャーを BepInEx フォルダーまたはそのサブフォルダーにはインストールできません。ゲームフォルダー外の場所を選択してください。"
 
-LangString OC2InstallDirectoryValidationFailed 2052 "安装目录校验程序未能完成（状态：$0）。请查看安装详情中的具体错误后重试。"
-LangString OC2InstallDirectoryValidationFailed 1028 "安裝目錄驗證程式未能完成（狀態：$0）。請查看安裝詳細資料中的具體錯誤後重試。"
-LangString OC2InstallDirectoryValidationFailed 1033 "The installation directory validator could not complete (status: $0). Check the installation details for the error and try again."
-LangString OC2InstallDirectoryValidationFailed 1042 "설치 폴더 확인 프로그램이 완료되지 않았습니다(상태: $0). 설치 세부 정보에서 오류를 확인한 후 다시 시도하세요."
-LangString OC2InstallDirectoryValidationFailed 1041 "インストール先の確認プログラムを完了できませんでした（状態：$0）。インストールの詳細でエラーを確認してから再試行してください。"
+LangString OC2InstallDirectoryValidationFailed 2052 "安装目录校验程序未能完成（状态：$0）。本次将跳过此检查并继续安装，具体错误请查看安装详情。"
+LangString OC2InstallDirectoryValidationFailed 1028 "安裝目錄驗證程式未能完成（狀態：$0）。本次將略過此檢查並繼續安裝，具體錯誤請查看安裝詳細資料。"
+LangString OC2InstallDirectoryValidationFailed 1033 "The installation directory validator could not complete (status: $0). This check will be skipped so installation can continue. See the installation details for the error."
+LangString OC2InstallDirectoryValidationFailed 1042 "설치 폴더 확인 프로그램이 완료되지 않았습니다(상태: $0). 이번에는 이 확인을 건너뛰고 설치를 계속합니다. 오류는 설치 세부 정보에서 확인하세요."
+LangString OC2InstallDirectoryValidationFailed 1041 "インストール先の確認プログラムを完了できませんでした（状態：$0）。今回はこの確認をスキップしてインストールを続行します。エラーはインストールの詳細で確認してください。"
 
 LangString OC2MigrationFailed 2052 "自动迁移未完成，已保留原管理器或恢复副本。请查看安装详情后重试。"
 LangString OC2MigrationFailed 1028 "自動遷移未完成，已保留原管理器或復原副本。請查看安裝詳細資料後重試。"

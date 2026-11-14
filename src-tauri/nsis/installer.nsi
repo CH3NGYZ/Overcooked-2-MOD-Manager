@@ -409,10 +409,18 @@ Function OC2ValidateInstallDirectory
   nsExec::ExecToStack /TIMEOUT=10000 '"$PLUGINSDIR\OC2InstallGuard.exe" --validate-manager-install-dir "$INSTDIR\."'
   Pop $0
   Pop $1
-  StrCpy $2 "$(OC2InstallDirectoryValidationFailed)"
-  ${If} $0 == 1
-    StrCpy $2 "$(OC2InvalidInstallDirectory)"
+  ${If} $0 != 0
+    DetailPrint "Install directory validation: directory=$INSTDIR; status=$0"
+    DetailPrint "$1"
+    ${If} $0 != 1
+      DetailPrint "$(OC2InstallDirectoryValidationFailed)"
+      ${IfNot} ${Silent}
+        MessageBox MB_OK|MB_ICONEXCLAMATION "$(OC2InstallDirectoryValidationFailed)" /SD IDOK
+      ${EndIf}
+      Goto oc2_guard_allowed
+    ${EndIf}
   ${EndIf}
+  StrCpy $2 "$(OC2InvalidInstallDirectory)"
   ; Only an explicit path rejection can migrate an old installation. A helper
   ; launch error, timeout, or OS exit code does not establish an unsafe path.
   ${If} $0 == 1
@@ -439,13 +447,16 @@ Function OC2ValidateInstallDirectory
     DetailPrint "Install directory validation: directory=$INSTDIR; status=$0"
     DetailPrint "$1"
     DetailPrint "$2"
-    MessageBox MB_OK|MB_ICONSTOP "$2" /SD IDOK
+    ${IfNot} ${Silent}
+      MessageBox MB_OK|MB_ICONSTOP "$2" /SD IDOK
+    ${EndIf}
     SetErrorLevel 1
     Pop $2
     Pop $1
     Pop $0
     Abort
   ${EndIf}
+  oc2_guard_allowed:
   SetErrorLevel 0
   Pop $2
   Pop $1

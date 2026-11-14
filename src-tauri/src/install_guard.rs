@@ -21,7 +21,7 @@ impl InstallDirectoryError {
 impl std::fmt::Display for InstallDirectoryError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Forbidden => formatter.write_str("invalid directory or directory inside BepInEx"),
+            Self::Forbidden => formatter.write_str("directory inside BepInEx"),
             Self::Unavailable(error) => {
                 write!(formatter, "cannot resolve installation directory: {error}")
             }
@@ -45,7 +45,9 @@ impl From<InstallDirectoryError> for String {
 /// `~/Library/Application Support`），不再跟着安装目录走。
 pub(crate) fn validate_install_dir(directory: &Path) -> Result<(), InstallDirectoryError> {
     if directory.as_os_str().is_empty() || !directory.is_absolute() {
-        return Err(InstallDirectoryError::Forbidden);
+        return Err(InstallDirectoryError::Unavailable(
+            "installation directory must be a nonempty absolute path".into(),
+        ));
     }
     if is_inside_bepinex(directory)? {
         return Err(InstallDirectoryError::Forbidden);

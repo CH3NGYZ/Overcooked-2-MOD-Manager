@@ -17,8 +17,6 @@ fn rejects_plugins_and_descendants_with_case_variants() {
             "{suffix}"
         );
     }
-    assert!(validate_install_dir(Path::new("")).is_err());
-    assert!(validate_install_dir(Path::new("relative/path")).is_err());
 }
 
 #[test]
@@ -39,9 +37,12 @@ fn allows_normal_locations_and_similarly_named_directories() {
 #[test]
 fn installer_distinguishes_a_forbidden_directory_from_an_unavailable_check() {
     let root = std::env::temp_dir();
+    let allowed = validate_install_dir(&root.join("OC2ModManager"));
+    assert_eq!(allowed.map_or_else(|error| error.exit_code(), |()| 0), 0);
     let forbidden = validate_install_dir(&root.join("game/BepInEx/OC2ModManager")).unwrap_err();
     assert_eq!(forbidden.exit_code(), 1);
     assert!(matches!(forbidden, InstallDirectoryError::Forbidden));
+    assert_eq!(forbidden.to_string(), "directory inside BepInEx");
 
     // Filesystem resolution can fail independently of BepInEx containment.
     // Such a failure must not authorize the installer's legacy-path migration.
@@ -55,6 +56,18 @@ fn installer_distinguishes_a_forbidden_directory_from_an_unavailable_check() {
         tag, ERROR,
         "ordinary app callers retain the existing error tag"
     );
+}
+
+#[test]
+fn invalid_installer_input_is_unavailable_without_claiming_bepinex_containment() {
+    for directory in ["", "relative/path", "BepInEx/plugins"] {
+        let error = validate_install_dir(Path::new(directory)).unwrap_err();
+        assert_eq!(error.exit_code(), 2, "{directory}");
+        assert!(matches!(error, InstallDirectoryError::Unavailable(_)));
+        assert!(error.to_string().contains("nonempty absolute path"));
+        let tag: String = error.into();
+        assert_eq!(tag, ERROR, "app callers must still reject invalid input");
+    }
 }
 
 #[test]

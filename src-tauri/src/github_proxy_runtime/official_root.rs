@@ -19,27 +19,36 @@ impl ProxyRuntime {
     }
 
     /// Dropping an overtaken request cancels its HTTP future as well as lock waits.
-    pub(crate) async fn in_selection<T>(
+    pub(crate) fn in_selection<T>(
         &self,
         selection: (DataProvider, u64),
         work: impl std::future::Future<Output = Result<T, String>>,
-    ) -> Result<T, String> {
-        let mut changed = self.selection_changed.subscribe();
-        if self.selection() != selection {
-            return Err("source.addressMismatch".into());
-        }
-        tokio::select! {
-            biased;
-            _ = changed.changed() => Err("source.addressMismatch".into()),
-            result = work => {
-                if self.selection() != selection { Err("source.addressMismatch".into()) } else { result }
+    ) -> impl std::future::Future<Output = Result<T, String>> {
+        // Keep the scope's unpolled state small, including when its caller is
+        // another async wrapper. Cancellation still drops the original work.
+        let work = Box::pin(work);
+        async move {
+            let mut changed = self.selection_changed.subscribe();
+            if self.selection() != selection {
+                return Err("source.addressMismatch".into());
+            }
+            tokio::select! {
+                biased;
+                _ = changed.changed() => Err("source.addressMismatch".into()),
+                result = work => {
+                    if self.selection() != selection { Err("source.addressMismatch".into()) } else { result }
+                }
             }
         }
     }
 
-    pub(crate) async fn official_root(&self, force: bool) -> Result<OfficialRootSnapshot, String> {
-        self.official_root_from(force, |provider| self.official_address(provider))
-            .await
+    pub(crate) fn official_root(
+        &self,
+        force: bool,
+    ) -> impl std::future::Future<Output = Result<OfficialRootSnapshot, String>> {
+        // The builtin branch bypasses in_selection; bound the complete root
+        // task here so neither branch propagates its size into release IPC.
+        Box::pin(self.official_root_from(force, move |provider| self.official_address(provider)))
     }
 
     pub(super) fn official_address(&self, provider: DataProvider) -> String {
@@ -169,5 +178,7 @@ impl ProxyRuntime {
     }
 }
 
+#[cfg(test)]
+mod task_tests;
 #[cfg(test)]
 mod tests;

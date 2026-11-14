@@ -2,6 +2,9 @@ use super::*;
 use crate::repository_sources::{SourceLocation, load_text_document};
 use std::sync::Arc;
 
+#[cfg(test)]
+mod tests;
+
 tokio::task_local! { static ACTIVE: Arc<NetworkPolicy>; }
 
 impl NetworkPolicy {
@@ -15,11 +18,13 @@ impl NetworkPolicy {
         ACTIVE.sync_scope(policy, work)
     }
 
-    pub(crate) async fn in_snapshot<T>(
+    // Box before returning a future: an async fn would still capture the full
+    // work in its initial state and propagate it through Tauri's release IPC.
+    pub(crate) fn in_snapshot<T>(
         policy: Arc<Self>,
         work: impl std::future::Future<Output = T>,
-    ) -> T {
-        ACTIVE.scope(policy, work).await
+    ) -> impl std::future::Future<Output = T> {
+        ACTIVE.scope(policy, Box::pin(work))
     }
 
     pub(crate) async fn refresh_from(base: &SourceLocation) -> Result<Self, String> {

@@ -4,6 +4,28 @@ use std::fs;
 use uuid::Uuid;
 
 #[tokio::test]
+async fn data_selection_bounds_unpolled_task_size_without_requiring_static_borrows() {
+    let root = std::env::temp_dir().join(format!("oc2-selection-task-{}", Uuid::new_v4()));
+    let service = ConfigService::for_test(root.clone());
+    let value = String::from("borrowed result");
+    let borrowed = value.as_str();
+    let payload = [7_u8; 128 * 1024];
+    let work = async move {
+        tokio::task::yield_now().await;
+        assert_eq!(std::hint::black_box(&payload).len(), 128 * 1024);
+        Ok(borrowed)
+    };
+    assert!(std::mem::size_of_val(&work) >= payload.len());
+    let scoped = service.in_data_selection(service.data_selection(), work);
+    assert!(
+        std::mem::size_of_val(&scoped) <= 1024,
+        "the configuration facade must not capture the complete work future"
+    );
+    assert_eq!(scoped.await.unwrap(), value);
+    assert!(!root.exists());
+}
+
+#[tokio::test]
 async fn bundled_provider_blocks_remote_refresh_and_replaces_the_entire_network_snapshot() {
     let root = std::env::temp_dir().join(format!("oc2-bundled-provider-{}", Uuid::new_v4()));
     let service = ConfigService::for_test(root.clone());

@@ -7,6 +7,9 @@ use crate::release_cache::freshness::now_millis;
 use crate::releases;
 use tauri::State;
 
+#[cfg(test)]
+mod task_tests;
+
 /// 列出当前地区可用的地图（含 Release 缓存）。
 ///
 /// 只读：不发起网络请求。缓存为空时界面显示「待检查」，用户点刷新才抓。

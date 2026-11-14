@@ -104,12 +104,12 @@ impl ConfigService {
         self.proxies.official_root(force).await
     }
 
-    pub(crate) async fn in_data_selection<T>(
+    pub(crate) fn in_data_selection<T>(
         &self,
         selection: (DataProvider, u64),
         work: impl std::future::Future<Output = Result<T, String>>,
-    ) -> Result<T, String> {
-        self.proxies.in_selection(selection, work).await
+    ) -> impl std::future::Future<Output = Result<T, String>> {
+        self.proxies.in_selection(selection, work)
     }
 
     pub(crate) async fn refresh_proxies(&self) -> Result<(), String> {

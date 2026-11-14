@@ -2,6 +2,7 @@
 import type { InstalledMod } from '../types'
 export interface LocalModSnapshot { generation: number; mods: InstalledMod[]; diy_level_target?: string | null }
 export interface ChefTarget { id: string; guid: string; version: string | null; display_path: string; enabled: boolean; generation: number; compatibility: string; supports_custom_default?: boolean }
+export interface ChefFilesChanged { target_id: string; generation: number; resources_changed: boolean }
 export interface ChefSource { state: string; filename: string; revision: string; encoding: string; newline: string }
 export interface ChefItem { id: string; source_kind: string; display_name: string; config_name: string; head_name: string; custom_id: number | null; resource_state: string; preview_state: string }
 export interface ChefHat { id: string; kind: string; config_value: string; display_name: string; resource_state: string; preview_state: string }

@@ -1,5 +1,5 @@
 import type { LevelPreview, LevelPreviewDetail } from '../types'
-import type { LocalModSnapshot, ChefEditorOpen, ChefEditorSnapshot, ChefDraft, ChefValidation } from '../diychef/types'
+import type { LocalModSnapshot, ChefEditorOpen, ChefEditorSnapshot, ChefDraft, ChefValidation, ChefFilesChanged } from '../diychef/types'
 import type { ChefPreviewScene } from '../diychef/preview/types'
 import type { PublishProvider } from '../types'
 import { Channel, invoke } from '@tauri-apps/api/core'
@@ -541,6 +541,11 @@ export function watchLevelSetZipProgress(callback: (progress: LevelSetZipProgres
  */
 export function watchLevelSetsChanged(callback: () => void): Promise<UnlistenFn> {
   return listen('level-sets-changed', () => callback())
+}
+
+/** Selected DIYChef files changed; revisions determine whether this is our own save. */
+export function watchDiyChefFiles(callback: (changed: ChefFilesChanged) => void): Promise<UnlistenFn> {
+  return listen<ChefFilesChanged>('diychef-files-changed', event => callback(event.payload))
 }
 
 export function watchAppUpdatePhase(callback: (progress: AppUpdatePhaseEvent) => void): Promise<UnlistenFn> {

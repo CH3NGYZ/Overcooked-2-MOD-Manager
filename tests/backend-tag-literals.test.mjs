@@ -60,6 +60,8 @@ const NON_TAG = new Set([
   'bundled.example', 'disabled.example', 'fast.example', 'first.example',
   'invalid.example', 'raw.example', 'release.example', 'remote.example',
   'second.example', 'selected.example', 'slow.example', 'halfwritten.json.tmp',
+  // 暖暖目录监听应忽略的原子写盘临时文件名，不是用户错误 tag。
+  'prefer.txt.tmp',
   'dll.disabled',
   // Unity's streamed texture file and the rendered-cache eviction fixtures.
   'resources.assets.resS', 'current.bin', 'old.bin',

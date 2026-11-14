@@ -12,6 +12,7 @@ pub struct AppState {
     pub config: ConfigService,
     pub(crate) local_mod_snapshot: Arc<Mutex<crate::mods::snapshot::LocalModSnapshots>>,
     pub(crate) diychef_sessions: Arc<Mutex<crate::diychef::session::ChefSessions>>,
+    pub(crate) diychef_watch: Arc<crate::diychef::watch::ChefWatcher>,
     /*
      * 串行化「写游戏目录」的操作（安装、卸载、开关、回收站）。
      *
@@ -69,6 +70,7 @@ impl AppState {
             config,
             local_mod_snapshot: Arc::default(),
             diychef_sessions: Arc::default(),
+            diychef_watch: Arc::default(),
             operation: Arc::new(Mutex::new(())),
             repository_cache: Arc::new(tokio::sync::Mutex::new(())),
             community: Arc::new(crate::community::CommunitySearch::default()),

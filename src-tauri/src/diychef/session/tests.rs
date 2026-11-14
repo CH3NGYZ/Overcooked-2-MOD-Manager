@@ -2,9 +2,9 @@ use super::*;
 use crate::{config::ConfigService, models::InstalledMod};
 use std::fs;
 
-struct Workspace(PathBuf);
+pub(super) struct Workspace(pub(super) PathBuf);
 impl Workspace {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let p = std::env::temp_dir().join(format!("oc2-chef-session-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(p.join("game/BepInEx/plugins/DIYChef")).unwrap();
         fs::create_dir_all(p.join("game/Overcooked2.app/Contents/MacOS")).unwrap();
@@ -42,7 +42,7 @@ fn editor_requires_completed_backend_generation_and_invalidates_existing_session
     .unwrap();
     let generation = state.local_mod_snapshot.lock().unwrap().begin(Some(&root));
     assert_eq!(
-        open(&state, generation, None).err().unwrap(),
+        open(&state, generation, None, |_| 0).err().unwrap(),
         "diychef.staleScan"
     );
     state
@@ -51,7 +51,10 @@ fn editor_requires_completed_backend_generation_and_invalidates_existing_session
         .unwrap()
         .publish(generation, Some(&root), vec![installed])
         .unwrap();
-    let opened = open(&state, generation, None).unwrap().snapshot.unwrap();
+    let opened = open(&state, generation, None, |_| 0)
+        .unwrap()
+        .snapshot
+        .unwrap();
     assert_eq!(opened.source.state, "missing");
     assert_eq!(opened.selection.entries.len(), 1);
     assert!(opened.selection.lobby_switch);
@@ -116,7 +119,7 @@ fn editor_requires_completed_backend_generation_and_invalidates_existing_session
         "diychef.staleScan"
     );
     assert_eq!(
-        open(&state, generation, None).err().unwrap(),
+        open(&state, generation, None, |_| 0).err().unwrap(),
         "diychef.staleScan"
     );
 }
@@ -145,6 +148,7 @@ fn missing_and_initialized_defaults_enable_lobby_switch_without_changing_present
             supports_custom_default: true,
         },
         catalog: catalog::read(&root, &mod_root).unwrap(),
+        resources_revision: 0,
         stored: storage::read(
             &root,
             &mod_root,
@@ -287,7 +291,7 @@ fn ambiguous_picker_exposes_only_targets_that_can_be_selected() {
         .unwrap()
         .publish(generation, Some(&root), installed.clone())
         .unwrap();
-    let opened = open(&state, generation, None).unwrap();
+    let opened = open(&state, generation, None, |_| 0).unwrap();
     assert_eq!(opened.status, "select_target");
     assert!(opened.snapshot.is_none());
     assert_eq!(
@@ -299,7 +303,9 @@ fn ambiguous_picker_exposes_only_targets_that_can_be_selected() {
         ["latest-a", "latest-b"]
     );
     assert_eq!(
-        open(&state, generation, Some("older")).err().unwrap(),
+        open(&state, generation, Some("older"), |_| 0)
+            .err()
+            .unwrap(),
         "diychef.targetChanged"
     );
     let mut unknown = installed;
@@ -311,7 +317,7 @@ fn ambiguous_picker_exposes_only_targets_that_can_be_selected() {
         .unwrap()
         .publish(next, Some(&root), unknown)
         .unwrap();
-    let reopened = open(&state, next, None).unwrap();
+    let reopened = open(&state, next, None, |_| 0).unwrap();
     assert_eq!(reopened.status, "select_target");
     assert_eq!(reopened.candidates.len(), 3);
 }
@@ -366,7 +372,10 @@ fn real_dll_session_initialize_edit_save_readback_and_external_conflict() {
         .unwrap()
         .publish(generation, Some(&root), installed)
         .unwrap();
-    let opened = open(&state, generation, None).unwrap().snapshot.unwrap();
+    let opened = open(&state, generation, None, |_| 0)
+        .unwrap()
+        .snapshot
+        .unwrap();
     assert_eq!(opened.target.compatibility, "editable");
     assert_eq!(opened.source.state, "missing");
     assert!(opened.selection.lobby_switch);
@@ -447,7 +456,10 @@ fn real_dll_session_initialize_edit_save_readback_and_external_conflict() {
     assert!(
         matches!(&saved.selection.entries[1].hat_ref, HatReference::Known {hat_id} if hat_id == "hat:Hardhat")
     );
-    let reopened = open(&state, generation, None).unwrap().snapshot.unwrap();
+    let reopened = open(&state, generation, None, |_| 0)
+        .unwrap()
+        .snapshot
+        .unwrap();
     assert_eq!(reopened.source.revision, saved.source.revision);
     assert!(reopened.selection.lobby_switch);
     assert!(
@@ -481,7 +493,10 @@ fn real_dll_session_initialize_edit_save_readback_and_external_conflict() {
         .unwrap()
         .publish(generation, Some(&root), installed)
         .unwrap();
-    let restored = open(&state, generation, None).unwrap().snapshot.unwrap();
+    let restored = open(&state, generation, None, |_| 0)
+        .unwrap()
+        .snapshot
+        .unwrap();
     assert!(
         matches!(restored.selection.hat_bindings.get("custom:00-Fox"), Some(HatReference::Known { hat_id }) if hat_id == "hat:None")
     );
@@ -519,7 +534,10 @@ fn real_dll_session_initialize_edit_save_readback_and_external_conflict() {
     );
     // Deleting TXT must not let automatic initialization erase saved None hats.
     fs::remove_file(destination.join("prefer.txt")).unwrap();
-    let missing_again = open(&state, generation, None).unwrap().snapshot.unwrap();
+    let missing_again = open(&state, generation, None, |_| 0)
+        .unwrap()
+        .snapshot
+        .unwrap();
     let reinitialized = initialize(
         &state,
         &missing_again.session_id,
@@ -537,7 +555,10 @@ fn real_dll_session_initialize_edit_save_readback_and_external_conflict() {
     }
     let historical = b"00-Fox HAT=Hardhat\r\nChef_Black_cat HAT=None\r\n";
     fs::write(destination.join("prefer.txt"), historical).unwrap();
-    let old = open(&state, generation, None).unwrap().snapshot.unwrap();
+    let old = open(&state, generation, None, |_| 0)
+        .unwrap()
+        .snapshot
+        .unwrap();
     assert!(!old.selection.lobby_switch);
     assert!(
         matches!(&old.selection.entries[0].chef_ref, ChefReference::Known {chef_id} if chef_id == "custom:00-Fox")

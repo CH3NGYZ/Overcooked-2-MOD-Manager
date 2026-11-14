@@ -1,11 +1,11 @@
 import { computed, onBeforeUnmount, shallowRef, watch } from 'vue'
-import { api } from '../services/tauri'
+import { api, watchDiyChefFiles } from '../services/tauri'
 import { useDashboard } from './useDashboardStore'
 import { useNotify } from '../useNotify'
 import { t } from '../i18n'
 import { backendMessageOf } from '../locale/backend'
 import { ignoredLegacyTargets, legacyTargetSignature } from '../diychef/migration'
-import type { ChefChange, ChefEditorOpen, ChefEditorSnapshot, ChefValidation, HatReference } from '../diychef/types'
+import type { ChefChange, ChefEditorOpen, ChefEditorSnapshot, ChefValidation, HatReference, ChefFilesChanged } from '../diychef/types'
 import {
   changeChefHat, copyEditState, createChefDraft, draftSignature, moveChef,
   rebaseInitializedDraft, removeProblemRow, resetChefDraft, setDefaultChef, toggleChef, placeChef, disableChefs, enableAllChefs, disableAllChefs,
@@ -17,6 +17,16 @@ interface EditorOptions {
   cancelChanges: () => void
   demoSnapshot?: () => ChefEditorSnapshot | null
   confirmMigration?: () => Promise<boolean>
+  interactionBusy?: () => boolean
+}
+
+// Reads register one backend watcher, so their order must survive page unmounts.
+let editorReadBarrier: Promise<void> = Promise.resolve()
+function queueEditorRead(scanGeneration: number, targetId: string | undefined, isCurrent: () => boolean): Promise<ChefEditorOpen | null> {
+  const read = editorReadBarrier.then(() => isCurrent() ? api.diyChefOpen(scanGeneration, targetId) : null)
+  // A failed or cancelled read must still release the next editor's request.
+  editorReadBarrier = read.then(() => {}, () => {})
+  return read
 }
 
 /** Disk snapshots and editable state are independent until a successful write and read-back. */
@@ -35,6 +45,8 @@ export function useDiyChefEditor(options: EditorOptions) {
   const validationError = shallowRef('')
   const error = computed(() => operationError.value || validationError.value)
   const needsReload = shallowRef(false)
+  const pendingFiles = shallowRef<ChefFilesChanged | null>(null)
+  const checkingFiles = shallowRef(false)
   const validation = shallowRef<ChefValidation | null>(null)
   const undoState = shallowRef<ChefEditState | null>(null)
   const demonstrating = computed(() => !!options.demoSnapshot?.())
@@ -45,20 +57,78 @@ export function useDiyChefEditor(options: EditorOptions) {
   const editable = computed(() => !!state.value && !busy.value && !readOnly.value)
   const baselineSignature = computed(() => snapshot.value ? draftSignature(createChefDraft(snapshot.value)) : '')
   const dirty = computed(() => !demonstrating.value && !!state.value && draftSignature(state.value.draft) !== baselineSignature.value)
-  const canSave = computed(() => dirty.value && !busy.value && !readOnly.value && !gameRunning.value && !stale.value && !needsReload.value && snapshot.value?.source.state === 'present')
+  const canSave = computed(() => dirty.value && !busy.value && !readOnly.value && !gameRunning.value && !stale.value && !needsReload.value && !pendingFiles.value && !checkingFiles.value && snapshot.value?.source.state === 'present')
   const diagnostics = computed(() => validation.value?.diagnostics ?? snapshot.value?.diagnostics ?? [])
   const legacyTargets = computed(() => opened.value?.legacy_targets ?? [])
   const migrationSignature = computed(() => legacyTargetSignature(legacyTargets.value, dashboard.config.value?.game.path ?? ''))
   const migrationVisible = computed(() => !demonstrating.value && legacyTargets.value.length > 0
     && ignoredMigration.value !== migrationSignature.value && !ignoredLegacyTargets.has(migrationSignature.value))
   const canMigrate = computed(() => migrationVisible.value && opened.value?.migration_available === true
-    && !!snapshot.value && !busy.value && !gameRunning.value && !stale.value && !needsReload.value)
+    && !!snapshot.value && !busy.value && !gameRunning.value && !stale.value && !needsReload.value && !pendingFiles.value && !checkingFiles.value)
   let generation = 0
   let validationGeneration = 0
   let validationTimer: ReturnType<typeof setTimeout> | null = null
   let disposed = false
+  let unlistenFiles: (() => void) | null = null
+  let deferredMissingInitialization = false
   const pendingDiskOperations = new Set<symbol>()
   let suspended: ReturnType<typeof captureEditor> | null = null
+
+  function sameTarget(changed: ChefFilesChanged, current: ChefEditorSnapshot | null) {
+    return !!current && changed.target_id === current.target.id && changed.generation === current.target.generation
+  }
+
+  function filesChanged(changed: ChefFilesChanged) {
+    if (disposed) return
+    // During an explicit open, the new backend watch may fire before the new
+    // snapshot arrives. Keep its notification until that read finishes.
+    const current = demonstrating.value ? suspended?.snapshot ?? null : snapshot.value
+    if (!loading.value && !sameTarget(changed, current)) return
+    const previous = pendingFiles.value
+    pendingFiles.value = { ...changed, resources_changed: changed.resources_changed
+      || !!previous && previous.target_id === changed.target_id && previous.generation === changed.generation && previous.resources_changed }
+  }
+
+  async function readExternalFiles() {
+    if (disposed || demonstrating.value || busy.value || checkingFiles.value || options.interactionBusy?.() || stale.value) return
+    const changed = pendingFiles.value
+    const current = snapshot.value
+    if (!changed) return
+    pendingFiles.value = null
+    if (!sameTarget(changed, current) || !current) return
+    const ticket = generation
+    checkingFiles.value = true
+    try {
+      // External deletion never starts initialization; only an initial open's
+      // deferred initialization may resume after these file reads settle.
+      const result = await queueEditorRead(current.target.generation, current.target.id,
+        () => !disposed && ticket === generation && !demonstrating.value && snapshot.value === current && !stale.value)
+      if (disposed) return
+      if (!result || ticket !== generation || demonstrating.value || snapshot.value !== current || stale.value) {
+        // A tutorial can both start and finish during this read; retain its event for the restored target.
+        const restored = demonstrating.value ? suspended?.snapshot ?? null : snapshot.value
+        if (sameTarget(changed, restored)) filesChanged(changed)
+        return
+      }
+      if (!result.snapshot || !sameTarget(changed, result.snapshot)) { reportOperationFailure('diychef.targetChanged'); return }
+      if (!changed.resources_changed && result.snapshot.source.revision === current.source.revision
+        && result.snapshot.catalog_revision === current.catalog_revision) return
+      // Recheck the latest draft after IPC: typing while a read was in flight
+      // must preserve that edit and its undo history as well.
+      if (dirty.value) { reportOperationFailure('diychef.conflict'); return }
+      if (options.interactionBusy?.()) { filesChanged(changed); return }
+      opened.value = result
+      acceptSnapshot(result.snapshot)
+    } catch (reason) {
+      if (!disposed && ticket === generation) {
+        needsReload.value = true
+        reportOperationFailure(reason)
+      }
+    } finally {
+      checkingFiles.value = false
+      if (deferredMissingInitialization && !dirty.value && !options.interactionBusy?.()) void initializeMissing()
+    }
+  }
 
   function captureEditor() {
     return {
@@ -105,8 +175,12 @@ export function useDiyChefEditor(options: EditorOptions) {
   }
 
   async function initializeMissing() {
+    if (disposed || demonstrating.value) return
     const current = snapshot.value
-    if (disposed || demonstrating.value || needsReload.value || !current || current.source.state !== 'missing' || gameRunning.value || readOnly.value || busy.value || error.value) return
+    if (!current || current.source.state !== 'missing') { deferredMissingInitialization = false; return }
+    if (needsReload.value || stale.value || gameRunning.value || readOnly.value || busy.value || error.value) return
+    if (pendingFiles.value || checkingFiles.value) { deferredMissingInitialization = true; return }
+    deferredMissingInitialization = false
     const ticket = generation
     const operation = Symbol()
     pendingDiskOperations.add(operation)
@@ -127,20 +201,24 @@ export function useDiyChefEditor(options: EditorOptions) {
 
   async function open(targetId?: string, rescan = false): Promise<void> {
     if (disposed || demonstrating.value || busy.value) return
+    deferredMissingInitialization = false
     const ticket = ++generation
     validationGeneration += 1
     loading.value = true
     operationError.value = ''
     validationError.value = ''
     try {
+      await filesListening
+      if (disposed || ticket !== generation) return
       await dashboard.ensureLoaded()
       if (disposed || ticket !== generation) return
       if (rescan) await dashboard.loadLocalMods()
       if (disposed || ticket !== generation) return
       await dashboard.ensureLocalModsLoaded()
       if (disposed || ticket !== generation) return
-      const result = await api.diyChefOpen(dashboard.modsGeneration.value, targetId)
-      if (disposed || ticket !== generation) return
+      const result = await queueEditorRead(dashboard.modsGeneration.value, targetId,
+        () => !disposed && ticket === generation && !demonstrating.value)
+      if (!result || disposed || ticket !== generation) return
       opened.value = result
       if (result.snapshot) acceptSnapshot(result.snapshot)
       else { snapshot.value = null; state.value = null; undoState.value = null }
@@ -306,6 +384,12 @@ export function useDiyChefEditor(options: EditorOptions) {
     }
   }
 
+  // Complete the event handshake before the first disk read, closing the gap
+  // between backend watch registration and frontend subscription.
+  const filesListening = watchDiyChefFiles(filesChanged).then(stop => {
+    if (disposed) stop()
+    else unlistenFiles = stop
+  }).catch(() => { /* Watching is optional; explicit reload remains available. */ })
   watch(() => options.demoSnapshot?.() ?? null, (demo) => {
     if (disposed) return
     if (demo) {
@@ -333,11 +417,17 @@ export function useDiyChefEditor(options: EditorOptions) {
     }
   }, { immediate: true, flush: 'sync' })
   watch(gameRunning, (running) => { if (!running) void initializeMissing() })
+  // Read page interaction state only when an event exists; setup has not yet
+  // constructed the drag/selection controllers when this composable is created.
+  watch([pendingFiles, checkingFiles, busy, demonstrating, stale,
+    () => !!pendingFiles.value && (options.interactionBusy?.() ?? false)], () => { void readExternalFiles() })
   onBeforeUnmount(() => {
     disposed = true
     generation += 1
     validationGeneration += 1
     if (validationTimer) clearTimeout(validationTimer)
+    unlistenFiles?.()
+    unlistenFiles = null
     options.cancelChanges()
   })
   return {

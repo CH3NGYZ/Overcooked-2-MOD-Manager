@@ -1,4 +1,6 @@
 //! Sessions hold backend-owned paths, baselines and bounded editor state.
+#[cfg(test)]
+mod external_files_tests;
 mod mutations;
 #[cfg(test)]
 mod native_fallback_tests;
@@ -11,7 +13,10 @@ use super::{
     target, validation,
 };
 use crate::{app_state::AppState, game, models::*};
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 #[derive(Default)]
 pub(crate) struct ChefSessions {
     pub(super) values: HashMap<String, Session>,
@@ -24,6 +29,7 @@ pub(crate) struct Session {
     pub mod_root: PathBuf,
     pub target: ChefTarget,
     pub catalog: Catalog,
+    pub resources_revision: u64,
     pub stored: Stored,
     pub bindings_dir: PathBuf,
 }
@@ -39,6 +45,7 @@ pub(crate) fn open(
     state: &AppState,
     generation: u64,
     target_id: Option<&str>,
+    before_read: impl FnOnce(Option<(&Path, &ChefTarget)>) -> u64,
 ) -> Result<ChefEditorOpen, String> {
     let root = game_root(state)?;
     let snapshot = state
@@ -49,6 +56,7 @@ pub(crate) fn open(
     let candidates = target::eligible(&target::candidates(&snapshot.mods, generation));
     let legacy_targets = super::migration::legacy_targets(&snapshot.mods, generation);
     let Some(target) = target::select(&candidates, target_id)? else {
+        before_read(None);
         return Ok(ChefEditorOpen {
             status: if candidates.is_empty() {
                 "not_installed"
@@ -64,22 +72,43 @@ pub(crate) fn open(
     };
     let migration_available = !legacy_targets.is_empty() && super::migration::modern(&target);
     let mod_root = target::mod_root(&root, &target)?;
+    // Observe before either resource or TXT read so an external change cannot
+    // fall between the baseline snapshot and starting the OS subscription.
+    let resources_revision = before_read(Some((&mod_root, &target)));
     let catalog = catalog::read(&root, &mod_root)?;
     let bindings_dir = state.config.config_path().with_file_name("diychef");
     let stored = storage::read(&root, &mod_root, &target.id, &bindings_dir)?;
-    let session = Session {
+    let mut session = Session {
         id: uuid::Uuid::new_v4().to_string(),
         game_root: root,
         game_settings: state.config.load_or_default().game,
         mod_root,
         target,
         catalog,
+        resources_revision,
         stored,
         bindings_dir,
     };
+    {
+        let sessions = state.diychef_sessions.lock().map_err(|e| e.to_string())?;
+        // A prefer-only notification can be our own save echo. Reusing an
+        // identical baseline keeps repeated checks from evicting the session
+        // still used by an unchanged frontend draft and its selection.
+        if let Some(existing) = sessions.values.values().find(|existing| {
+            existing.game_root == session.game_root
+                && existing.mod_root == session.mod_root
+                && existing.target.id == session.target.id
+                && existing.target.generation == session.target.generation
+                && existing.stored.source.revision == session.stored.source.revision
+                && existing.catalog.revision == session.catalog.revision
+                && existing.resources_revision == session.resources_revision
+        }) {
+            session.id.clone_from(&existing.id);
+        }
+    }
     let view = view(&session)?;
     let mut sessions = state.diychef_sessions.lock().map_err(|e| e.to_string())?;
-    if sessions.values.len() >= 16 {
+    if sessions.values.len() >= 16 && !sessions.values.contains_key(&session.id) {
         sessions.values.clear();
     }
     sessions.values.insert(session.id.clone(), session);

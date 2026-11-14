@@ -8,4 +8,5 @@ pub(crate) mod storage;
 pub(crate) mod target;
 pub(crate) mod thumbnail_cache;
 pub(crate) mod validation;
+pub(crate) mod watch;
 pub(crate) use session::resolve_preview_context;

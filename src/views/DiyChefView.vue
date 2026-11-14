@@ -36,7 +36,8 @@ const message = useNotify()
 const dashboard = useDashboard()
 watch(() => dashboard.config.value?.diychef_preview_concurrency ?? 0, configurePreviewConcurrency, { immediate: true })
 const confirmation = useDiyChefConfirmations(() => editor.save())
-const editor = useDiyChefEditor({ confirmChanges: confirmation.confirmChanges, cancelChanges: confirmation.cancelChanges, demoSnapshot: () => diyChefDemoSnapshot.value, confirmMigration: () => requestLeave() })
+const editor = useDiyChefEditor({ confirmChanges: confirmation.confirmChanges, cancelChanges: confirmation.cancelChanges, demoSnapshot: () => diyChefDemoSnapshot.value, confirmMigration: () => requestLeave(),
+  interactionBusy: () => !!draggingId.value || !!selection.rectangle.value || hatOpen.value || moreOpen.value || leaveOpen.value || changesOpen.value })
 const { snapshot, state, opened, loading, saving, error, diagnostics, gameRunning, readOnly, stale, busy, editable, dirty, canSave, canUndo, demonstrating } = editor
 const { changes, changesOpen, leaveOpen } = confirmation
 const { requestLeave } = usePageLeaveGuard({ busy, dirty, confirm: confirmation.confirmLeave, cancelConfirm: confirmation.cancelLeave })

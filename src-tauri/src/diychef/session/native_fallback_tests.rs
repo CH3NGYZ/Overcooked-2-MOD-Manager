@@ -47,7 +47,10 @@ fn imported_custom_only_selection_is_readable_but_save_and_txt_generation_are_ha
         .unwrap()
         .publish(generation, Some(&root), vec![installed])
         .unwrap();
-    let opened = open(&state, generation, None).unwrap().snapshot.unwrap();
+    let opened = open(&state, generation, None, |_| 0)
+        .unwrap()
+        .snapshot
+        .unwrap();
     assert!(opened.target.supports_custom_default);
     assert!(opened.diagnostics.iter().any(|problem| problem.code
         == validation::NATIVE_FALLBACK_REQUIRED

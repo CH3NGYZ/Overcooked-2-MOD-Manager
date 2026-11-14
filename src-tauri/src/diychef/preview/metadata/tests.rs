@@ -254,7 +254,7 @@ fn real_preview_authorization_and_fingerprint_benchmark() {
         .unwrap()
         .publish(generation, Some(&game), vec![installed])
         .unwrap();
-    let opened = crate::diychef::session::open(&state, generation, None)
+    let opened = crate::diychef::session::open(&state, generation, None, |_| 0)
         .unwrap()
         .snapshot
         .unwrap();

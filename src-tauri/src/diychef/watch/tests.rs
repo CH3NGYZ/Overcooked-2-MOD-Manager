@@ -186,12 +186,8 @@ fn real_resource_change_survives_restart_when_size_and_mtime_stay_equal() {
     let fixture = Workspace::new();
     let cache = fixture.0.join("cache");
     let root = fixture.0.join("mod");
-    fs::create_dir_all(root.join("Resources/Fox")).unwrap();
+    fs::create_dir(&root).unwrap();
     let root = root.canonicalize().unwrap();
-    let resource = root.join("Resources/Fox/t_Head.png");
-    fs::write(&resource, b"old bytes").unwrap();
-    let before = fs::metadata(&resource).unwrap();
-    let modified = before.modified().unwrap();
     let (tx, rx) = mpsc::channel();
     let first_tx = tx.clone();
     let watcher = ChefWatcher::new(cache.clone());
@@ -203,32 +199,8 @@ fn real_resource_change_survives_restart_when_size_and_mtime_stay_equal() {
         "missing records must never revive legacy revision zero"
     );
 
-    // Windows may report fixture directory metadata after registration. Require
-    // bounded quiet before taking the baseline, so a feedback loop still fails.
-    let quiet = crate::directory_watch::QUIET_WINDOW + Duration::from_millis(250);
-    let ready_deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let remaining = ready_deadline.saturating_duration_since(Instant::now());
-        assert!(
-            !remaining.is_zero(),
-            "initial resource notifications never settled"
-        );
-        let wait = quiet.min(remaining);
-        match rx.recv_timeout(wait) {
-            Ok(event) => assert!(event.resources_changed),
-            Err(mpsc::RecvTimeoutError::Timeout)
-                if wait == quiet && !watcher.resources_revision.has_pending(&root) =>
-            {
-                break;
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                panic!("watcher disconnected during setup")
-            }
-        }
-    }
-    let initial = watcher.watch(&root, &target(1), |_| {});
-
+    // Windows can report directory metadata well after fixture creation. Keep
+    // Resources absent during TXT-only checks so those phases cannot overlap.
     fs::write(root.join("README.md"), "unrelated").unwrap();
     assert!(rx.recv_timeout(Duration::from_millis(850)).is_err());
     fs::write(root.join("prefer.txt"), "Chef_Black_cat").unwrap();
@@ -238,6 +210,20 @@ fn real_resource_change_survives_restart_when_size_and_mtime_stay_equal() {
             .resources_changed
     );
     assert_eq!(watcher.watch(&root, &target(1), |_| {}), initial);
+
+    fs::create_dir_all(root.join("Resources/Fox")).unwrap();
+    let resource = root.join("Resources/Fox/t_Head.png");
+    fs::write(&resource, b"old bytes").unwrap();
+    let before = fs::metadata(&resource).unwrap();
+    let modified = before.modified().unwrap();
+    assert!(
+        rx.recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .resources_changed
+    );
+    let resource_baseline = watcher.watch(&root, &target(1), |_| {});
+    assert_ne!(resource_baseline, 0);
+    assert_ne!(resource_baseline, initial);
 
     fs::write(&resource, b"new bytes").unwrap();
     fs::OpenOptions::new()
@@ -251,9 +237,13 @@ fn real_resource_change_survives_restart_when_size_and_mtime_stay_equal() {
             .unwrap()
             .resources_changed
     );
-    let changed = watcher.watch(&root, &target(1), |_| {});
+    // Stop joins the worker and flushes every accepted resource notification;
+    // compare the persisted final stamp, including a last coalesced batch.
+    watcher.stop();
+    let changed = watcher.resources_revision.current(&root);
     assert_ne!(changed, 0);
     assert_ne!(changed, initial);
+    assert_ne!(changed, resource_baseline);
     let after = fs::metadata(&resource).unwrap();
     assert_eq!(after.len(), before.len());
     assert_eq!(after.modified().unwrap(), modified);

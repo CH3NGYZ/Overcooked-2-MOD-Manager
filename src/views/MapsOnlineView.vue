@@ -20,6 +20,7 @@ import { useNotify } from '../useNotify'
 import PageLoading from '../components/PageLoading.vue'
 import HeaderIconAction from '../components/HeaderIconAction.vue'
 import HeaderSearch from '../components/HeaderSearch.vue'
+import InstallSourceTags from '../components/InstallSourceTags.vue'
 import { prefetchAvatars } from '../avatars'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
@@ -685,6 +686,9 @@ const pageLoading = computed(() => loading.value && tree.value.length === 0)
 </script>
 
 <template>
+  <Teleport to="#page-header-title-extra" defer>
+    <InstallSourceTags />
+  </Teleport>
 
   <!--
     页头右侧，从左到右：计数 → 搜索 → 安装地图（与 MOD 安装页「计数 → 搜索 →

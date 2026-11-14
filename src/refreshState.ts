@@ -1,5 +1,9 @@
-import { computed, ref, type ComputedRef, type Ref } from 'vue'
+import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import { mapWithConcurrency } from './concurrency.ts'
+
+// A source-package replacement pauses both refresh domains through this one gate.
+const schedulingPaused = ref(false)
+export function setRefreshSchedulingPaused(value: boolean) { schedulingPaused.value = value }
 
 /**
  * 刷新状态机（MOD 仓库与地图共用同一份实现）。
@@ -77,6 +81,11 @@ export interface RefreshBatch<T> {
 }
 
 export interface RefreshState {
+  /** Provider replacement invalidates old queues/results without clearing trusted data. */
+  generation: Readonly<Ref<number>>
+  invalidate: () => void
+  schedulingPaused: Readonly<Ref<boolean>>
+  whenIdle: () => Promise<void>
   /** All source documents must settle before scheduling release comparisons. */
   preparingSources: Ref<boolean>
   /** Only whole-page/source-check passes may mark every item as preparing. */
@@ -157,6 +166,8 @@ function batchFlagOf(trigger: RefreshTrigger): 'all' | 'bound' | null {
  *   再低则几十个仓库要排很久）。
  */
 export function createRefreshState(concurrency: number): RefreshState {
+  const generation = ref(0)
+  const activeBatches = ref(0)
   const preparingSources = ref(false)
   const refreshing = ref<Record<string, boolean>>({})
   const queued = ref<Record<string, boolean>>({})
@@ -182,29 +193,33 @@ export function createRefreshState(concurrency: number): RefreshState {
   }
 
   const inFlight = computed(() => Object.keys(refreshing.value).length)
-  const anyRefreshing = computed(() =>
-    preparingSources.value
+  const workInProgress = computed(() =>
+    activeBatches.value > 0
+    || preparingSources.value
     || refreshingAll.value
     || checkingBound.value
     || inFlight.value > 0
     || Object.keys(queued.value).length > 0
     || Object.keys(refreshingSources.value).length > 0,
   )
+  const anyRefreshing = computed(() => schedulingPaused.value || workInProgress.value)
 
   const beginBatch = (trigger: RefreshTrigger) => {
+    activeBatches.value += 1
     const flag = batchFlagOf(trigger)
     if (flag === 'all') refreshingAll.value = true
     else if (flag === 'bound') checkingBound.value = true
   }
 
   const endBatch = (trigger: RefreshTrigger) => {
+    activeBatches.value -= 1
     const flag = batchFlagOf(trigger)
     if (flag === 'all') refreshingAll.value = false
     else if (flag === 'bound') checkingBound.value = false
   }
 
   const runSource = async (id: string, worker: () => Promise<string[]>) => {
-    if (!id || refreshingSources.value[id]) return []
+    if (schedulingPaused.value || !id || refreshingSources.value[id]) return []
     writeFlag(refreshingSources, id, true)
     try {
       return await worker()
@@ -219,6 +234,8 @@ export function createRefreshState(concurrency: number): RefreshState {
   }
 
   const runBatch = async <T>(batch: RefreshBatch<T>): Promise<RefreshOutcome> => {
+    if (schedulingPaused.value) return { trigger: batch.trigger, refreshed: 0, updated: 0, errors: [], finishedAt: Date.now() }
+    const ticket = generation.value
     /*
      * 去重 + 跳过正在刷新中的条目。
      *
@@ -256,10 +273,13 @@ export function createRefreshState(concurrency: number): RefreshState {
          * 用户看到的就是「结果一批一起回来」，而不是刷一个回来一个。
          */
         writeFlag(queued, batch.idOf(item), false)
+        if (ticket !== generation.value) return null
         return batch.worker(item)
       })
+      if (ticket !== generation.value) return { trigger: batch.trigger, refreshed: 0, updated: 0, errors: [], finishedAt: Date.now() }
       const errors = results.filter((error): error is string => !!error)
       await batch.finalize?.()
+      if (ticket !== generation.value) return { trigger: batch.trigger, refreshed: 0, updated: 0, errors: [], finishedAt: Date.now() }
       const next: RefreshOutcome = {
         trigger: batch.trigger,
         refreshed: queue.length,
@@ -285,6 +305,14 @@ export function createRefreshState(concurrency: number): RefreshState {
   }
 
   return {
+    generation,
+    invalidate: () => { generation.value += 1 },
+    schedulingPaused,
+    whenIdle: async () => {
+      while (workInProgress.value) await new Promise<void>(resolve => {
+        const stop = watch(workInProgress, busy => { if (!busy) { stop(); resolve() } }, { flush: 'sync' })
+      })
+    },
     preparingSources,
     preparingAllSources,
     refreshing,

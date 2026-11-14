@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { ownerHomepage, providerLabel, repositoryHomepage, repositoryRawUrl } from '../src/providers.ts'
+import { dataProviderShortLabel, ownerHomepage, providerLabel, repositoryHomepage, repositoryRawUrl } from '../src/providers.ts'
+
+test('data source badges share short names and localize only the bundled source', () => {
+  for (const [provider, label] of Object.entries({ gitcode: 'GitCode', gitee: 'Gitee', github: 'Github', cloudflare: 'Cloudflare' })) {
+    assert.equal(dataProviderShortLabel(provider, '内置源'), label)
+    assert.equal(dataProviderShortLabel(provider, 'Bundled'), label)
+  }
+  assert.equal(dataProviderShortLabel('builtin', '内置源'), '内置源')
+  assert.equal(dataProviderShortLabel('builtin', 'Bundled'), 'Bundled')
+})
 
 test('all providers preserve their own identity and encoded coordinates', () => {
   assert.equal(providerLabel('gitcode'), 'GitCode')

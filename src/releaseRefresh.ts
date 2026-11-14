@@ -48,14 +48,18 @@ export async function runSourceReleaseRefresh(options: {
   refresh: () => Promise<RefreshOutcome>
 }): Promise<RefreshOutcome> {
   const { state, trigger } = options
+  if (state.schedulingPaused.value) return { trigger, refreshed: 0, updated: 0, errors: [], finishedAt: Date.now() }
+  const ticket = state.generation.value
   state.beginBatch(trigger)
   state.preparingSources.value = true
   try {
     const errors = await options.prepare()
+    if (ticket !== state.generation.value) return { trigger, refreshed: 0, updated: 0, errors: [], finishedAt: Date.now() }
     state.preparingSources.value = false
     state.setEntryStateUnavailable(false)
     // Calling refresh synchronously queues every target before Vue renders.
     const result = await options.refresh()
+    if (ticket !== state.generation.value) return { trigger, refreshed: 0, updated: 0, errors: [], finishedAt: Date.now() }
     const outcome = { ...result, trigger, errors: [...errors, ...result.errors], finishedAt: Date.now() }
     state.publishOutcome(outcome)
     return outcome
@@ -122,7 +126,8 @@ export async function refreshReleaseItem<T extends ReleaseItem, R = ReleaseInfo[
   item: T,
   spec: ReleaseFetchSpec<T, R>,
 ): Promise<string | null> {
-  if (!item.id || state.refreshing.value[item.id]) return null
+  if (state.schedulingPaused.value || !item.id || state.refreshing.value[item.id]) return null
+  const ticket = state.generation.value
   state.setItemFlag(item.id, true)
   try {
     if (state.preparingSources.value) {
@@ -132,7 +137,9 @@ export async function refreshReleaseItem<T extends ReleaseItem, R = ReleaseInfo[
         }, { flush: 'sync' })
       })
     }
+    if (ticket !== state.generation.value) return null
     const releases = await spec.fetch(item)
+    if (ticket !== state.generation.value) return null
     /*
      * 写回必须早于关标志：反过来会先出现一帧「不在刷新中、但结论还是旧的」，
      * 然后才被这次的结果替换 —— 看起来像闪了一下旧状态。
@@ -140,6 +147,7 @@ export async function refreshReleaseItem<T extends ReleaseItem, R = ReleaseInfo[
     spec.apply?.(item, releases)
     return null
   } catch (reason) {
+    if (ticket !== state.generation.value) return null
     const message = spec.errorText(item, reason)
     spec.fail?.(item, message)
     return message

@@ -301,7 +301,9 @@ function sourceError(source: RepositorySource, reason: string): string {
 interface SourceRefreshPass { successful: Set<string>; rebuild: boolean; rootIds?: Set<string>; force?: boolean }
 
 function sourceConfigProjection(rootId: string, sourceId: string, pass?: SourceRefreshPass) {
+  const ticket = state.generation.value
   return (current: PublicConfig, received: PublicConfig): PublicConfig => {
+    if (ticket !== state.generation.value) return current
     const ids = sourceDescendantIds([...current.repository_sources, ...received.repository_sources], rootId)
     const repositories = replaceScopedItems(current.repositories, received.repositories, repo => !!repo.source_id && ids.has(repo.source_id))
     const repository_sources = replaceScopedItems(current.repository_sources, received.repository_sources, source => ids.has(source.id))
@@ -331,7 +333,8 @@ function sourceConfigProjection(rootId: string, sourceId: string, pass?: SourceR
 }
 
 async function refreshSourceChain(sourceId: string, visited = new Set<string>(), rootId = sourceId, pass?: SourceRefreshPass): Promise<string[]> {
-  if (demoActive.value || isDemoId(sourceId)) return []
+  if (demoActive.value || state.schedulingPaused.value || isDemoId(sourceId)) return []
+  const ticket = state.generation.value
   if (visited.has(sourceId)) return []
   visited.add(sourceId)
   const { reloadConfig, sources, region } = store()
@@ -349,18 +352,21 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>(),
   const importErrors = await state.runSource(sourceId, async () => {
     try {
       const result = await api.importRepositorySource(source.id, source.url, false, !!pass?.force && sourceId === rootId)
+      if (ticket !== state.generation.value) return []
       if (result.access_error) return [sourceError(source, result.access_error)]
       // 配置回读也是这份源的应用阶段：失败必须留在源分组，不能以空列表报成功。
       pass?.successful.add(sourceId)
       await reloadConfig({ throwOnError: true, project: sourceConfigProjection(rootId, sourceId, pass) })
       return []
     } catch (reason) {
+      if (ticket !== state.generation.value) return []
       pass?.successful.delete(sourceId)
       // A failed child retains its backend cache and binding, but does not
       // reappear in the online tree or join this pass's Release queue.
       return [sourceError(source, reason instanceof Error ? reason.message : String(reason))]
     }
   })
+  if (ticket !== state.generation.value) return []
   // 父源没读出来时它的子源无从谈起：直接返回，别拿旧 `sources` 递归
   if (importErrors.length) { sourceTree.settle(sourceId, importErrors[0]); return importErrors }
 
@@ -378,12 +384,16 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>(),
   )
   if (!children.length) return []
   const childErrors: string[] = []
-  for (const child of children) childErrors.push(...await refreshSourceChain(child.id, visited, rootId, pass))
+  for (const child of children) {
+    if (ticket !== state.generation.value) break
+    childErrors.push(...await refreshSourceChain(child.id, visited, rootId, pass))
+  }
   return childErrors
 }
 
 async function refreshSourceDocuments(pass?: SourceRefreshPass): Promise<string[]> {
-  if (demoActive.value) return []
+  if (demoActive.value || state.schedulingPaused.value) return []
+  const ticket = state.generation.value
   const { sources, region } = store()
   const refreshable = sources.value.filter(
     (source) => !COMMUNITY_SOURCE_IDS.has(source.id) && sourceMatchesRegion(source, region.value, sources.value),
@@ -397,7 +407,10 @@ async function refreshSourceDocuments(pass?: SourceRefreshPass): Promise<string[
   // Apply each declaration before descending. Concurrent config snapshots can
   // discard a just-created child and leave its node pending forever.
   const errors: string[] = []
-  for (const source of roots) errors.push(...await refreshSourceChain(source.id, visited, source.id, pass))
+  for (const source of roots) {
+    if (ticket !== state.generation.value) break
+    errors.push(...await refreshSourceChain(source.id, visited, source.id, pass))
+  }
   return errors
 }
 
@@ -407,10 +420,11 @@ async function refreshSourceDocuments(pass?: SourceRefreshPass): Promise<string[
  */
 async function prepareRepositorySources(rebuild: boolean, pass?: SourceRefreshPass): Promise<string[]> {
     if (demoActive.value) return []
+    const ticket = state.generation.value
     const { loadBase, repositories, sources } = store()
     // 启动时 Dashboard 可能还没读过：先读一次才有源和仓库可刷
     if (!sources.value.length && !repositories.value.length) await loadBase()
-    if (demoActive.value) return []
+    if (demoActive.value || ticket !== state.generation.value) return []
     // Keep the previous tree until its main document commits. Each successful
     // import publishes the new declarations and its own rows before descending.
     return refreshSourceDocuments(rebuild ? pass : undefined)
@@ -497,6 +511,7 @@ export function useModRepositoryRefresh() {
     outcome: computed(() => demoActive.value ? null : outcome.value), lastErrors, startupRefreshPending,
     refreshOne, refreshMany, refreshBoundRepositories,
     refreshSource, refreshSourceChain, refreshSourceDocuments, refreshEverything,
+    invalidateRefresh: state.invalidate, whenIdle: state.whenIdle,
     requestStartupRefresh, deferStartupRefresh, releaseStartupRefresh,
   }
 }

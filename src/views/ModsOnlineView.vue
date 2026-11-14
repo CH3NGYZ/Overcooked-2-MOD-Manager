@@ -14,13 +14,14 @@ import { useFocusHighlight, useLocalModLink } from '../crossLink'
 import { dependencyTagFor, primaryRelation, relationJumpRepositoryId, resolveRelations, type RelationStatus } from '../modRelations'
 import { pickI18n, t } from '../i18n'
 import { tagColorFor, type TagTone } from '../theme'
-import { repositoryRegionLabel, sourceMatchesRegion } from '../repositorySources'
+import { sourceMatchesRegion } from '../repositorySources'
 import { modRepositoryIsAvailable } from '../repositoryAvailability'
 import { markdownSummary } from '../markdown'
 import ModRepositoryDetail from '../components/ModRepositoryDetail.vue'
 import PageLoading from '../components/PageLoading.vue'
 import HeaderIconAction from '../components/HeaderIconAction.vue'
 import HeaderSearch from '../components/HeaderSearch.vue'
+import InstallSourceTags from '../components/InstallSourceTags.vue'
 import ModInstallDialog from '../components/ModInstallDialog.vue'
 import InstallCheckDialog from '../components/InstallCheckDialog.vue'
 import InstallPlanDialog from '../components/InstallPlanDialog.vue'
@@ -248,7 +249,6 @@ function openInLocalMods(repo: ModRepository) {
 }
 
 const currentRegion = computed(() => config.value?.region)
-const regionLabel = computed(() => repositoryRegionLabel(currentRegion.value))
 
 /** 仅保留当前下载渠道适用的仓库。 */
 /**
@@ -650,9 +650,9 @@ defineExpose({ refreshAll, visibleCount })
 </script>
 
 <template>
-    <!-- 页头 h1 右侧：当前下载渠道 -->
+    <!-- 页头 h1 右侧：地区、当前实际数据来源 -->
     <Teleport to="#page-header-title-extra" defer>
-      <n-tag size="small" :bordered="false" type="info">{{ regionLabel }}</n-tag>
+      <InstallSourceTags />
     </Teleport>
 
     <!--

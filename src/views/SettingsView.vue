@@ -17,6 +17,7 @@ import { FOCUS_QUERY } from '../crossLink'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { useDashboard } from '../composables/useDashboardStore'
+import { useDataProviderSwitch } from '../composables/useDataProviderSwitch'
 import { displayPath } from '../gameRuntime'
 import type { AppUpdateCheckResult, DataProvider, GameRuntime, PermissionStatus, PublicConfig } from '../types'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
@@ -366,34 +367,26 @@ async function confirmDisableRecycle() {
 
 /* ===== 官方数据来源（本次启动有效） ===== */
 const dataProvider = computed(() => (demoActive.value ? config.value : dashboard.config.value ?? config.value)?.data_provider ?? 'github')
-const switchingDataProvider = ref(false)
+const { switching: switchingDataProvider, switchProvider } = useDataProviderSwitch()
 const dataProviderOptions = computed(() => [
-  { value: 'github', label: t('settings.dataProviderGithub') },
-  { value: 'gitee', label: t('settings.dataProviderGitee') },
   { value: 'gitcode', label: t('settings.dataProviderGitcode') },
+  { value: 'gitee', label: t('settings.dataProviderGitee') },
+  { value: 'github', label: t('settings.dataProviderGithub') },
   { value: 'cloudflare', label: t('settings.dataProviderCloudflare') },
   { value: 'builtin', label: t('settings.dataProviderBuiltin') },
 ])
 
 async function switchDataProvider(value: DataProvider) {
   if (value === dataProvider.value || switchingDataProvider.value || demoActive.value) return
-  switchingDataProvider.value = true
   try {
-    config.value = await api.saveSettings({ data_provider: value })
-    dashboard.applyConfigSnapshot(config.value)
-    try {
-      config.value = await api.refreshNetworkConfig()
-      dashboard.applyConfigSnapshot(config.value)
-      message.success(t('settings.dataProviderChanged'))
-    } catch {
-      await dashboard.reloadConfig()
-      // A proxy/plan failure keeps the provider chosen by the MOD root gate.
-      message.warning(t('settings.dataProviderNetworkFallback'))
-    }
+    const result = await switchProvider(value)
+    if (!result) return
+    config.value = result.config
+    if (!result.ready) message.warning(t('settings.dataProviderNetworkFallback'))
+    else if (result.errors.length) message.warning(result.errors.join('\n'))
+    else message.success(t('settings.dataProviderChanged'))
   } catch (reason) {
     fail(reason)
-  } finally {
-    switchingDataProvider.value = false
   }
 }
 
@@ -534,7 +527,7 @@ async function clearTokens() {
   <SettingsGroup :title="t('settings.dataSources')" data-testid="data-sources">
     <SettingsRow :title="t('settings.dataSources')" :description="t('settings.dataProviderHint')">
       <template #right>
-        <n-select :value="dataProvider" :options="dataProviderOptions" style="width: 224px"
+        <n-select :value="dataProvider" :options="dataProviderOptions" style="width: 304px; max-width: 100%"
           :loading="switchingDataProvider" :disabled="switchingDataProvider || !config || demoActive"
           :aria-label="t('settings.dataSources')" data-testid="data-provider"
           @update:value="switchDataProvider" />

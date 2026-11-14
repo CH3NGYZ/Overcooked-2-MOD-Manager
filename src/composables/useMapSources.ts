@@ -140,13 +140,14 @@ function setFlag(flags: typeof refreshing, id: string, value: boolean) {
  *   · 明确要求读取时允许 force；revision 仍拒绝期间已被新条目写回淘汰的快照。
  */
 async function loadMaps(options: { force?: boolean } = {}) {
-  if (demoActive.value) return
+  if (demoActive.value || state.schedulingPaused.value) return
   if ((refreshingAll.value || state.preparingSources.value) && !options.force) return
+  const ticket = state.generation.value
   const revision = ++mapsRevision
   loading.value = maps.value.length === 0
   try {
     const result = await api.maps()
-    if (revision === mapsRevision) maps.value = result
+    if (revision === mapsRevision && ticket === state.generation.value) maps.value = result
   } catch (reason) {
     message?.error(backendMessageOf(reason))
   } finally {
@@ -312,6 +313,7 @@ export interface MapBoundRefreshSummary {
  * refresh queue. Failed nodes stay empty and never roll successful siblings back. */
 async function prepareMapSources(passId: string, force = false, sourceId?: string, preparedIds?: Set<string>): Promise<string[]> {
   if (demoActive.value) return []
+  const ticket = state.generation.value
   mapsRevision += 1
   const branch = sourceId && sourceId !== 'official-map-index' ? sourceId : undefined
   let rootReady = !!branch
@@ -328,7 +330,7 @@ async function prepareMapSources(passId: string, force = false, sourceId?: strin
   }
   try {
     const result = await api.refreshMapSources(passId, force, progress => {
-      if (!acceptProgress) return
+      if (!acceptProgress || ticket !== state.generation.value) return
       mapsRevision += 1
       if (branch && scope) {
         for (const id of sourceDescendantIds(progress.nodes, branch)) scope.add(id)
@@ -347,16 +349,19 @@ async function prepareMapSources(passId: string, force = false, sourceId?: strin
       apply(progress.maps)
     }, sourceId)
     acceptProgress = false
+    if (ticket !== state.generation.value) return []
     // A successful IPC result also covers a cache hit without intermediate events.
     apply(result)
     return sourceTree.nodes.value.flatMap(node => node.error && (!scope || scope.has(node.id)) ? [backendMessageOf(node.error)] : [])
   } catch (reason) {
+    if (ticket !== state.generation.value) return []
     return [backendMessageOf(reason)]
   } finally {
     acceptProgress = false
     // The MOD root gate may have changed the active provider before map loading.
     await useDashboard().reloadConfig({
-      project: (current, received) => ({ ...current, data_provider: received.data_provider }),
+      project: (current, received) => ticket === state.generation.value
+        ? { ...current, data_provider: received.data_provider } : current,
     })
   }
 }
@@ -435,6 +440,7 @@ export function useMapSources() {
     outcome: computed(() => demoActive.value ? null : outcome.value),
     loadMaps,
     refreshAll,
+    invalidateRefresh: state.invalidate, whenIdle: state.whenIdle,
     refreshSource,
     refreshReleases,
     refreshBoundMaps,

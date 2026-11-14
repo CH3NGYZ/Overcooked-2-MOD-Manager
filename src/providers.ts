@@ -1,4 +1,16 @@
-import type { Provider } from './types'
+import type { DataProvider, Provider } from './types'
+
+const DATA_PROVIDER_NAMES: Record<Exclude<DataProvider, 'builtin'>, string> = {
+  gitcode: 'GitCode',
+  gitee: 'Gitee',
+  github: 'Github',
+  cloudflare: 'Cloudflare',
+}
+
+/** Data source badges use short names; the bundled source follows the UI language. */
+export function dataProviderShortLabel(provider: DataProvider, builtinLabel: string): string {
+  return provider === 'builtin' ? builtinLabel : DATA_PROVIDER_NAMES[provider]
+}
 
 const PLATFORMS: Record<Provider, { label: string; homepage: string }> = {
   github: { label: 'GitHub', homepage: 'https://github.com' },

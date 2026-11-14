@@ -8,11 +8,12 @@ import type { DomainMessages } from './types'
  */
 export const settings: DomainMessages = {
   dataSources: { 'zh-CN': '数据来源', 'zh-TW': '資料來源', en: 'Data sources', ko: '데이터 소스', ja: 'データソース' },
-  dataProviderGithub: { 'zh-CN': 'GitHub（国际）', 'zh-TW': 'GitHub（國際）', en: 'GitHub (International)', ko: 'GitHub (국제)', ja: 'GitHub（国際）' },
-  dataProviderGitee: { 'zh-CN': 'Gitee（中国大陆）', 'zh-TW': 'Gitee（中國大陸）', en: 'Gitee (Mainland China)', ko: 'Gitee (중국 본토)', ja: 'Gitee（中国本土）' },
-  dataProviderGitcode: { 'zh-CN': 'GitCode', 'zh-TW': 'GitCode', en: 'GitCode', ko: 'GitCode', ja: 'GitCode' },
-  dataProviderCloudflare: { 'zh-CN': 'Cloudflare（全球）', 'zh-TW': 'Cloudflare（全球）', en: 'Cloudflare (Global)', ko: 'Cloudflare (전 세계)', ja: 'Cloudflare（グローバル）' },
-  dataProviderBuiltin: { 'zh-CN': '内置', 'zh-TW': '內建', en: 'Bundled', ko: '내장', ja: '内蔵' },
+  dataProviderGitcode: { 'zh-CN': 'GitCode（中国大陆 - 推荐）', 'zh-TW': 'GitCode（中國大陸 - 推薦）', en: 'GitCode (Mainland China - Recommended)', ko: 'GitCode (중국 본토 - 권장)', ja: 'GitCode（中国本土 - 推奨）' },
+  dataProviderGitee: { 'zh-CN': 'Gitee (中国大陆 - 备用)', 'zh-TW': 'Gitee（中國大陸 - 備用）', en: 'Gitee (Mainland China - Backup)', ko: 'Gitee (중국 본토 - 예비)', ja: 'Gitee（中国本土 - 予備）' },
+  dataProviderGithub: { 'zh-CN': 'Github (国际)', 'zh-TW': 'Github（國際）', en: 'Github (International)', ko: 'Github (국제)', ja: 'Github（国際）' },
+  dataProviderCloudflare: { 'zh-CN': 'Cloudflare (全球)', 'zh-TW': 'Cloudflare（全球）', en: 'Cloudflare (Global)', ko: 'Cloudflare (전 세계)', ja: 'Cloudflare（グローバル）' },
+  dataProviderBuiltin: { 'zh-CN': '内置数据源 (保底)', 'zh-TW': '內建資料來源（保底）', en: 'Bundled source (Fallback)', ko: '내장 데이터 소스 (최종 대안)', ja: '内蔵データソース（最終手段）' },
+  dataProviderBuiltinShort: { 'zh-CN': '内置源', 'zh-TW': '內建源', en: 'Bundled', ko: '내장 소스', ja: '内蔵ソース' },
   dataProviderHint: {
     'zh-CN': '本次启动有效。中国大陆：GitCode → Gitee → Cloudflare → 内置；国际地区：GitHub → Cloudflare → 内置。Gitee 需在独立原生窗口中完成验证并点击下载。官方文档从同一源码 ZIP 读取，此处显示实际来源。',
     'zh-TW': '僅在本次啟動有效。中國大陸：GitCode → Gitee → Cloudflare → 內建；國際地區：GitHub → Cloudflare → 內建。Gitee 需在獨立原生視窗中完成驗證並點擊下載。官方文件從同一原始碼 ZIP 讀取，此處顯示實際來源。',
@@ -21,11 +22,11 @@ export const settings: DomainMessages = {
     ja: '今回の起動中のみ有効です。中国本土：GitCode → Gitee → Cloudflare → 内蔵、その他の地域：GitHub → Cloudflare → 内蔵。Gitee は独立したネイティブウィンドウで認証を完了し、ダウンロードをクリックしてください。公式ドキュメントは同じソース ZIP から読み込み、ここに実際の取得元を表示します。',
   },
   dataProviderChanged: {
-    'zh-CN': '已切换数据来源，刷新 MOD / 地图仓库后应用',
-    'zh-TW': '已切換資料來源，重新整理 MOD / 地圖倉庫後套用',
-    en: 'Data source changed. Refresh the MOD / map repositories to apply.',
-    ko: '데이터 소스를 변경했습니다. MOD / 지도 저장소를 새로 고치면 적용됩니다.',
-    ja: 'データソースを変更しました。MOD / マップリポジトリを更新すると反映されます。',
+    'zh-CN': '已切换数据来源并刷新 MOD / 地图源',
+    'zh-TW': '已切換資料來源並重新整理 MOD / 地圖來源',
+    en: 'Data source changed and MOD / map sources refreshed.',
+    ko: '데이터 소스를 변경하고 MOD / 지도 소스를 새로 고쳤습니다.',
+    ja: 'データソースを切り替え、MOD / マップソースを更新しました。',
   },
   dataProviderNetworkFallback: {
     'zh-CN': '未能完成数据来源刷新，请查看当前实际来源并重试刷新 MOD / 地图仓库',

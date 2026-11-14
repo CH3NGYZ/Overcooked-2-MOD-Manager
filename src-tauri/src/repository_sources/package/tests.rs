@@ -508,7 +508,13 @@ async fn http_errors_are_not_parsed_as_source_archives() {
     )
     .await;
     assert_eq!(server.join().unwrap().len(), 1);
-    assert!(result.unwrap_err().contains("HTTP 503"));
+    let error = result.unwrap_err();
+    let (tag, query) = error.split_once('?').unwrap();
+    assert_eq!(tag, "config.readFailedReason");
+    let params = url::form_urlencoded::parse(query.as_bytes()).collect::<Vec<_>>();
+    assert_eq!(params.len(), 1);
+    assert_eq!(params[0].0, "reason");
+    assert_eq!(params[0].1, "HTTP 503");
 }
 
 #[tokio::test]

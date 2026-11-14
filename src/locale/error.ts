@@ -13,6 +13,13 @@ import type { DomainMessages } from './types'
  * 前端把参数原样传给 `t()`。
  */
 export const error: DomainMessages = {
+  'error.backendMessageUnknown': {
+    'zh-CN': '操作失败，无法识别错误信息，请重试或查看日志',
+    'zh-TW': '操作失敗，無法辨識錯誤訊息，請重試或查看記錄',
+    en: 'The operation failed with an unrecognized error. Try again or check the logs.',
+    ko: '알 수 없는 오류로 작업에 실패했습니다. 다시 시도하거나 로그를 확인하세요.',
+    ja: '不明なエラーで操作に失敗しました。再試行するかログを確認してください。',
+  },
   // ===== 多彩名字推送（原 commands.rs 里的中文字面量）=====
   'diyLevel.notRunning': {
     'zh-CN': '请打开游戏并确认 街机MOD 正在运行',

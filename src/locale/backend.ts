@@ -6,6 +6,8 @@
  * 只有真正跑测试时才会暴露。Vite 也接受显式扩展名，所以两边都能用。
  */
 import { i18n } from './index.ts'
+import { DOMAINS } from './types.ts'
+import { isRenderedBackendMessage } from './renderedMessage.ts'
 
 /**
  * 后端错误 → 用户可见文案。
@@ -25,8 +27,8 @@ import { i18n } from './index.ts'
  *   `{ tag: 'error.backup.recycleFailed', params: { reason: '...', path: '...' } }`
  * - 为了让后端改动最小，也接受**内联参数**：`error.backup.recycleFailed?path=...`
  *   这种查询串形态，解析后交给 `t()` 插值。
- * - 兜底：既不是已知 tag、也不像中文的，原样返回 —— 宁可显示英文技术信息，
- *   也不要显示一个裸 tag 让人以为程序坏了。
+ * - 历史 `tag: 原因` 仅在完整 tag 边界兼容；上下文前缀和嵌套 reason 共用此解析。
+ * - 普通文本原样保留；已登记域的未知 tag 用通用文案并保留详情，不输出裸 key。
  */
 export interface BackendErrorPayload {
   /** `error.*` tag。 */
@@ -50,82 +52,99 @@ export interface BackendErrorPayload {
  */
 export function isErrorTag(value: string): boolean {
   const tag = value.trim()
-  return i18n.global.te(tag)
+  return registeredTag(tag) !== undefined
 }
 
-/**
- * 解析 `error.xxx.yyy?a=1&b=2` 形态的 tag。
- *
- * 参数放在查询串里是为了让 Rust 侧只用一个 `format!` 就能产出完整的
- * 错误值，不必构造结构体再序列化。
- */
-function parseInlineParams(value: string): BackendErrorPayload {
-  const [tag, query] = value.split('?', 2)
-  if (!query) return { tag }
+function registeredTag(tag: string): string | undefined {
+  if (i18n.global.te(tag)) return tag
+  const legacy = tag.startsWith('error.') ? tag.slice('error.'.length) : ''
+  return legacy && i18n.global.te(legacy) ? legacy : undefined
+}
+
+const domains: ReadonlySet<string> = new Set(DOMAINS)
+const tagPrefix = /^([a-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)+)(?=$|[?:：])/
+// A reserved domain can also be a filename (config.toml, source.json).
+const fileSuffix = /\.(?:toml|json|log|exe|dll|md|zip|png|jpe?g|lock|txt|nsh|wxs|nsi|dylib|cfg|sig|db|app|rs|ts|js|vue)$/i
+
+function reservedTag(tag: string): boolean {
+  return domains.has(tag.split('.')[0]) && !fileSuffix.test(tag)
+}
+
+function decode(value: string): string {
+  try { return decodeURIComponent(value) } catch { return value }
+}
+
+/** Split only at the first separator: OS details may themselves contain ? or =. */
+function parseInlineParams(query: string): Record<string, string> {
   const params: Record<string, string> = {}
   for (const pair of query.split('&')) {
-    const [rawKey, rawValue] = pair.split('=', 2)
+    const separator = pair.indexOf('=')
+    const rawKey = separator < 0 ? pair : pair.slice(0, separator)
     if (!rawKey) continue
-    try {
-      params[decodeURIComponent(rawKey)] = decodeURIComponent(rawValue ?? '')
-    } catch {
-      // 非法百分号编码：保留原文，不让整个提示因为一个参数崩掉
-      params[rawKey] = rawValue ?? ''
-    }
+    const key = decode(rawKey)
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue
+    params[key] = decode(separator < 0 ? '' : pair.slice(separator + 1))
   }
-  return { tag, params }
+  return params
 }
 
-/**
- * 把一个后端返回值翻译成当前语言的文案。
- *
- * 这是所有「显示后端 message」的地方该调的函数 —— 不要直接
- * `message.error(result.message)`，那样会绕过翻译。
- */
+function renderPayload(payload: BackendErrorPayload, depth: number): string {
+  const key = registeredTag(payload.tag)
+  // Only reason can contain another backend error; names/paths/URLs are opaque.
+  const params = { ...payload.params }
+  if (typeof params.reason === 'string') params.reason = translateText(params.reason, depth + 1)
+  if (!key) {
+    const details = Object.values(params).map(String).filter(Boolean).join(' · ')
+    const fallback = i18n.global.t('error.backendMessageUnknown')
+    return details ? `${fallback}: ${details}` : fallback
+  }
+  const text = i18n.global.t(key, params)
+  // Old colon errors also attached details to messages without a reason slot.
+  const reason = params.reason
+  return reason && !text.includes(String(reason)) ? `${text}: ${reason}` : text
+}
+
+/** A whole leading tag only. Never search arbitrary words inside a sentence. */
+function translateLeading(value: string, depth: number): string | undefined {
+  const match = tagPrefix.exec(value)
+  if (!match || !registeredTag(match[1]) && !reservedTag(match[1])) return undefined
+  const tag = match[1]
+  const tail = value.slice(tag.length)
+  const params = tail.startsWith('?')
+    ? parseInlineParams(tail.slice(1))
+    : tail ? { reason: tail.slice(1).trimStart() } : undefined
+  return renderPayload({ tag, params }, depth)
+}
+
+function translateText(value: string, depth: number): string {
+  if (depth > 12) return value
+  // Tauri itself may reject a command missing from the running binary.
+  const missingCommand = /^Command (.+) not found$/i.exec(value)
+  if (missingCommand) {
+    return i18n.global.t('error.commandUnavailable', { command: missingCommand[1] })
+  }
+  const direct = translateLeading(value, depth)
+  if (direct !== undefined) return direct
+  // A source name/path/id can itself look like a tag. The catalog's fixed
+  // template identifies already-rendered values before context recursion.
+  if (isRenderedBackendMessage(value)) return value
+
+  // Source/batch owners may prepend a label. Translate only a complete suffix
+  // at an explicit context boundary, preserving every prefix byte and newline.
+  const context = /^(.*?(?::[ \t]+|：[ \t]*|\r?\n))([\s\S]+)$/.exec(value)
+  if (context) {
+    const translated = translateText(context[2], depth + 1)
+    if (translated !== context[2]) return context[1] + translated
+  }
+  return value
+}
+
+/** All backend display boundaries use this one parser, including useNotify. */
 export function translateBackendMessage(
   value: string | BackendErrorPayload | null | undefined,
 ): string {
   if (!value) return ''
-  const payload = typeof value === 'string' ? parseInlineParams(value) : value
-  const { tag, params } = payload
-
-  /*
-   * Tauri 宿主层的英文兜底：`Command set_all_level_sets_enabled not found`。
-   * 前端热更新比后端快时（或用户还在跑旧安装包），新命令在运行中的二进制里
-   * 不存在，宿主直接回这句英文 —— 它不是后端 tag，但同样要给用户一句可读、
-   * 可执行的提示，不能把 raw English 丢出来。
-   */
-  const missingCommand = /^Command (.+) not found$/i.exec(tag)
-  if (missingCommand) {
-    return i18n.global.t('error.commandUnavailable', { command: missingCommand[1] })
-  }
-
-  /*
-   * 只有登记过的 tag 才尝试翻译。
-   *
-   * 其它中文串（成功提示、命令里的普通 message）在迁移完成前原样返回：
-   * 它们是后端拼好的整句，没有 tag 可查，硬翻只会翻错。
-   * vue-i18n 的 t() 在缺 key 时返回 key 本身（本项目关闭了 missingWarn），
-   * 用这一点判断「这个 tag 有没有登记」。
-   */
-  const text = params
-    ? i18n.global.t(tag, params as Record<string, unknown>)
-    : i18n.global.t(tag)
-  if (text !== tag) return text
-
-  /*
-   * 兼容早期批次的 `error.<域>.<原因>` 形态：那时语言表把这类文案登记成
-   * `<域>.<原因>`（`framework.cleanupFailed`），去掉 `error.` 前缀再查一次。
-   * 新代码两种都能命中，不需要调用方关心自己拿到的是哪种形态。
-   */
-  if (tag.startsWith('error.')) {
-    const legacy = tag.slice('error.'.length)
-    const legacyText = params
-      ? i18n.global.t(legacy, params as Record<string, unknown>)
-      : i18n.global.t(legacy)
-    if (legacyText !== legacy) return legacyText
-  }
-  return tag
+  return typeof value === 'string' ? translateText(value, 0) : renderPayload(value, 0)
 }
 
 /**
@@ -138,8 +157,14 @@ export function translateBackendMessage(
 export function backendMessageOf(reason: unknown): string {
   if (typeof reason === 'string') return translateBackendMessage(reason)
   if (reason instanceof Error) return translateBackendMessage(reason.message)
-  if (reason && typeof reason === 'object' && 'message' in reason) {
-    const message = (reason as { message?: unknown }).message
+  if (reason && typeof reason === 'object') {
+    if ('tag' in reason && typeof reason.tag === 'string') {
+      const params = 'params' in reason && reason.params && typeof reason.params === 'object'
+        ? Object.fromEntries(Object.entries(reason.params).filter(([, value]) => typeof value === 'string' || typeof value === 'number'))
+        : undefined
+      return translateBackendMessage({ tag: reason.tag, params })
+    }
+    const message = 'message' in reason ? reason.message : undefined
     if (typeof message === 'string') return translateBackendMessage(message)
   }
   return translateBackendMessage(String(reason))

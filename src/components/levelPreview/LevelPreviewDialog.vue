@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { NButton, NInput, NSpin, useMessage } from 'naive-ui'
+import { NButton, NInput, NSpin } from 'naive-ui'
+import { useNotify } from '../../useNotify'
 import { t, locale } from '../../i18n'
 import { translateBackendMessage } from '../../locale/backend'
 import { levelSetDisplayName } from '../../levelSetStatus'
@@ -18,7 +19,7 @@ import type { LevelSetInfo, LevelPreview } from '../../types'
 const recipeDetail = ref<InstanceType<typeof RecipeDetailDialog> | null>(null)
 const p = useLevelPreview()
 const content = ref<HTMLElement | null>(null)
-const message = useMessage()
+const message = useNotify()
 const { copying, copy } = useElementScreenshot()
 async function copyScreenshot() {
   if (!content.value || !target.value || !current.value) return

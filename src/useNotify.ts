@@ -4,9 +4,8 @@
  * 直接 `useMessage()` 的话，每条提示都吃 `n-message-provider` 的全局
  * `duration`（3000ms）。带完整路径的错误动辄上百字符，3 秒读不完。
  *
- * 这层包装做两件事：
- *   1. 按内容长度算停留时长（见 `notifyDuration.ts`）
- *   2. 长内容自动加关闭按钮，并且**悬停暂停**
+ * 字符串先经过唯一后端翻译链，再按可见文案估算停留时长；长内容自动
+ * 加关闭按钮并悬停暂停。VNode/渲染函数原样交给 Naive UI。
  *
  * 用法与 `useMessage()` 完全一致（`notify.success(text)`），所以各组件
  * 只需把 `useMessage` 换成 `useNotify`。显式传 `{ duration }` 时以调用方
@@ -51,26 +50,26 @@ export interface Notify {
  */
 export function useNotify(): Notify {
   const message = useMessage()
+  function show(kind: Exclude<keyof Notify, 'destroyAll'>, content: Content, options?: MessageOptions): MessageReactive {
+    const text = typeof content === 'string' ? translateBackendMessage(content) : content
+    // A process can start after the click check. Keep the backend refusal gate
+    // even when a source or batch owner has prepended a context label.
+    if (kind === 'error' && typeof text === 'string'
+      && text.includes(translateBackendMessage('game.running'))) gameOperationNotice.value = true
+    return message[kind](text, kind === 'loading'
+      ? { duration: 0, ...options } : withReadableDuration(text, options))
+  }
   /*
    * loading 不按长度算时长：它表示「进行中」，由调用方拿返回的句柄
    * 自己 destroy。传了 duration 反而会中途消失。
    */
   return {
-    create: (content, options) => message.create(content, withReadableDuration(content, options)),
-    info: (content, options) => message.info(content, withReadableDuration(content, options)),
-    success: (content, options) => message.success(content, withReadableDuration(content, options)),
-    warning: (content, options) => message.warning(content, withReadableDuration(content, options)),
-    error: (content, options) => {
-      // A process may start after the click check. Backend refusal must still
-      // surface the same blocking notice, even when its caller adds context.
-      if (typeof content === 'string'
-        && (content.includes('game.running')
-          || content.includes(translateBackendMessage('game.running')))) {
-        gameOperationNotice.value = true
-      }
-      return message.error(content, withReadableDuration(content, options))
-    },
-    loading: (content, options) => message.loading(content, { duration: 0, ...options }),
+    create: (content, options) => show('create', content, options),
+    info: (content, options) => show('info', content, options),
+    success: (content, options) => show('success', content, options),
+    warning: (content, options) => show('warning', content, options),
+    error: (content, options) => show('error', content, options),
+    loading: (content, options) => show('loading', content, options),
     destroyAll: () => message.destroyAll(),
   }
 }

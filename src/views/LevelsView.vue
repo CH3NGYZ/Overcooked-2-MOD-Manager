@@ -801,7 +801,7 @@ async function organizeLevelSets() {
         if (report.failed.length > 0) {
           message.warning(t('levelSet.organizeFailed', {
             count: report.failed.length,
-            detail: report.failed.join('；'),
+            detail: report.failed.map(backendMessageOf).join('；'),
           }))
         } else if (report.flattened > 0) {
           message.success(t('levelSet.organizeDone', { count: report.flattened }))

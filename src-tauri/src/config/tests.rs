@@ -20,6 +20,7 @@ mod availability;
 mod bundle_export;
 mod bundle_import;
 mod defaults;
+mod errors;
 mod identity;
 mod metadata;
 mod public;

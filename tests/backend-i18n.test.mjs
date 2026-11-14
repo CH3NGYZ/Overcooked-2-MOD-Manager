@@ -80,6 +80,132 @@ test('backendMessageOf 收口 Error / 字符串 / 对象三种形态', () => {
   assert.match(backendMessageOf({ message: 'diyLevel.notRunning' }), /HostUtilities/)
 })
 
+test('配置写盘失败的新协议和历史冒号协议都在五语保留系统原因', () => {
+  const reason = '另一个程序正在使用此文件，进程无法访问。 (os error 32): C:\\配置\\config.toml?x=a=b&rate=100%+'
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
+    i18n.global.locale.value = locale
+    const expected = i18n.global.t('config.writeFailedReason', { reason })
+    for (const wire of [
+      `config.writeFailedReason?reason=${encodeURIComponent(reason)}`,
+      `config.writeFailedReason: ${reason}`,
+      `config.writeFailedReason：${reason}`,
+    ]) {
+      assert.equal(translateBackendMessage(wire), expected)
+      const contextual = `MOD源: ${wire}`
+      assert.equal(backendMessageOf(new Error(contextual)), `MOD源: ${expected}`)
+      assert.equal(backendMessageOf({ message: contextual }), `MOD源: ${expected}`)
+      assert.equal(translateBackendMessage(`地图源：${wire}`), `地图源：${expected}`)
+      assert.equal(translateBackendMessage(`MOD源\n${wire}`), `MOD源\n${expected}`)
+      assert.equal(translateBackendMessage(translateBackendMessage(contextual)), `MOD源: ${expected}`)
+    }
+  }
+})
+
+test('嵌套 reason 复用同一翻译规则，其它参数按原文字面插值', () => {
+  const os = 'permission denied: D:\\maps\\custom.mod?x=a=b&next=100%+'
+  const nested = `config.readFailedReason?reason=${encodeURIComponent(os)}`
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
+    i18n.global.locale.value = locale
+    const expectedReason = i18n.global.t('config.readFailedReason', { reason: os })
+    const expected = i18n.global.t('config.invalidFormatReason', { reason: expectedReason })
+    assert.equal(translateBackendMessage(`config.invalidFormatReason?reason=${encodeURIComponent(nested)}`), expected)
+    assert.equal(backendMessageOf({ tag: 'config.invalidFormatReason', params: { reason: nested } }), expected)
+    assert.equal(translateBackendMessage(`config.invalidFormatReason: config.readFailedReason: ${os}`), expected)
+    const source = 'https://example.com/config.writeFailedReason?a=b&name=c'
+    assert.equal(translateBackendMessage({ tag: 'source.builtinFileMissing', params: { path: source } }),
+      i18n.global.t('source.builtinFileMissing', { path: source }))
+  }
+})
+
+test('查询串只按首个问号和等号分割，非法转义保留原文', () => {
+  i18n.global.locale.value = 'en'
+  for (const reason of ['first?second=third=fourth', 'invalid%escape?x=a=b', 'a+b=c=d']) {
+    const wire = `config.writeFailedReason?reason=${reason}`
+    assert.equal(translateBackendMessage(wire), i18n.global.t('config.writeFailedReason', { reason }))
+  }
+})
+
+test('登记域未知错误安全降级但保留详情，未知普通点号字符串不当作协议', () => {
+  const reason = 'sharing violation (os error 32): C:\\配置\\config.toml?x=a=b&c=d'
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
+    i18n.global.locale.value = locale
+    const fallback = i18n.global.t('error.backendMessageUnknown')
+    assert.equal(translateBackendMessage('config.futureWriteFailure'), fallback)
+    assert.equal(translateBackendMessage(`config.futureWriteFailure: ${reason}`), `${fallback}: ${reason}`)
+    assert.equal(translateBackendMessage(`MOD源: config.futureWriteFailure?reason=${encodeURIComponent(reason)}`), `MOD源: ${fallback}: ${reason}`)
+    assert.equal(backendMessageOf({ tag: 'newDomain.futureFailure', params: { reason } }), `${fallback}: ${reason}`)
+    assert.equal(translateBackendMessage(translateBackendMessage(`config.futureWriteFailure: ${reason}`)), `${fallback}: ${reason}`)
+  }
+  for (const value of [
+    'config.toml', 'source.json', 'game.dll', 'node.js', 'Object.prototype', 'System.IO.IOException',
+    'dev.gua.overcooked.diychef', 'https://config.readFailedReason/?token=a=b&x=y',
+    'C:\\config.writeFailedReason', 'D:/source.addressInvalid',
+    'request failed for config.writeFailedReason in the middle of a sentence',
+    'File: config.toml?x=a=b', 'open https://source.addressInvalid:443/file',
+  ]) assert.equal(translateBackendMessage(value), value)
+})
+
+test('旧冒号详情不会在没有reason插槽的已登记tag下丢失', () => {
+  i18n.global.locale.value = 'en'
+  assert.equal(translateBackendMessage('download.cancelled: native detail (os error 32)'),
+    `${i18n.global.t('download.cancelled')}: native detail (os error 32)`)
+})
+
+test('五语已渲染的opaque id/name/path跨通知及源上下文重复桥接保持字节', () => {
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
+    i18n.global.locale.value = locale
+    for (const [tag, parameter] of [
+      ['source.idDuplicateValue', 'id'],
+      ['source.builtinFileMissing', 'path'],
+      ['config.repositoryLabeled', 'name'],
+    ]) for (const opaque of ['game.running', 'proxy.futureId', 'config.toml', 'C:\\config\\game.running']) {
+      const wire = `${tag}?${parameter}=${encodeURIComponent(opaque)}`
+      const expected = i18n.global.t(tag, { [parameter]: opaque })
+      let result = translateBackendMessage(wire)
+      assert.equal(result, expected)
+      for (let attempt = 0; attempt < 4; attempt++) {
+        result = translateBackendMessage(result)
+        assert.equal(result, expected, `${locale}: ${wire}, pass ${attempt}`)
+        assert.equal(backendMessageOf(`MOD源: ${result}`), `MOD源: ${expected}`)
+      }
+      // A pending message can cross a language change before its next sink.
+      i18n.global.locale.value = locale === 'en' ? 'ja' : 'en'
+      assert.equal(translateBackendMessage(`MOD源: ${result}`), `MOD源: ${expected}`)
+      i18n.global.locale.value = locale
+    }
+    const unknown = translateBackendMessage({ tag: 'source.futureFailure', params: { id: 'game.running' } })
+    assert.match(unknown, /game\.running$/)
+    assert.equal(translateBackendMessage(`MOD源: ${unknown}`), `MOD源: ${unknown}`)
+    const nested = `config.writeFailedReason?reason=${encodeURIComponent('source.idDuplicateValue?id=game.running')}`
+    const expected = i18n.global.t('config.writeFailedReason', {
+      reason: i18n.global.t('source.idDuplicateValue', { id: 'game.running' }),
+    })
+    assert.equal(translateBackendMessage(nested), expected)
+    assert.equal(translateBackendMessage(`MOD源: ${translateBackendMessage(nested)}`), `MOD源: ${expected}`)
+  }
+})
+
+test('地图拍平的多条后端详情先译再组成五语汇总，通知重复桥接保持内容', () => {
+  const view = readFileSync(new URL('../src/views/LevelsView.vue', import.meta.url), 'utf8')
+  assert.match(view, /detail:\s*report\.failed\.map\(backendMessageOf\)\.join\('；'\)/)
+  const reason = 'sharing violation (os error 32): C:\\maps\\config.toml?x=a=b'
+  const path = 'C:\\maps\\game.running'
+  const report = { failed: [
+    `Map A: levelSet.writeFailed?reason=${encodeURIComponent(reason)}`,
+    `Map B: levelSet.targetExists?name=${encodeURIComponent(path)}`,
+  ] }
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
+    i18n.global.locale.value = locale
+    const detail = report.failed.map(backendMessageOf).join('；')
+    const expectedDetail = `Map A: ${i18n.global.t('levelSet.writeFailed', { reason })}；Map B: ${i18n.global.t('levelSet.targetExists', { name: path })}`
+    assert.equal(detail, expectedDetail)
+    const text = i18n.global.t('levelSet.organizeFailed', { count: report.failed.length, detail })
+    assert.ok(!text.includes('levelSet.writeFailed') && !text.includes('levelSet.targetExists'))
+    assert.ok(text.includes(reason) && text.includes(path))
+    assert.equal(backendMessageOf(text), text)
+  }
+})
+
 test('空值不产生文案', () => {
   assert.equal(translateBackendMessage(''), '')
   assert.equal(translateBackendMessage(null), '')

@@ -44,25 +44,31 @@ pub(crate) use validation::validate_mod_repository;
 
 /// 配置读写失败。
 ///
-/// `#[error]` 的值是**给 thiserror 的模板**，不是普通字符串：末尾的 `: {0}`
-/// 必须保留，否则会把具体原因（哪个文件、哪一行解析失败）整个丢掉 ——
-/// 用户只看到「配置格式无效」却不知道哪里错了，日志里也查不到。
-///
-/// 这里保留历史 thiserror 的 `tag: 细节` 输出；前端查询串解析器不拆冒号。
-/// 若统一错误协议，应单独迁移所有调用方，不能在结构拆分中删掉错误细节。
-#[derive(Debug, Clone, thiserror::Error)]
+/// 与其它 IPC 错误共用 locale_tag 协议；系统原因或嵌套 tag 作为 reason
+/// 编码，不能拼成 `tag: 原因`，否则前端会把整串误认成普通文本。
+#[derive(Debug, Clone)]
 pub enum ConfigError {
-    #[error("config.directoryUnavailableReason: {0}")]
     Directory(String),
-    #[error("config.readFailedReason: {0}")]
     Read(String),
-    #[error("config.parseFailedReason: {0}")]
     Parse(String),
-    #[error("config.writeFailedReason: {0}")]
     Write(String),
-    #[error("config.invalidFormatReason: {0}")]
     Invalid(String),
 }
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (tag, reason) = match self {
+            Self::Directory(reason) => ("config.directoryUnavailableReason", reason),
+            Self::Read(reason) => ("config.readFailedReason", reason),
+            Self::Parse(reason) => ("config.parseFailedReason", reason),
+            Self::Write(reason) => ("config.writeFailedReason", reason),
+            Self::Invalid(reason) => ("config.invalidFormatReason", reason),
+        };
+        formatter.write_str(&crate::locale_tag::with_params(tag, &[("reason", reason)]))
+    }
+}
+
+impl std::error::Error for ConfigError {}
 
 #[derive(Clone)]
 pub struct ConfigService {

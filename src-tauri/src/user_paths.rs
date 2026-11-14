@@ -31,9 +31,8 @@ fn data_parent() -> Result<PathBuf, String> {
     #[cfg(windows)]
     let parent =
         dirs::document_dir().or_else(|| dirs::home_dir().map(|home| home.join("Documents")));
-    // macOS 的 data_dir 就是 ~/Library/Application Support；其余平台只用于
-    // 编译与测试（项目不发布 Linux），沿用 XDG 数据目录保持同样的语义。
-    #[cfg(not(windows))]
+    // macOS 的 data_dir 就是 ~/Library/Application Support。
+    #[cfg(target_os = "macos")]
     let parent = dirs::data_dir();
     parent.ok_or_else(|| ROOT_UNAVAILABLE.to_string())
 }

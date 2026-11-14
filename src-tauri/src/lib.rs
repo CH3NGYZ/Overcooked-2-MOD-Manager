@@ -1,3 +1,10 @@
+// Cargo's rustc-link-arg-tests covers integration tests, not this unit-test harness.
+// Reuse Tauri's generated resource (and native search path) only for this harness;
+// application binaries already link it through tauri_build.
+#[cfg(all(test, target_os = "windows", target_env = "msvc"))]
+#[link(name = "resource", kind = "static")]
+unsafe extern "C" {}
+
 mod api_rate_gate;
 mod api_scheduler;
 mod app_state;

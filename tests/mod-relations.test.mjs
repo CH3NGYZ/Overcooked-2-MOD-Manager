@@ -357,16 +357,19 @@ test('来源仓库没有满足区间的版本时不提供安装入口', () => {
   assert.equal(status.release?.tag_name, 'v9.5.0')
 })
 
-/* 自动挑版本时跳过预发布与草稿：不能把用户悄悄带到测试版上。 */
-test('自动选源跳过预发布与草稿 Release', () => {
-  const dep = { kind: 'requires', guid: 'com.example.dep' }
+/* 显式限定正式版时跳过预发布；草稿无论发布线都不能安装。 */
+test('限定正式版的自动选源跳过预发布与草稿 Release', () => {
+  const dep = { kind: 'compatible', guid: 'com.example.dep', version: '>=2.0.0', prerelease: false }
+  const installed = [mod({ guid: dep.guid, version: '1.0.0' })]
   const onlyBeta = repo({
     cached_releases: [
       { tag_name: 'v3.0.0-beta.1', version: '3.0.0-beta.1', name: '', body: '', prerelease: true, draft: false, assets: [] },
       { tag_name: 'v2.5.0', version: '2.5.0', name: '', body: '', prerelease: false, draft: true, assets: [] },
     ],
   })
-  assert.equal(resolveRelation(dep, [], [onlyBeta]).state, 'missing')
+  const unavailable = resolveRelation(dep, installed, [onlyBeta])
+  assert.equal(unavailable.state, 'conflict')
+  assert.equal(unavailable.release, undefined)
 
   const withStable = repo({
     cached_releases: [
@@ -374,7 +377,7 @@ test('自动选源跳过预发布与草稿 Release', () => {
       { tag_name: 'v2.0.0', version: '2.0.0', name: '', body: '', prerelease: false, draft: false, assets: [] },
     ],
   })
-  assert.equal(resolveRelation(dep, [], [withStable]).release?.tag_name, 'v2.0.0')
+  assert.equal(resolveRelation(dep, installed, [withStable]).release?.tag_name, 'v2.0.0')
 })
 
 /* ===== 安装前计划 ===== */
@@ -402,6 +405,36 @@ test('缺依赖且没有可安装版本 → 进 blocked（只提醒）', () => {
   assert.equal(plan.install.length, 0)
   assert.equal(plan.blocked.length, 1)
   assert.equal(plan.blocked[0].state, 'missing')
+})
+
+test('DIYLevel 4.0 覆盖要求：唯一的 API 预发布也进入真实安装计划', () => {
+  const guid = 'dev.gua.overcooked.diylevel'
+  const owner = repo({
+    ...OWNER,
+    relations: [{ kind: 'requires', guid }],
+    release_relations: [{
+      version: '==4.0.0', relations: [{ kind: 'requires', guid, version: '>=0.11.0' }],
+    }],
+  })
+  const source = repo({ plugin_guid: guid, cached_releases: [{
+    tag_name: 'v0.11.0', version: '0.11', apiPrerelease: true,
+    prerelease: false, draft: false, assets: [],
+  }] })
+  const plans = [undefined, '0.10.0', '0.11.0'].map((version) => {
+    const installed = version ? [mod({ guid, version, prerelease: version === '0.11.0' })] : []
+    const plan = buildInstallPlan(owner, installed, [source], '4.0.0')
+    return {
+      tags: plan.install.map((item) => item.release?.tag_name),
+      requirements: plan.install.map((item) => item.relation.version),
+      blocked: plan.blocked.length,
+      uninstall: plan.uninstall.length,
+    }
+  })
+  assert.deepEqual(plans, [
+    { tags: ['v0.11.0'], requirements: ['>=0.11.0'], blocked: 0, uninstall: 0 },
+    { tags: ['v0.11.0'], requirements: ['>=0.11.0'], blocked: 0, uninstall: 0 },
+    { tags: [], requirements: [], blocked: 0, uninstall: 0 },
+  ])
 })
 
 /*
@@ -531,6 +564,60 @@ test('不写 prerelease 时两条发布线都算', () => {
     'conflict')
 })
 
+test('未限定发布线：API 预发布 v0.11.0 可补依赖，已装同版则满足', () => {
+  const guid = 'dev.gua.overcooked.diylevel'
+  const relation = { kind: 'requires', guid, version: '>=0.11.0' }
+  // tag 没有 beta 后缀，预发布只由 API 标记；显示版本也不能代替完整 tag 比较。
+  const source = repo({ plugin_guid: guid, cached_releases: [{
+    tag_name: 'v0.11.0', version: '0.11', apiPrerelease: true,
+    prerelease: false, draft: false, assets: [],
+  }] })
+  const statuses = [undefined, '0.10.0', '0.11.0'].map((version) => {
+    const installed = version ? [mod({ guid, version, prerelease: version === '0.11.0' })] : []
+    const status = resolveRelation(relation, installed, [source])
+    return [status.state, status.installedVersion, status.release?.tag_name]
+  })
+  assert.deepEqual(statuses, [
+    ['installable', null, 'v0.11.0'],
+    ['installable', '0.10.0', 'v0.11.0'],
+    ['ok', '0.11.0', undefined],
+  ])
+})
+
+test('兼容关系显式发布线：false 拒绝 API 预发布，true 拒绝正式版', () => {
+  const relation = { kind: 'compatible', guid: DEP.guid, version: '>=0.11.0' }
+  const installed = [mod({ guid: relation.guid, version: '0.10.0' })]
+  const entry = { tag_name: 'v0.11.0', version: '0.11', prerelease: false, draft: false, assets: [] }
+  const prereleaseSource = repo({ cached_releases: [{ ...entry, apiPrerelease: true }] })
+  const stableSource = repo({ cached_releases: [{ ...entry, apiPrerelease: false }] })
+  const states = [false, true].map((prerelease) => [prereleaseSource, stableSource]
+    .map((source) => {
+      const status = resolveRelation({ ...relation, prerelease }, installed, [source])
+      return [status.state, status.release?.apiPrerelease]
+    }))
+  assert.deepEqual(states, [
+    [['conflict', undefined], ['conflict', false]],
+    [['conflict', true], ['conflict', undefined]],
+  ])
+})
+
+test('未限定发布线的依赖也不能选草稿、低于下限或同号 beta 的 Release', () => {
+  const relation = { ...DEP, version: '>=0.11.0' }
+  const rejected = [
+    { tag_name: 'v0.11.0', draft: true },
+    { tag_name: 'v0.10.0', draft: false },
+    { tag_name: 'v0.11.0-beta.1', draft: false },
+  ]
+  for (const entry of rejected) {
+    const source = repo({ cached_releases: [{
+      ...entry, version: entry.tag_name, apiPrerelease: true, prerelease: true, assets: [],
+    }] })
+    const status = resolveRelation(relation, [], [source])
+    assert.equal(status.state, 'missing', `${entry.tag_name} draft=${entry.draft}`)
+    assert.equal(status.release, undefined)
+  }
+})
+
 /* 四段写法本身就是预发布，不依赖清单标记也能判出来。 */
 test('四段版本号按预发布处理（即使清单没标记）', () => {
   const rel = { kind: 'conflicts', guid: SAME_GUID, prerelease: true }
@@ -598,10 +685,15 @@ test('依赖自动选源不能把 API false 的显式 beta 选作正式版', () 
     tag_name: 'v2.0.0-beta.3', version: '2.0.0-beta.3', name: '', body: '',
     prerelease: false, apiPrerelease: false, draft: false, assets: [],
   }] })
-  assert.equal(resolveRelation(DEP, [], [betaOnly]).state, 'missing')
+  const stableOnly = { kind: 'compatible', guid: DEP.guid, version: '>=1.0.0', prerelease: false }
+  const installed = [mod({ guid: DEP.guid, version: '0.10.0' })]
+  const unavailable = resolveRelation(stableOnly, installed, [betaOnly])
+  assert.equal(unavailable.state, 'conflict')
+  assert.equal(unavailable.release, undefined)
   const explicitlyBeta = resolveRelation({ ...DEP, prerelease: true }, [], [betaOnly])
   assert.equal(explicitlyBeta.state, 'installable')
   assert.equal(explicitlyBeta.release?.tag_name, 'v2.0.0-beta.3')
+  assert.equal(resolveRelation(DEP, [], [betaOnly]).release?.tag_name, 'v2.0.0-beta.3')
 })
 
 /* 发布线互斥只给卸载，不给「换版本」——换发布线不是装同一 GUID 的另一个包。 */
@@ -621,15 +713,18 @@ test('发布线互斥的冲突不进 install 计划，只进 uninstall', () => {
 })
 
 /* 自动选源要尊重发布线：关系限定了正式版，就不能自动装预发布。 */
-test('依赖自动选源跳过预发布版本', () => {
-  const dep = { kind: 'requires', guid: 'com.example.dep' }
+test('显式限定正式版的兼容关系自动选源跳过预发布版本', () => {
+  const dep = { kind: 'compatible', guid: 'com.example.dep', version: '>=2.0.0', prerelease: false }
+  const installed = [mod({ guid: dep.guid, version: '1.0.0' })]
   const betaOnly = repo({
     cached_releases: [{
       tag_name: 'v3.0.0-beta.1', version: '3.0.0-beta.1', name: '', body: '',
       prerelease: true, draft: false, assets: [],
     }],
   })
-  assert.equal(resolveRelation(dep, [], [betaOnly]).state, 'missing')
+  const status = resolveRelation(dep, installed, [betaOnly])
+  assert.equal(status.state, 'conflict')
+  assert.equal(status.release, undefined)
 })
 
 /* ===== 标签跳转目标 ===== */

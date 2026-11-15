@@ -402,6 +402,40 @@ test('包外壳的依赖表合并全部成员：高版本成员的覆盖规则�
   assert.equal(merged[0].status, 'tools.updatable')
 })
 
+test('DIYLevel Web 4.0 包依赖表：API 预发布可安装或更新，已装 0.11 则满足', () => {
+  const guid = 'dev.gua.overcooked.diylevel'
+  const bundle = repo({
+    id: 'web-runtime',
+    plugin_guid: 'dev.gua.diylevel.web',
+    relations: [{ kind: 'requires', guid }],
+    release_relations: [{
+      version: '==4.0.0', relations: [{ kind: 'requires', guid, version: '>=0.11.0' }],
+    }],
+  })
+  const source = repo({
+    id: 'diylevel', plugin_guid: guid, name_i18n: { 'zh-CN': 'DIYLevel 框架' },
+    cached_releases: [{
+      ...release('v0.11.0'), version: '0.11', apiPrerelease: true,
+    }],
+  })
+  const members = [
+    mod({ repository_id: bundle.id, guid: 'dev.debug', name: 'debugLog.dll', version: '2.0.1' }),
+    mod({ repository_id: bundle.id, guid: bundle.plugin_guid, name: 'Loader.dll', version: '4.0.0' }),
+  ]
+  const states = [undefined, '0.10.0', '0.11.0'].map((version) => {
+    const mods = version ? [mod({ guid, version, prerelease: version === '0.11.0' })] : []
+    const rows = mergedModDependencyRows(members, { mods, repositories: [bundle, source], translate: keyOf })
+    assert.equal(rows.length, 1)
+    const [row] = rows
+    return [row.name, row.requirement, row.status, row.tone, row.jump?.id]
+  })
+  assert.deepEqual(states, [
+    ['DIYLevel 框架', '>=0.11.0', 'tools.installable', 'moderate', 'diylevel'],
+    ['DIYLevel 框架', '>=0.11.0', 'tools.updatable', 'moderate', 'diylevel'],
+    ['DIYLevel 框架', '>=0.11.0', 'tools.satisfied', 'mild', undefined],
+  ])
+})
+
 test('地图关系：在线条目在就按在线，不在才用本地快照', () => {
   const online = mapInfo({ relations: [{ kind: 'requires', guid: 'dev.diy', version: '>=19.0' }] })
   assert.deepEqual(

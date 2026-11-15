@@ -203,26 +203,21 @@ export function installedForGuid(mods: readonly InstalledMod[], guid: string): I
 }
 
 /**
- * 一个本地 MOD 是否属于「预发布」。
- *
- * 两个来源取或：安装清单的 `prerelease` 标记（权威），以及版本号本身
- * 是不是四段/带后缀写法（旧快照兜底）。与 `statusTags` 的展示判定
- * 用同一套规则，避免「标签说预发布、关系判定说正式版」。
- */
-function isPrereleaseCopy(mod: InstalledMod): boolean {
-  return isPrereleaseVersion(mod.version, mod.prerelease)
-}
-
-/**
- * 这条关系是否适用于该本地 MOD（版本要求 + 预发布三态）。
+ * 本地副本和在线来源共用版本区间与发布线规则。
  *
  * `prerelease` 不写表示两种都算；写了就只在「是不是预发布」相符时才成立。
- * 它先于版本要求判断：区间是「哪些版本」，这个标志是「哪条发布线」。
+ * 平台/安装清单标记与历史快照由同一个预发布入口解析，不从显示版本猜发布线。
  */
-function relationMatchesCopy(relation: RepositoryRelation, mod: InstalledMod): boolean {
+function relationMatchesVersion(
+  relation: RepositoryRelation,
+  version: string | null | undefined,
+  prerelease?: boolean | null,
+  legacyPrerelease?: boolean | null,
+): boolean {
   const wantPrerelease = relation.prerelease
-  if (wantPrerelease !== undefined && isPrereleaseCopy(mod) !== wantPrerelease) return false
-  return matchesVersionSpec(relation.version, mod.version)
+  if (wantPrerelease !== undefined
+    && isPrereleaseVersion(version, prerelease, legacyPrerelease) !== wantPrerelease) return false
+  return matchesVersionSpec(relation.version, version)
 }
 
 /**
@@ -233,25 +228,17 @@ function relationMatchesCopy(relation: RepositoryRelation, mod: InstalledMod): b
  * 而不是给一个点了也没用的按钮。
  *
  * `cached_releases` 已按后端顺序（新的在前）排列，所以从前往后找第一个
- * 满足要求的即可。默认跳过草稿与预发布，避免自动装到测试版；
- * 只有当关系显式要求 `prerelease = true` 时才接受预发布 Release。
+ * 满足要求的即可。草稿不可安装；预发布按关系的三态约束匹配，
+ * 未限定发布线时不能遗漏满足区间的测试版依赖。
  */
 function matchingRelease(
   repo: ModRepository,
   relation: RepositoryRelation,
 ): ReleaseInfo | undefined {
-  const wantPrerelease = relation.prerelease
   return (repo.cached_releases ?? []).find((release) => {
     if (release.draft) return false
     const version = release.tag_name || release.version
-    // 发布线判定：默认只要正式版；显式要求预发布时才放宽
-    const prerelease = isPrereleaseVersion(version, release.apiPrerelease, release.prerelease)
-    if (wantPrerelease === true) {
-      if (!prerelease) return false
-    } else if (prerelease) {
-      return false
-    }
-    return matchesVersionSpec(relation.version, version)
+    return relationMatchesVersion(relation, version, release.apiPrerelease, release.prerelease)
   })
 }
 
@@ -311,7 +298,7 @@ export function resolveRelation(
 
   if (kind === 'requires') {
     // 装了且版本落在区间内才算满足；装了多份时任一份满足即可
-    if (installed.some((mod) => relationMatchesCopy(relation, mod))) {
+    if (installed.some((mod) => relationMatchesVersion(relation, mod.version, mod.prerelease))) {
       return { relation, state: 'ok', installedVersion, installedMod: target }
     }
     /*
@@ -331,7 +318,7 @@ export function resolveRelation(
 
   if (kind === 'conflicts') {
     // 目标存在且命中（版本区间 + 发布线）→ 冲突
-    const hit = installed.find((mod) => relationMatchesCopy(relation, mod))
+    const hit = installed.find((mod) => relationMatchesVersion(relation, mod.version, mod.prerelease))
     if (!hit) return { relation, state: 'ok', installedVersion }
     /*
      * 冲突的解法看它是哪一类：
@@ -354,7 +341,7 @@ export function resolveRelation(
 
   // kind === 'compatible'：对方存在时版本必须落在区间内
   if (!target) return { relation, state: 'ok', installedVersion: null }
-  if (relationMatchesCopy(relation, target)) {
+  if (relationMatchesVersion(relation, target.version, target.prerelease)) {
     return { relation, state: 'ok', installedVersion, installedMod: target }
   }
   // 不在兼容区间内：线上有区间内的版本就能靠升级/降级救回来

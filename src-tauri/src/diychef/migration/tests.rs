@@ -71,7 +71,9 @@ impl Workspace {
             &self.recycle,
             &selected,
             &legacy_targets(installed, 1),
+            &[],
             installed,
+            &mut recycle_bin::set_diychef_resources_imported,
         )
     }
 }
@@ -226,6 +228,37 @@ fn shared_plugin_directory_and_old_destination_are_rejected_before_copying() {
 }
 
 #[test]
+fn active_peer_manifest_using_legacy_resources_rejects_migration_before_copy() {
+    let w = Workspace::new();
+    let modern = w.plugin("new", "2.2");
+    let old = w.plugin("old", "1.9");
+    let model = "BepInEx/plugins/old/Resources/Fox/Body.obj";
+    w.write(model, b"old model");
+    let peer = crate::archive::InstallManifest {
+        repository_id: "unrelated-package".into(),
+        release_tag: "v1".into(),
+        repository_binding: None,
+        package_name_i18n: Default::default(),
+        note_i18n: Default::default(),
+        group_i18n: Default::default(),
+        prerelease: false,
+        relations: vec![],
+        installed_at: "2026-11-16T00:00:00Z".into(),
+        files: vec![model.into()],
+    };
+    crate::archive::write_manifest(&w.manifests, &peer).unwrap();
+
+    assert_eq!(
+        w.execute(&[modern, old.clone()]).unwrap_err(),
+        "recycle.fileSharedByOtherPackage"
+    );
+    assert!(w.game.join(&old.dll_file).is_file());
+    assert!(w.game.join(model).is_file());
+    assert!(!w.game.join("BepInEx/plugins/new/Resources").exists());
+    assert!(!w.recycle.exists());
+}
+
+#[test]
 fn registered_map_dll_hidden_from_mod_scan_blocks_migration_before_copy_or_recycle() {
     for suffix in ["", ".disabled"] {
         let w = Workspace::new();
@@ -318,3 +351,9 @@ fn command_rejects_stale_scan_without_copying() {
     );
     assert!(w.game.join(&installed[1].dll_file).is_file());
 }
+
+#[path = "orphan_repro_tests.rs"]
+mod orphan_repro_tests;
+
+#[path = "recovery_tests.rs"]
+mod recovery_tests;

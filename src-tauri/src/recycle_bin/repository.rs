@@ -120,6 +120,14 @@ pub fn recycle_repository_packages_before_install(
     let mut targets = Vec::new();
     for manifest in &manifests {
         let same_id = manifest.repository_id == repo.id;
+        // A persisted binding is the authoritative provenance for a managed
+        // package.  Do not let a shared product/original DLL name pull a
+        // package bound to another repository into this install's cleanup.
+        // The repository id itself remains authoritative for normal upgrades.
+        let bound_to_other_repository = manifest
+            .repository_binding
+            .as_ref()
+            .is_some_and(|binding| binding.is_valid() && !binding.matches_identity(repo));
         let same_identity = manifest
             .repository_binding
             .as_ref()
@@ -135,10 +143,11 @@ pub fn recycle_repository_packages_before_install(
          *     命中整包，与它们散落在哪个子目录无关；
          *   · 同目录判定会误伤 plugins 下平铺的无关插件。
          */
-        let identity_match = manifest
-            .files
-            .iter()
-            .any(|file| dll_matches_repository(game_root, file, repo));
+        let identity_match = !bound_to_other_repository
+            && manifest
+                .files
+                .iter()
+                .any(|file| dll_matches_repository(game_root, file, repo));
         let overlaps_install = manifest.repository_id.starts_with("manual-")
             && manifest.files.iter().any(|file| {
                 replacement_files.iter().any(|target| {

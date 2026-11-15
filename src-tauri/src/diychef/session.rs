@@ -54,7 +54,12 @@ pub(crate) fn open(
         .map_err(|e| e.to_string())?
         .get(generation, &root)?;
     let candidates = target::eligible(&target::candidates(&snapshot.mods, generation));
-    let legacy_targets = super::migration::legacy_targets(&snapshot.mods, generation);
+    let (legacy_targets, recovered) = super::migration::available_legacy_targets(
+        &snapshot.mods,
+        &root,
+        &state.config.mod_recycle_bin_dir(),
+        generation,
+    );
     let Some(target) = target::select(&candidates, target_id)? else {
         before_read(None);
         return Ok(ChefEditorOpen {
@@ -70,7 +75,8 @@ pub(crate) fn open(
             migration_available: false,
         });
     };
-    let migration_available = !legacy_targets.is_empty() && super::migration::modern(&target);
+    let migration_available =
+        (!legacy_targets.is_empty() || !recovered.is_empty()) && super::migration::modern(&target);
     let mod_root = target::mod_root(&root, &target)?;
     // Observe before either resource or TXT read so an external change cannot
     // fall between the baseline snapshot and starting the OS subscription.

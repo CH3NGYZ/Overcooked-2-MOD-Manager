@@ -1,10 +1,22 @@
 use crate::{diychef::target, recycle_bin};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeMap,
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
 };
+
+#[derive(Clone)]
+pub(super) struct ArchivedResource {
+    pub relative: String,
+    pub path: PathBuf,
+}
+
+struct ResourceFolder {
+    name: String,
+    files: BTreeMap<String, (PathBuf, PathBuf)>,
+}
 
 #[derive(Default)]
 pub(super) struct Copies {
@@ -54,35 +66,28 @@ impl Copies {
     fn folder(
         &mut self,
         game: &Path,
-        source: &Path,
+        folder: ResourceFolder,
         parent: &Path,
         hat: bool,
     ) -> Result<(), String> {
-        let name = source
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or("diychef.migrationFailed")?;
+        let name = folder.name;
         let mut renamed = name.to_string();
         while target::child(game, parent, &renamed)?.exists() {
             renamed = format!("{name}_{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
         }
         let destination = target::child(game, parent, &renamed)?;
         self.directory(&destination)?;
-        let relative = source
-            .strip_prefix(game)
-            .map_err(|_| "archive.pathEscape")?
-            .to_string_lossy()
-            .replace('\\', "/");
-        for relative_file in recycle_bin::directory_files(game, &relative)? {
-            let from = game.join(relative_file);
-            let local = from
-                .strip_prefix(source)
-                .map_err(|_| "archive.pathEscape")?;
-            let mut to = destination.join(local);
-            if hat && renamed != name && local.components().count() == 1 {
+        for (local, from) in folder.files.into_values() {
+            let mut to = destination.join(&local);
+            if hat && local.components().count() == 1 {
                 let filename = local.to_string_lossy();
                 for prefix in ["t_", "m_"] {
-                    if let Some(tail) = filename.strip_prefix(&format!("{prefix}{name}.")) {
+                    let expected = format!("{prefix}{name}.");
+                    if let Some(tail) = filename.get(expected.len()..).filter(|_| {
+                        filename
+                            .get(..expected.len())
+                            .is_some_and(|head| head.eq_ignore_ascii_case(&expected))
+                    }) {
                         to = destination.join(format!("{prefix}{renamed}.{tail}"));
                     }
                 }
@@ -94,47 +99,87 @@ impl Copies {
     pub(super) fn import(
         &mut self,
         game: &Path,
-        source: &Path,
+        live_resources: Option<&Path>,
+        archived: &[ArchivedResource],
         destination: &Path,
     ) -> Result<(), String> {
-        let source = target::child(game, source, "Resources")?;
-        if !source.exists() {
+        let destination = target::child(game, destination, "Resources")?;
+        let mut files = Vec::<(String, PathBuf)>::new();
+        if let Some(source) = live_resources {
+            let source = target::child(game, source, "Resources")?;
+            if source.is_dir() {
+                let relative = source
+                    .strip_prefix(game)
+                    .map_err(|_| "archive.pathEscape")?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                for file in recycle_bin::directory_files(game, &relative)? {
+                    let from = game.join(&file);
+                    let local = from
+                        .strip_prefix(&source)
+                        .map_err(|_| "archive.pathEscape")?
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    files.push((local, from));
+                }
+            }
+        }
+        for resource in archived {
+            files.push((resource.relative.clone(), resource.path.clone()));
+        }
+
+        let mut chefs = BTreeMap::<String, ResourceFolder>::new();
+        let mut hats = BTreeMap::<String, ResourceFolder>::new();
+        // Live files precede archives (newest first). Preserve that priority for
+        // folder spelling and file contents when directory casing has changed.
+        for (relative, source) in files {
+            let mut parts = Path::new(&relative).components();
+            let Some(first) = parts.next().and_then(|part| part.as_os_str().to_str()) else {
+                continue;
+            };
+            let rest = parts
+                .map(|part| part.as_os_str().to_owned())
+                .collect::<Vec<_>>();
+            let (folders, name, local): (&mut BTreeMap<String, ResourceFolder>, &str, PathBuf) =
+                if first.eq_ignore_ascii_case("HATS") {
+                    let Some((name, tail)) = rest.split_first() else {
+                        continue;
+                    };
+                    let Some(name) = name.to_str() else {
+                        return Err("diychef.migrationFailed".into());
+                    };
+                    if tail.is_empty() {
+                        continue;
+                    }
+                    (&mut hats, name, tail.iter().collect())
+                } else {
+                    if rest.is_empty() {
+                        continue;
+                    }
+                    (&mut chefs, first, rest.iter().collect())
+                };
+            let folder = folders
+                .entry(name.to_lowercase())
+                .or_insert_with(|| ResourceFolder {
+                    name: name.to_string(),
+                    files: BTreeMap::new(),
+                });
+            folder
+                .files
+                .entry(local.to_string_lossy().replace('\\', "/").to_lowercase())
+                .or_insert((local, source));
+        }
+        if chefs.is_empty() && hats.is_empty() {
             return Ok(());
         }
-        let destination = target::child(game, destination, "Resources")?;
         self.directory(&destination)?;
-        let mut entries = fs::read_dir(&source)
-            .map_err(|_| "diychef.migrationFailed")?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| "diychef.migrationFailed")?;
-        entries.sort_by_key(|entry| entry.file_name());
-        for entry in entries {
-            if !entry
-                .file_type()
-                .map_err(|_| "diychef.migrationFailed")?
-                .is_dir()
-            {
-                continue;
-            }
-            if entry.file_name() == "HATS" {
-                let hats = target::child(game, &destination, "HATS")?;
-                self.directory(&hats)?;
-                let mut folders = fs::read_dir(entry.path())
-                    .map_err(|_| "diychef.migrationFailed")?
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|_| "diychef.migrationFailed")?;
-                folders.sort_by_key(|entry| entry.file_name());
-                for folder in folders {
-                    if folder
-                        .file_type()
-                        .map_err(|_| "diychef.migrationFailed")?
-                        .is_dir()
-                    {
-                        self.folder(game, &folder.path(), &hats, true)?;
-                    }
-                }
-            } else {
-                self.folder(game, &entry.path(), &destination, false)?;
+        for folder in chefs.into_values() {
+            self.folder(game, folder, &destination, false)?;
+        }
+        if !hats.is_empty() {
+            let hats_root = target::child(game, &destination, "HATS")?;
+            for folder in hats.into_values() {
+                self.folder(game, folder, &hats_root, true)?;
             }
         }
         Ok(())

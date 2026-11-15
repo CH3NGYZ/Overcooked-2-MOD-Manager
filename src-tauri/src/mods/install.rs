@@ -366,12 +366,13 @@ pub(crate) fn install_downloaded_mod_repository(
         }
     } else if !keep_recycled {
         /*
-         * 安装成功且用户关闭了回收站：旧包已确认不再需要，现在才清理暂存记录。
+         * 安装成功且用户关闭了回收站：现在才清理暂存记录。
+         * 待迁移的旧 DIYChef 模型沿用同一记录保留，不因回收站设置而永久丢失。
          * 放在成功分支里而不是回收时立即删，是因为上面那段回滚依赖这些记录；
          * 提前清掉会让「安装失败 → 旧包也找不回来」变成数据丢失。
          */
         for entry in &recycled {
-            if let Err(error) = recycle_bin::delete(recycle_root, &entry.id) {
+            if let Err(error) = recycle_bin::purge_entry(recycle_root, &entry.id) {
                 // 清理失败只影响回收站里多出一条记录，不影响本次安装结果
                 log::warn!(
                     "覆盖安装成功后清理旧包暂存记录失败：仓库={}，记录={}，原因={}",

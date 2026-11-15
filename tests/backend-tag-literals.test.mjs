@@ -56,6 +56,8 @@ const NON_TAG = new Set([
   'com.bepis.bepinex.configurationmanager', 'com.valvesoftware.steam',
   'com.ch3ngyz.plugin.HostUtilities', 'com.ch3ngyz.plugin.DIYLevel',
   'fixture.configurationmanager',
+  // Changed-GUID and recycle-payload regression fixtures, not backend error tags.
+  'yang.oc2.diylevel.fastinit', 'fixture.other', 'unrecorded.obj',
   // 测试用的示例文件名
   'bundled.example', 'disabled.example', 'fast.example', 'first.example',
   'invalid.example', 'raw.example', 'release.example', 'remote.example',

@@ -57,6 +57,7 @@ fn junctions_in_source_destination_or_recycle_payload_never_follow_outside_paths
     assert_eq!(
         recycle_unmanaged(
             &workspace.recycle,
+            &workspace.manifests,
             &workspace.game,
             "BepInEx/plugins/Linked/A.dll"
         )
@@ -65,7 +66,8 @@ fn junctions_in_source_destination_or_recycle_payload_never_follow_outside_paths
     );
     remove_directory_link(&linked_source);
     workspace.write(A, b"staged original");
-    let entry = recycle_unmanaged(&workspace.recycle, &workspace.game, A).unwrap();
+    let entry =
+        recycle_unmanaged(&workspace.recycle, &workspace.manifests, &workspace.game, A).unwrap();
     let directory = workspace.recycle.join(&entry.id);
     let bundle = directory.join("files/BepInEx/plugins/Bundle");
     let preserved = workspace.directory.join("preserved-staged.dll");

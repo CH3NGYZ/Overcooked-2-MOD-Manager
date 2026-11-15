@@ -332,7 +332,8 @@ fn partial_restore_merges_only_its_own_files_and_retains_current_metadata() {
 fn unmanaged_disabled_dll_can_restore_or_be_permanently_deleted() {
     let workspace = Workspace::new();
     workspace.write(&format!("{A}.disabled"), b"unmanaged");
-    let entry = recycle_unmanaged(&workspace.recycle, &workspace.game, A).unwrap();
+    let entry =
+        recycle_unmanaged(&workspace.recycle, &workspace.manifests, &workspace.game, A).unwrap();
     assert_eq!(entry.files, vec![format!("{A}.disabled")]);
     assert!(entry.package_id.is_none());
     restore(
@@ -346,7 +347,8 @@ fn unmanaged_disabled_dll_can_restore_or_be_permanently_deleted() {
         fs::read(workspace.game.join(format!("{A}.disabled"))).unwrap(),
         b"unmanaged"
     );
-    let removed = recycle_unmanaged(&workspace.recycle, &workspace.game, A).unwrap();
+    let removed =
+        recycle_unmanaged(&workspace.recycle, &workspace.manifests, &workspace.game, A).unwrap();
     delete(&workspace.recycle, &removed.id).unwrap();
     assert!(!workspace.recycle.join(removed.id).exists());
     assert!(!workspace.game.join(format!("{A}.disabled")).exists());

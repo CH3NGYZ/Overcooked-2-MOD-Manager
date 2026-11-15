@@ -8,7 +8,7 @@ fn both_duplicate_copies_get_the_duplicate_label() {
         duplicate_configuration_manager("1.8.7", "1.9.7"),
         duplicate_configuration_manager("1.9.7", "1.9.7"),
     ];
-    super::mark_duplicate_guids(&mut mods);
+    super::mark_duplicate_guids(&mut mods, &crate::mods::test_support::config(Vec::new()));
     super::refresh_status_labels(&mut mods);
 
     use crate::models::InstalledModStatusLabel as Label;
@@ -27,7 +27,10 @@ fn shadowed_old_configuration_manager_is_not_an_available_update() {
         duplicate_configuration_manager("19.0", "19.0"),
     ];
     assert!(installed[0].update_available);
-    super::mark_duplicate_guids(&mut installed);
+    super::mark_duplicate_guids(
+        &mut installed,
+        &crate::mods::test_support::config(Vec::new()),
+    );
     assert_eq!(installed[0].status, "duplicate_lower_version");
     assert_eq!(
         installed[0].load_warning.as_deref(),
@@ -48,7 +51,10 @@ fn newer_online_configuration_manager_keeps_the_effective_local_copy_update() {
         duplicate_configuration_manager("18.3", "20.0"),
         duplicate_configuration_manager("19.0", "20.0"),
     ];
-    super::mark_duplicate_guids(&mut installed);
+    super::mark_duplicate_guids(
+        &mut installed,
+        &crate::mods::test_support::config(Vec::new()),
+    );
     assert!(!installed[0].update_available);
     assert!(installed[1].update_available);
     assert_eq!(
@@ -67,7 +73,10 @@ fn disabled_higher_copy_does_not_hide_the_loaded_mod_update() {
         duplicate_configuration_manager("19.0", "19.0"),
     ];
     installed[1].enabled = false;
-    super::mark_duplicate_guids(&mut installed);
+    super::mark_duplicate_guids(
+        &mut installed,
+        &crate::mods::test_support::config(Vec::new()),
+    );
     assert!(installed[0].update_available);
     assert!(installed[0].load_warning.is_none());
     assert_ne!(installed[0].status, "duplicate_lower_version");
@@ -79,7 +88,10 @@ fn same_version_duplicates_keep_updates_and_raw_keeps_its_source_status() {
         duplicate_configuration_manager("19.0", "20.0"),
         duplicate_configuration_manager("19.0", "20.0"),
     ];
-    super::mark_duplicate_guids(&mut same_version);
+    super::mark_duplicate_guids(
+        &mut same_version,
+        &crate::mods::test_support::config(Vec::new()),
+    );
     assert!(
         same_version
             .iter()
@@ -89,7 +101,10 @@ fn same_version_duplicates_keep_updates_and_raw_keeps_its_source_status() {
     raw.status = "not_release_asset".into();
     raw.update_available = false;
     let mut raw_and_release = vec![raw, duplicate_configuration_manager("19.0", "19.0")];
-    super::mark_duplicate_guids(&mut raw_and_release);
+    super::mark_duplicate_guids(
+        &mut raw_and_release,
+        &crate::mods::test_support::config(Vec::new()),
+    );
     assert_eq!(raw_and_release[0].status, "not_release_asset");
     assert!(!raw_and_release[0].update_available);
 }
@@ -207,7 +222,7 @@ fn lower_duplicate_guid_is_marked_as_not_loaded() {
             status: "installed".into(),
         },
     ];
-    super::mark_duplicate_guids(&mut mods);
+    super::mark_duplicate_guids(&mut mods, &crate::mods::test_support::config(Vec::new()));
     assert_eq!(
         mods[0].load_warning.as_deref(),
         Some("mods.higherVersionPresent")
@@ -221,15 +236,16 @@ fn lower_duplicate_guid_is_marked_as_not_loaded() {
     mods[0].status = "installed".into();
     mods[0].duplicate_guid = false;
     mods[1].duplicate_guid = false;
-    super::mark_duplicate_guids(&mut mods);
+    super::mark_duplicate_guids(&mut mods, &crate::mods::test_support::config(Vec::new()));
     assert!(mods[0].duplicate_version && mods[1].duplicate_version);
 }
 
 fn repository_bound_copy(index: usize, version: &str) -> crate::models::InstalledMod {
     plain_mod(
-        &format!("BepInEx/plugins/copy-{index}.dll"),
+        &format!("BepInEx/plugins/copy-{index}/Shared.dll"),
         serde_json::json!({
-            "name": format!("Distinct plugin {index}"), "guid": format!("com.example.distinct.{index}"),
+            "name": "Shared Plugin", "product_name": "Shared Product", "original_filename": "Shared.dll",
+            "guid": format!("com.example.distinct.{index}"),
             "version": version, "package_id": format!("package-{index}"),
             "repository_id": format!("source-entry-{index}"), "repository_ids": ["shared-candidate"],
             "repository_binding": {"provider": "github", "owner": "Example", "repository": "Mod", "tag": format!("v{version}")},
@@ -239,7 +255,7 @@ fn repository_bound_copy(index: usize, version: &str) -> crate::models::Installe
 }
 
 #[test]
-fn exact_repository_binding_marks_different_plugins_without_claiming_one_is_shadowed() {
+fn exact_repository_binding_marks_changed_guids_and_the_lower_local_version() {
     let mut mods = vec![
         repository_bound_copy(1, "1.0"),
         repository_bound_copy(2, "2.0"),
@@ -247,22 +263,21 @@ fn exact_repository_binding_marks_different_plugins_without_claiming_one_is_shad
     let binding = mods[1].repository_binding.as_mut().unwrap();
     binding.owner = " example ".into();
     binding.repository = " MOD ".into();
-    binding.channel = crate::models::Channel::Beta;
-    mark_duplicate_guids(&mut mods);
+    mark_duplicate_guids(&mut mods, &crate::mods::test_support::config(Vec::new()));
     refresh_status_labels(&mut mods);
     assert!(mods.iter().all(|item| item.duplicate_guid));
     assert!(mods.iter().all(|item| {
         item.labels
             .contains(&crate::models::InstalledModStatusLabel::Duplicate)
     }));
-    assert!(
-        mods.iter()
-            .all(|item| !item.duplicate_version && item.update_available)
+    assert!(mods.iter().all(|item| !item.duplicate_version));
+    assert!(!mods[0].update_available && mods[1].update_available);
+    assert_eq!(
+        mods[0].load_warning.as_deref(),
+        Some("mods.higherVersionPresent")
     );
-    assert!(
-        mods.iter()
-            .all(|item| item.load_warning.is_none() && item.status == "latest")
-    );
+    assert_eq!(mods[0].status, "duplicate_lower_version");
+    assert!(mods[1].load_warning.is_none());
 }
 
 #[test]
@@ -272,6 +287,7 @@ fn candidate_ids_and_different_repository_coordinates_are_never_duplicate_identi
         "github-vs-gitcode",
         "owner",
         "repository",
+        "channel",
         "missing",
         "invalid",
     ] {
@@ -285,6 +301,7 @@ fn candidate_ids_and_different_repository_coordinates_are_never_duplicate_identi
             "github-vs-gitcode" => binding.provider = crate::models::Provider::Gitcode,
             "owner" => binding.owner = "another-owner".into(),
             "repository" => binding.repository = "another-repository".into(),
+            "channel" => binding.channel = crate::models::Channel::Beta,
             "invalid" => {
                 binding.owner = "../invalid".into();
                 mods[0].repository_binding.as_mut().unwrap().owner = "../invalid".into();
@@ -293,7 +310,7 @@ fn candidate_ids_and_different_repository_coordinates_are_never_duplicate_identi
             _ => unreachable!(),
         }
         assert_eq!(mods[0].repository_ids, mods[1].repository_ids);
-        mark_duplicate_guids(&mut mods);
+        mark_duplicate_guids(&mut mods, &crate::mods::test_support::config(Vec::new()));
         assert!(
             mods.iter()
                 .all(|item| !item.duplicate_guid && !item.duplicate_version),
@@ -304,21 +321,31 @@ fn candidate_ids_and_different_repository_coordinates_are_never_duplicate_identi
 
 #[test]
 fn repository_identity_excludes_package_siblings_and_pure_dependencies() {
-    for exclusion in ["package", "dependency"] {
+    for exclusion in [
+        "dll",
+        "name",
+        "product_name",
+        "original_filename",
+        "dependency",
+    ] {
         let mut mods = vec![
             repository_bound_copy(1, "1.0"),
             repository_bound_copy(2, "2.0"),
         ];
-        if exclusion == "package" {
-            mods[1].package_id = mods[0].package_id.clone();
-        } else {
-            mods[1].is_dependency = true;
+        mods[1].package_id = mods[0].package_id.clone();
+        match exclusion {
+            "dll" => mods[1].dll_file = "BepInEx/plugins/Pack/Other.dll".into(),
+            "name" => mods[1].name = "Other Plugin".into(),
+            "product_name" => mods[1].product_name = Some("Other Product".into()),
+            "original_filename" => mods[1].original_filename = Some("Other.dll".into()),
+            "dependency" => mods[1].is_dependency = true,
+            _ => unreachable!(),
         }
-        mark_duplicate_guids(&mut mods);
+        mark_duplicate_guids(&mut mods, &crate::mods::test_support::config(Vec::new()));
         assert!(mods.iter().all(|item| !item.duplicate_guid), "{exclusion}");
         // An actual GUID copy remains a duplicate even inside the same package.
         mods[1].guid = mods[0].guid.clone();
-        mark_duplicate_guids(&mut mods);
+        mark_duplicate_guids(&mut mods, &crate::mods::test_support::config(Vec::new()));
         assert!(mods.iter().all(|item| item.duplicate_guid), "{exclusion}");
         assert_eq!(
             mods[0].load_warning.as_deref(),
@@ -328,13 +355,29 @@ fn repository_identity_excludes_package_siblings_and_pure_dependencies() {
 }
 
 #[test]
+fn shared_package_id_does_not_hide_changed_guid_copies_in_separate_directories() {
+    let mut mods = vec![
+        repository_bound_copy(1, "1.3"),
+        repository_bound_copy(2, "1.9.2"),
+    ];
+    mods[1].package_id = mods[0].package_id.clone();
+    mark_duplicate_guids(&mut mods, &crate::mods::test_support::config(Vec::new()));
+    assert!(mods.iter().all(|item| item.duplicate_guid));
+    assert_eq!(mods[0].status, "duplicate_lower_version");
+    assert_eq!(
+        mods[0].load_warning.as_deref(),
+        Some("mods.higherVersionPresent")
+    );
+}
+
+#[test]
 fn repository_duplicate_labels_clear_after_disable_and_removal() {
     let config = crate::mods::test_support::config(Vec::new());
     let mut mods = vec![
         repository_bound_copy(1, "1.0"),
         repository_bound_copy(2, "2.0"),
     ];
-    mark_duplicate_guids(&mut mods);
+    mark_duplicate_guids(&mut mods, &crate::mods::test_support::config(Vec::new()));
     assert!(mods.iter().all(|item| item.duplicate_guid));
     mods[1].enabled = false;
     crate::mods::rebind_installed_mods(&config, &mut mods);
@@ -345,7 +388,7 @@ fn repository_duplicate_labels_clear_after_disable_and_removal() {
                 .contains(&crate::models::InstalledModStatusLabel::Duplicate)
     }));
     mods[1].enabled = true;
-    mark_duplicate_guids(&mut mods);
+    mark_duplicate_guids(&mut mods, &crate::mods::test_support::config(Vec::new()));
     assert!(mods.iter().all(|item| item.duplicate_guid));
     mods.remove(1);
     crate::mods::rebind_installed_mods(&config, &mut mods);
@@ -363,10 +406,10 @@ fn old_guid_shadow_warning_is_revoked_when_the_higher_copy_is_disabled() {
         duplicate_configuration_manager("1.0", "3.0"),
         duplicate_configuration_manager("2.0", "3.0"),
     ];
-    mark_duplicate_guids(&mut mods);
+    mark_duplicate_guids(&mut mods, &crate::mods::test_support::config(Vec::new()));
     assert_eq!(mods[0].status, "duplicate_lower_version");
     mods[1].enabled = false;
-    mark_duplicate_guids(&mut mods);
+    mark_duplicate_guids(&mut mods, &crate::mods::test_support::config(Vec::new()));
     refresh_status_labels(&mut mods);
     assert!(
         mods.iter()
@@ -381,17 +424,18 @@ fn old_guid_shadow_warning_is_revoked_when_the_higher_copy_is_disabled() {
 }
 
 #[test]
-fn existing_name_identity_keeps_its_previous_version_warning_semantics() {
+fn same_name_without_repository_cannot_merge_differing_guids() {
     let mut mods = vec![
         repository_bound_copy(1, "1.0"),
         repository_bound_copy(2, "2.0"),
     ];
     mods[1].name = mods[0].name.clone();
     mods[1].repository_binding = None;
-    mark_duplicate_guids(&mut mods);
+    mark_duplicate_guids(&mut mods, &crate::mods::test_support::config(Vec::new()));
+    assert!(mods.iter().all(|item| !item.duplicate_guid));
+    assert!(mods[0].load_warning.is_none());
+    // A missing GUID retains the old nonempty-name fallback, consistently with previews.
+    mods[1].guid = None;
+    mark_duplicate_guids(&mut mods, &crate::mods::test_support::config(Vec::new()));
     assert!(mods.iter().all(|item| item.duplicate_guid));
-    assert_eq!(
-        mods[0].load_warning.as_deref(),
-        Some("mods.higherVersionPresent")
-    );
 }

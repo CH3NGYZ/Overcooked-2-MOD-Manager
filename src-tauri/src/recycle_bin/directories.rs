@@ -40,6 +40,7 @@ pub(crate) fn recycle_directories(
     game: &Path,
     directories: &[String],
     name: String,
+    diychef_resources_imported: bool,
 ) -> Result<ModRecycleEntry, String> {
     let files = directories
         .iter()
@@ -91,6 +92,7 @@ pub(crate) fn recycle_directories(
         files,
         None,
         related,
+        diychef_resources_imported,
         &mut || Ok(()),
     )?;
     for directory in directories {

@@ -54,7 +54,7 @@ pub async fn analyze_mod_source(
     } else {
         analyze_zip(&local_path, &file_name, workers)?
     };
-    attach_install_conflicts(&state, &mut preview);
+    attach_install_conflicts(&state, &mut preview, None);
 
     // 暂存目录用 preview_id 命名，confirm / cancel 靠它找回文件。
     stage_local(&state, &preview, &local_path)?;

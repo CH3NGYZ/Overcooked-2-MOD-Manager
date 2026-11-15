@@ -107,7 +107,9 @@ fn duplicate_plugin(file: &str, version: &str) -> crate::models::InstalledMod {
 mod delete;
 mod duplicates;
 mod file_io;
+mod legacy_resources;
 mod links;
+mod payload;
 mod repository;
 mod rollback;
 mod roundtrip;

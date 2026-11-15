@@ -34,6 +34,7 @@ fn duplicate_journal_commit_failure_rolls_back_every_manifest() {
         vec![A.into()],
         Some(&remaining),
         vec![related],
+        false,
         &mut || {
             let entry = fs::read_dir(&workspace.recycle)
                 .unwrap()

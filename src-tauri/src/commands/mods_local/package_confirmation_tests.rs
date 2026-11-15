@@ -35,3 +35,12 @@ fn other_cases_skip_the_confirmation() {
         false
     ));
 }
+
+#[test]
+fn confirmed_package_uninstall_overrides_duplicate_guid_fast_path() {
+    // 冲突弹窗已确认整包后，即使存在另一个同 GUID 副本，也必须走整包回收。
+    assert!(!should_remove_only_selected_dll(true, true));
+    // 普通单 DLL 删除仍保留原来的共享副本保护。
+    assert!(should_remove_only_selected_dll(true, false));
+    assert!(!should_remove_only_selected_dll(false, false));
+}

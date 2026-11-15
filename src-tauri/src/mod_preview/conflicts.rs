@@ -1,7 +1,7 @@
 use super::model::{ModPreview, ModPreviewEntry};
 use crate::app_state::AppState;
-use crate::models::{DllRole, InstallConflict, InstalledMod};
-use crate::mods::compare_mod_versions;
+use crate::models::{AppConfig, DllRole, InstallConflict, InstalledMod, ModRepositoryBinding};
+use crate::mods::{PluginIdentity, compare_mod_versions, same_plugin_identity};
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::path::Path;
@@ -12,11 +12,11 @@ use std::path::Path;
 /// （它按安装清单回收整包），安装事务里不掺卸载。同一个 MOD 不管版本相同、
 /// 升级还是降级都算同一个东西 —— 并存只会得到两份互相顶掉的 DLL。
 ///
-/// 匹配规则（唯一实现，前端不要另判）：
+/// 匹配规则复用 `mods::same_plugin_identity`，前端不要另判：
 ///   · 只看 `role == DllRole::Mod` 的条目：纯依赖不算冲突源，依赖是随包带着
 ///     的 DLL，装成依赖不会顶掉本地同一个插件；
-///   · 两边都有 GUID 时只比 GUID：它是 BepInPlugin 的稳定身份，不同作者可能
-///     起同名 DLL，但不会共用 GUID；
+///   · 相同 GUID 直接命中；GUID 不同则必须同仓库、同发布线、同 DLL 名称，
+///     且现有插件身份元数据一致，才能兼容作者更换 GUID；
 ///   · 任一方缺 GUID（读不出元数据）才退回比名字，忽略大小写与首尾空白；
 ///     两边名字都空时不算命中，否则「读不出元数据」会把所有同类包都判成冲突。
 ///
@@ -26,6 +26,8 @@ use std::path::Path;
 pub fn find_install_conflicts(
     installed: &[InstalledMod],
     entries: &[ModPreviewEntry],
+    source_binding: Option<&ModRepositoryBinding>,
+    config: &AppConfig,
 ) -> Vec<InstallConflict> {
     let candidates: Vec<&ModPreviewEntry> = entries
         .iter()
@@ -39,7 +41,25 @@ pub fn find_install_conflicts(
     for existing in installed {
         let Some(entry) = candidates
             .iter()
-            .find(|entry| same_plugin(entry, existing))
+            .find(|entry| {
+                same_plugin_identity(
+                    &PluginIdentity::from_metadata(
+                        entry.guid.as_deref(),
+                        entry.name.as_deref(),
+                        entry.product_name.as_deref(),
+                        entry.original_filename.as_deref(),
+                        &entry.path,
+                        false,
+                    )
+                    .with_repository(
+                        config,
+                        source_binding,
+                        None,
+                        entry.version.as_deref(),
+                    ),
+                    &PluginIdentity::from_installed(existing, config),
+                )
+            })
             .copied()
         else {
             continue;
@@ -67,7 +87,11 @@ pub fn find_install_conflicts(
 /// 探测不到游戏目录时留空：没装游戏就没有已装副本。扫描走
 /// `mods::scan_mods_with_manifests`（与 MOD 管理页同一份），所以「包内副本」
 /// 这类整包视角与界面显示的完全一致。
-pub(super) fn attach_install_conflicts(state: &AppState, preview: &mut ModPreview) {
+pub(super) fn attach_install_conflicts(
+    state: &AppState,
+    preview: &mut ModPreview,
+    source: Option<(&str, &str)>,
+) {
     let config = state.config.load_or_default();
     let Some(game_root) = crate::game::detect_game(&config).path else {
         return;
@@ -77,22 +101,19 @@ pub(super) fn attach_install_conflicts(state: &AppState, preview: &mut ModPrevie
         &config,
         Some(&state.config.manifests_dir()),
     );
-    preview.conflicts = find_install_conflicts(&installed, &preview.entries);
-}
-
-/// 预览条目与本地已装 MOD 是否指同一个插件。
-fn same_plugin(entry: &ModPreviewEntry, installed: &InstalledMod) -> bool {
-    if let (Some(entry_guid), Some(installed_guid)) = (
-        trimmed(entry.guid.as_deref()),
-        trimmed(installed.guid.as_deref()),
-    ) {
-        return entry_guid.eq_ignore_ascii_case(installed_guid);
-    }
-    let Some(entry_name) = trimmed(entry.name.as_deref()) else {
-        return false;
-    };
-    let installed_name = installed.name.trim();
-    !installed_name.is_empty() && entry_name.eq_ignore_ascii_case(installed_name)
+    let source_binding = source.and_then(|(repository_id, release_tag)| {
+        config
+            .repositories
+            .iter()
+            .find(|repository| repository.id == repository_id)
+            .and_then(|repository| ModRepositoryBinding::from_release(repository, release_tag))
+    });
+    preview.conflicts = find_install_conflicts(
+        &installed,
+        &preview.entries,
+        source_binding.as_ref(),
+        &config,
+    );
 }
 
 /// 冲突行的展示名：包名优先（一个包里多个 DLL 时用户认包），缺省回落插件名。

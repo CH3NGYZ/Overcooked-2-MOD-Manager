@@ -3,8 +3,10 @@ use super::commands::safe_preview_id;
 use super::conflicts::{find_install_conflicts, same_version};
 use super::model::{ModPreviewEntry, PreviewOrigin};
 use super::staging::PreviewOriginRecord;
-use crate::models::{DllRole, InstalledMod};
+use crate::models::{DllRole, InstalledMod, ModRepositoryBinding};
 use uuid::Uuid;
+
+mod repository_identity;
 
 fn entry(role: DllRole) -> ModPreviewEntry {
     ModPreviewEntry {
@@ -188,7 +190,12 @@ fn conflicts_match_by_guid_ignoring_case_and_whitespace() {
         Some("1.2.0"),
     )];
 
-    let conflicts = find_install_conflicts(&installed, &entries);
+    let conflicts = find_install_conflicts(
+        &installed,
+        &entries,
+        None,
+        &crate::mods::test_support::config(Vec::new()),
+    );
     assert_eq!(conflicts.len(), 1);
     assert_eq!(conflicts[0].name, "快速投掷修复包");
     assert_eq!(conflicts[0].version, "1.2.0");
@@ -214,6 +221,8 @@ fn conflicts_fall_back_to_name_when_either_side_lacks_a_guid() {
                 Some("com.example.plain"),
                 None,
             )],
+            None,
+            &crate::mods::test_support::config(Vec::new()),
         )
         .len(),
         1
@@ -222,6 +231,8 @@ fn conflicts_fall_back_to_name_when_either_side_lacks_a_guid() {
         find_install_conflicts(
             &installed,
             &[preview_entry("Plain.dll", DllRole::Mod, None, None, None)],
+            None,
+            &crate::mods::test_support::config(Vec::new()),
         )
         .is_empty()
     );
@@ -241,7 +252,15 @@ fn differing_guids_are_not_conflicts_even_with_the_same_name() {
         Some("com.author-b.shared"),
         None,
     )];
-    assert!(find_install_conflicts(&installed, &entries).is_empty());
+    assert!(
+        find_install_conflicts(
+            &installed,
+            &entries,
+            None,
+            &crate::mods::test_support::config(Vec::new())
+        )
+        .is_empty()
+    );
 }
 
 #[test]
@@ -258,7 +277,15 @@ fn dependency_entries_never_count_as_conflicts() {
         Some("com.example.runtime"),
         Some("2.0.0"),
     )];
-    assert!(find_install_conflicts(&installed, &entries).is_empty());
+    assert!(
+        find_install_conflicts(
+            &installed,
+            &entries,
+            None,
+            &crate::mods::test_support::config(Vec::new())
+        )
+        .is_empty()
+    );
 }
 
 #[test]
@@ -297,7 +324,12 @@ fn conflicts_are_deduplicated_per_installed_package() {
         ),
     ];
 
-    let conflicts = find_install_conflicts(&installed, &entries);
+    let conflicts = find_install_conflicts(
+        &installed,
+        &entries,
+        None,
+        &crate::mods::test_support::config(Vec::new()),
+    );
     assert_eq!(conflicts.len(), 1);
     assert_eq!(conflicts[0].handle, "BepInEx/plugins/Pack/Main.dll");
 }
@@ -325,7 +357,12 @@ fn conflicts_keep_installed_order_and_report_disabled_copies() {
         Some("1.0"),
     )];
 
-    let conflicts = find_install_conflicts(&installed, &entries);
+    let conflicts = find_install_conflicts(
+        &installed,
+        &entries,
+        None,
+        &crate::mods::test_support::config(Vec::new()),
+    );
     assert_eq!(conflicts.len(), 2);
     assert_eq!(conflicts[0].handle, "BepInEx/plugins/A.dll");
     assert!(conflicts[0].enabled);
@@ -334,6 +371,125 @@ fn conflicts_keep_installed_order_and_report_disabled_copies() {
         "BepInEx/plugins/A-disabled.dll.disabled"
     );
     assert!(!conflicts[1].enabled);
+}
+
+fn repository_binding(channel: &str) -> ModRepositoryBinding {
+    serde_json::from_value(serde_json::json!({
+        "provider": "github", "owner": "CH3NGYZ", "repository": "DIYLevelFastInit",
+        "tag": "v1.9.2", "channel": channel,
+    }))
+    .unwrap()
+}
+
+#[test]
+fn repository_update_conflicts_with_renamed_guid_only_for_the_same_plugin() {
+    let installed = vec![installed_mod(
+        "BepInEx/plugins/DIYLevelFastInit.dll",
+        serde_json::json!({
+            "guid": "yang.oc2.diylevel.fastinit", "name": "DIYLevel Fast Init",
+            "product_name": "DIYLevel Fast Init", "original_filename": "DIYLevelFastInit.dll",
+            "version": "1.3", "repository_binding": {
+                "provider": "github", "owner": "CH3NGYZ", "repository": "DIYLevelFastInit",
+                "tag": "v1.3", "channel": "stable",
+            },
+        }),
+    )];
+    let entries = vec![ModPreviewEntry {
+        path: "DIYLevelFastInit.dll".into(),
+        role: DllRole::Mod,
+        name: Some(" diyLevel fast init ".into()),
+        guid: Some("oc2.diylevel.fastinit".into()),
+        version: Some("1.9.2".into()),
+        title: None,
+        product_name: Some("DIYLevel Fast Init".into()),
+        company: None,
+        copyright: None,
+        original_filename: Some("DIYLevelFastInit.dll".into()),
+    }];
+
+    let conflicts = find_install_conflicts(
+        &installed,
+        &entries,
+        Some(&repository_binding("stable")),
+        &crate::mods::test_support::config(Vec::new()),
+    );
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].version, "1.3");
+    assert_eq!(conflicts[0].handle, "BepInEx/plugins/DIYLevelFastInit.dll");
+    assert!(!conflicts[0].same_version);
+}
+
+#[test]
+fn repository_binding_does_not_merge_other_plugins_or_beta_channel() {
+    let installed = vec![
+        installed_mod(
+            "BepInEx/plugins/Package/Other.dll",
+            serde_json::json!({
+                "guid": "com.example.other", "name": "Other plugin", "version": "1.0",
+                "repository_binding": {
+                    "provider": "github", "owner": "CH3NGYZ", "repository": "DIYLevelFastInit",
+                    "tag": "v1.3", "channel": "stable",
+                },
+            }),
+        ),
+        installed_mod(
+            "BepInEx/plugins/DIYLevelFastInit.dll",
+            serde_json::json!({
+                "guid": "yang.oc2.diylevel.fastinit", "name": "DIYLevel Fast Init",
+                "product_name": "DIYLevel Fast Init", "original_filename": "DIYLevelFastInit.dll",
+                "version": "1.3", "repository_binding": {
+                    "provider": "github", "owner": "CH3NGYZ", "repository": "DIYLevelFastInit",
+                    "tag": "v1.3-beta.1", "channel": "beta",
+                },
+            }),
+        ),
+        installed_mod(
+            "BepInEx/plugins/Sibling/DIYLevelFastInit.dll",
+            serde_json::json!({
+                "guid": "com.example.sibling", "name": "Different plugin", "version": "1.3",
+                "product_name": "DIYLevel Fast Init", "original_filename": "DIYLevelFastInit.dll",
+                "repository_binding": {
+                    "provider": "github", "owner": "CH3NGYZ", "repository": "DIYLevelFastInit",
+                    "tag": "v1.3", "channel": "stable",
+                },
+            }),
+        ),
+        installed_mod(
+            "BepInEx/plugins/Unrelated/DIYLevelFastInit.dll",
+            serde_json::json!({
+                "guid": "com.example.unrelated", "name": "DIYLevel Fast Init", "version": "1.3",
+                "product_name": "DIYLevel Fast Init", "original_filename": "DIYLevelFastInit.dll",
+                "repository_id": "target-repository", "repository_ids": ["target-repository"],
+                "repository_binding": {
+                    "provider": "github", "owner": "CH3NGYZ", "repository": "OtherProject",
+                    "tag": "v1.3", "channel": "stable",
+                },
+            }),
+        ),
+    ];
+    let entries = vec![ModPreviewEntry {
+        path: "DIYLevelFastInit.dll".into(),
+        role: DllRole::Mod,
+        name: Some("DIYLevel Fast Init".into()),
+        guid: Some("oc2.diylevel.fastinit".into()),
+        version: Some("1.9.2".into()),
+        title: None,
+        product_name: Some("DIYLevel Fast Init".into()),
+        company: None,
+        copyright: None,
+        original_filename: Some("DIYLevelFastInit.dll".into()),
+    }];
+
+    let conflicts = find_install_conflicts(
+        &installed,
+        &entries,
+        Some(&repository_binding("stable")),
+        &crate::mods::test_support::config(Vec::new()),
+    );
+    assert!(
+        conflicts.is_empty(),
+        "sibling plugins, other bindings and beta installs cannot replace this stable plugin"
+    );
 }
 
 #[test]

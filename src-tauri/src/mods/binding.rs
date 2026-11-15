@@ -329,6 +329,6 @@ pub(crate) fn rebind_installed_mods(config: &crate::models::AppConfig, mods: &mu
         }
     }
     inherit_repository_from_sibling(mods);
-    super::identity::mark_duplicate_guids(mods);
+    super::identity::mark_duplicate_guids(mods, config);
     super::status::refresh_status_labels(mods);
 }

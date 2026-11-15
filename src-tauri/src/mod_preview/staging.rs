@@ -125,7 +125,7 @@ pub(crate) fn stage_downloaded_file(
         analyze_zip(source, file_name, workers)?
     };
     apply_repository_origin(&mut preview, repository_name, release_tag, release_body);
-    attach_install_conflicts(state, &mut preview);
+    attach_install_conflicts(state, &mut preview, Some((repository_id, release_tag)));
     stage_local(state, &preview, source)?;
     // 记录来源：确认安装时要回到仓库安装路径，才知道回收哪个仓库的旧包
     write_origin_record(

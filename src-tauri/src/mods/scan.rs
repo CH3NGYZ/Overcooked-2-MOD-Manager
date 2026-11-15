@@ -106,7 +106,7 @@ pub fn scan_mods_with_manifests(
         .collect::<Vec<_>>();
     annotate_package_counts(&mut installed);
     inherit_repository_from_sibling(&mut installed);
-    mark_duplicate_guids(&mut installed);
+    mark_duplicate_guids(&mut installed, config);
     // 更新判定只看「清单 tag vs 仓库 tag」；DLL 自报版本只参与抑制误报
     // （见 effective_local_version），不再有「DLL 版本低于清单就标记可更新」的二次扫描。
     refresh_status_labels(&mut installed);

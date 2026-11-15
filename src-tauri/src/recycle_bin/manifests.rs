@@ -116,13 +116,20 @@ pub(super) fn original_manifest(
     for relative in &manifest.files {
         normalize_relative(relative)?;
     }
-    if record.files.iter().any(|file| {
-        !record
+    for file in &record.files {
+        let in_manifest = record
             .removed_manifest_files
             .iter()
-            .any(|removed| file_key(removed) == file_key(&file.relative))
-    }) {
-        return Err(INVALID_RECORD.into());
+            .any(|removed| file_key(removed) == file_key(&file.relative));
+        if !in_manifest
+            && !super::legacy_resources::is_recorded_legacy_resource(
+                directory,
+                record,
+                &file.relative,
+            )?
+        {
+            return Err(INVALID_RECORD.into());
+        }
     }
     Ok(Some(manifest))
 }

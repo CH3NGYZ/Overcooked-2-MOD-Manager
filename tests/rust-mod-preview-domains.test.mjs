@@ -28,7 +28,6 @@ test('MOD preview production definitions have one responsibility owner', () => {
     ['fn build_preview', 'mod_preview/analysis.rs'],
     ['fn apply_repository_origin', 'mod_preview/analysis.rs'],
     ['fn find_install_conflicts', 'mod_preview/conflicts.rs'],
-    ['fn same_plugin', 'mod_preview/conflicts.rs'],
     ['fn preview_root', 'mod_preview/staging.rs'],
     ['fn stage_downloaded_file', 'mod_preview/staging.rs'],
     ['fn analyze_mod_source', 'mod_preview/commands.rs'],
@@ -56,7 +55,12 @@ test('MOD preview preserves analysis, conflict, staging and Tauri command contra
   assert.match(analysis, /MAX_DLL_BYTES/)
   assert.match(analysis, /read_metadata_batch/)
   assert.match(analysis, /kind: if total_dlls == 1 \{ "single" \} else \{ "package" \}/)
-  assert.match(conflicts, /entry_guid\.eq_ignore_ascii_case\(installed_guid\)/)
+  assert.match(conflicts, /same_plugin_identity\(/)
+  const identity = read('mods/identity.rs')
+  assert.match(identity, /left_guid\.eq_ignore_ascii_case\(right_guid\)/)
+  assert.match(identity, /left_repo\.channel != right_repo\.channel/)
+  assert.match(identity, /normalized_dll_filename\(left\.dll_file\)/)
+  assert.doesNotMatch(conflicts, /fn same_plugin\(/)
   assert.match(conflicts, /compare_mod_versions\(target, local\)/)
   assert.match(conflicts, /HashSet<String>/)
   assert.match(staging, /const PREVIEW_TTL: Duration = Duration::from_secs\(60 \* 60\)/)
@@ -67,5 +71,7 @@ test('MOD preview preserves analysis, conflict, staging and Tauri command contra
   assert.match(commands, /install_manual_mod/)
   const registered = [...lib.matchAll(/mod_preview::commands::(analyze_mod_source|confirm_mod_install|cancel_mod_preview)/g)].map(match => match[1])
   assert.deepEqual(registered, ['analyze_mod_source', 'confirm_mod_install', 'cancel_mod_preview'])
-  assert.equal([...read('mod_preview/tests.rs').matchAll(/#\[(?:tokio::)?test\]/g)].length, 17)
+  assert.equal([...read('mod_preview/tests.rs').matchAll(/#\[(?:tokio::)?test\]/g)].length, 19)
+  assert.match(read('mod_preview/tests.rs'), /mod repository_identity;/)
+  assert.equal([...read('mod_preview/tests/repository_identity.rs').matchAll(/#\[test\]/g)].length, 4)
 })

@@ -7,12 +7,13 @@ const root = resolve('src-tauri/src/recycle_bin')
 const owners = {
   paths: ['validate_absolute_path', 'validate_relative', 'checked_path', 'existing_variants'],
   file_io: ['fingerprint', 'move_file', 'copy_verified_and_remove', 'rollback_moves', 'write_atomic'],
-  records: ['save_record', 'load_record', 'list', 'original_game_path'],
+  records: ['save_record', 'load_record', 'list', 'original_game_path', 'set_diychef_resources_imported'],
   manifests: ['read_active_manifest', 'set_active_manifest', 'original_manifest', 'merge_restored_manifest'],
   selection: ['recycle_package_with_mods', 'recycle_selected_mod', 'has_safe_replacement'],
   repository: ['recycle_repository_packages_before_install', 'dll_matches_repository', 'same_package_dir'],
   staging: ['stage', 'stage_with_related_manifests'],
-  restore: ['restore', 'validate_payload'],
+  payload: ['verified_payload_records', 'validate_payload'],
+  restore: ['restore'],
   delete: ['delete', 'delete_all', 'remove_entry_directory', 'purge_entry'],
 }
 

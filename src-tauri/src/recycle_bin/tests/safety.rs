@@ -26,6 +26,7 @@ fn directory_records_restore_related_manifests_but_cannot_claim_unmoved_files() 
         &workspace.game,
         &["BepInEx/plugins/Bundle".into()],
         "directory".into(),
+        false,
     )
     .unwrap();
     let directory = workspace.recycle.join(&record.id);
@@ -92,7 +93,8 @@ fn restore_rejects_record_with_snapshot_but_no_package_id() {
 fn restoring_disabled_dll_refuses_enabled_variant_and_keeps_both_copies() {
     let workspace = Workspace::new();
     workspace.write(&format!("{A}.disabled"), b"original");
-    let entry = recycle_unmanaged(&workspace.recycle, &workspace.game, A).unwrap();
+    let entry =
+        recycle_unmanaged(&workspace.recycle, &workspace.manifests, &workspace.game, A).unwrap();
     workspace.write(A, b"new install");
     assert_eq!(
         restore(
@@ -165,10 +167,19 @@ fn restore_refuses_changed_game_directory_and_reinstalled_package() {
 fn forged_ids_paths_and_corrupted_payload_cannot_escape_or_destroy_data() {
     let workspace = Workspace::new();
     workspace.write(A, b"original");
-    assert!(recycle_unmanaged(&workspace.recycle, &workspace.game, "../outside.dll").is_err());
     assert!(
         recycle_unmanaged(
             &workspace.recycle,
+            &workspace.manifests,
+            &workspace.game,
+            "../outside.dll"
+        )
+        .is_err()
+    );
+    assert!(
+        recycle_unmanaged(
+            &workspace.recycle,
+            &workspace.manifests,
             &workspace.game,
             "BepInEx/plugins/a.dll:stream"
         )
@@ -185,7 +196,8 @@ fn forged_ids_paths_and_corrupted_payload_cannot_escape_or_destroy_data() {
         )
         .is_err()
     );
-    let entry = recycle_unmanaged(&workspace.recycle, &workspace.game, A).unwrap();
+    let entry =
+        recycle_unmanaged(&workspace.recycle, &workspace.manifests, &workspace.game, A).unwrap();
     let directory = workspace.recycle.join(&entry.id);
     let original_record = load_record(&directory, &entry.id).unwrap();
     let mut forged = original_record.clone();
@@ -225,7 +237,8 @@ fn forged_ids_paths_and_corrupted_payload_cannot_escape_or_destroy_data() {
 fn undeclared_staged_files_are_preserved_when_restore_metadata_is_incomplete() {
     let workspace = Workspace::new();
     workspace.write(A, b"original");
-    let entry = recycle_unmanaged(&workspace.recycle, &workspace.game, A).unwrap();
+    let entry =
+        recycle_unmanaged(&workspace.recycle, &workspace.manifests, &workspace.game, A).unwrap();
     let directory = workspace.recycle.join(&entry.id);
     let unknown = directory.join("files/omitted-from-record.dll");
     fs::write(&unknown, b"must not disappear during restore").unwrap();
@@ -259,7 +272,7 @@ fn manager_inside_plugins_is_rejected_before_any_file_moves() {
     workspace.write(A, b"original");
     let recycle = workspace.game.join("BepInEx/plugins/manager/recycle-bin");
     assert_eq!(
-        recycle_unmanaged(&recycle, &workspace.game, A).unwrap_err(),
+        recycle_unmanaged(&recycle, &workspace.manifests, &workspace.game, A).unwrap_err(),
         "recycle.insideModsDirectory"
     );
     assert_eq!(fs::read(workspace.game.join(A)).unwrap(), b"original");

@@ -356,3 +356,41 @@ fn unrelated_manual_package_survives_repository_install() {
     assert!(workspace.active("manual-other").is_some());
     assert!(workspace.game.join(other).exists());
 }
+
+#[test]
+fn foreign_binding_wins_over_shared_dll_metadata_fallback() {
+    // 一个旧包的 DLL 元数据仍与目标仓库相同，但清单已经绑定到另一条
+    // 线上仓库。持久化 binding 是来源事实，不能被 GUID/PE 名称兜底覆盖。
+    let workspace = Workspace::new();
+    let repo: crate::models::ModRepositoryConfig = serde_json::from_value(serde_json::json!({
+        "id": "repo-new", "name": "New", "provider": "github",
+        "username": "Owner", "repository": "NewMod", "download_mode": "release",
+        "plugin_guid": "com.example.shared", "install_target": "BepInEx/plugins",
+        "enabled": true, "builtin": false, "channel": "stable"
+    }))
+    .unwrap();
+    let file = "BepInEx/plugins/Foreign/Foreign.dll";
+    workspace.write(file, &plugin_blob("com.example.shared", "Shared", "1.0.0"));
+    let mut manifest = workspace.manifest("repo-old", &[file]);
+    manifest.repository_binding = Some(crate::models::ModRepositoryBinding {
+        provider: crate::models::Provider::Github,
+        owner: "Owner".into(),
+        repository: "OldMod".into(),
+        tag: "v1.0.0".into(),
+        channel: crate::models::Channel::Stable,
+    });
+    archive::write_manifest(&workspace.manifests, &manifest).unwrap();
+
+    let entries = recycle_repository_packages_before_install(
+        &workspace.recycle,
+        &workspace.manifests,
+        &workspace.game,
+        &repo,
+        &["BepInEx/plugins/New/Foreign.dll".into()],
+    )
+    .unwrap();
+
+    assert!(entries.is_empty());
+    assert!(workspace.active("repo-old").is_some());
+    assert!(workspace.game.join(file).exists());
+}

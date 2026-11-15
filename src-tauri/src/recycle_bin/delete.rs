@@ -100,17 +100,18 @@ pub fn delete_all(root: &Path) -> Result<usize, String> {
  *
  * 用户关闭「删除 MOD 时优先放入回收站」后，删除操作应直接移除文件。
  *
- * 实现方式是**先按原回收流程处理，再立即彻底删除刚生成的记录**，
+ * 实现方式是**先按原回收流程处理，再清理刚生成的记录**，
  * 而不是另写一套删除逻辑。原因：
  *   · 回收流程已经处理了共享文件保护、`.disabled` 变体、清单快照、
  *     空目录清理、失败回滚 —— 这些都是踩过多轮坑才稳定的；
  *   · 复制一份「删除」实现迟早与回收逻辑分叉，出现「回收安全、直删
  *     丢共享文件」这类只在特定配置下复现的问题；
  *
- * 清理成功才不留记录；清理失败会直接上抛，可能留下完整或部分暂存文件，
+ * 待迁移的旧 DIYChef 模型保留在同一记录内，避免关闭回收站导致永久丢失。
+ * 其余清理成功才不留记录；清理失败会直接上抛，可能留下完整或部分暂存文件，
  * 不能保证失败后一定可恢复。移动优先 rename，失败走校验复制，不假定同盘。
  */
-/// 直接删除一个 MOD 包（或其中单个 DLL），不留回收记录。
+/// 直接删除一个 MOD 包（或其中单个 DLL），只保留待迁移暖暖模型记录。
 pub fn purge_package(
     root: &Path,
     manifests_dir: &Path,
@@ -122,7 +123,7 @@ pub fn purge_package(
     purge_entry(root, &entry.id)
 }
 
-/// 直接删除本地选中的 DLL（或它的整包），不留回收记录。
+/// 直接删除本地选中的 DLL（或它的整包），只保留待迁移暖暖模型记录。
 pub fn purge_selected_mod(
     root: &Path,
     manifests_dir: &Path,
@@ -142,7 +143,7 @@ pub fn purge_selected_mod(
     purge_entry(root, &entry.id)
 }
 
-/// 直接删除同包中单个 DLL（保留包内其他成员），不留回收记录。
+/// 直接删除同包中单个 DLL，保留包内其他成员和待迁移暖暖模型。
 pub fn purge_mod_dll(
     root: &Path,
     manifests_dir: &Path,
@@ -155,19 +156,37 @@ pub fn purge_mod_dll(
     purge_entry(root, &entry.id)
 }
 
-/// 直接删除未由管理器安装的 DLL，不留回收记录。
-pub fn purge_unmanaged(root: &Path, game_root: &Path, dll: &str) -> Result<(), String> {
-    let entry = recycle_unmanaged(root, game_root, dll)?;
+/// 直接删除未由管理器安装的 DLL，保留待迁移暖暖模型。
+pub fn purge_unmanaged(
+    root: &Path,
+    manifests_dir: &Path,
+    game_root: &Path,
+    dll: &str,
+) -> Result<(), String> {
+    let entry = recycle_unmanaged(root, manifests_dir, game_root, dll)?;
     purge_entry(root, &entry.id)
 }
 
 /*
  * 覆盖安装没有 `purge_repository_packages_before_install` 这样的包装：
- * 那条路径必须保留回滚能力，所以由调用方「先回收 → 安装成功后再 delete」，
+ * 那条路径必须保留回滚能力，所以由调用方「先回收 → 安装成功后再 purge_entry」，
  * 见 `install_downloaded_mod_repository` 里 `keep_recycled` 的分支。
  */
-/// 清掉回收站里的一条记录（回收流程刚生成的那条）。
-fn purge_entry(root: &Path, id: &str) -> Result<(), String> {
+/// 自动清理刚生成的记录；待导入旧暖暖模型保留，显式 delete/empty 不走此策略。
+pub(crate) fn purge_entry(root: &Path, id: &str) -> Result<(), String> {
+    let directory = record_directory(root, id)?;
+    let record = load_record(&directory, id)?;
+    if record.state != super::records::RecordState::Ready {
+        return Err(super::errors::INVALID_RECORD.into());
+    }
+    if super::legacy_resources::has_pending_legacy_resources(&directory, &record)? {
+        log::info!(
+            "保留待迁移 DIYChef 历史模型：ID={}，文件数={}",
+            id,
+            record.files.len()
+        );
+        return Ok(());
+    }
     delete(root, id).map_err(|error| {
         log::error!(
             "直接删除时清理暂存记录失败：ID={}，原因={}。文件可能仍留在回收站，请手动检查。",

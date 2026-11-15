@@ -1,8 +1,6 @@
 use super::delete::remove_entry_directory;
 use super::errors::CONFLICT;
 use super::errors::INCOMPLETE;
-use super::errors::INVALID_RECORD;
-use super::errors::UNSAFE_PATH;
 use super::errors::io_error;
 use super::file_io::matches_fingerprint;
 use super::file_io::move_file;
@@ -14,51 +12,17 @@ use super::manifests::read_active_manifest;
 use super::manifests::set_active_manifest;
 use super::paths::checked_path;
 use super::paths::existing_variants;
-use super::paths::is_link;
 use super::paths::manifest_path;
 use super::paths::record_directory;
 use super::paths::validate_absolute_path;
+use super::payload::validate_payload;
 use super::records::RecordState;
-use super::records::RecycleRecord;
 use super::records::load_record;
 use super::records::save_record;
 use crate::mods;
-use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
-
-fn validate_payload(payload: &Path, record: &RecycleRecord) -> Result<(), String> {
-    validate_absolute_path(payload)?;
-    let expected = record
-        .files
-        .iter()
-        .map(|file| file.relative.to_lowercase())
-        .collect::<HashSet<_>>();
-    for entry in walkdir::WalkDir::new(payload).follow_links(false) {
-        let entry = entry.map_err(io_error)?;
-        let metadata = fs::symlink_metadata(entry.path()).map_err(io_error)?;
-        if is_link(&metadata) {
-            return Err(UNSAFE_PATH.into());
-        }
-        if !metadata.is_file() && !metadata.is_dir() {
-            return Err(INVALID_RECORD.into());
-        }
-        if metadata.is_file() {
-            let relative = entry
-                .path()
-                .strip_prefix(payload)
-                .map_err(|_| UNSAFE_PATH.to_string())?
-                .to_string_lossy()
-                .replace('\\', "/");
-            if !expected.contains(&relative.to_lowercase()) {
-                // Never silently discard a file omitted from edited/corrupt metadata.
-                return Err(INCOMPLETE.into());
-            }
-        }
-    }
-    Ok(())
-}
 
 pub fn restore(
     root: &Path,

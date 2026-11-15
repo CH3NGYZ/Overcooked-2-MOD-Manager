@@ -56,6 +56,7 @@ pub(crate) fn stage(
         actual_files,
         remaining_manifest,
         Vec::new(),
+        false,
         after_move,
     )
 }
@@ -67,14 +68,53 @@ pub(super) fn stage_with_related_manifests(
     name: String,
     manifest: Option<&InstallManifest>,
     original_manifest: Option<&[u8]>,
-    removed_manifest_files: Vec<String>,
-    actual_files: Vec<String>,
+    mut removed_manifest_files: Vec<String>,
+    mut actual_files: Vec<String>,
     remaining_manifest: Option<&InstallManifest>,
     related_manifests: Vec<RelatedManifest>,
+    diychef_resources_imported: bool,
     after_move: &mut dyn FnMut() -> Result<(), String>,
 ) -> Result<ModRecycleEntry, String> {
     validate_absolute_path(root)?;
     validate_absolute_path(game_root)?;
+    // User-added legacy models must be journaled before removing their DLL:
+    // a same-directory upgrade may replace these filenames immediately after.
+    let legacy_files = if diychef_resources_imported {
+        vec![]
+    } else {
+        super::legacy_resources::legacy_resource_files(
+            game_root,
+            manifests_dir,
+            &actual_files,
+            manifest,
+        )?
+    };
+    let legacy_keys = legacy_files
+        .iter()
+        .map(|file| super::paths::file_key(file))
+        .collect::<HashSet<_>>();
+    if let Some(manifest) = manifest {
+        for file in &manifest.files {
+            if legacy_keys.contains(&super::paths::file_key(file))
+                && !removed_manifest_files
+                    .iter()
+                    .any(|removed| super::paths::file_key(removed) == super::paths::file_key(file))
+            {
+                removed_manifest_files.push(file.clone());
+            }
+        }
+    }
+    let remaining_manifest = remaining_manifest
+        .cloned()
+        .map(|mut manifest| {
+            manifest
+                .files
+                .retain(|file| !legacy_keys.contains(&super::paths::file_key(file)));
+            manifest
+        })
+        .filter(|manifest| !manifest.files.is_empty());
+    let remaining_manifest = remaining_manifest.as_ref();
+    actual_files.extend(legacy_files);
     let canonical_game = fs::canonicalize(game_root).map_err(io_error)?;
     // A manager placed inside plugins must not have its staged DLLs scanned as
     // active MODs. Resolve the nearest existing ancestor before creating the bin.
@@ -132,6 +172,7 @@ pub(super) fn stage_with_related_manifests(
         related_manifests,
         files,
         state: RecordState::Preparing,
+        diychef_resources_imported,
     };
     fs::create_dir_all(&directory).map_err(io_error)?;
     let payload = checked_path(&directory, "files")?;

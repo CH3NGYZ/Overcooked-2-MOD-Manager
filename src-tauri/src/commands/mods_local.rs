@@ -83,6 +83,19 @@ fn needs_package_confirmation(
     !package_mod_names.is_empty() && !has_other_enabled_same_guid && !allow_unmanaged
 }
 
+/// Whether a confirmed uninstall may keep the package and remove only one DLL.
+///
+/// `allow_unmanaged` is also used by the install-conflict flow after the user
+/// has already accepted the package-level removal.  That confirmation must
+/// win over the duplicate-GUID fast path; otherwise a package containing two
+/// plugin DLLs can leave one behind after the conflict row is handled.
+fn should_remove_only_selected_dll(
+    has_other_enabled_same_guid: bool,
+    allow_unmanaged: bool,
+) -> bool {
+    has_other_enabled_same_guid && !allow_unmanaged
+}
+
 #[tauri::command]
 pub async fn uninstall_local_mod(
     state: State<'_, AppState>,
@@ -182,10 +195,10 @@ fn uninstall_local_mod_blocking(
                 package_mod_names,
             });
         }
-        if has_other_enabled_same_guid {
+        if should_remove_only_selected_dll(has_other_enabled_same_guid, allow_unmanaged) {
             /*
              * 用户关闭「删除 MOD 时优先放入回收站」后走 purge_* 系列：
-             * 同一套定位与共享文件保护逻辑，只是不留回收记录。
+             * 同一套定位与共享文件保护逻辑，待迁移旧暖暖模型仍保留记录。
              */
             if config.recycle_deleted_mods {
                 recycle_bin::recycle_mod_dll(
@@ -280,12 +293,14 @@ fn uninstall_local_mod_blocking(
     if config.recycle_deleted_mods {
         recycle_bin::recycle_unmanaged(
             &state.config.mod_recycle_bin_dir(),
+            &manifest_dir,
             &game_root,
             &safe_relative,
         )?;
     } else {
         recycle_bin::purge_unmanaged(
             &state.config.mod_recycle_bin_dir(),
+            &manifest_dir,
             &game_root,
             &safe_relative,
         )?;

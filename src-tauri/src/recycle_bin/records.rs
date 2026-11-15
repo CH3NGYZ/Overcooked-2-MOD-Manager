@@ -104,6 +104,8 @@ pub(super) struct RecycleRecord {
     pub(super) related_manifests: Vec<RelatedManifest>,
     pub(super) files: Vec<StagedFile>,
     pub(super) state: RecordState,
+    #[serde(default)]
+    pub(super) diychef_resources_imported: bool,
 }
 
 impl RecycleRecord {
@@ -193,6 +195,20 @@ pub(super) fn load_record(directory: &Path, id: &str) -> Result<RecycleRecord, S
         related.manifest()?;
     }
     Ok(record)
+}
+
+pub(crate) fn set_diychef_resources_imported(
+    root: &Path,
+    id: &str,
+    imported: bool,
+) -> Result<(), String> {
+    let directory = record_directory(root, id)?;
+    let mut record = load_record(&directory, id)?;
+    if record.state != RecordState::Ready {
+        return Err(INVALID_RECORD.into());
+    }
+    record.diychef_resources_imported = imported;
+    save_record(&directory, &record)
 }
 
 pub fn list(root: &Path) -> Result<Vec<ModRecycleEntry>, String> {

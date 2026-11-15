@@ -283,6 +283,7 @@ pub(super) fn recycle_package_with_mods(
         actual,
         remaining.as_ref(),
         related_manifests,
+        false,
         &mut || Ok(()),
     )
     .map(Some)
@@ -290,6 +291,7 @@ pub(super) fn recycle_package_with_mods(
 
 pub fn recycle_unmanaged(
     root: &Path,
+    manifests_dir: &Path,
     game_root: &Path,
     dll: &str,
 ) -> Result<ModRecycleEntry, String> {
@@ -315,7 +317,7 @@ pub fn recycle_unmanaged(
         .to_owned();
     stage(
         root,
-        root,
+        manifests_dir,
         game_root,
         name,
         None,

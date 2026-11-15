@@ -212,19 +212,23 @@ fn uninstall_diy_level_blocking(state: &AppState) -> Result<OperationResult, Str
             },
         )
     } else if config.recycle_deleted_mods {
-        recycle_bin::recycle_unmanaged(&recycle_root, &game_root, &dll_file).map(|_| {
-            crate::locale_tag::with_params(
-                "message.framework.diyLevelMovedToRecycleBinNoCount",
-                &[("path", &backup.display().to_string())],
-            )
-        })
+        recycle_bin::recycle_unmanaged(&recycle_root, &manifests_dir, &game_root, &dll_file).map(
+            |_| {
+                crate::locale_tag::with_params(
+                    "message.framework.diyLevelMovedToRecycleBinNoCount",
+                    &[("path", &backup.display().to_string())],
+                )
+            },
+        )
     } else {
-        recycle_bin::purge_unmanaged(&recycle_root, &game_root, &dll_file).map(|_| {
-            crate::locale_tag::with_params(
-                "message.framework.diyLevelDeleted",
-                &[("path", &backup.display().to_string())],
-            )
-        })
+        recycle_bin::purge_unmanaged(&recycle_root, &manifests_dir, &game_root, &dll_file).map(
+            |_| {
+                crate::locale_tag::with_params(
+                    "message.framework.diyLevelDeleted",
+                    &[("path", &backup.display().to_string())],
+                )
+            },
+        )
     };
 
     match result {

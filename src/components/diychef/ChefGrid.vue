@@ -9,7 +9,7 @@ const props = defineProps<{
   reorderable: boolean; draggingId: string | null; draggingIds?: ReadonlySet<string>; overEnabled: boolean; selectedIds?: ReadonlySet<string>; bulkDisabled: boolean
 }>()
 const emit = defineEmits<{
-  select: [chefId: string]; hat: [chefId: string]; drag: [event: PointerEvent, chefId: string]; bulkEnable: []; bulkDisable: []
+  select: [chefId: string]; hat: [chefId: string]; drag: [event: PointerEvent, chefId: string]; contextmenu: [event: MouseEvent, chefId: string]; contextmenuKey: [event: KeyboardEvent, chefId: string]; bulkEnable: []; bulkDisable: []
 }>()
 const groups = computed(() => props.enabled
   ? [{ key: 'enabled', items: props.items }]
@@ -32,7 +32,7 @@ const groups = computed(() => props.enabled
       <div class="chef-grid">
       <ChefTile v-for="item in group.items" :key="item.chef.id" :item="item" :session-id="sessionId"
         :frozen="frozen" :reorderable="reorderable" :dragging="draggingIds?.has(item.chef.id) || draggingId === item.chef.id" :selected="selectedIds?.has(item.chef.id)"
-        @select="emit('select', $event)" @hat="emit('hat', $event)" @drag="(event, id) => emit('drag', event, id)" />
+        @select="emit('select', $event)" @hat="emit('hat', $event)" @drag="(event, id) => emit('drag', event, id)" @contextmenu="(event, id) => emit('contextmenu', event, id)" @contextmenu-key="(event, id) => emit('contextmenuKey', event, id)" />
       </div>
     </div>
   </section>

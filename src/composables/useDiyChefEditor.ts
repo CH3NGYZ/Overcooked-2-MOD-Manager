@@ -165,6 +165,17 @@ export function useDiyChefEditor(options: EditorOptions) {
     needsReload.value = false
   }
 
+  function applySnapshot(value: ChefEditorSnapshot, expectedSessionId: string, expectedTargetId: string) {
+    const current = snapshot.value
+    if (!current || current.session_id !== expectedSessionId || current.target.id !== expectedTargetId
+      || value.session_id !== expectedSessionId || value.target.id !== expectedTargetId
+      || value.target.generation !== current.target.generation) return false
+    acceptSnapshot(value)
+    if (opened.value?.snapshot) opened.value = { ...opened.value, snapshot: value }
+    pendingFiles.value = null
+    return true
+  }
+
   function reportOperationFailure(reason: unknown) {
     const raw = reason instanceof Error ? reason.message : String(reason)
     // Match the raw IPC tag before translation; a written file or stale revision
@@ -431,10 +442,10 @@ export function useDiyChefEditor(options: EditorOptions) {
     options.cancelChanges()
   })
   return {
-    snapshot, state, opened, loading, saving, initializing, migrating, error, validation, diagnostics,
+    snapshot, state, opened, loading, saving, initializing, migrating, error, validation, diagnostics, needsReload, pendingFiles,
     gameRunning, readOnly, stale, busy, editable, dirty, canSave, demonstrating,
     legacyTargets, migrationVisible, canMigrate, ignoreMigration, migrate,
     canUndo: computed(() => !!undoState.value && editable.value),
-    open, save, toggle, setDefault, move, place, disable, enableAll, disableAll, changeHat, setLobby, removeProblem, reset, undo,
+    open, save, applySnapshot, reportOperationFailure, toggle, setDefault, move, place, disable, enableAll, disableAll, changeHat, setLobby, removeProblem, reset, undo,
   }
 }

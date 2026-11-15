@@ -104,6 +104,24 @@ impl ChefWatcher {
         self.directory.stop();
         self.resources_revision.flush_pending();
     }
+
+    /// Return the latest revision observed for a backend-authorized target.
+    ///
+    /// Mutating commands use this at their commit boundary to reject a stale
+    /// editor session after an external Resources edit. The watcher owns the
+    /// revision store, so callers never provide a cache path or arbitrary root.
+    pub(crate) fn resources_revision(&self, root: &Path) -> u64 {
+        self.resources_revision.flush_pending();
+        self.resources_revision.current(root)
+    }
+
+    /// Mark a backend-owned resource mutation immediately. Filesystem
+    /// notifications are asynchronous, so a command returning a fresh snapshot
+    /// must advance the revision before the watcher eventually reports it.
+    pub(crate) fn mark_resources_changed(&self, root: &Path) -> u64 {
+        self.resources_revision.mark_changed(root);
+        self.resources_revision.current(root)
+    }
 }
 
 impl Drop for ChefWatcher {

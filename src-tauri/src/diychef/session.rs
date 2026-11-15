@@ -4,7 +4,7 @@ mod external_files_tests;
 mod mutations;
 #[cfg(test)]
 mod native_fallback_tests;
-pub(crate) use mutations::{initialize, save};
+pub(crate) use mutations::{delete_resource, initialize, save};
 
 use super::{
     catalog::{self, Catalog},
@@ -146,7 +146,7 @@ pub(crate) fn get(state: &AppState, id: &str) -> Result<Session, String> {
     }
     Ok(s)
 }
-fn baseline_draft(s: &Session) -> ChefDraft {
+pub(super) fn baseline_draft(s: &Session) -> ChefDraft {
     let mut selection = s.stored.document.selection(&s.catalog);
     let mut bindings = s.stored.hat_bindings.clone();
     bindings.retain(|id, hat| s.catalog.chefs.iter().any(|chef| chef.id == *id)

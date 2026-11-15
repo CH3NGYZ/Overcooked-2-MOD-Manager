@@ -55,6 +55,10 @@ impl ResourceRevisions {
         }
     }
 
+    pub(super) fn mark_changed(&self, root: &Path) {
+        self.pending_flag(root).store(true, Ordering::Release);
+    }
+
     pub(super) fn current(&self, root: &Path) -> u64 {
         let mut values = self.values.lock().unwrap_or_else(|e| e.into_inner());
         let entry = values.entry(root.to_path_buf()).or_default();

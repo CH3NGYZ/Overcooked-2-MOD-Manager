@@ -85,6 +85,7 @@ export const api = {
   diyChefInitialize: (sessionId: string, expectedRevision: string) => invoke<ChefEditorSnapshot>('initialize_diychef_config', { sessionId, expectedRevision }),
   diyChefValidate: (sessionId: string, draft: ChefDraft) => invoke<ChefValidation>('validate_diychef_draft', { sessionId, draft }),
   diyChefSave: (sessionId: string, draft: ChefDraft) => invoke<ChefEditorSnapshot>('save_diychef_config', { sessionId, draft }),
+  diyChefDeleteResource: (sessionId: string, chefId: string) => invoke<ChefEditorSnapshot>('delete_diychef_resource', { sessionId, chefId }),
   diyChefPreview: (sessionId: string, chefId: string, hatId: string) => invoke<ChefPreviewScene>('get_diychef_preview', { sessionId, chefId, hatId }),
   diyChefPreviewAsset: (sessionId: string, assetId: string) => invoke<ArrayBuffer>('read_diychef_preview_asset', { sessionId, assetId }),
   diyChefFingerprint: (sessionId: string, chefId: string, hatId: string) => invoke<string>('get_diychef_preview_fingerprint', { sessionId, chefId, hatId }),

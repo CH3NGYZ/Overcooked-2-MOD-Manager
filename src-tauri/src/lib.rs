@@ -209,6 +209,7 @@ pub fn run() {
             commands::diychef_editor::initialize_diychef_config,
             commands::diychef_editor::validate_diychef_draft,
             commands::diychef_editor::save_diychef_config,
+            commands::diychef_editor::delete_diychef_resource,
             commands::diychef_preview::get_diychef_preview,
             commands::diychef_preview::read_diychef_preview_asset,
             commands::diychef_preview::clear_diychef_cache,

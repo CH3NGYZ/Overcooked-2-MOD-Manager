@@ -75,3 +75,17 @@ pub async fn save_diychef_config(
         .await
         .map_err(|e| e.to_string())?
 }
+
+#[tauri::command]
+pub async fn delete_diychef_resource(
+    state: State<'_, AppState>,
+    session_id: String,
+    chef_id: String,
+) -> Result<ChefEditorSnapshot, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        session::delete_resource(&state, &session_id, &chef_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}

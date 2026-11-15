@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onBeforeUnmount, onMounted, shallowRef, watch } from 'vue'
-import { NButton, NCheckbox, NDropdown, type DropdownOption } from 'naive-ui'
+import { NButton, NCheckbox, NDropdown, useDialog, type DropdownOption } from 'naive-ui'
 import { EllipsisHorizontal, FolderOpenOutline, RefreshOutline, SaveOutline, ShirtOutline } from '@vicons/ionicons5'
 import { t } from '../i18n'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
+import { markDialogBusy } from '../dialogBusy'
 import { canBeDefault, hatForChef, isUsableResource } from '../diychef/draft'
 import type { HatReference } from '../diychef/types'
 import { duplicateChefIdGroups, projectChefs, projectProblems, type ChefFilters as ChefFilterState } from '../diychef/projection'
@@ -33,12 +34,13 @@ import LeaveDialog from '../components/diychef/LeaveDialog.vue'
 import LegacyMigrationNotice from '../components/diychef/LegacyMigrationNotice.vue'
 
 const message = useNotify()
+const dialog = useDialog()
 const dashboard = useDashboard()
 watch(() => dashboard.config.value?.diychef_preview_concurrency ?? 0, configurePreviewConcurrency, { immediate: true })
 const confirmation = useDiyChefConfirmations(() => editor.save())
 const editor = useDiyChefEditor({ confirmChanges: confirmation.confirmChanges, cancelChanges: confirmation.cancelChanges, demoSnapshot: () => diyChefDemoSnapshot.value, confirmMigration: () => requestLeave(),
-  interactionBusy: () => !!draggingId.value || !!selection.rectangle.value || hatOpen.value || moreOpen.value || leaveOpen.value || changesOpen.value })
-const { snapshot, state, opened, loading, saving, error, diagnostics, gameRunning, readOnly, stale, busy, editable, dirty, canSave, canUndo, demonstrating } = editor
+  interactionBusy: () => !!draggingId.value || !!selection.rectangle.value || hatOpen.value || moreOpen.value || contextMenuOpen.value || deletingChef.value || leaveOpen.value || changesOpen.value })
+const { snapshot, state, opened, loading, saving, error, diagnostics, gameRunning, readOnly, stale, busy, editable, dirty, canSave, canUndo, demonstrating, pendingFiles } = editor
 const { changes, changesOpen, leaveOpen } = confirmation
 const { requestLeave } = usePageLeaveGuard({ busy, dirty, confirm: confirmation.confirmLeave, cancelConfirm: confirmation.cancelLeave })
 const query = shallowRef('')
@@ -58,7 +60,17 @@ const hatChefId = shallowRef<string | null>(null)
 const hatScope = shallowRef<'chef' | 'all'>('chef')
 const hatOpen = shallowRef(false)
 const moreOpen = shallowRef(false)
+const contextMenuOpen = shallowRef(false)
+const contextChefId = shallowRef<string | null>(null)
+const contextMenuX = shallowRef(0)
+const contextMenuY = shallowRef(0)
+const deletingChef = shallowRef(false)
 const hatChef = computed(() => snapshot.value?.chefs.find((chef) => chef.id === hatChefId.value) ?? null)
+const contextChef = computed(() => snapshot.value?.chefs.find((chef) => chef.id === contextChefId.value) ?? null)
+const contextChefEnabled = computed(() => {
+  const chefId = contextChefId.value
+  return !!chefId && !!state.value?.draft.entries.some((entry) => entry.chef_ref.kind === 'known' && entry.chef_ref.chef_id === chefId)
+})
 const currentHat = computed(() => snapshot.value && state.value && hatChefId.value ? hatForChef(state.value, snapshot.value, hatChefId.value) : null)
 const hatChefEnabled = computed(() => state.value?.draft.entries.some((entry) => entry.chef_ref.kind === 'known' && entry.chef_ref.chef_id === hatChefId.value) ?? false)
 const announcement = shallowRef('')
@@ -84,6 +96,26 @@ const moreOptions = computed<DropdownOption[]>(() => [
 const moreNodeProps = (option: DropdownOption) => option.key === 'lobby'
   ? { role: 'menuitemcheckbox', 'aria-label': t('diychef.lobbySwitch'), 'aria-checked': state.value?.draft.lobby_switch ? 'true' as const : 'false' as const, 'data-tutorial': 'diychef-more-lobby' }
   : option.key === 'default' ? { 'data-tutorial': 'diychef-more-default' } : {}
+const contextOptions = computed<DropdownOption[]>(() => {
+  const chef = contextChef.value
+  const canEditChef = !!editable.value && !deletingChef.value && !!chef
+  const canToggleChef = canEditChef && isUsableResource(chef.resource_state)
+  const native = chef?.source_kind === 'native'
+  const canDeleteChef = canEditChef && !native && snapshot.value?.source.state === 'present' && !dirty.value && !pendingFiles.value && !editor.needsReload.value
+  return [
+    { key: 'toggle', label: t(contextChefEnabled.value ? 'diychef.chefContextDisable' : 'diychef.chefContextEnable'), disabled: !canToggleChef },
+    { key: 'hat', label: t('diychef.chefContextChangeHat'), disabled: !canEditChef },
+    { type: 'divider', key: 'chef-context-divider' },
+    { key: 'delete', label: () => h('span', { class: 'chef-context-danger' }, t('diychef.chefContextDelete')), disabled: !canDeleteChef },
+  ]
+})
+watch([loading, snapshot, demonstrating], () => {
+  contextMenuOpen.value = false
+  contextChefId.value = null
+})
+watch(contextMenuOpen, (open) => {
+  if (!open) contextChefId.value = null
+})
 
 function clearFilters() { query.value = ''; sources.value = []; statuses.value = [] }
 async function focusChef(chefId: string, scroll = false) {
@@ -121,6 +153,66 @@ function openHat(chefId: string, scope: 'chef' | 'all' = 'chef') {
   hatScope.value = scope
   hatChefId.value = chefId
   hatOpen.value = true
+}
+function onChefContextMenu(event: MouseEvent, chefId: string) {
+  if (!snapshot.value || demonstrating.value) return
+  contextChefId.value = chefId
+  contextMenuX.value = event.clientX
+  contextMenuY.value = event.clientY
+  contextMenuOpen.value = true
+}
+function onChefContextMenuKey(event: KeyboardEvent, chefId: string) {
+  if (!snapshot.value || demonstrating.value) return
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  contextChefId.value = chefId
+  contextMenuX.value = rect.left + Math.min(32, rect.width / 2)
+  contextMenuY.value = rect.top + Math.min(32, rect.height / 2)
+  contextMenuOpen.value = true
+}
+function closeChefContextMenu() {
+  contextMenuOpen.value = false
+}
+function deleteContextChef(chefId: string) {
+  const chef = snapshot.value?.chefs.find((item) => item.id === chefId)
+  const current = snapshot.value
+  const sessionId = current?.session_id
+  const targetId = current?.target.id
+  if (!chef || !sessionId || !targetId || chef.source_kind !== 'custom' || !editable.value || deletingChef.value || dirty.value || current?.source.state !== 'present') return
+  const name = chef.display_name
+  const instance = dialog.warning({
+    title: t('diychef.chefContextDeleteTitle'),
+    content: t('diychef.chefContextDeleteHint', { name }),
+    positiveText: t('diychef.chefContextDeleteConfirm'),
+    positiveButtonProps: { type: 'error' },
+    negativeText: t('diychef.cancel'),
+    onPositiveClick: async () => {
+      markDialogBusy(instance)
+      deletingChef.value = true
+      try {
+        const updated = await api.diyChefDeleteResource(sessionId, chefId)
+        contextChefId.value = null
+        if (!editor.applySnapshot(updated, sessionId, targetId)) {
+          editor.reportOperationFailure('diychef.targetChanged')
+          message.error(error.value)
+          return
+        }
+        message.success(t('diychef.chefContextDeleteDone', { name }))
+      } catch (reason) {
+        editor.reportOperationFailure(reason)
+        message.error(error.value)
+      } finally {
+        deletingChef.value = false
+      }
+    },
+  })
+}
+function chefContextAction(key: string | number) {
+  const chefId = contextChefId.value
+  closeChefContextMenu()
+  if (!chefId) return
+  if (key === 'toggle') void chefMotion.change(chefId, () => editor.toggle(chefId))
+  else if (key === 'hat') openHat(chefId)
+  else if (key === 'delete') deleteContextChef(chefId)
 }
 function applyHat(chefId: string, hat: HatReference) {
   editor.changeHat(hatScope.value === 'all' ? snapshot.value?.chefs.map(chef => chef.id) ?? [] : chefId, hat)
@@ -184,17 +276,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', saveShortcut))
       <ChefGrid data-tutorial="diychef-grid" :items="projection.enabled" :session-id="snapshot.session_id" enabled :filtered="projection.filtered" :frozen="!editable"
         :bulk-disabled="!projection.defaultId"
         :reorderable="reorderable" :dragging-id="draggingId" :dragging-ids="draggingIds" :selected-ids="selection.selectedIds.value" :over-enabled="overEnabled"
-        @select="selectChef" @hat="openHat" @drag="startDrag" @bulk-disable="bulkDisable" @bulk-enable="bulkEnable" />
+        @select="selectChef" @hat="openHat" @drag="startDrag" @contextmenu="onChefContextMenu" @contextmenu-key="onChefContextMenuKey" @bulk-disable="bulkDisable" @bulk-enable="bulkEnable" />
       <ChefGrid :items="projection.disabled" :session-id="snapshot.session_id" :enabled="false" :filtered="projection.filtered" :frozen="!editable"
         :bulk-disabled="!canEnableAll"
         :reorderable="reorderable" :dragging-id="draggingId" :dragging-ids="draggingIds" :selected-ids="selection.selectedIds.value" :over-enabled="overEnabled"
-        @select="selectChef" @hat="openHat" @drag="startDrag" @bulk-disable="bulkDisable" @bulk-enable="bulkEnable" />
+        @select="selectChef" @hat="openHat" @drag="startDrag" @contextmenu="onChefContextMenu" @contextmenu-key="onChefContextMenuKey" @bulk-disable="bulkDisable" @bulk-enable="bulkEnable" />
       <div v-if="selection.rectangle.value" class="chef-selection-rect" :style="selection.rectangleStyle.value" aria-hidden="true" />
       <ContentState v-if="!projection.enabled.length && !projection.disabled.length" :description="t('diychef.noResults')">
         <template #extra><n-button size="small" @click="clearFilters">{{ t('diychef.clearFilters') }}</n-button></template>
       </ContentState>
       <HatDialog v-model:show="hatOpen" :snapshot="snapshot" :chef="hatChef" :hat="currentHat" :enabled="hatChefEnabled" :scope="hatScope" :frozen="!editable" @apply="applyHat" />
     </template>
+    <n-dropdown v-model:show="contextMenuOpen" trigger="manual" placement="bottom-start" :x="contextMenuX" :y="contextMenuY" :options="contextOptions" @select="chefContextAction" />
     <SaveChangesDialog :show="changesOpen" :changes="changes" @resolve="confirmation.resolveChanges" />
     <LeaveDialog :show="leaveOpen" :can-save="canSave" @stay="confirmation.cancelLeave" @discard="confirmation.resolveLeave(true)" @save="confirmation.saveAndLeave" />
     <span class="chef-live" aria-live="polite" aria-atomic="true">{{ announcement }}</span>
@@ -206,4 +299,5 @@ onBeforeUnmount(() => window.removeEventListener('keydown', saveShortcut))
 .chef-more-trigger { display: inline-flex; }
 .chef-live { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .chef-selection-rect { position: fixed; z-index: 25; pointer-events: none; border: 1px solid var(--oc2-accent); background: color-mix(in srgb, var(--oc2-accent) 12%, transparent); }
+:global(.chef-context-danger) { color: var(--oc2-danger, #e5484d); }
 </style>

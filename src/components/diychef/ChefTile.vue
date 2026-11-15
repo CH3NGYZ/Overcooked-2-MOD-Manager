@@ -18,18 +18,25 @@ const emit = defineEmits<{
   select: [chefId: string]
   hat: [chefId: string]
   drag: [event: PointerEvent, chefId: string]
+  contextmenu: [event: MouseEvent, chefId: string]
+  contextmenuKey: [event: KeyboardEvent, chefId: string]
 }>()
 const draggable = computed(() => props.reorderable && isUsableResource(props.item.chef.resource_state))
 const selectable = computed(() => isUsableResource(props.item.chef.resource_state))
 const description = computed(() => [props.item.chef.display_name, props.item.isDefault ? t('diychef.defaultChef') : ''].filter(Boolean).join(' · '))
+function onContextMenuKey(event: KeyboardEvent) {
+  if (event.key !== 'ContextMenu' && !(event.key === 'F10' && event.shiftKey)) return
+  event.preventDefault()
+  emit('contextmenuKey', event, props.item.chef.id)
+}
 </script>
 
 <template>
     <article class="chef-tile" :class="{ 'is-default': item.isDefault, 'is-enabled': item.enabled, 'is-identity-conflict': item.identityConflict, 'is-selected': selected, 'is-draggable': draggable, 'is-dragging': dragging }"
-    :data-chef-id="item.chef.id" :data-chef-source="item.chef.source_kind" :data-chef-order="item.catalogOrder" @pointerdown="draggable && emit('drag', $event, item.chef.id)" @dragstart.prevent>
+    :data-chef-id="item.chef.id" :data-chef-source="item.chef.source_kind" :data-chef-order="item.catalogOrder" @pointerdown="draggable && emit('drag', $event, item.chef.id)" @contextmenu.prevent.stop="emit('contextmenu', $event, item.chef.id)" @dragstart.prevent>
     <button type="button" class="chef-tile-main" :data-chef-focus="item.chef.id" aria-haspopup="dialog"
       :aria-label="t('diychef.hatTitle', { name: description })" :title="description"
-      @click="emit('hat', item.chef.id)">
+      @click="emit('hat', item.chef.id)" @keydown="onContextMenuKey">
       <PreviewImage :session-id="sessionId" :chef-id="item.chef.id" :hat-id="item.hat.kind === 'known' ? item.hat.hat_id : null" :name="item.chef.display_name" />
     </button>
     <span class="chef-select" @pointerdown.stop @click.stop>

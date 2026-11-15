@@ -1,0 +1,3 @@
+[submodule "src-tauri/resources"]
+	path = src-tauri/resources
+	url = https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Repos.git

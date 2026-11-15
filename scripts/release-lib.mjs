@@ -70,10 +70,30 @@ const COMMIT_TRAILER = /^(?:co-authored-by|co-developed-by|signed-off-by|reviewe
 const VERIFICATION_HEADING = /^(?:校验|驗證|验证|verification|testing|tests?)\s*[：:]/i
 const VERIFICATION_NOTE = /^(?:未做|未进行|未验证|not verified)[^\n]*(?:验证|测试|verified|tested)/i
 const BUILD_COMMAND = /\b(?:npm test|npm run build|cargo test|cargo check|cargo fmt|git diff --check)\b/i
+const RELEASE_NOTES_START = '<!-- release-notes:start -->'
+const RELEASE_NOTES_END = '<!-- release-notes:end -->'
 
 export function releaseNotesFromMessage(message) {
   if (typeof message !== 'string') return ''
-  const paragraphs = message.replace(/\r\n/g, '\n').split(/\n{2,}/)
+  const normalized = message.replace(/\r\n/g, '\n')
+  const lines = normalized.split('\n')
+  const markers = []
+  for (const [index, line] of lines.entries()) {
+    if (!line.includes('<!-- release-notes:')) continue
+    const marker = line.trim()
+    if (marker !== RELEASE_NOTES_START && marker !== RELEASE_NOTES_END) {
+      throw new Error('Release notes markers must be exact start/end comments on their own lines')
+    }
+    markers.push({ index, marker })
+  }
+  // Invalid explicit selection must fail rather than expose the detailed commit body.
+  if (markers.length && (markers.length !== 2 || markers[0].marker !== RELEASE_NOTES_START
+    || markers[1].marker !== RELEASE_NOTES_END)) {
+    throw new Error('Release notes require exactly one start marker followed by one end marker')
+  }
+  const explicit = markers.length !== 0
+  const selected = explicit ? lines.slice(markers[0].index + 1, markers[1].index).join('\n') : normalized
+  const paragraphs = selected.split(/\n{2,}/)
   const kept = []
   for (const paragraph of paragraphs) {
     const body = paragraph
@@ -85,7 +105,9 @@ export function releaseNotesFromMessage(message) {
     if (VERIFICATION_HEADING.test(body) || VERIFICATION_NOTE.test(body) || BUILD_COMMAND.test(body)) continue
     kept.push(body)
   }
-  return kept.join('\n\n').trim()
+  const notes = kept.join('\n\n').trim()
+  if (explicit && !notes) throw new Error('The explicit release notes block has no public notes after filtering')
+  return notes
 }
 
 export function releaseTag(version, refType, refName) {

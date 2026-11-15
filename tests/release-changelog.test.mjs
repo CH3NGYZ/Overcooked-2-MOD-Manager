@@ -2,10 +2,10 @@ import assert from 'node:assert/strict'
 import { createHash, generateKeyPairSync, sign } from 'node:crypto'
 import test from 'node:test'
 import { GitHubRelease } from '../scripts/github-release.mjs'
-import { aggregateManifest } from '../scripts/release.mjs'
+import { aggregateManifest, prepareRelease } from '../scripts/release.mjs'
 import {
   CHANGELOG_LIMITS, MAX_UPDATE_MANIFEST_BYTES, PLATFORM_KEYS, RELEASE_OWNER, RELEASE_REPO,
-  collectReleaseChangelog, serializeUpdateManifest, updateManifest,
+  collectReleaseChangelog, releaseNotesFromMessage, serializeUpdateManifest, updateManifest,
 } from '../scripts/release-lib.mjs'
 
 const platforms = Object.fromEntries(PLATFORM_KEYS.map(key => [key, { signature: 'fixture', url: `https://example.com/${key}` }]))
@@ -193,6 +193,41 @@ test('real manifest aggregation verifies all signed packages before adding Relea
   assert.ok(fixture.requests.at(-1).endsWith('/releases?per_page=100&page=1'))
   assert.ok(serializeUpdateManifest(result).length <= MAX_UPDATE_MANIFEST_BYTES)
 })
+
+for (const existing of [false, true]) {
+  test(`explicit notes stay identical across ${existing ? 'updated' : 'created'} Release and signed manifest`, async () => {
+    const fixture = signedFixture()
+    const notes = releaseNotesFromMessage([
+      fixture.version, '- Detailed implementation record', '', '<!-- release-notes:start -->',
+      '- Concise public changes', '<!-- release-notes:end -->', '', '- Internal delivery details',
+    ].join('\n'))
+    const commitish = 'a'.repeat(40)
+    const requests = []
+    const github = new GitHubRelease('test-fixture', async (input, options) => {
+      const url = new URL(input)
+      requests.push({ path: url.pathname, method: options.method })
+      if (options.method === 'POST' || options.method === 'PATCH') {
+        return Response.json({ id: fixture.release.id, ...JSON.parse(options.body) })
+      }
+      if (url.pathname.endsWith('/releases')) return Response.json(existing ? [fixture.release] : [])
+      if (url.pathname.endsWith('/assets')) return Response.json([])
+      return Response.json({ default_branch: 'main' })
+    })
+
+    const release = await prepareRelease(github, fixture.version, fixture.release.tag_name, commitish, notes)
+    const result = await aggregateManifest(fixture.github, release, fixture.assets, fixture.version, fixture.publicKey)
+
+    assert.equal(notes, '- Concise public changes')
+    assert.equal(release.body, notes)
+    assert.equal(release.target_commitish, commitish)
+    assert.equal(release.draft, true)
+    assert.equal(release.prerelease, false)
+    assert.equal(result.notes, notes)
+    assert.deepEqual(result.changelog.at(-1), { version: fixture.version, notes })
+    assert.equal(requests.filter(request => request.method === (existing ? 'PATCH' : 'POST')).length, 1)
+    assert.doesNotMatch(serializeUpdateManifest(result).toString('utf8'), /Detailed|Internal|release-notes/)
+  })
+}
 
 for (const [label, options] of [
   ['HTTP history failure', { failHistory: true }], ['malformed history list', { history: {} }],

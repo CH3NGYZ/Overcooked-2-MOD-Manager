@@ -8,7 +8,7 @@ import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { canBeDefault, hatForChef, isUsableResource } from '../diychef/draft'
 import type { HatReference } from '../diychef/types'
-import { projectChefs, projectProblems, type ChefFilters as ChefFilterState } from '../diychef/projection'
+import { duplicateChefIdGroups, projectChefs, projectProblems, type ChefFilters as ChefFilterState } from '../diychef/projection'
 import { useDiyChefEditor } from '../composables/useDiyChefEditor'
 import { useDiyChefConfirmations } from '../composables/useDiyChefConfirmations'
 import { usePageLeaveGuard } from '../composables/usePageLeaveGuard'
@@ -46,6 +46,7 @@ const sources = shallowRef<ChefFilterState['sources']>([])
 const statuses = shallowRef<ChefFilterState['statuses']>([])
 const filters = computed<ChefFilterState>(() => ({ query: query.value, sources: sources.value, statuses: statuses.value }))
 const projection = computed(() => snapshot.value && state.value ? projectChefs(snapshot.value, state.value, filters.value) : null)
+const identityConflicts = computed(() => snapshot.value ? duplicateChefIdGroups(snapshot.value) : [])
 const filterKey = computed(() => JSON.stringify(filters.value))
 const readingOrder = computed(() => projection.value ? [...projection.value.enabled, ...projection.value.disabled].map(item => item.chef.id) : [])
 const selectableIds = computed(() => new Set(snapshot.value?.chefs.filter(chef => isUsableResource(chef.resource_state)).map(chef => chef.id) ?? []))
@@ -174,7 +175,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', saveShortcut))
   </Teleport>
   <div ref="root" class="diychef-page" data-chef-motion="idle" data-tutorial="diychef-page" @pointerdown.capture="selection.start">
     <LegacyMigrationNotice v-if="editor.migrationVisible.value" :targets="editor.legacyTargets.value" :busy="busy" :importing="editor.migrating.value" :can-import="editor.canMigrate.value" :target-available="opened?.migration_available === true" @import="editor.migrate" @ignore="editor.ignoreMigration" />
-    <EditorNotice :snapshot="snapshot" :error="error" :game-running="gameRunning" :read-only="readOnly" :stale="stale" :busy="busy" :diagnostics="diagnostics" @reload="reload" />
+    <EditorNotice :snapshot="snapshot" :error="error" :game-running="gameRunning" :read-only="readOnly" :stale="stale" :busy="busy" :diagnostics="diagnostics" :identity-conflicts="identityConflicts" @reload="reload" />
     <ContentState v-if="loading && !snapshot" loading :description="t('diychef.loading')" />
     <TargetPicker v-else-if="opened?.status === 'select_target'" :candidates="opened.candidates" :busy="busy" @select="editor.open" />
     <ModNotInstalled v-else-if="opened?.status === 'not_installed'" guid="dev.gua.overcooked.diychef" name="DIYChef" />

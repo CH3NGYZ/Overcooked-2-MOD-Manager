@@ -25,7 +25,7 @@ const description = computed(() => [props.item.chef.display_name, props.item.isD
 </script>
 
 <template>
-    <article class="chef-tile" :class="{ 'is-default': item.isDefault, 'is-enabled': item.enabled, 'is-selected': selected, 'is-draggable': draggable, 'is-dragging': dragging }"
+    <article class="chef-tile" :class="{ 'is-default': item.isDefault, 'is-enabled': item.enabled, 'is-identity-conflict': item.identityConflict, 'is-selected': selected, 'is-draggable': draggable, 'is-dragging': dragging }"
     :data-chef-id="item.chef.id" :data-chef-source="item.chef.source_kind" :data-chef-order="item.catalogOrder" @pointerdown="draggable && emit('drag', $event, item.chef.id)" @dragstart.prevent>
     <button type="button" class="chef-tile-main" :data-chef-focus="item.chef.id" aria-haspopup="dialog"
       :aria-label="t('diychef.hatTitle', { name: description })" :title="description"
@@ -44,6 +44,7 @@ const description = computed(() => [props.item.chef.display_name, props.item.isD
 .chef-tile { position: relative; height: 218px; box-sizing: border-box; min-width: 0; display: flex; flex-direction: column; border: 1px solid var(--oc2-row-line); border-radius: 12px; background: var(--oc2-row); transition: border-color 180ms ease, box-shadow 180ms ease; }
 .chef-tile.is-default { border-radius: 16px; border-color: var(--oc2-accent); box-shadow: inset 0 0 0 1px var(--oc2-accent); }
 .chef-tile.is-selected { outline: 2px dashed color-mix(in srgb, var(--oc2-accent) 80%, var(--oc2-text-1)); outline-offset: 3px; background: color-mix(in srgb, var(--oc2-accent) 9%, var(--oc2-row)); }
+.chef-tile.is-identity-conflict { border-color: var(--oc2-danger, #e5484d); background: color-mix(in srgb, var(--oc2-danger, #e5484d) 14%, var(--oc2-row)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--oc2-danger, #e5484d) 72%, transparent); }
 .chef-tile-main { width: 100%; min-width: 0; min-height: 0; flex: 1; display: flex; align-items: center; justify-content: center; padding: 8px 6px; background: transparent; border: 0; border-radius: inherit; font: inherit; color: var(--oc2-text-1); cursor: pointer; }
 .chef-tile :deep(.chef-portrait) { width: 100%; height: 100%; max-height: none; aspect-ratio: auto; }
 .chef-tile :deep(.chef-motion-image) { width: 100%; height: 100%; object-fit: contain; }

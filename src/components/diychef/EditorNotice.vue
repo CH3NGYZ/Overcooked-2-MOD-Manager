@@ -4,10 +4,12 @@ import { NAlert, NButton } from 'naive-ui'
 import { t } from '../../i18n'
 import { translateBackendMessage } from '../../locale/backend'
 import type { ChefDiagnostic, ChefEditorSnapshot } from '../../diychef/types'
+import type { ChefIdentityConflictGroup } from '../../diychef/projection'
 
 const props = defineProps<{
   snapshot: ChefEditorSnapshot | null; error: string; gameRunning: boolean
   readOnly: boolean; stale: boolean; busy: boolean; diagnostics: ChefDiagnostic[]
+  identityConflicts: ChefIdentityConflictGroup[]
 }>()
 const emit = defineEmits<{ reload: [] }>()
 const generalDiagnostics = computed(() => props.diagnostics.filter((item) => !item.row_id))
@@ -15,6 +17,9 @@ function describe(item: ChefDiagnostic) {
   const chef = props.snapshot?.chefs.find((entry) => entry.id === item.chef_id)
   const message = translateBackendMessage(item.code)
   return chef ? `${chef.display_name}：${message}` : message
+}
+function describeIdentityConflict(group: ChefIdentityConflictGroup) {
+  return t('diychef.duplicateChefIdGroup', { id: group.customId, names: group.chefs.map(chef => chef.display_name).join('、') })
 }
 </script>
 
@@ -28,6 +33,9 @@ function describe(item: ChefDiagnostic) {
     <n-alert v-if="gameRunning" type="info">{{ t('diychef.gameRunning') }}</n-alert>
     <n-alert v-if="snapshot?.source.state === 'missing'" type="info">{{ t('diychef.missingConfig') }}</n-alert>
     <n-alert v-if="snapshot && !snapshot.target.enabled" type="warning">{{ t('diychef.targetDisabled') }}</n-alert>
+    <n-alert v-if="identityConflicts.length" type="error">
+      {{ t('diychef.duplicateChefIds', { details: identityConflicts.map(describeIdentityConflict).join('；') }) }}
+    </n-alert>
     <n-alert v-for="item in generalDiagnostics" :key="item.id" :type="item.save_blocking ? 'error' : 'warning'">{{ describe(item) }}</n-alert>
   </div>
 </template>

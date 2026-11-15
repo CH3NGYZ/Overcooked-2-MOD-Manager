@@ -11,8 +11,13 @@ export interface ChefTileItem {
   catalogOrder: number
   enabled: boolean
   isDefault: boolean
+  identityConflict: boolean
   entry: ChefEntry | null
   hat: HatReference
+}
+export interface ChefIdentityConflictGroup {
+  customId: number
+  chefs: ChefItem[]
 }
 export interface ChefProblem {
   row: ChefDocumentRow
@@ -24,8 +29,31 @@ export function hasChefFilters(filters: ChefFilters): boolean {
   return !!filters.query.trim() || filters.sources.length > 0 || filters.statuses.length > 0
 }
 
+/**
+ * Finds duplicate custom chef IDs in the complete Resources catalog.
+ *
+ * This deliberately does not inspect the current draft: a disabled chef still
+ * occupies the same game identity and must remain visible as a conflict before
+ * it is enabled. Native chefs have no custom ID and therefore never enter a
+ * group.
+ */
+export function duplicateChefIdGroups(snapshot: ChefEditorSnapshot): ChefIdentityConflictGroup[] {
+  const groups = new Map<number, ChefItem[]>()
+  for (const chef of snapshot.chefs) {
+    if (chef.source_kind !== 'custom' || chef.custom_id === null || !Number.isFinite(chef.custom_id)) continue
+    const group = groups.get(chef.custom_id) ?? []
+    group.push(chef)
+    groups.set(chef.custom_id, group)
+  }
+  return [...groups.entries()]
+    .filter(([, chefs]) => chefs.length > 1)
+    .sort(([left], [right]) => left - right)
+    .map(([customId, chefs]) => ({ customId, chefs }))
+}
+
 export function projectChefs(snapshot: ChefEditorSnapshot, state: ChefEditState, filters: ChefFilters) {
   const chefById = new Map(snapshot.chefs.map((chef) => [chef.id, chef]))
+  const identityConflictIds = new Set(duplicateChefIdGroups(snapshot).flatMap(group => group.chefs.map(chef => chef.id)))
   const knownEntries = state.draft.entries.filter((entry) => entry.chef_ref.kind === 'known')
   const selected = new Set(knownEntries.map((entry) => entry.chef_ref.kind === 'known' ? entry.chef_ref.chef_id : ''))
   const usable = usableEntries(state.draft, snapshot)
@@ -41,6 +69,7 @@ export function projectChefs(snapshot: ChefEditorSnapshot, state: ChefEditState,
   const tile = (chef: ChefItem, entry: ChefEntry | null): ChefTileItem => {
     return {
     chef, catalogOrder: snapshot.chefs.indexOf(chef), entry, enabled: !!entry, isDefault: chef.id === defaultId,
+    identityConflict: identityConflictIds.has(chef.id),
     hat: hatForChef(state, snapshot, chef.id),
     }
   }

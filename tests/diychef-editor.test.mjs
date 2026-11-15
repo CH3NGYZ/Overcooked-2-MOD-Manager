@@ -4,7 +4,7 @@ import {
   changeChefHat, copyEditState, createChefDraft, draftSignature, hatForChef, moveChef, placeChef,
   rebaseInitializedDraft, removeProblemRow, resetChefDraft, setDefaultChef, toggleChef, disableChefs, enableAllChefs, disableAllChefs,
 } from '../src/diychef/draft.ts'
-import { projectChefs, projectProblems } from '../src/diychef/projection.ts'
+import { duplicateChefIdGroups, projectChefs, projectProblems } from '../src/diychef/projection.ts'
 
 const hat = (id = 'hat:') => ({ kind: 'known', hat_id: id })
 const selected = (id, row = id, choice = hat()) => ({
@@ -40,6 +40,24 @@ function fixture(entries = [selected('cat'), selected('fox')]) {
   return { snapshot, state: { draft: createChefDraft(snapshot) } }
 }
 const unfiltered = { query: '', sources: [], statuses: [] }
+
+test('duplicate custom chef IDs stay visible across enabled and disabled regions', () => {
+  const { snapshot, state } = fixture([selected('fox')])
+  for (const item of snapshot.chefs) item.custom_id = item.id === 'fox' || item.id === 'owl' ? 42 : null
+
+  assert.deepEqual(duplicateChefIdGroups(snapshot).map(group => [group.customId, group.chefs.map(chef => chef.id)]), [[42, ['fox', 'owl']]])
+  const projected = projectChefs(snapshot, state, unfiltered)
+  assert.equal(projected.enabled.find(item => item.chef.id === 'fox')?.identityConflict, true)
+  assert.equal(projected.disabled.find(item => item.chef.id === 'owl')?.identityConflict, true)
+})
+
+test('single custom IDs and native chefs do not produce identity conflicts', () => {
+  const { snapshot, state } = fixture([selected('fox')])
+  for (const item of snapshot.chefs) item.custom_id = item.id === 'fox' ? 42 : null
+
+  assert.deepEqual(duplicateChefIdGroups(snapshot), [])
+  assert.equal(projectChefs(snapshot, state, unfiltered).enabled[0]?.identityConflict, false)
+})
 
 test('DIYChef 2.2 supports custom opening chefs through setting, dragging and projection', () => {
   const { snapshot, state } = fixture()

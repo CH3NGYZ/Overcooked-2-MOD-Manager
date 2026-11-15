@@ -7,6 +7,8 @@ export const diychefEditor: DomainMessages = {
   disabled: { 'zh-CN': '未启用', 'zh-TW': '未啟用', en: 'Not enabled', ko: '미사용', ja: '無効' },
   defaultChef: { 'zh-CN': '默认开屏厨师', 'zh-TW': '預設開屏廚師', en: 'Opening chef', ko: '시작 화면 셰프', ja: '起動時のシェフ' },
   defaultHint: { 'zh-CN': '游戏会使用第一位可加载且已解锁的厨师', 'zh-TW': '遊戲會使用第一位可載入且已解鎖的廚師', en: 'The game uses the first chef that can be loaded and is unlocked', ko: '게임은 불러올 수 있고 잠금 해제된 첫 셰프를 사용합니다', ja: 'ゲームは読み込み可能でアンロック済みの最初のシェフを使用します' },
+  duplicateChefIds: { 'zh-CN': '检测到重复的自定义厨师 ID：{details}。请为这些厨师保留唯一 ID，否则更新时可能互相覆盖。', 'zh-TW': '偵測到重複的自訂廚師 ID：{details}。請為這些廚師保留唯一 ID，否則更新時可能互相覆蓋。', en: 'Duplicate custom chef IDs detected: {details}. Keep these chefs on unique IDs or updates may overwrite one another.', ko: '중복된 사용자 지정 셰프 ID가 감지되었습니다: {details}. 업데이트 중 서로 덮어쓰지 않도록 셰프마다 고유 ID를 사용하세요.', ja: '重複したカスタムシェフ IDを検出しました: {details}。更新時の上書きを防ぐため、各シェフに固有のIDを設定してください。' },
+  duplicateChefIdGroup: { 'zh-CN': 'ID={id}：{names}', 'zh-TW': 'ID={id}：{names}', en: 'ID={id}: {names}', ko: 'ID={id}: {names}', ja: 'ID={id}: {names}' },
   native: { 'zh-CN': '游戏自带', 'zh-TW': '遊戲內建', en: 'Game chefs', ko: '게임 기본', ja: 'ゲーム内蔵' },
   custom: { 'zh-CN': '自定义', 'zh-TW': '自訂', en: 'Custom', ko: '사용자 지정', ja: 'カスタム' },
   sourceFilter: { 'zh-CN': '厨师来源', 'zh-TW': '廚師來源', en: 'Chef source', ko: '셰프 출처', ja: 'シェフの種類' },

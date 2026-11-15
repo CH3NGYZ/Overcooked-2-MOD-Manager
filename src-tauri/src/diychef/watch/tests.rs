@@ -7,6 +7,40 @@ use std::{
     time::{Duration, Instant},
 };
 
+// Keep raw receipts in memory until a fixture fails: per-event stderr changes
+// callback timing, and paths from concurrent fixtures must stay distinguishable.
+type WatchTrace = Vec<(PathBuf, Instant, String)>;
+static WATCH_TRACE: std::sync::Mutex<WatchTrace> = std::sync::Mutex::new(Vec::new());
+
+pub(super) fn trace(root: &Path, message: String) {
+    let mut events = WATCH_TRACE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    events.push((root.to_path_buf(), Instant::now(), message));
+}
+
+fn finish_trace(root: &Path) {
+    let canonical_root = root.canonicalize().ok();
+    let mut events = WATCH_TRACE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let mut start = None;
+    events.retain(|(event_root, received, message)| {
+        if !event_root.starts_with(root)
+            && !canonical_root
+                .as_ref()
+                .is_some_and(|root| event_root.starts_with(root))
+        {
+            return true;
+        }
+        if std::thread::panicking() {
+            let elapsed = received.duration_since(*start.get_or_insert(*received));
+            eprintln!("[chef-watch-trace +{elapsed:?}] root={event_root:?} {message}");
+        }
+        false
+    });
+}
+
 struct Workspace(PathBuf);
 impl Workspace {
     fn new() -> Self {
@@ -17,6 +51,7 @@ impl Workspace {
 }
 impl Drop for Workspace {
     fn drop(&mut self) {
+        finish_trace(&self.0);
         let root = self.0.canonicalize().unwrap();
         let temporary = std::env::temp_dir().canonicalize().unwrap();
         assert!(root.starts_with(&temporary) && root != temporary);

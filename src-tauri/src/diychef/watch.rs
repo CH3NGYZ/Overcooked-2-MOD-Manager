@@ -39,6 +39,8 @@ impl ChefWatcher {
         mut emit: impl FnMut(FilesChanged) + Send + 'static,
     ) -> u64 {
         let key = (target.id.clone(), target.generation);
+        #[cfg(test)]
+        tests::trace(root, format!("watch key={key:?}"));
         let payload = FilesChanged {
             target_id: key.0.clone(),
             generation: key.1,
@@ -52,6 +54,18 @@ impl ChefWatcher {
             key,
             vec![root.to_path_buf()],
             move |event| {
+                #[cfg(test)]
+                tests::trace(
+                    &accept_root,
+                    format!(
+                        "raw event={event:?} classified={:?}",
+                        event
+                            .paths
+                            .iter()
+                            .map(|path| classify(&accept_root, path))
+                            .collect::<Vec<_>>()
+                    ),
+                );
                 if event
                     .paths
                     .iter()
@@ -83,7 +97,10 @@ impl ChefWatcher {
         // watch joins the old worker before this read; never hold the revision
         // lock across registration, since that worker may still be advancing.
         self.resources_revision.flush_pending();
-        self.resources_revision.current(root)
+        let revision = self.resources_revision.current(root);
+        #[cfg(test)]
+        tests::trace(root, format!("watch returned revision={revision}"));
+        revision
     }
 
     pub(crate) fn stop(&self) {

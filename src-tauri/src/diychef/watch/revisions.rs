@@ -76,6 +76,11 @@ impl ResourceRevisions {
             });
         // A raw event received during IO stays pending for the next read/flush.
         entry.value = revision;
+        #[cfg(test)]
+        super::tests::trace(
+            root,
+            format!("revision previous={previous} pending={changed} next={revision}"),
+        );
         revision
     }
 

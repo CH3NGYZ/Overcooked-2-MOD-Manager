@@ -82,6 +82,28 @@ fn wait_for_pending(watcher: &ChefWatcher, root: &Path) {
     }
 }
 
+fn bootstrap_resource(
+    watcher: &ChefWatcher,
+    root: &Path,
+    receiver: &mpsc::Receiver<FilesChanged>,
+) -> (PathBuf, u64) {
+    // Create after registration, then await the real debounced batch. Otherwise
+    // late fixture Create events on macOS can satisfy the later pending wait
+    // before the model replacement being tested has reached the watcher.
+    fs::create_dir(root.join("Resources")).unwrap();
+    let resource = root.join("Resources/model");
+    fs::write(&resource, b"old bytes").unwrap();
+    assert!(
+        receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .resources_changed
+    );
+    let initial = watcher.resources_revision.current(root);
+    assert_ne!(initial, 0);
+    (resource, initial)
+}
+
 fn replace_resource_preserving_metadata(resource: &Path) {
     let before = fs::metadata(resource).unwrap();
     let modified = before.modified().unwrap();
@@ -481,16 +503,15 @@ fn pending_resource_change_is_persisted_when_switching_targets_before_debounce()
     let cache = fixture.0.join("cache");
     let root = fixture.0.join("mod");
     let other = fixture.0.join("other-mod");
-    fs::create_dir_all(root.join("Resources")).unwrap();
+    fs::create_dir(&root).unwrap();
     fs::create_dir(&other).unwrap();
     let root = root.canonicalize().unwrap();
     let other = other.canonicalize().unwrap();
-    let resource = root.join("Resources/model");
-    fs::write(&resource, b"old bytes").unwrap();
     let watcher = ChefWatcher::new(cache.clone());
     let (tx, rx) = mpsc::channel();
     let old_tx = tx.clone();
-    let initial = watcher.watch(&root, &target(1), move |event| old_tx.send(event).unwrap());
+    watcher.watch(&root, &target(1), move |event| old_tx.send(event).unwrap());
+    let (resource, initial) = bootstrap_resource(&watcher, &root, &rx);
     replace_resource_preserving_metadata(&resource);
     wait_for_pending(&watcher, &root);
     assert!(
@@ -520,14 +541,13 @@ fn pending_resource_change_survives_stop_or_drop_before_debounce_and_restart() {
         let fixture = Workspace::new();
         let cache = fixture.0.join("cache");
         let root = fixture.0.join("mod");
-        fs::create_dir_all(root.join("Resources")).unwrap();
+        fs::create_dir(&root).unwrap();
         let root = root.canonicalize().unwrap();
-        let resource = root.join("Resources/model");
-        fs::write(&resource, b"old bytes").unwrap();
         let watcher = ChefWatcher::new(cache.clone());
         let (tx, rx) = mpsc::channel();
         let old_tx = tx.clone();
-        let initial = watcher.watch(&root, &target(1), move |event| old_tx.send(event).unwrap());
+        watcher.watch(&root, &target(1), move |event| old_tx.send(event).unwrap());
+        let (resource, initial) = bootstrap_resource(&watcher, &root, &rx);
         replace_resource_preserving_metadata(&resource);
         wait_for_pending(&watcher, &root);
         assert!(

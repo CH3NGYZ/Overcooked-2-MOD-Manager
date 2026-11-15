@@ -647,6 +647,8 @@ prerelease = false     # 排斥正式版
 
 Gitee 直接使用独立的原生 WebView 窗口处理站点验证。用户在该窗口完成验证并点击下载后，管理器接管原生下载，沿用浏览器中的验证会话接收源码 ZIP；GitCode 如果返回验证网页，也使用同一下载能力。普通 HTTP 下载最多等待 30 秒，网页验证与下载最多等待 120 秒；关闭验证窗口会继续尝试后备来源。原生下载使用独立临时目录，读取完成后清理，不把验证页或 HTML 当作源码包。
 
+GitCode、Gitee、GitHub 的源码包下载统一使用浏览器 UA `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36 Edg/157.0.0.0`，HTTP 请求、重定向及网页验证与原生下载沿用这一值。Cloudflare 单独使用精确短 UA `Overcooked 2 MOD Manager/<版本>`，因为其安全规则只放行管理器。
+
 | 来源 | 官方源码 ZIP |
 |---|---|
 | Gitee | `https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Repos/repository/archive/main.zip` |

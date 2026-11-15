@@ -17,7 +17,7 @@ const DOWNLOAD_PATHS: [&str; 2] = [
 ];
 const MAX_BYTES: usize = 32 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(120);
-const USER_AGENT: &str = concat!("Overcooked 2 MOD Manager/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36 Edg/157.0.0.0";
 static EVENTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static LOGGER: DownloadLogger = DownloadLogger;
 

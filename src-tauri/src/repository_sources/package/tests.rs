@@ -395,7 +395,15 @@ fn reply(status: &str, content_type: &str, body: &[u8], extra: &str) -> Vec<u8> 
     response
 }
 
-fn assert_anonymous_archive_headers(request: &str) {
+fn expected_archive_user_agent(provider: DataProvider) -> &'static str {
+    if provider == DataProvider::Cloudflare {
+        concat!("Overcooked 2 MOD Manager/", env!("CARGO_PKG_VERSION"))
+    } else {
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36 Edg/157.0.0.0"
+    }
+}
+
+fn assert_anonymous_archive_headers(request: &str, provider: DataProvider) {
     let headers = request
         .lines()
         .filter_map(|line| line.split_once(':'))
@@ -408,10 +416,7 @@ fn assert_anonymous_archive_headers(request: &str) {
             .1
             .trim()
     };
-    assert_eq!(
-        value("User-Agent"),
-        concat!("Overcooked 2 MOD Manager/", env!("CARGO_PKG_VERSION"))
-    );
+    assert_eq!(value("User-Agent"), expected_archive_user_agent(provider));
     assert_eq!(value("Cache-Control"), "no-cache, no-store, max-age=0");
     assert_eq!(value("Pragma"), "no-cache");
     assert!(
@@ -436,7 +441,7 @@ async fn each_remote_provider_fetches_once_with_exact_ua_and_no_authentication()
         let package = result.unwrap();
         assert_eq!(requests.len(), 1);
         assert!(requests[0].starts_with("GET /archive.zip HTTP/1.1\r\n"));
-        assert_anonymous_archive_headers(&requests[0]);
+        assert_anonymous_archive_headers(&requests[0], provider);
         // Repeated document reads succeed after the HTTP fixture has closed.
         assert_eq!(package.read("mods.toml").unwrap(), "x = 1");
         assert_eq!(package.read("maps.toml").unwrap(), "x = 2");
@@ -446,29 +451,68 @@ async fn each_remote_provider_fetches_once_with_exact_ua_and_no_authentication()
 
 #[tokio::test]
 async fn archive_redirects_preserve_exact_anonymous_request_headers() {
-    let bytes = archive(&[("repo-main/mods.toml", b"x = 1")]);
-    let (address, server) = serve(vec![
-        reply(
+    for provider in [
+        DataProvider::Github,
+        DataProvider::Gitcode,
+        DataProvider::Cloudflare,
+    ] {
+        let bytes = archive(&[("repo-main/mods.toml", b"x = 1")]);
+        let (destination, destination_server) =
+            serve(vec![reply("200 OK", "application/zip", &bytes, "")]);
+        // Official archives can redirect to a different origin such as codeload.
+        let (address, server) = serve(vec![reply(
             "302 Found",
             "application/zip",
             b"",
-            "Location: /download.zip\r\n",
+            &format!("Location: {destination}/download.zip\r\n"),
+        )]);
+        let result = fetch(provider, &format!("{address}/archive.zip"), None).await;
+        let mut requests = server.join().unwrap();
+        requests.extend(destination_server.join().unwrap());
+        assert_eq!(result.unwrap().read("mods.toml").unwrap(), "x = 1");
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].starts_with("GET /archive.zip "));
+        assert!(requests[1].starts_with("GET /download.zip "));
+        for request in &requests {
+            assert_anonymous_archive_headers(request, provider);
+        }
+    }
+}
+
+#[test]
+fn native_verification_uses_the_browser_identity_and_existing_download_policy() {
+    for (provider, title, hosts) in [
+        (DataProvider::Gitee, "Gitee", vec!["gitee.com"]),
+        (
+            DataProvider::Gitcode,
+            "GitCode",
+            vec!["gitcode.com", "huaweicloud.com", "myhuaweicloud.com"],
         ),
-        reply("200 OK", "application/zip", &bytes, ""),
-    ]);
-    let result = fetch(
+    ] {
+        let address = provider.archive_url().unwrap();
+        let request = download::browser_request(address, provider).unwrap();
+        assert_eq!(request.url.as_str(), address);
+        assert_eq!(request.user_agent, expected_archive_user_agent(provider));
+        assert_eq!(request.title, title);
+        assert_eq!(request.max_bytes, MAX_ARCHIVE_BYTES);
+        assert_eq!(request.timeout, std::time::Duration::from_secs(120));
+        assert_eq!(request.allowed_download_hosts, hosts);
+        let paths = if provider == DataProvider::Gitee {
+            vec![
+                "/ch3ngyz/Overcooked-2-MOD-Manager-Repos/repository/download",
+                "/ch3ngyz/Overcooked-2-MOD-Manager-Repos/repository/blazearchive/main.zip",
+            ]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(request.allowed_download_paths, paths);
+    }
+    for provider in [
         DataProvider::Github,
-        &format!("{address}/archive.zip"),
-        None,
-    )
-    .await;
-    let requests = server.join().unwrap();
-    assert_eq!(result.unwrap().read("mods.toml").unwrap(), "x = 1");
-    assert_eq!(requests.len(), 2);
-    assert!(requests[0].starts_with("GET /archive.zip "));
-    assert!(requests[1].starts_with("GET /download.zip "));
-    for request in &requests {
-        assert_anonymous_archive_headers(request);
+        DataProvider::Cloudflare,
+        DataProvider::Builtin,
+    ] {
+        assert!(download::browser_request("https://example.com/archive.zip", provider).is_err());
     }
 }
 

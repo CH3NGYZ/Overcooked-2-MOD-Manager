@@ -102,12 +102,15 @@ test('official package dispatch retains native verification and one blocking ZIP
   assert.doesNotMatch(download, /try_download_candidates|bearer_auth|AUTHORIZATION/, 'official archives use the shared native/anonymous download paths')
 })
 
-test('archive HTTP and native verification share the exact application user agent and bounded request', () => {
+test('archive HTTP and native verification share provider UA selection and bounded requests', () => {
   const download = read('package/download.rs')
-  assert.match(download, /const\s+USER_AGENT:\s*&str\s*=\s*concat!\(\s*"Overcooked 2 MOD Manager\/",\s*env!\("CARGO_PKG_VERSION"\),?\s*\)/)
-  assert.match(download, /\.header\(reqwest::header::USER_AGENT,\s*USER_AGENT\)/)
-  assert.match(download, /user_agent:\s*USER_AGENT\.to_owned\(\)/)
-  assert.match(download, /crate::webview_download::download\(\s*app,\s*crate::webview_download::Request\s*\{/)
+  assert.match(download, /const\s+MANAGER_USER_AGENT:\s*&str\s*=\s*concat!\(\s*"Overcooked 2 MOD Manager\/",\s*env!\("CARGO_PKG_VERSION"\),?\s*\)/)
+  assert.match(download, /DataProvider::Cloudflare\s*\|\s*DataProvider::Builtin\s*=>\s*MANAGER_USER_AGENT/)
+  assert.match(download, /DataProvider::Github\s*\|\s*DataProvider::Gitee\s*\|\s*DataProvider::Gitcode\s*=>\s*BROWSER_USER_AGENT/)
+  assert.match(download, /\.header\(reqwest::header::USER_AGENT,\s*archive_user_agent\(provider\)\)/)
+  assert.match(download, /user_agent:\s*archive_user_agent\(provider\)\.to_owned\(\)/)
+  ordered(download, ['let request = browser_request(address, provider)?', 'crate::webview_download::download(app, request).await'])
+  assert.match(download, /Ok\(crate::webview_download::Request\s*\{/)
   assert.match(download, /max_bytes:\s*MAX_ARCHIVE_BYTES/)
   assert.match(download, /timeout:\s*std::time::Duration::from_secs\(120\)/)
   assert.match(download, /allowed_download_paths:\s*if\s+provider\s*==\s*DataProvider::Gitee\s*\{\s*vec!\[\s*"\/ch3ngyz\/Overcooked-2-MOD-Manager-Repos\/repository\/download"\.to_owned\(\)/)

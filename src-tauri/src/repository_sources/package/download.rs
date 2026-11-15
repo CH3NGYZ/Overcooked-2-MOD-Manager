@@ -5,7 +5,16 @@ use crate::models::DataProvider;
 use crate::repository_sources::SourceLocation;
 use std::sync::Arc;
 
-const USER_AGENT: &str = concat!("Overcooked 2 MOD Manager/", env!("CARGO_PKG_VERSION"));
+const MANAGER_USER_AGENT: &str = concat!("Overcooked 2 MOD Manager/", env!("CARGO_PKG_VERSION"));
+const BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36 Edg/157.0.0.0";
+
+fn archive_user_agent(provider: DataProvider) -> &'static str {
+    match provider {
+        // Cloudflare's security rule explicitly permits the manager identifier.
+        DataProvider::Cloudflare | DataProvider::Builtin => MANAGER_USER_AGENT,
+        DataProvider::Github | DataProvider::Gitee | DataProvider::Gitcode => BROWSER_USER_AGENT,
+    }
+}
 
 pub(crate) async fn fetch(
     provider: DataProvider,
@@ -18,7 +27,7 @@ pub(crate) async fn fetch(
     let bytes = if provider == DataProvider::Gitee {
         browser_bytes(browser, archive_address, provider).await?
     } else {
-        match Box::pin(fetch_archive(archive_address)).await {
+        match Box::pin(fetch_archive(archive_address, provider)).await {
             Ok(bytes) => bytes,
             Err(ArchiveError::Verification) if provider == DataProvider::Gitcode => {
                 browser_bytes(browser, archive_address, provider).await?
@@ -41,6 +50,15 @@ async fn browser_bytes(
     provider: DataProvider,
 ) -> Result<Vec<u8>, String> {
     let app = browser.ok_or("source.webDownloadFailed")?;
+    let request = browser_request(address, provider)?;
+    log::info!("数据来源需要网页验证：来源={provider:?}；关闭验证窗口将尝试下一来源");
+    crate::webview_download::download(app, request).await
+}
+
+pub(super) fn browser_request(
+    address: &str,
+    provider: DataProvider,
+) -> Result<crate::webview_download::Request, String> {
     let url = url::Url::parse(address).map_err(|_| "source.webDownloadAddressInvalid")?;
     let (title, hosts) = match provider {
         DataProvider::Gitee => ("Gitee", vec!["gitee.com"]),
@@ -50,29 +68,24 @@ async fn browser_bytes(
         ),
         _ => return Err("source.webDownloadAddressInvalid".into()),
     };
-    log::info!("数据来源需要网页验证：来源={provider:?}；关闭验证窗口将尝试下一来源");
-    crate::webview_download::download(
-        app,
-        crate::webview_download::Request {
-            url,
-            user_agent: USER_AGENT.to_owned(),
-            max_bytes: MAX_ARCHIVE_BYTES,
-            title: title.to_owned(),
-            timeout: std::time::Duration::from_secs(120),
-            allowed_download_hosts: hosts.into_iter().map(str::to_owned).collect(),
-            allowed_download_paths: if provider == DataProvider::Gitee {
-                vec![
-                    "/ch3ngyz/Overcooked-2-MOD-Manager-Repos/repository/download".to_owned(),
-                    // Verified archive requests redirect to this signed endpoint.
-                    "/ch3ngyz/Overcooked-2-MOD-Manager-Repos/repository/blazearchive/main.zip"
-                        .to_owned(),
-                ]
-            } else {
-                Vec::new()
-            },
+    Ok(crate::webview_download::Request {
+        url,
+        user_agent: archive_user_agent(provider).to_owned(),
+        max_bytes: MAX_ARCHIVE_BYTES,
+        title: title.to_owned(),
+        timeout: std::time::Duration::from_secs(120),
+        allowed_download_hosts: hosts.into_iter().map(str::to_owned).collect(),
+        allowed_download_paths: if provider == DataProvider::Gitee {
+            vec![
+                "/ch3ngyz/Overcooked-2-MOD-Manager-Repos/repository/download".to_owned(),
+                // Verified archive requests redirect to this signed endpoint.
+                "/ch3ngyz/Overcooked-2-MOD-Manager-Repos/repository/blazearchive/main.zip"
+                    .to_owned(),
+            ]
+        } else {
+            Vec::new()
         },
-    )
-    .await
+    })
 }
 
 enum ArchiveError {
@@ -86,7 +99,7 @@ impl From<ConfigError> for ArchiveError {
     }
 }
 
-async fn fetch_archive(address: &str) -> Result<Vec<u8>, ArchiveError> {
+async fn fetch_archive(address: &str, provider: DataProvider) -> Result<Vec<u8>, ArchiveError> {
     let SourceLocation::Remote(url) = SourceLocation::parse(address)? else {
         return Err(ConfigError::Invalid("source.mustBeHttp".into()).into());
     };
@@ -96,7 +109,7 @@ async fn fetch_archive(address: &str) -> Result<Vec<u8>, ArchiveError> {
         .map_err(|error| ConfigError::Read(error.to_string()))?;
     let response = client
         .get(url)
-        .header(reqwest::header::USER_AGENT, USER_AGENT)
+        .header(reqwest::header::USER_AGENT, archive_user_agent(provider))
         .header(
             reqwest::header::CACHE_CONTROL,
             "no-cache, no-store, max-age=0",

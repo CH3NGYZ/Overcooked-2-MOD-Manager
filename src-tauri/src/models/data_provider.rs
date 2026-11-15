@@ -172,6 +172,31 @@ mod tests {
     }
 
     #[test]
+    fn official_archives_use_exact_download_addresses() {
+        for (provider, expected) in [
+            (
+                DataProvider::Github,
+                "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/archive/refs/heads/main.zip",
+            ),
+            (
+                DataProvider::Gitee,
+                "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Repos/repository/archive/main.zip",
+            ),
+            (
+                DataProvider::Gitcode,
+                "https://raw.gitcode.com/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/archive/refs/heads/main.zip",
+            ),
+            (
+                DataProvider::Cloudflare,
+                "https://oc2gh.ch3ng.top/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/archive/refs/heads/main.zip",
+            ),
+        ] {
+            assert_eq!(provider.archive_url(), Some(expected), "{provider:?}");
+        }
+        assert_eq!(DataProvider::Builtin.archive_url(), None);
+    }
+
+    #[test]
     fn regional_archive_chains_only_visit_the_authorized_providers() {
         for (region, expected) in [
             (

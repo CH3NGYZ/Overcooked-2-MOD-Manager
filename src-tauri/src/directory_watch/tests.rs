@@ -13,21 +13,42 @@ fn temp_root(label: &str) -> PathBuf {
 
 #[test]
 fn access_events_do_not_trigger_reload() {
-    assert!(!affects_contents(&EventKind::Access(
+    let affects_contents = |kind| accepted_paths(Event::new(kind), &|_| true).is_some();
+    assert!(!affects_contents(EventKind::Access(
         notify::event::AccessKind::Any
     )));
-    assert!(affects_contents(&EventKind::Create(
+    assert!(affects_contents(EventKind::Create(
         notify::event::CreateKind::Any
     )));
-    assert!(affects_contents(&EventKind::Remove(
+    assert!(affects_contents(EventKind::Remove(
         notify::event::RemoveKind::Any
     )));
-    assert!(affects_contents(&EventKind::Modify(
+    assert!(affects_contents(EventKind::Modify(
         notify::event::ModifyKind::Any
     )));
     // 平台差异兜底：Any/Other 也当作变化
-    assert!(affects_contents(&EventKind::Any));
-    assert!(affects_contents(&EventKind::Other));
+    assert!(affects_contents(EventKind::Any));
+    assert!(affects_contents(EventKind::Other));
+}
+
+#[test]
+fn accepted_paths_are_projected_before_debounce() {
+    let ignored = PathBuf::from("root");
+    let kept = ignored.join("prefer.txt");
+    let event = Event::new(EventKind::Create(notify::event::CreateKind::Any))
+        .add_path(ignored.clone())
+        .add_path(kept.clone());
+    assert_eq!(
+        accepted_paths(event, &|event| {
+            event.paths.retain(|path| path != &ignored);
+            !event.paths.is_empty()
+        }),
+        Some(vec![kept])
+    );
+    assert_eq!(
+        accepted_paths(Event::new(EventKind::Other), &|_| false),
+        None
+    );
 }
 
 #[test]

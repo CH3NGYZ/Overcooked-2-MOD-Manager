@@ -2,7 +2,10 @@
 use crate::{directory_watch::DirectoryWatcher, models::ChefTarget};
 use std::{
     path::{Component, Path, PathBuf},
-    sync::{Arc, atomic::Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 mod revisions;
@@ -48,6 +51,7 @@ impl ChefWatcher {
         };
         let accept_root = root.to_path_buf();
         let emit_root = accept_root.clone();
+        let root_was_present = root.is_dir();
         let pending = self.resources_revision.pending_flag(root);
         let resources_revision = self.resources_revision.clone();
         self.directory.watch(
@@ -66,20 +70,13 @@ impl ChefWatcher {
                             .collect::<Vec<_>>()
                     ),
                 );
-                if event
-                    .paths
-                    .iter()
-                    .any(|path| classify(&accept_root, path) == Some(true))
-                {
-                    // The debounced worker can be replaced before it emits.
-                    // Keep receipt independently, without doing IO in notify.
-                    pending.store(true, Ordering::Release);
-                    return true;
-                }
-                event
-                    .paths
-                    .iter()
-                    .any(|path| classify(&accept_root, path).is_some())
+                let accepted = accept_event(&accept_root, root_was_present, event, &pending);
+                #[cfg(test)]
+                tests::trace(
+                    &accept_root,
+                    format!("accepted={accepted} retained={:?}", event.paths),
+                );
+                accepted
             },
             move |paths| {
                 let mut payload = payload.clone();
@@ -113,6 +110,37 @@ impl Drop for ChefWatcher {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+fn accept_event(
+    root: &Path,
+    root_was_present: bool,
+    event: &mut notify::Event,
+    pending: &AtomicBool,
+) -> bool {
+    // FSEvents can deliver the existing root's Create(Folder) after watch
+    // registration. It says nothing about Resources; retain child creations,
+    // removals, renames and rescan/unknown root events normally. Filtering before
+    // debounce also prevents a mixed root+prefer event becoming a resource edit.
+    // Initially missing roots still need their creation signal from the shared
+    // ancestor watch. This snapshot does not close the registration TOCTOU race.
+    let root_creation = root_was_present
+        && matches!(event.kind, notify::EventKind::Create(_))
+        && !event.need_rescan();
+    event
+        .paths
+        .retain(|path| !(root_creation && path == root) && classify(root, path).is_some());
+    if event
+        .paths
+        .iter()
+        .any(|path| classify(root, path) == Some(true))
+    {
+        // The debounced worker can be replaced before it emits.
+        // Keep receipt independently, without doing IO in notify.
+        pending.store(true, Ordering::Release);
+        return true;
+    }
+    !event.paths.is_empty()
 }
 
 /// true means models or textures may have changed, even if catalog semantics

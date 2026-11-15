@@ -34,11 +34,13 @@ struct Registration<K> {
 impl<K: Eq> DirectoryWatcher<K> {
     /// Failed registration is optional enhancement failure, never a read error.
     /// Callbacks must not call `watch`/`stop` synchronously on this same instance.
+    /// `accept` may retain only domain-relevant event paths; the debounced batch
+    /// contains that projection, never the original unfiltered paths.
     pub(crate) fn watch(
         &self,
         key: K,
         roots: Vec<PathBuf>,
-        accept: impl Fn(&Event) -> bool + Send + 'static,
+        accept: impl Fn(&mut Event) -> bool + Send + 'static,
         emit: impl FnMut(Vec<PathBuf>) + Send + 'static,
     ) {
         let plan = watch_plan(&roots);
@@ -121,7 +123,7 @@ impl Drop for WatchState {
 
 fn build_watch_state(
     plan: Vec<WatchTarget>,
-    accept: impl Fn(&Event) -> bool + Send + 'static,
+    accept: impl Fn(&mut Event) -> bool + Send + 'static,
     mut emit: impl FnMut(Vec<PathBuf>) + Send + 'static,
 ) -> Option<WatchState> {
     if plan.is_empty() {
@@ -130,10 +132,11 @@ fn build_watch_state(
     let (sender, receiver) = mpsc::channel::<Vec<PathBuf>>();
     let mut watcher =
         match notify::recommended_watcher(move |result: notify::Result<Event>| match result {
-            Ok(event) if affects_contents(&event.kind) && accept(&event) => {
-                let _ = sender.send(event.paths);
+            Ok(event) => {
+                if let Some(paths) = accepted_paths(event, &accept) {
+                    let _ = sender.send(paths);
+                }
             }
-            Ok(_) => {}
             Err(error) => log::debug!("目录监听错误：{error}"),
         }) {
             Ok(watcher) => watcher,
@@ -195,8 +198,11 @@ fn build_watch_state(
 }
 
 /// Reads from the scanner itself must never cause another scan.
-fn affects_contents(kind: &EventKind) -> bool {
-    !matches!(kind, EventKind::Access(_))
+fn accepted_paths(mut event: Event, accept: &impl Fn(&mut Event) -> bool) -> Option<Vec<PathBuf>> {
+    if matches!(event.kind, EventKind::Access(_)) || !accept(&mut event) {
+        return None;
+    }
+    Some(event.paths)
 }
 
 fn debounce_loop(

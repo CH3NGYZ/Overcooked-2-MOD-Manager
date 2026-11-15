@@ -125,6 +125,105 @@ fn filter_includes_both_prefer_names_resources_and_target_removal() {
 }
 
 #[test]
+fn delayed_fsevents_root_creation_does_not_invalidate_resources() {
+    let root = Path::new("game/DIYChef");
+    // Captured on macOS ARM: FSEvents reported the already-existing root's
+    // Create(Folder) after registration, before unrelated README events.
+    let mut event =
+        notify::Event::new(notify::EventKind::Create(notify::event::CreateKind::Folder))
+            .add_path(root.to_path_buf());
+    let pending = AtomicBool::new(false);
+    assert!(!accept_event(root, true, &mut event, &pending));
+    assert!(event.paths.is_empty());
+    assert!(!pending.load(Ordering::Acquire));
+}
+
+#[test]
+fn root_creation_projection_keeps_prefer_and_resources_classification() {
+    let root = Path::new("game/DIYChef");
+    for (relative, resources_changed) in [
+        ("prefer.txt", false),
+        ("prefer.txt.txt", false),
+        ("Resources", true),
+        ("Resources/Fox/model", true),
+    ] {
+        let child = root.join(relative);
+        let mut event =
+            notify::Event::new(notify::EventKind::Create(notify::event::CreateKind::Any))
+                .add_path(root.to_path_buf())
+                .add_path(root.join("README.md"))
+                .add_path(child.clone());
+        let pending = AtomicBool::new(false);
+        assert!(accept_event(root, true, &mut event, &pending));
+        assert_eq!(event.paths, vec![child]);
+        assert_eq!(pending.load(Ordering::Acquire), resources_changed);
+        // The unchanged debounced emitter must reach the same conclusion.
+        assert_eq!(
+            event
+                .paths
+                .iter()
+                .any(|path| classify(root, path) == Some(true)),
+            resources_changed
+        );
+    }
+}
+
+#[test]
+fn root_removal_rename_unknown_and_rescan_still_invalidate_resources() {
+    use notify::{Event, EventKind, event::*};
+    let root = Path::new("game/DIYChef");
+    for mut event in [
+        Event::new(EventKind::Remove(RemoveKind::Folder)),
+        Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::From))),
+        Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::To))),
+        Event::new(EventKind::Modify(ModifyKind::Any)),
+        Event::new(EventKind::Any),
+        Event::new(EventKind::Other).set_flag(Flag::Rescan),
+        Event::new(EventKind::Create(CreateKind::Folder)).set_flag(Flag::Rescan),
+    ] {
+        event.paths.push(root.to_path_buf());
+        let pending = AtomicBool::new(false);
+        assert!(accept_event(root, true, &mut event, &pending), "{event:?}");
+        assert_eq!(event.paths, vec![root.to_path_buf()]);
+        assert!(pending.load(Ordering::Acquire));
+    }
+}
+
+#[test]
+fn initially_missing_root_creation_still_invalidates_resources() {
+    let root = Path::new("game/DIYChef");
+    let mut event =
+        notify::Event::new(notify::EventKind::Create(notify::event::CreateKind::Folder))
+            .add_path(root.to_path_buf());
+    let pending = AtomicBool::new(false);
+    assert!(accept_event(root, false, &mut event, &pending));
+    assert_eq!(event.paths, vec![root.to_path_buf()]);
+    assert!(pending.load(Ordering::Acquire));
+}
+
+#[test]
+fn real_initially_missing_root_creation_notifies_from_ancestor_watch() {
+    let fixture = Workspace::new();
+    let root = fixture.0.canonicalize().unwrap().join("mod");
+    let watcher = ChefWatcher::new(fixture.0.join("cache"));
+    let (tx, rx) = mpsc::channel();
+    let initial = watcher.watch(&root, &target(7), move |event| tx.send(event).unwrap());
+    assert_ne!(initial, 0);
+    assert!(!root.exists());
+    fs::create_dir_all(root.join("Resources/Fox")).unwrap();
+    fs::write(root.join("Resources/Fox/model"), b"model bytes").unwrap();
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+        FilesChanged {
+            target_id: "chef".into(),
+            generation: 7,
+            resources_changed: true,
+        }
+    );
+    assert_ne!(watcher.resources_revision.current(&root), initial);
+}
+
+#[test]
 fn real_notify_atomic_prefer_and_resource_creation_rename_removal_are_scoped() {
     let fixture = Workspace::new();
     let watcher = ChefWatcher::new(fixture.0.join("cache"));

@@ -17,7 +17,9 @@ mod tests;
 
 pub(crate) use binding::{installed_prerelease, rebind_installed_mods};
 pub(crate) use file_state::{canonical_dll_name, disabled_dll_file, plugin_dll_files};
-pub(crate) use identity::{compare_mod_versions, is_safe_replacement_mod, note_key};
+pub(crate) use identity::{
+    PluginIdentity, compare_mod_versions, is_safe_replacement_mod, note_key, same_plugin_identity,
+};
 pub(crate) use metadata::{
     DllDetails, MAX_DLL_BYTES, file_stem_name, parse_bepin_plugin_metadata,
     placeholder_dll_details, plugin_name_from_file, read_dll_details,

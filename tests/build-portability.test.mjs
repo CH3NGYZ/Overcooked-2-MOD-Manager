@@ -47,6 +47,17 @@ test('Linux targets and package formats cannot enter release, cache, or update s
   ]) assert.equal(updateAssetKey(name, '2.1.1'), undefined, name)
 })
 
+test('compiling workflows check out the pinned builtin source submodule', () => {
+  const modules = source('.gitmodules')
+  assert.match(modules, /path = src-tauri\/resources/)
+  assert.match(modules, /url = https:\/\/github\.com\/CH3NGYZ\/Overcooked-2-MOD-Manager-Repos\.git/)
+  const release = source('.github/workflows/build.yml')
+  const build = release.split('\n  build:\n')[1].split('\n  updater-manifest:')[0]
+  assert.match(build, /uses: actions\/checkout@v5\s+with:\s+submodules: recursive/)
+  const cache = source('.github/workflows/build-cache.yml')
+  assert.match(cache, /uses: actions\/checkout@v5\s+with:\s+ref: \$\{\{ github\.sha \}\}\s+submodules: recursive/)
+})
+
 test('direct Cargo builds reject unsupported operating systems before generating app resources', () => {
   const build = source('src-tauri/build.rs')
   assert.match(build, /matches!\(target_os\.as_str\(\), "windows" \| "macos"\)/)

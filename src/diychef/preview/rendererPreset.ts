@@ -1,5 +1,5 @@
 /** Keep the Fox lighting reference while framing the complete chef portrait. */
-export const PREVIEW_VERSION = 'chef-body-v1'
+export const PREVIEW_VERSION = 'chef-body-v2'
 export const PREVIEW_WIDTH = 512
 export const PREVIEW_HEIGHT = 640
 export const RENDER_WIDTH = 1024

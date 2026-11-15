@@ -1,26 +1,15 @@
+use super::tests::Workspace;
 use super::*;
 use crate::{config::ConfigService, models::InstalledMod};
-use std::{fs, path::PathBuf};
-
-struct Workspace(PathBuf);
-impl Drop for Workspace {
-    fn drop(&mut self) {
-        let temporary = std::env::temp_dir().canonicalize().unwrap();
-        let target = self.0.canonicalize().unwrap();
-        assert!(target.starts_with(&temporary) && target != temporary);
-        fs::remove_dir_all(target).unwrap();
-    }
-}
+use std::fs;
 
 #[test]
 fn imported_custom_only_selection_is_readable_but_save_and_txt_generation_are_hard_blocked() {
-    let workspace =
-        Workspace(std::env::temp_dir().join(format!("oc2-chef-fallback-{}", uuid::Uuid::new_v4())));
+    let workspace = Workspace::new();
     let game = workspace.0.join("game");
     let directory = game.join("BepInEx/plugins/DIYChef");
     let custom = directory.join("Resources/Fox");
     fs::create_dir_all(&custom).unwrap();
-    fs::write(game.join("Overcooked2.exe"), b"fixture").unwrap();
     fs::write(
         directory.join("DIYChef.dll"),
         crate::mods::plugin_blob(target::GUID, "DIYChef", "2.2.0"),

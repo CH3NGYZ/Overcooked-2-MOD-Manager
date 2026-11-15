@@ -14,6 +14,7 @@ impl Workspace {
         fs::create_dir_all(root.join("game/BepInEx/plugins")).unwrap();
         let root = root.canonicalize().unwrap();
         let game = root.join("game");
+        fs::create_dir_all(game.join("Overcooked2.app/Contents/MacOS")).unwrap();
         fs::write(game.join("Overcooked2.exe"), b"fixture").unwrap();
         Self {
             manifests: root.join("manager/manifests"),

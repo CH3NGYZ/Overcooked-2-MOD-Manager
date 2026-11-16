@@ -73,6 +73,9 @@ url = "2"
 thiserror = "2"
 xz2 = { version = "0.1.7", features = ["static"] }
 
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
+
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
 winapi = { version = "0.3", features = [

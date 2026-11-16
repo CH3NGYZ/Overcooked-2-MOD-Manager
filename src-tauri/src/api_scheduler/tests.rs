@@ -1,16 +1,16 @@
 use super::*;
 
-fn local_scheduler() -> Arc<Scheduler> {
+fn local_scheduler(window: Duration) -> Arc<Scheduler> {
     Arc::new(Scheduler {
         queue: Mutex::new(Queue::default()),
         changed: Notify::new(),
-        window: Duration::from_millis(80),
+        window,
     })
 }
 
 #[tokio::test]
 async fn sliding_window_admits_three_then_queues_and_prioritizes_installed_across_domains() {
-    let scheduler = local_scheduler();
+    let scheduler = local_scheduler(Duration::from_millis(80));
     for _ in 0..3 {
         scheduler.acquire(String::new()).await;
     }
@@ -60,7 +60,7 @@ async fn cancelled_waiters_are_removed_and_providers_have_independent_queues() {
         scheduler(&Provider::Github),
         scheduler(&Provider::Gitcode)
     ));
-    let s = local_scheduler();
+    let s = local_scheduler(Duration::from_millis(80));
     for _ in 0..3 {
         s.acquire(String::new()).await;
     }
@@ -75,18 +75,38 @@ async fn cancelled_waiters_are_removed_and_providers_have_independent_queues() {
     assert!(s.queue.lock().unwrap().waiting.is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn seven_requests_obey_every_sliding_window_not_calendar_buckets() {
-    let s = scheduler(&Provider::Gitcode);
+    let s = local_scheduler(Duration::from_secs(1));
     let mut starts = Vec::new();
     for _ in 0..7 {
-        s.acquire(String::new()).await;
-        starts.push(Instant::now());
+        starts.push(s.acquire(String::new()).await);
     }
     for i in 3..starts.len() {
-        assert!(starts[i].duration_since(starts[i - 3]) >= Duration::from_millis(999));
+        assert!(starts[i].duration_since(starts[i - 3]) >= Duration::from_secs(1));
     }
-    assert!(starts[6].duration_since(starts[0]) >= Duration::from_millis(1999));
+    assert!(starts[6].duration_since(starts[0]) >= Duration::from_secs(2));
+}
+
+#[tokio::test(start_paused = true)]
+async fn delayed_observer_does_not_change_admission_times() {
+    let s = local_scheduler(Duration::from_secs(1));
+    let mut admitted = Vec::new();
+    let mut observed = Vec::new();
+    for i in 0..4 {
+        admitted.push(s.acquire(String::new()).await);
+        if i == 0 {
+            // Model descheduling between admission and the test's old sample.
+            tokio::time::advance(Duration::from_millis(250)).await;
+        }
+        observed.push(Instant::now());
+    }
+    assert!(admitted[3].duration_since(admitted[0]) >= Duration::from_secs(1));
+    // Sampling after acquire would falsely report a 750 ms admission window.
+    assert_eq!(
+        observed[3].duration_since(observed[0]),
+        Duration::from_millis(750)
+    );
 }
 
 #[test]

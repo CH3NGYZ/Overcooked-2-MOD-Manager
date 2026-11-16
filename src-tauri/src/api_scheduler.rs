@@ -107,7 +107,7 @@ impl Drop for Ticket<'_> {
 }
 
 impl Scheduler {
-    async fn acquire(&self, key: String) {
+    async fn acquire(&self, key: String) -> Instant {
         let ticket = {
             let mut q = self.queue.lock().unwrap_or_else(|e| e.into_inner());
             q.next += 1;
@@ -142,7 +142,7 @@ impl Scheduler {
                 if first == Some(ticket.id) && q.started.len() < 3 {
                     q.waiting.retain(|(id, _)| *id != ticket.id);
                     q.started.push_back(now);
-                    return;
+                    return now;
                 }
                 q.started
                     .front()

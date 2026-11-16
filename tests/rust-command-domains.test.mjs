@@ -13,7 +13,8 @@ test('commands root only declares domains; registered IPC points at the real imp
   const handler = read('lib.rs').match(/generate_handler!\s*\[([\s\S]*?)\]/)?.[1]
   assert.ok(handler)
   const paths = [...handler.matchAll(/\bcommands::([a-z_]+)::([a-z_]+)\b/g)]
-  assert.equal(paths.length, 124, '既有 IPC 与暖暖编辑、迁移、真实预览及元数据缩略图缓存命令，集合不得丢失')
+  assert.equal(paths.length, 126, '既有 IPC 与暖暖编辑、迁移、真实预览、缩略图缓存及管理器数据重置命令，集合不得丢失')
+  for (const name of ['get_manager_data_directory', 'clear_all_config']) assert.ok(paths.some(([, domain, actual]) => domain === 'manager_data' && actual === name))
   for (const name of ['open_diychef_editor', 'migrate_diychef_resources', 'initialize_diychef_config', 'validate_diychef_draft', 'save_diychef_config', 'delete_diychef_resource']) assert.ok(paths.some(([, domain, actual]) => domain === 'diychef_editor' && actual === name))
   for (const name of ['get_diychef_preview', 'read_diychef_preview_asset', 'clear_diychef_cache']) assert.ok(paths.some(([, domain, actual]) => domain === 'diychef_preview' && actual === name))
   for (const name of ['get_diychef_preview_fingerprint', 'diychef_thumbnail_cache']) assert.ok(paths.some(([, domain, actual]) => domain === 'diychef_thumbnail' && actual === name))

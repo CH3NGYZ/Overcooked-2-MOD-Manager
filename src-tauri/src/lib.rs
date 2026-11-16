@@ -39,6 +39,7 @@ mod level_sets;
 mod directory_watch;
 mod level_watch;
 mod locale_tag;
+mod manager_data;
 // 地图仓库源（与 repository_sources 对称：源树、相对路径、Release 刷新）
 mod map_sources;
 // Release note 里的地图元数据块（`<!-- oc2-map ... -->`）：一个仓库放多张地图时
@@ -82,6 +83,15 @@ use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 pub fn run() {
     install_guard::run_if_requested();
     update_migration::run_if_requested();
+    manager_data::run_if_requested();
+    let _data_session = match manager_data::initialize() {
+        Ok(session) => session,
+        Err(error) => {
+            manager_data::show_startup_error(&error);
+            return;
+        }
+    };
+    let skip_legacy_migration = _data_session.skip_legacy_migration;
     install_panic_logger();
     /*
      * 不再在启动时无条件自提权。
@@ -96,7 +106,11 @@ pub fn run() {
      * 通常也可直接写入；只有真的遇到「拒绝访问」时，才由前端提示用户
      * 以管理员身份重启（见 `relaunch_as_admin` 命令）。
      */
+    let context = tauri::generate_context!();
+    let preference_reset =
+        manager_data::webview_reset_script(_data_session.completed_reset_token, context.config());
     tauri::Builder::default()
+        .append_invoke_initialization_script(preference_reset)
         .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| {
@@ -117,10 +131,14 @@ pub fn run() {
                 .expect("valid updater User-Agent")
                 .build(),
         )
-        .setup(|app| {
+        .setup(move |app| {
             // 旧版本把数据放在安装目录里；先搬走再建日志目录，
             // 这样同一卷上一次 rename 就能完成迁移。
-            let migration = user_paths::migrate_legacy_root();
+            let migration = if skip_legacy_migration {
+                user_paths::LegacyMigration::None
+            } else {
+                user_paths::migrate_legacy_root()
+            };
             let data_root = user_paths::root()?;
             let log_dir = data_root.join("logs");
             fs::create_dir_all(&log_dir)
@@ -219,6 +237,8 @@ pub fn run() {
             commands::dashboard::get_mod_updates,
             commands::settings::get_config,
             commands::settings::get_install_language,
+            commands::manager_data::get_manager_data_directory,
+            commands::manager_data::clear_all_config,
             commands::logs::read_rust_log,
             commands::logs::read_frontend_log,
             commands::logs::read_crash_log,
@@ -349,7 +369,7 @@ pub fn run() {
             commands::update::check_app_update,
             commands::update::install_app_update,
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::ExitRequested { api, .. } = &event {

@@ -14,6 +14,7 @@ pub(crate) mod drop_source;
 pub(crate) mod game;
 pub(crate) mod levels;
 pub(crate) mod logs;
+pub(crate) mod manager_data;
 pub(crate) mod map_install;
 pub(crate) mod maps;
 pub(crate) mod mod_repositories;

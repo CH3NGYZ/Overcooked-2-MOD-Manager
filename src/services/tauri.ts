@@ -391,6 +391,10 @@ export const api = {
   openBackupDirectory: (backupPath?: string) => invoke<OperationResult>('open_backup_directory', { backupPath: backupPath ?? null }),
   openUpdateRepository: () => invoke<OperationResult>('open_update_repository'),
   exitApp: () => invoke<void>('exit_app'),
+  /** 实际管理器数据根，只读展示；清理命令不接受前端路径。 */
+  getManagerDataDirectory: () => invoke<string>('get_manager_data_directory'),
+  /** 确认后安排清除所有管理器数据并退出；成功不继续使用本次会话。 */
+  clearAllConfig: () => invoke<void>('clear_all_config'),
   /** 当前进程权限与游戏/数据目录可写性自检。 */
   permissionStatus: () => invoke<PermissionStatus>('permission_status'),
   /** 以管理员身份重启（仅文件访问被拒时由用户主动触发）。 */

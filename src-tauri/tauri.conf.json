@@ -44,8 +44,7 @@
     },
     "windows": {
       "webviewInstallMode": {
-        "type": "embedBootstrapper",
-        "silent": true
+        "type": "skip"
       },
       "nsis": {
         "installMode": "currentUser",

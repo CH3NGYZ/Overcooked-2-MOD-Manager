@@ -34,7 +34,7 @@ async function clearBin() {
 </script>
 
 <template>
-  <n-popover :show="menuOpen" trigger="click" placement="bottom-end" :z-index="5000" :show-arrow="false"
+  <n-popover :show="menuOpen" trigger="hover" placement="bottom-end" :z-index="5000" :show-arrow="false"
     @update:show="showMenu">
     <template #trigger>
       <button class="recycle-button" :class="{ 'over-limit': overLimit }" type="button"

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { registerHooks } from 'node:module'
 import test from 'node:test'
 
@@ -257,4 +258,18 @@ test('a running game prevents restore IPC but does not block deleting recycled f
   await actions.remove(recycled)
   assert.deepEqual(boundary.calls, [['delete', 'chef'], ['read']])
   assert.equal(bin.count.value, 0)
+})
+
+test('titlebar recycle menu delegates hover visibility to Naive and closes before opening dialogs', () => {
+  const status = readFileSync(new URL('../src/components/RecycleBinStatus.vue', import.meta.url), 'utf8')
+  const popover = status.match(/<n-popover\b[^>]*>/)?.[0]
+  assert.ok(popover)
+  assert.match(popover, /trigger="hover"/)
+  assert.match(popover, /:show="menuOpen"/)
+  assert.match(popover, /@update:show="showMenu"/)
+  assert.match(status, /function showMenu\(show: boolean\)\s*\{\s*menuOpen\.value = show\s+if \(show\) void reload\(\)/)
+  assert.match(status, /@click="openBin"/)
+  assert.match(status, /function openBin\(\)\s*\{\s*menuOpen\.value = false\s+dialogOpen\.value = true/)
+  assert.match(status, /@click="clearBin"/)
+  assert.match(status, /async function clearBin\(\)\s*\{\s*menuOpen\.value = false[\s\S]*?await nextTick\(\)\s+confirmClearAll\(\)/)
 })

@@ -37,6 +37,14 @@ test('页面使用单一手动定位菜单并接通启停、换帽、删除确�
   assert.match(view, /chef\.source_kind !== 'custom'/)
 })
 
+test('手动定位的厨师右键菜单点击外部时关闭同一显示状态', () => {
+  const menu = view.match(/<n-dropdown\b(?=[^>]*\btrigger="manual")[^>]*>/)?.[0]
+  assert.ok(menu, '厨师右键菜单使用手动定位的 NDropdown')
+  assert.match(menu, /v-model:show="contextMenuOpen"/)
+  assert.match(menu, /@clickoutside="closeChefContextMenu"/)
+  assert.match(view, /function closeChefContextMenu\(\)\s*\{\s*contextMenuOpen\.value = false\s*\}/)
+})
+
 test('删除 IPC 使用不透明会话与厨师 ID，而不是前端路径', () => {
   assert.match(tauri, /diyChefDeleteResource: \(sessionId: string, chefId: string\)/)
   assert.match(tauri, /invoke<ChefEditorSnapshot>\('delete_diychef_resource', \{ sessionId, chefId \}\)/)

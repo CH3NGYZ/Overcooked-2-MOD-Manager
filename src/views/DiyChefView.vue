@@ -287,7 +287,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', saveShortcut))
       </ContentState>
       <HatDialog v-model:show="hatOpen" :snapshot="snapshot" :chef="hatChef" :hat="currentHat" :enabled="hatChefEnabled" :scope="hatScope" :frozen="!editable" @apply="applyHat" />
     </template>
-    <n-dropdown v-model:show="contextMenuOpen" trigger="manual" placement="bottom-start" :x="contextMenuX" :y="contextMenuY" :options="contextOptions" @select="chefContextAction" />
+    <n-dropdown v-model:show="contextMenuOpen" trigger="manual" placement="bottom-start" :x="contextMenuX" :y="contextMenuY" :options="contextOptions" @clickoutside="closeChefContextMenu" @select="chefContextAction" />
     <SaveChangesDialog :show="changesOpen" :changes="changes" @resolve="confirmation.resolveChanges" />
     <LeaveDialog :show="leaveOpen" :can-save="canSave" @stay="confirmation.cancelLeave" @discard="confirmation.resolveLeave(true)" @save="confirmation.saveAndLeave" />
     <span class="chef-live" aria-live="polite" aria-atomic="true">{{ announcement }}</span>

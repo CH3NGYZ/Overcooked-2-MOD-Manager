@@ -1,55 +1,18 @@
 <script setup lang="ts">
-/**
- * 回收站弹窗 —— 回收站的唯一入口（工具页「回收站设置」→「打开回收站」）。
- *
- * 只做外壳：标题、刷新与清空按钮、尺寸上限，内容全部交给 `RecycleBinList`。
- * 回收站既不占主导航也没有独立页面：它是低频维护功能，不值得一个常驻入口。
- */
-import { ref } from 'vue'
-import { NButton, useDialog } from 'naive-ui'
+/** Full recycle bin view, opened from tools or the titlebar summary. */
+import { NButton } from 'naive-ui'
 import { RefreshOutline, TrashOutline } from '@vicons/ionicons5'
 import { t } from '../i18n'
+import { useRecycleBin } from '../composables/useRecycleBin'
+import { useRecycleBinActions } from '../composables/useRecycleBinActions'
 import AppModal from './AppModal.vue'
 import RecycleBinList from './RecycleBinList.vue'
+import RecycleBinSummary from './RecycleBinSummary.vue'
 
 defineProps<{ show: boolean }>()
 const emit = defineEmits<{ (event: 'update:show', value: boolean): void }>()
-
-const dialog = useDialog()
-const list = ref<InstanceType<typeof RecycleBinList> | null>(null)
-const refreshing = ref(false)
-
-/** 重新读取：列表组件自持状态，这里只负责把「刷新中」反馈到按钮上。 */
-async function reload() {
-  if (refreshing.value) return
-  refreshing.value = true
-  try {
-    await list.value?.reload()
-  } finally {
-    refreshing.value = false
-  }
-}
-
-/**
- * 清空回收站。
- *
- * 这是全应用破坏性最强的单个动作：一次性移走所有 MOD 的**唯一副本**
- * （暂存文件与清单快照），删完不能恢复。所以不放进任何菜单，而用
- * 标题栏图标 + 明确的二次确认，并在问句里点名条数。
- */
-function confirmClearAll() {
-  const count = list.value?.entryCount ?? 0
-  if (!count) return
-  dialog.error({
-    title: t('recycle.emptyRecycleBin'),
-    content: t('recycle.allRecycledEntriesAndTheirFilesWillBePermanentlyDeletedThisCannotBeUndoneEmptyTheBin', { count }),
-    positiveText: t('recycle.deleteAllPermanently'),
-    negativeText: t('recycle.cancel'),
-    onPositiveClick() {
-      void list.value?.clearAll()
-    },
-  })
-}
+const { count, loading, busy, acting, reload } = useRecycleBin()
+const { confirmClearAll } = useRecycleBinActions()
 </script>
 
 <template>
@@ -62,21 +25,27 @@ function confirmClearAll() {
   <AppModal :show="show" :title="t('recycle.recycleBin')" fill max-width="min(860px, 90%)"
     @update:show="(value: boolean) => emit('update:show', value)">
     <template #header-extra>
-      <n-button size="small" quaternary :loading="refreshing" :title="t('recycle.refreshNow')" @click="reload">
-        <template #icon><RefreshOutline width="15" height="15" /></template>
-      </n-button>
-      <n-button size="small" quaternary type="error" :title="t('recycle.emptyRecycleBin')"
-        :disabled="!list?.entryCount" @click="confirmClearAll">
-        <template #icon><TrashOutline width="15" height="15" /></template>
-      </n-button>
+      <div class="recycle-dialog-actions">
+        <RecycleBinSummary />
+        <n-button size="small" quaternary :loading="loading" :disabled="busy" :title="t('recycle.refreshNow')"
+          :aria-label="t('recycle.refreshNow')" @click="reload">
+          <template #icon><RefreshOutline width="15" height="15" /></template>
+        </n-button>
+        <n-button size="small" quaternary type="error" :title="t('recycle.emptyRecycleBin')"
+          :aria-label="t('recycle.emptyRecycleBin')" :loading="acting?.kind === 'clear'"
+          :disabled="busy || loading || !count" @click="confirmClearAll">
+          <template #icon><TrashOutline width="15" height="15" /></template>
+        </n-button>
+      </div>
     </template>
     <div class="recycle-dialog-body">
-      <RecycleBinList ref="list" />
+      <RecycleBinList />
     </div>
   </AppModal>
 </template>
 
 <style scoped>
+.recycle-dialog-actions { display: flex; align-items: center; gap: 8px; }
 /*
  * 弹窗内容区：吃满 AppModal 分配的高度，滚动交给列表自己。
  *

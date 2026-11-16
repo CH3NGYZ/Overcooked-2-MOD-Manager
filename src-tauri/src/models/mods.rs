@@ -149,6 +149,8 @@ pub struct ModRecycleEntry {
     pub name_i18n: BTreeMap<String, String>,
     pub deleted_at: String,
     pub file_count: usize,
+    #[serde(default)]
+    pub size_bytes: u64,
     pub files: Vec<String>,
     pub game_path: String,
     pub package_id: Option<String>,

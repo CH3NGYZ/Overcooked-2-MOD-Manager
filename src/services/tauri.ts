@@ -511,6 +511,11 @@ export function watchDataProvider(callback: () => void): Promise<UnlistenFn> {
   return listen('data-provider-changed', () => callback())
 }
 
+/** One process-wide subscription keeps both recycle-bin surfaces current. */
+export function watchRecycleBin(callback: () => void): Promise<UnlistenFn> {
+  return listen('recycle-bin-changed', () => callback())
+}
+
 /**
  * 关卡集扫描进度（`get_level_sets` 执行期间逐份上报）。
  *

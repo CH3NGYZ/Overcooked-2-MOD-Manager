@@ -7,8 +7,24 @@ use std::path::PathBuf;
 use tauri::State;
 
 #[tauri::command]
-pub fn get_mod_recycle_bin(state: State<'_, AppState>) -> Result<Vec<ModRecycleEntry>, String> {
+pub async fn get_mod_recycle_bin(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Vec<ModRecycleEntry>, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || get_mod_recycle_bin_blocking(&state, &app))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn get_mod_recycle_bin_blocking(
+    state: &AppState,
+    app: &tauri::AppHandle,
+) -> Result<Vec<ModRecycleEntry>, String> {
     log::debug!("读取 MOD 回收站列表请求");
+    state
+        .recycle_watch
+        .watch(app, state.config.mod_recycle_bin_dir());
     let _guard = state
         .operation
         .lock()

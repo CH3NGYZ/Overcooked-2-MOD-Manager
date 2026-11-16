@@ -1,73 +1,30 @@
 <script setup lang="ts">
-/**
- * 回收站内容列表。
- *
- * 入口只有一个：工具页「回收站设置」里的「打开回收站」弹窗
- * （`components/RecycleBinDialog.vue`）。回收站是低频维护功能，
- * 不占主导航、也没有独立页面 —— 抽成组件是为了让弹窗只写外壳，
- * 列表行为与文案集中在这里。
- *
- * 两个动作的确认强度不同，这是刻意的：
- *   · 恢复可逆、失败可重试 → 直接执行 + toast；
- *   · 彻底删除移除唯一副本（暂存文件 + 清单快照）→ n-popconfirm 二次确认，
- *     并在问句里点名是哪一个 MOD（列表长时容易点错行）。
- */
-import { computed, onMounted, ref } from 'vue'
+/** Entries and mutations share the same process state as the titlebar menu. */
+import { computed, onMounted } from 'vue'
 import {
   NButton, NCollapse, NCollapseItem, NEmpty, NList, NListItem, NPopconfirm, NSpin, NTag, NThing,
 } from 'naive-ui'
 import { ArrowUndoOutline, TrashOutline } from '@vicons/ionicons5'
-import { api } from '../services/tauri'
 import { pickI18n, t, locale } from '../i18n'
-import { useNotify } from '../useNotify'
 import { tagColorFor } from '../theme'
 import { useDashboard } from '../composables/useDashboardStore'
-import { useGameOperationGate } from '../composables/useGameOperationGate'
+import { useRecycleBin } from '../composables/useRecycleBin'
+import { useRecycleBinActions } from '../composables/useRecycleBinActions'
+import { formatFileSize } from '../repositoryAssets'
 import type { ModRecycleEntry } from '../types'
-import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
-const message = useNotify()
 const { game } = useDashboard()
-const { blockModOperation } = useGameOperationGate()
-
-const entries = ref<ModRecycleEntry[]>([])
-const loading = ref(false)
-const error = ref('')
-/** 正在执行的动作：只锁这一行，不冻结整个列表（其他行仍可操作）。 */
-const acting = ref<{ id: string; kind: 'restore' | 'delete' } | null>(null)
-
-/** 游戏运行时不能恢复（文件被占用）；删除回收站内容不受影响。 */
+const { entries, loading, error, loaded, acting, busy, ensureLoaded } = useRecycleBin()
+const { restore, remove } = useRecycleBinActions()
 const restoreBlocked = computed(() => !!game.value?.kitchen_running)
-const busy = computed(() => acting.value !== null)
-/** 供宿主决定是否显示「刷新」入口等；与列表同一份状态。 */
-const isEmpty = computed(() => !loading.value && !entries.value.length && !error.value)
+const isEmpty = computed(() => loaded.value && !loading.value && !entries.value.length && !error.value)
 
-onMounted(() => { void reload() })
+onMounted(() => { void ensureLoaded() })
 
-async function reload() {
-  if (loading.value) return
-  loading.value = true
-  error.value = ''
-  try {
-    entries.value = await api.getModRecycleBin()
-  } catch (reason) {
-    error.value = backendMessageOf(reason)
-  } finally {
-    loading.value = false
-  }
-}
-
-/**
- * 回收条目的显示名：优先用删除时存下的多语言快照，按当前语言现选。
- *
- * 切语言后历史记录也会跟着变；旧记录没有快照，回退到单语 `name`
- * （那通常是仓库名或 DLL 文件名，本身没有多语言信息）。
- */
 function entryName(entry: ModRecycleEntry) {
   return pickI18n(entry.name_i18n, entry.name)
 }
 
-/** 删除时间：按当前界面语言格式化；解析失败时原样显示，不编造时间。 */
 function deletedTime(value: string) {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale.value)
@@ -76,76 +33,6 @@ function deletedTime(value: string) {
 function isActing(entry: ModRecycleEntry, kind: 'restore' | 'delete') {
   return acting.value?.id === entry.id && acting.value.kind === kind
 }
-
-async function restore(entry: ModRecycleEntry) {
-  if (busy.value || blockModOperation()) return
-  acting.value = { id: entry.id, kind: 'restore' }
-  try {
-    const result = await api.restoreRecycledMod(entry.id)
-    if (result.ok) {
-      message.success(result.message ? translateBackendMessage(result.message) : t('overlays.restore'))
-      entries.value = entries.value.filter((item) => item.id !== entry.id)
-    } else {
-      message.error(translateBackendMessage(result.message))
-    }
-  } catch (reason) {
-    message.error(backendMessageOf(reason))
-  } finally {
-    acting.value = null
-  }
-}
-
-async function remove(entry: ModRecycleEntry) {
-  if (busy.value) return
-  acting.value = { id: entry.id, kind: 'delete' }
-  try {
-    const result = await api.deleteRecycledMod(entry.id)
-    if (result.ok) {
-      message.success(result.message ? translateBackendMessage(result.message) : t('recycle.deletePermanently'))
-      entries.value = entries.value.filter((item) => item.id !== entry.id)
-    } else {
-      message.error(translateBackendMessage(result.message))
-    }
-  } catch (reason) {
-    message.error(backendMessageOf(reason))
-  } finally {
-    acting.value = null
-  }
-}
-
-/**
- * 清空回收站：彻底删除全部记录。
- *
- * 确认交给宿主弹窗（`RecycleBinDialog` 的 header 图标按钮），因为那是
- * 整个回收站的破坏性动作，不该挤在单条记录的删除确认样式里。
- * 这里只负责执行 + 把结果同步到本地列表。
- */
-const clearing = ref(false)
-
-async function clearAll(): Promise<boolean> {
-  if (clearing.value || !entries.value.length) return false
-  clearing.value = true
-  try {
-    const result = await api.deleteAllRecycledMods()
-    if (result.ok) {
-      message.success(result.message ? translateBackendMessage(result.message) : t('recycle.recycleBinEmptied'))
-      entries.value = []
-      return true
-    }
-    message.error(translateBackendMessage(result.message))
-    // 失败时可能已删掉一部分：重新读取，让用户看到真实剩余
-    await reload()
-    return false
-  } catch (reason) {
-    message.error(backendMessageOf(reason))
-    await reload()
-    return false
-  } finally {
-    clearing.value = false
-  }
-}
-
-defineExpose({ reload, clearAll, entryCount: computed(() => entries.value.length) })
 </script>
 
 <template>
@@ -165,7 +52,7 @@ defineExpose({ reload, clearAll, entryCount: computed(() => entries.value.length
           <template #header-extra>
             <div class="recycle-actions">
               <n-button size="tiny" secondary :loading="isActing(entry, 'restore')"
-                :disabled="busy" @click="restore(entry)">
+                :disabled="busy" :title="t('overlays.restore')" @click="restore(entry)">
                 <template #icon><ArrowUndoOutline width="14" height="14" /></template>
                 {{ t('overlays.restore') }}
               </n-button>
@@ -192,6 +79,7 @@ defineExpose({ reload, clearAll, entryCount: computed(() => entries.value.length
                 :color="tagColorFor('muted')">{{ entry.release_tag }}</n-tag>
               <span>{{ t('recycle.deleted') }} · {{ deletedTime(entry.deleted_at) }}</span>
               <span>{{ t('recycle.files') }} · {{ entry.file_count }}</span>
+              <span :title="t('recycle.recordedFileSize')">{{ entry.size_bytes ? formatFileSize(entry.size_bytes) : '0 B' }}</span>
             </div>
             <div class="recycle-path" :title="entry.game_path">{{ entry.game_path }}</div>
           </template>

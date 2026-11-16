@@ -116,6 +116,10 @@ impl RecycleRecord {
             name_i18n: self.name_i18n.clone(),
             deleted_at: self.deleted_at.clone(),
             file_count: self.files.len(),
+            size_bytes: self
+                .files
+                .iter()
+                .fold(0_u64, |total, file| total.saturating_add(file.size)),
             files: self
                 .files
                 .iter()

@@ -13,6 +13,7 @@ mod repository;
 mod restore;
 mod selection;
 mod staging;
+pub(crate) mod watch;
 
 #[cfg(test)]
 mod tests;

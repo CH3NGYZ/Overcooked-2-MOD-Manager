@@ -15,6 +15,27 @@ export const recycleUi: DomainMessages = {
     ko: '휴지통',
     ja: 'ゴミ箱',
   },
+  entryCount: {
+    'zh-CN': '{count} 项',
+    'zh-TW': '{count} 個項目',
+    en: '{count} items',
+    ko: '{count}개 항목',
+    ja: '{count} 件',
+  },
+  recordedFileSize: {
+    'zh-CN': '回收记录中的文件总大小',
+    'zh-TW': '回收記錄中的檔案總大小',
+    en: 'Total file size recorded in the recycle bin',
+    ko: '휴지통에 기록된 파일의 총 크기',
+    ja: 'ゴミ箱に記録されたファイルの合計サイズ',
+  },
+  overSizeLimit: {
+    'zh-CN': '回收站已超过 1 GB，可按需清理。',
+    'zh-TW': '資源回收筒已超過 1 GB，可視需要清理。',
+    en: 'The recycle bin exceeds 1 GB. Clear it when no longer needed.',
+    ko: '휴지통이 1 GB를 초과했습니다. 필요 없는 항목을 비워 주세요.',
+    ja: 'ゴミ箱が 1 GB を超えています。不要な場合は空にしてください。',
+  },
   // 回收站为空
   recycleBinIsEmpty: {
     'zh-CN': '回收站为空',

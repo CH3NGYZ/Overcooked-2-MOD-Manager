@@ -17,6 +17,7 @@ import { appUpdateState } from '../appUpdateState'
 import { isMacWindow } from '../platform'
 import appIcon from '../assets/app-icon.png'
 import LevelCompressionStatus from './LevelCompressionStatus.vue'
+import RecycleBinStatus from './RecycleBinStatus.vue'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { demoActive, withDemoGame } from '../tutorial/demo'
 
@@ -233,6 +234,7 @@ defineExpose({ onUnmountedCleanup })
     -->
     <div class="toolbar-group">
       <LevelCompressionStatus />
+      <RecycleBinStatus />
       <!-- 界面缩放：下拉选择（与语言下拉一致） -->
       <n-dropdown :options="zoomOptions" :value="zoomKey" trigger="click" :z-index="TITLEBAR_MENU_Z_INDEX"
         @select="onZoomSelect">

@@ -29,6 +29,7 @@ fn clone_keeps_every_lock_observer_and_cache_shared() {
     assert!(Arc::ptr_eq(&state.game_state, &cloned.game_state));
     assert!(Arc::ptr_eq(&state.level_watch, &cloned.level_watch));
     assert!(Arc::ptr_eq(&state.diychef_watch, &cloned.diychef_watch));
+    assert!(Arc::ptr_eq(&state.recycle_watch, &cloned.recycle_watch));
     assert!(Arc::ptr_eq(&state.release_cache, &cloned.release_cache));
     assert!(Arc::ptr_eq(
         &state.app_update_check,
@@ -57,6 +58,7 @@ fn independently_constructed_states_do_not_share_runtime_state() {
     assert!(!Arc::ptr_eq(&first.game_state, &second.game_state));
     assert!(!Arc::ptr_eq(&first.level_watch, &second.level_watch));
     assert!(!Arc::ptr_eq(&first.diychef_watch, &second.diychef_watch));
+    assert!(!Arc::ptr_eq(&first.recycle_watch, &second.recycle_watch));
     assert!(!Arc::ptr_eq(&first.release_cache, &second.release_cache));
     assert!(!Arc::ptr_eq(
         &first.app_update_check,

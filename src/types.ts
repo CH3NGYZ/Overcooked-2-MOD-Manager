@@ -627,6 +627,8 @@ export interface ModRecycleEntry {
   name_i18n?: Record<string, string>
   deleted_at: string
   file_count: number
+  /** Logical file bytes recorded by the recycle transaction, excluding its journal. */
+  size_bytes: number
   files: string[]
   game_path: string
   package_id?: string

@@ -132,7 +132,6 @@ pub(super) async fn fetch_installer_manifest(
             .header("User-Agent", releases::APP_USER_AGENT)
             .header("Cache-Control", "no-cache, no-store")
             .header("Pragma", "no-cache")
-            .timeout(std::time::Duration::from_secs(5))
             .send_logged()
             .await
             .map_err(|_| "update.manifestRequestFailed")?;
@@ -199,6 +198,7 @@ pub(crate) async fn race_installer_channels<T, F, Fut>(
     channels: &[InstallerChannel],
     is_cancelled: impl Fn() -> bool,
     mut fetch: F,
+    network: &crate::models::NetworkConfig,
 ) -> Result<T, String>
 where
     T: crate::download::DownloadOutput,
@@ -226,6 +226,7 @@ where
                 .unwrap();
             fetch(channel.clone(), reporter)
         },
+        network,
         None,
     )
     .await
@@ -239,6 +240,7 @@ pub(crate) async fn run_installer_manifest_routes<T, F, Fut>(
     is_cancelled: impl Fn() -> bool,
     on_status: impl FnMut(AppUpdateChannelStatus),
     mut on_update: F,
+    network: &crate::models::NetworkConfig,
 ) -> Result<InstallerRouteResult<T>, String>
 where
     F: FnMut(AppUpdateInfo) -> Fut,
@@ -260,45 +262,50 @@ where
         }
         let started = Mutex::new(HashSet::new());
         let finished = Mutex::new(HashSet::new());
-        let selected = race_installer_channels(&group, &is_cancelled, |channel, reporter| {
-            started.lock().unwrap().insert(channel.id.clone());
-            on_status.lock().unwrap()(installer_channel_status(&channel, "checking", None));
-            let (on_status, finished, is_cancelled) = (&on_status, &finished, &is_cancelled);
-            async move {
-                let result = fetch_installer_manifest(
-                    client,
-                    &channel,
-                    target,
-                    current_version,
-                    is_cancelled,
-                    Some(&reporter),
-                )
-                .await;
-                finished.lock().unwrap().insert(channel.id.clone());
-                match result {
-                    Ok(info) => {
-                        on_status.lock().unwrap()(installer_channel_status(
-                            &channel,
-                            if info.is_some() {
-                                "update_available"
-                            } else {
-                                "latest"
-                            },
-                            None,
-                        ));
-                        Ok(SelectedInstallerManifest { channel, info })
-                    }
-                    Err(error) => {
-                        on_status.lock().unwrap()(installer_channel_status(
-                            &channel,
-                            "failed",
-                            Some(error.clone()),
-                        ));
-                        Err(error)
+        let selected = race_installer_channels(
+            &group,
+            &is_cancelled,
+            |channel, reporter| {
+                started.lock().unwrap().insert(channel.id.clone());
+                on_status.lock().unwrap()(installer_channel_status(&channel, "checking", None));
+                let (on_status, finished, is_cancelled) = (&on_status, &finished, &is_cancelled);
+                async move {
+                    let result = fetch_installer_manifest(
+                        client,
+                        &channel,
+                        target,
+                        current_version,
+                        is_cancelled,
+                        Some(&reporter),
+                    )
+                    .await;
+                    finished.lock().unwrap().insert(channel.id.clone());
+                    match result {
+                        Ok(info) => {
+                            on_status.lock().unwrap()(installer_channel_status(
+                                &channel,
+                                if info.is_some() {
+                                    "update_available"
+                                } else {
+                                    "latest"
+                                },
+                                None,
+                            ));
+                            Ok(SelectedInstallerManifest { channel, info })
+                        }
+                        Err(error) => {
+                            on_status.lock().unwrap()(installer_channel_status(
+                                &channel,
+                                "failed",
+                                Some(error.clone()),
+                            ));
+                            Err(error)
+                        }
                     }
                 }
-            }
-        })
+            },
+            network,
+        )
         .await;
         // The coordinator has dropped losers before their final UI state.
         for channel in &group {
@@ -353,8 +360,7 @@ pub(crate) async fn discover_installer_update(
 ) -> Result<AppUpdateCheckResult, String> {
     let region = installer_region(&config.region);
     emit_installer_phase(app, region, "manifest", None, None);
-    let client =
-        releases::build_client(config.network.timeout_seconds).map_err(|e| e.to_string())?;
+    let client = releases::build_client(config.network.api_timeout()).map_err(|e| e.to_string())?;
     let target = crate::app_update::UpdateTarget::current()?;
     let current_version = semver::Version::parse(env!("CARGO_PKG_VERSION")).map_err(|e| {
         crate::locale_tag::with_params(
@@ -381,6 +387,7 @@ pub(crate) async fn discover_installer_update(
             }
         },
         |info| std::future::ready(Ok(info)),
+        &config.network,
     )
     .await?;
     let all_failed = matches!(result, InstallerRouteResult::Failed);

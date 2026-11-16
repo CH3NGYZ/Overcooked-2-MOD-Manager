@@ -57,7 +57,7 @@ test('失败进入错误态：标题、原因（已翻译）、重试闭包都�
   assert.equal(failure.id, id)
   assert.equal(failure.label, 'RW 关卡合集')
   // 后端 tag 由 backendMessageOf 翻译，不能把 tag 直接摆到界面上
-  assert.equal(failure.message, '下载首字节等待超过 10 秒')
+  assert.equal(failure.message, '等待下载首字节超时')
   assert.equal(calls, 0, '报告失败本身不触发重试')
 
   // 各入口的 finally 会再调一次 end：任务号已经失效，不能清掉刚报的失败

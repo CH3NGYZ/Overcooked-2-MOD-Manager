@@ -98,6 +98,19 @@ pub fn save_settings(
     if let Some(value) = patch.download_threads {
         config.network.download_threads = value.clamp(1, 64);
     }
+    if let Some(value) = patch.race_min_speed_kbps {
+        config.network.race_min_speed_kbps = value;
+    }
+    if let Some(value) = patch.race_window_seconds {
+        config.network.race_window_seconds = value;
+    }
+    if let Some(value) = patch.api_timeout_seconds {
+        config.network.api_timeout_seconds = value;
+    }
+    if let Some(value) = patch.first_byte_timeout_seconds {
+        config.network.first_byte_timeout_seconds = value;
+    }
+    config.network.normalize();
     /*
      * 元数据并行度：`0` 原样保存（= 全部核心，换机器后按新机器核心数跑），
      * 其余夹到本机核心数以内 —— 存一个超过本机的值只会让下次扫描白等。

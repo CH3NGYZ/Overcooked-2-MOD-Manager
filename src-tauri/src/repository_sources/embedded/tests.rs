@@ -142,7 +142,13 @@ async fn builtin_index_loads_only_declared_sources_and_relative_repository_docum
         &Default::default(),
     )
     .unwrap();
-    let index = load_document(&location, &Default::default()).await.unwrap();
+    let index = load_document(
+        &location,
+        &Default::default(),
+        &crate::models::NetworkConfig::default(),
+    )
+    .await
+    .unwrap();
     assert!(index.repositories.is_empty());
     assert!(!index.repository_sources.is_empty());
     assert_eq!(
@@ -172,9 +178,13 @@ async fn builtin_index_loads_only_declared_sources_and_relative_repository_docum
         for repository in &mut declared_child.repositories {
             crate::config::normalize_repository_i18n(repository).unwrap();
         }
-        let child = load_document(&child_location, &Default::default())
-            .await
-            .unwrap_or_else(|error| panic!("{}: {error}", source.url));
+        let child = load_document(
+            &child_location,
+            &Default::default(),
+            &crate::models::NetworkConfig::default(),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{}: {error}", source.url));
         assert!(!child.repositories.is_empty(), "{}", source.url);
         assert_eq!(
             child

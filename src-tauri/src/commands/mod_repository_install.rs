@@ -155,7 +155,7 @@ pub async fn install_mod_repository(
                 )
             }
         };
-        let client = releases::build_download_client(config.network.timeout_seconds)
+        let client = releases::build_download_client(config.network.first_byte_timeout())
             .map_err(|e| e.to_string())?;
         let cache_dir = state.config.cache_dir();
         let assets = if is_raw_file {
@@ -175,6 +175,7 @@ pub async fn install_mod_repository(
             &cache_dir,
             &display_name,
             Some(&app),
+            &config.network,
             |url| {
                 crate::download::planning::plan_repository_download(
                     &repo.provider,

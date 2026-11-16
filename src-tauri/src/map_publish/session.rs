@@ -249,7 +249,7 @@ async fn check_session_once(
     let refresh_token = state.config.publish_refresh_token(&config, provider);
     let login = publish_login(&config, provider).to_string();
     let now = chrono::Utc::now().timestamp();
-    let client = api_client()?;
+    let client = api_client(&config.network)?;
 
     if !access_token_expired(publish_expiries(&config, provider).0, now) {
         match probe_token(&client, &access_token, provider).await {

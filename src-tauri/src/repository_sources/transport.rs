@@ -6,8 +6,10 @@ use super::location::SourceLocation;
 use super::location::remote_document_location;
 use super::package::SourcePackage;
 use crate::config::ConfigError;
-use crate::http_diagnostics::HttpRequestExt;
+use crate::models::NetworkConfig;
 use crate::releases;
+use futures_util::StreamExt;
+use std::time::Duration;
 
 pub(crate) fn package_document_path(location: &SourceLocation) -> Option<String> {
     match location {
@@ -19,7 +21,7 @@ pub(crate) fn package_document_path(location: &SourceLocation) -> Option<String>
 }
 
 /// 官方源码 ZIP 与自定义 HTTP 源共用的请求超时。
-/// 固定 30 秒，不随 Release API 的 `network.timeout_seconds` 缩短。
+/// 完整传输固定 30 秒，连接与首个非空数据另受用户首字节期限约束。
 /// 官方各级 TOML 从已获取的同一包读取，不再逐份等待网络；
 /// 需要人工操作的 WebView 下载由调用方单独设置交互期限。
 pub const SOURCE_DOCUMENT_TIMEOUT: u64 = 30;
@@ -31,6 +33,7 @@ pub(super) const MAX_SOURCE_BYTES: usize = 1024 * 1024;
 /// 自定义绝对 HTTP 地址保留有界下载、重定向基准与错误分类。
 pub(crate) async fn load_text_document<T>(
     location: &SourceLocation,
+    network: &NetworkConfig,
     parse: impl Fn(&str, &SourceLocation) -> Result<T, ConfigError>,
 ) -> Result<T, ConfigError> {
     if let Some(path) = package_document_path(location) {
@@ -52,7 +55,8 @@ pub(crate) async fn load_text_document<T>(
         safe_url,
         timeout_seconds
     );
-    let client = releases::build_client(timeout_seconds).map_err(|error| {
+    let first_byte_timeout = network.first_byte_timeout();
+    let client = releases::build_download_client(first_byte_timeout).map_err(|error| {
         log::error!(
             "创建文档 HTTP 客户端失败：地址={}，原因={}",
             safe_url,
@@ -60,24 +64,21 @@ pub(crate) async fn load_text_document<T>(
         );
         ConfigError::Read(error.to_string())
     })?;
-    let mut response = client
+    let deadline = tokio::time::Instant::now() + first_byte_timeout;
+    let request = client
         .get(url.clone())
+        .timeout(Duration::from_secs(timeout_seconds))
         .header("User-Agent", releases::APP_USER_AGENT)
         .header(
             reqwest::header::CACHE_CONTROL,
             "no-cache, no-store, max-age=0",
         )
-        .header(reqwest::header::PRAGMA, "no-cache")
-        .send_logged()
+        .header(reqwest::header::PRAGMA, "no-cache");
+    let response = crate::archive::send_before_first_byte_deadline(request, Some(deadline))
         .await
         .map_err(|error| {
-            log::error!(
-                "请求远程文档失败：地址={}，超时={}，连接错误={}",
-                safe_url,
-                error.is_timeout(),
-                error.is_connect()
-            );
-            ConfigError::Read(error.to_string())
+            log::error!("请求远程文档失败：地址={}，原因={}", safe_url, error);
+            ConfigError::Read(error)
         })?;
     let status = response.status();
     if !status.is_success() {
@@ -86,14 +87,19 @@ pub(crate) async fn load_text_document<T>(
     // 普通直链以最终地址为相对基准；可识别的 Raw 请求保留原仓库 ref，
     // 避免 CDN 重定向丢掉分支结构。两条读取入口都交同一实现判定。
     let resolved = remote_document_location(url, response.url().clone())?;
+    let mut body = response.bytes_stream();
+    let first = crate::archive::first_nonempty_chunk(&mut body, Some(deadline))
+        .await
+        .map_err(ConfigError::Read)?;
+    let mut body = futures_util::stream::iter(first.into_iter().map(Ok)).chain(body);
     let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|error| {
+    while let Some(chunk) = body.next().await.transpose().map_err(|error| {
         log::error!(
             "读取远程文档响应失败：地址={}，已读取={}字节",
             safe_url,
             bytes.len()
         );
-        ConfigError::Read(error.to_string())
+        ConfigError::Read(error.without_url().to_string())
     })? {
         if bytes.len() + chunk.len() > MAX_SOURCE_BYTES {
             log::error!("远程文档超过大小限制：地址={}", safe_url);
@@ -128,15 +134,14 @@ pub(crate) async fn load_text_document<T>(
 
 /// 读取一个源文档（远程地址或内置资源）。
 ///
-/// 远程文档固定使用 `SOURCE_DOCUMENT_TIMEOUT`（30 秒）：索引与各级子源都走
-/// 这里，超时口径一致。不再由调用方传入 —— 这个阶段和 Release API 的
-/// 5 秒、下载的连接超时是三种不同性质的请求，混用一个配置会让
-/// 「调快下载」顺带把源文档读取弄坏。
+/// 索引与子源的完整传输上限统一为 30 秒；首字节期限来自本次配置快照，
+/// 不使用较短的 API 总超时限制文档正文传输。
 pub async fn load_document(
     location: &SourceLocation,
     inherited: &crate::models::NetworkPlanSelection,
+    network: &NetworkConfig,
 ) -> Result<RepositorySourceDocument, ConfigError> {
-    load_text_document(location, |text, origin| {
+    load_text_document(location, network, |text, origin| {
         parse_document(text, origin, inherited)
     })
     .await

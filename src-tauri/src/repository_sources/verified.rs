@@ -5,8 +5,10 @@ use super::transport::MAX_SOURCE_BYTES;
 use super::transport::SOURCE_DOCUMENT_TIMEOUT;
 use super::transport::load_text_document;
 use crate::config::ConfigError;
-use crate::http_diagnostics::HttpRequestExt;
+use crate::models::NetworkConfig;
 use crate::releases;
+use futures_util::StreamExt;
+use std::time::Duration;
 
 /// 一份需要「先问 API、再下载比对」的远程文档。
 ///
@@ -33,20 +35,21 @@ pub(crate) struct VerifiedDocument {
 pub(crate) async fn load_verified_text_document<T>(
     location: &SourceLocation,
     verified: &VerifiedDocument,
+    network: &NetworkConfig,
     parse: impl Fn(&str, &SourceLocation) -> Result<T, ConfigError>,
 ) -> Result<T, ConfigError> {
     if super::transport::package_document_path(location).is_some() {
-        return load_text_document(location, parse).await;
+        return load_text_document(location, network, parse).await;
     }
     let SourceLocation::Remote(url) = location else {
-        return load_text_document(location, parse).await;
+        return load_text_document(location, network, parse).await;
     };
     if verified.candidates.is_empty() {
         log::warn!(
             "校验文档没有可用下载候选，退回单次直连：地址={}",
             safe_log_address(url.as_str())
         );
-        return load_text_document(location, parse).await;
+        return load_text_document(location, network, parse).await;
     }
     let safe_url = safe_log_address(url.as_str());
     let started_at = std::time::Instant::now();
@@ -61,7 +64,8 @@ pub(crate) async fn load_verified_text_document<T>(
             "无"
         }
     );
-    let client = releases::build_client(SOURCE_DOCUMENT_TIMEOUT).map_err(|error| {
+    let first_byte_timeout = network.first_byte_timeout();
+    let client = releases::build_download_client(first_byte_timeout).map_err(|error| {
         log::error!(
             "创建文档 HTTP 客户端失败：地址={}，原因={}",
             safe_url,
@@ -84,10 +88,12 @@ pub(crate) async fn load_verified_text_document<T>(
                     &reporter,
                     expected_size,
                     digest.as_deref(),
+                    first_byte_timeout,
                 )
                 .await
             }
         },
+        network,
         None,
     )
     .await
@@ -131,18 +137,19 @@ pub(crate) async fn fetch_document_bytes(
     reporter: &crate::archive::DownloadReporter,
     expected_size: Option<u64>,
     digest: Option<&str>,
+    first_byte_timeout: Duration,
 ) -> Result<Vec<u8>, String> {
-    let mut response = client
+    let deadline = tokio::time::Instant::now() + first_byte_timeout;
+    let request = client
         .get(url)
+        .timeout(Duration::from_secs(SOURCE_DOCUMENT_TIMEOUT))
         .header("User-Agent", releases::APP_USER_AGENT)
         .header(
             reqwest::header::CACHE_CONTROL,
             "no-cache, no-store, max-age=0",
         )
-        .header(reqwest::header::PRAGMA, "no-cache")
-        .send_logged()
-        .await
-        .map_err(|error| error.without_url().to_string())?;
+        .header(reqwest::header::PRAGMA, "no-cache");
+    let response = crate::archive::send_before_first_byte_deadline(request, Some(deadline)).await?;
     let status = response.status();
     if !status.is_success() {
         return Err(format!("{} {}", safe_log_address(url), status.as_u16()));
@@ -156,9 +163,13 @@ pub(crate) async fn fetch_document_bytes(
     let mut content = Vec::new();
     let mut progress = reporter.snapshot();
     progress.total = expected_size.or(response.content_length());
-    while let Some(chunk) = response
-        .chunk()
+    let mut body = response.bytes_stream();
+    let first = crate::archive::first_nonempty_chunk(&mut body, Some(deadline)).await?;
+    let mut body = futures_util::stream::iter(first.into_iter().map(Ok)).chain(body);
+    while let Some(chunk) = body
+        .next()
         .await
+        .transpose()
         .map_err(|error| error.without_url().to_string())?
     {
         if content.len() + chunk.len() > MAX_SOURCE_BYTES {

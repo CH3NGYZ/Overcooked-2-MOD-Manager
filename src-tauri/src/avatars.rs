@@ -20,7 +20,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use crate::http_diagnostics::HttpRequestExt;
 use crate::models::{AppConfig, Provider};
 
 /// 单个头像的大小上限。
@@ -225,9 +224,17 @@ async fn download_and_store(
         candidates.len()
     );
 
-    let client = crate::releases::build_download_client(config.network.timeout_seconds)
+    let client = crate::releases::build_download_client(config.network.first_byte_timeout())
         .map_err(|error| error.to_string())?;
-    fetch_and_store_candidates(&client, cache_dir, provider, owner, candidates).await
+    fetch_and_store_candidates(
+        &client,
+        cache_dir,
+        provider,
+        owner,
+        candidates,
+        &config.network,
+    )
+    .await
 }
 
 async fn fetch_and_store_candidates(
@@ -236,13 +243,14 @@ async fn fetch_and_store_candidates(
     provider: &Provider,
     owner: &str,
     candidates: Vec<crate::download::DownloadCandidate>,
+    network: &crate::models::NetworkConfig,
 ) -> Result<Vec<u8>, String> {
     // 逐个尝试而不是竞速：头像是几十 KB 的小文件，竞速的并发开销比省下的
     // 时间更贵，而且一次刷新里会有很多 owner 同时请求，再竞速会把连接数
     // 放大好几倍（用户明确要求「同一 owner 只做一次」，同样适用于彼此）。
     let mut last_error = String::new();
     for candidate in candidates {
-        match fetch_avatar(client, &candidate.url).await {
+        match fetch_avatar(client, &candidate.url, network).await {
             Ok(bytes) => {
                 if let Err(error) = store(cache_dir, provider, owner, &bytes) {
                     // 落盘失败不影响本次显示，只是下次还要重新下载
@@ -261,25 +269,34 @@ async fn fetch_and_store_candidates(
 }
 
 /// 下载单个候选并做基本校验（状态码、大小、看起来像图片）。
-async fn fetch_avatar(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, String> {
-    let response = tokio::time::timeout(
-        AVATAR_TIMEOUT,
+async fn fetch_avatar(
+    client: &reqwest::Client,
+    url: &str,
+    network: &crate::models::NetworkConfig,
+) -> Result<Vec<u8>, String> {
+    let deadline = Some(tokio::time::Instant::now() + network.first_byte_timeout());
+    let response = crate::archive::send_before_first_byte_deadline(
         client
             .get(url)
-            .header("User-Agent", crate::releases::APP_USER_AGENT)
-            .send_logged(),
+            .header("User-Agent", crate::releases::APP_USER_AGENT),
+        deadline,
     )
-    .await
-    .map_err(|_| "avatar.requestTimeout".to_string())?
-    .map_err(|error| error.without_url().to_string())?
+    .await?
     .error_for_status()
     .map_err(|error| error.without_url().to_string())?;
-
-    let bytes = tokio::time::timeout(AVATAR_TIMEOUT, response.bytes())
-        .await
-        .map_err(|_| "avatar.readTimeout".to_string())?
-        .map_err(|error| error.without_url().to_string())?
-        .to_vec();
+    let mut stream = response.bytes_stream();
+    let mut chunk = crate::archive::first_nonempty_chunk(&mut stream, deadline).await?;
+    let mut bytes = Vec::new();
+    while let Some(data) = chunk {
+        bytes.extend_from_slice(&data);
+        if bytes.len() > MAX_AVATAR_BYTES {
+            validate(&bytes)?;
+        }
+        chunk = futures_util::StreamExt::next(&mut stream)
+            .await
+            .transpose()
+            .map_err(|error| error.without_url().to_string())?;
+    }
     validate(&bytes).map(|_| bytes)
 }
 

@@ -11,6 +11,7 @@ import AppModal from '../components/AppModal.vue'
 import BepInExPanel from '../components/BepInExPanel.vue'
 import SettingsGroup from '../components/settings/SettingsGroup.vue'
 import SettingsRow from '../components/settings/SettingsRow.vue'
+import SettingsDownloadGroup from '../components/settings/SettingsDownloadGroup.vue'
 import DiyLevelPanel from '../components/settings/DiyLevelPanel.vue'
 import { tagColorFor } from '../theme'
 import { FOCUS_QUERY } from '../crossLink'
@@ -38,6 +39,7 @@ const checking = ref(false)
 const realConfig = ref<PublicConfig | null>(null)
 const config = computed({ get: () => withDemoConfig(realConfig.value), set: value => { realConfig.value = value } })
 const savingPath = ref(false)
+const savingDownload = ref(false)
 
 const pathDrawer = ref(false)
 /** BepInEx 管理抽屉（右侧滑入）。 */
@@ -384,7 +386,7 @@ const dataProviderOptions = computed(() => [
 ])
 
 async function switchDataSelection(patch: DataSelectionPatch) {
-  if (switchingDataProvider.value || demoActive.value) return
+  if (switchingDataProvider.value || savingDownload.value || demoActive.value) return
   if (patch.region ? patch.region === userRegion.value : patch.data_provider === dataProvider.value) return
   try {
     const result = await switchSelection(patch)
@@ -536,7 +538,7 @@ async function clearTokens() {
     <SettingsRow :title="t('settings.region')" :description="t('settings.regionHint')">
       <template #right>
         <n-select :value="userRegion" :options="regionOptions" style="width: 304px; max-width: 100%"
-          :loading="switchingDataProvider" :disabled="switchingDataProvider || !config || demoActive"
+          :loading="switchingDataProvider" :disabled="switchingDataProvider || savingDownload || !config || demoActive"
           :aria-label="t('settings.region')" data-testid="user-region"
           @update:value="(value: UserRegion) => switchDataSelection({ region: value })" />
       </template>
@@ -544,12 +546,15 @@ async function clearTokens() {
     <SettingsRow :title="t('settings.dataSources')" :description="t('settings.dataProviderHint')">
       <template #right>
         <n-select :value="dataProvider" :options="dataProviderOptions" style="width: 304px; max-width: 100%"
-          :loading="switchingDataProvider" :disabled="switchingDataProvider || !config || demoActive"
+          :loading="switchingDataProvider" :disabled="switchingDataProvider || savingDownload || !config || demoActive"
           :aria-label="t('settings.dataSources')" data-testid="data-provider"
           @update:value="(value: DataProvider) => switchDataSelection({ data_provider: value })" />
       </template>
     </SettingsRow>
   </SettingsGroup>
+
+  <SettingsDownloadGroup :config="dataSourceConfig" :disabled="switchingDataProvider"
+    @saved="config = $event" @saving="savingDownload = $event" />
 
   <!--
     性能：元数据并行读取。

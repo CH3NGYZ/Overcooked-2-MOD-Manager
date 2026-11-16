@@ -24,7 +24,7 @@ pub(crate) async fn import_repository_source_into_config(
     // Keep the trusted source tree until the complete document is available.
     // No configuration mutation or lock spans the network request.
     let selection = state.config.data_selection();
-    let (mut source_url, official_root, parent_plan) = {
+    let (mut source_url, official_root, parent_plan, network) = {
         let _cache_guard = state.repository_cache.lock().await;
         let _operation_guard = state
             .operation
@@ -75,7 +75,12 @@ pub(crate) async fn import_repository_source_into_config(
             repository_sources::safe_log_address(&source_url),
             source.parent_id.as_deref().unwrap_or("无")
         );
-        (source_url, official_root, source.network_plan.clone())
+        (
+            source_url,
+            official_root,
+            source.network_plan.clone(),
+            original_config.network.clone(),
+        )
     };
     let (document, selection) = if official_root {
         let root = state.config.official_root(force).await?;
@@ -101,7 +106,7 @@ pub(crate) async fn import_repository_source_into_config(
             .in_data_selection(
                 selection,
                 crate::network_policy::NetworkPolicy::in_snapshot(policy, async {
-                    Ok(repository_sources::load_document(&location, &parent_plan).await)
+                    Ok(repository_sources::load_document(&location, &parent_plan, &network).await)
                 }),
             )
             .await?

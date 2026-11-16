@@ -297,7 +297,7 @@ pub async fn stage_map_release(
         let assets = archive::release_download::asset_set(&asset, &release.assets)?;
         let download_name = asset.name.clone();
         let display_name = crate::config::localized_map_name(&map, locale.as_deref());
-        let client = releases::build_download_client(config.network.timeout_seconds)
+        let client = releases::build_download_client(config.network.first_byte_timeout())
             .map_err(|error| error.to_string())?;
         let cache_dir = state.config.cache_dir();
         let temp = archive::release_download::download(
@@ -306,6 +306,7 @@ pub async fn stage_map_release(
             &cache_dir,
             &display_name,
             Some(&app),
+            &config.network,
             |url| {
                 crate::download::planning::plan_repository_download(
                     &map.provider,

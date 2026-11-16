@@ -1,6 +1,6 @@
 use crate::api_scheduler::ApiRequestExt;
 use crate::locale_tag::with_params;
-use crate::models::PublishProvider;
+use crate::models::{NetworkConfig, PublishProvider};
 use crate::releases::APP_USER_AGENT;
 use std::time::Duration;
 
@@ -9,8 +9,6 @@ pub(super) const API_ENDPOINT: &str = "https://api.github.com";
 const API_VERSION: &str = "2022-11-28";
 
 pub(super) const REPOSITORY_PAGE_SIZE: u32 = 100;
-
-const API_TIMEOUT: Duration = Duration::from_secs(30);
 
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(600);
 
@@ -28,16 +26,14 @@ pub(super) fn action_error(action: &str, reason: &str) -> String {
     )
 }
 
-pub(super) fn api_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .timeout(API_TIMEOUT)
-        .user_agent(APP_USER_AGENT)
-        .build()
+pub(super) fn api_client(network: &NetworkConfig) -> Result<reqwest::Client, String> {
+    crate::releases::build_client(network.api_timeout())
         .map_err(|error| request_error(&error.to_string()))
 }
 
-pub(super) fn upload_client() -> Result<reqwest::Client, String> {
+pub(super) fn upload_client(network: &NetworkConfig) -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
+        .connect_timeout(network.first_byte_timeout())
         .timeout(UPLOAD_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
         .user_agent(APP_USER_AGENT)

@@ -75,10 +75,11 @@ async fn probe_location(
     cancelled: &mut tokio::sync::watch::Receiver<bool>,
 ) -> StartupProbe {
     let inherited = Default::default();
+    let network = crate::models::NetworkConfig::default();
     tokio::select! {
         biased;
         _ = cancelled.changed() => StartupProbe::failed("cancelled"),
-        result = tokio::time::timeout(deadline, load_document(location, &inherited)) => {
+        result = tokio::time::timeout(deadline, load_document(location, &inherited, &network)) => {
             match result {
                 Err(_) => StartupProbe::failed("timeout"),
                 Ok(Ok(_)) => StartupProbe { reachable: true, failure_kind: None },

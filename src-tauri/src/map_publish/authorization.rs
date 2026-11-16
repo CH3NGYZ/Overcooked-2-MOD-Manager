@@ -261,7 +261,8 @@ pub async fn poll_publish_authorization(
                 *guard = CallbackOutcome::Exchanging;
             }
             let _session = super::session::SESSION_LOCK.lock().await;
-            let exchanged = exchange_code(provider, &code, verifier.as_deref()).await;
+            let network = service.load_or_default().network;
+            let exchanged = exchange_code(provider, &code, verifier.as_deref(), &network).await;
             // A canceled or replaced flow may finish its network exchange late.
             // Hold this short guard until persistence finishes so it cannot revive it.
             let mut pending = PENDING_AUTH

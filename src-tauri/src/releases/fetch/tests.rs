@@ -4,7 +4,7 @@ use super::*;
 #[tokio::test]
 #[ignore = "requires public GitCode API proxy network access"]
 async fn real_gitcode_proxy_reads_complete_release_pages() {
-    let client = crate::releases::build_client(30).unwrap();
+    let client = crate::releases::build_client(std::time::Duration::from_secs(30)).unwrap();
     let mut repo = api_test_repository();
     repo.provider = Provider::Gitcode;
     repo.username = "CH3NGY2".into();

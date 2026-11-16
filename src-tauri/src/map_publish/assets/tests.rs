@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn signed_upload_uses_put_and_never_inherits_oauth_credentials() {
-    let client = upload_client().unwrap();
+    let client = upload_client(&crate::models::NetworkConfig::default()).unwrap();
     let mut upload = SignedUpload {
         url: "https://bucket.example.invalid/file?signature=fixture".into(),
         headers: [

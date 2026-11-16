@@ -7,7 +7,6 @@ use crate::models::{CommunityDiscovery, Provider};
 use futures_util::StreamExt;
 use serde_json::Value;
 use std::collections::HashSet;
-use std::time::Duration;
 
 /// AtomGit documents keyword search, not GitHub's topic query syntax. Require
 /// explicit topic data before committing a new discovery snapshot.
@@ -35,7 +34,6 @@ pub(super) async fn discover(
         let response =
             crate::providers::api_request(client, url.as_str(), &Provider::Gitcode, Some(token))
                 .map_err(|_| "community.searchUrlInvalid")?
-                .timeout(Duration::from_secs(5))
                 .send_api(crate::models::Provider::Gitcode)
                 .await
                 .map_err(|error| error.without_url().to_string())?;

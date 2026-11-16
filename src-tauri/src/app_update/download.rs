@@ -14,7 +14,6 @@ use crate::archive::DownloadRoute as AssetDownloadRoute;
 use crate::download::DownloadCandidate as AssetDownloadCandidate;
 use crate::download::DownloadContext;
 use crate::download::try_download_candidates as try_asset_download_candidates;
-use crate::http_diagnostics::HttpRequestExt;
 use crate::models::{AppUpdateChannelStatus, AppUpdateInfo, GitHubProxyConfig};
 use crate::releases;
 use crate::repository_sources;
@@ -26,30 +25,31 @@ impl crate::download::DownloadOutput for tauri_plugin_updater::Update {
     fn discard(&self) {}
 }
 
-async fn download_installer(
+pub(super) async fn download_installer(
     client: &reqwest::Client,
     url: &str,
     reporter: &archive::DownloadReporter,
     label: &str,
+    network: &crate::models::NetworkConfig,
 ) -> Result<Vec<u8>, String> {
     log::debug!("开始下载安装器文件：标签={}", label);
-    let response = client
-        .get(url)
-        .header("User-Agent", releases::APP_USER_AGENT)
-        .send_logged()
-        .await
-        .map_err(|error| error.to_string())?
-        .error_for_status()
-        .map_err(|error| error.to_string())?;
+    let deadline = Some(tokio::time::Instant::now() + network.first_byte_timeout());
+    let response = archive::send_before_first_byte_deadline(
+        client
+            .get(url)
+            .header("User-Agent", releases::APP_USER_AGENT),
+        deadline,
+    )
+    .await?
+    .error_for_status()
+    .map_err(|error| error.without_url().to_string())?;
     let total = response.content_length();
     let started = std::time::Instant::now();
     let mut downloaded = 0_u64;
     let mut bytes = Vec::with_capacity(total.unwrap_or_default().min(64 * 1024 * 1024) as usize);
     let mut stream = response.bytes_stream();
-    let first_chunk = tokio::time::timeout(archive::FIRST_BYTE_TIMEOUT, stream.next())
-        .await
-        .map_err(|_| "download.firstByteTimeout".to_string())?;
-    let mut next_chunk = first_chunk;
+    let first_chunk = archive::first_nonempty_chunk(&mut stream, deadline).await?;
+    let mut next_chunk = first_chunk.map(Ok::<_, reqwest::Error>);
     while let Some(chunk) = next_chunk {
         let chunk = chunk.map_err(|error| error.to_string())?;
         reporter.received(chunk.len() as u64);
@@ -69,26 +69,6 @@ async fn download_installer(
     Ok(bytes)
 }
 
-pub(super) async fn download_installer_with_timeout(
-    client: &reqwest::Client,
-    url: &str,
-    reporter: &archive::DownloadReporter,
-    label: &str,
-) -> Result<Vec<u8>, String> {
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        download_installer(client, url, reporter, label),
-    )
-    .await
-    {
-        Ok(result) => result,
-        Err(_) => {
-            log::warn!("下载安装器文件超过 30 秒：标签={}", label);
-            Err("update.downloadTimeout".into())
-        }
-    }
-}
-
 async fn download_installer_for_info(
     client: &reqwest::Client,
     info: &AppUpdateInfo,
@@ -96,6 +76,7 @@ async fn download_installer_for_info(
     signature: &str,
     proxies: &GitHubProxyConfig,
     region: InstallerRegion,
+    network: &crate::models::NetworkConfig,
 ) -> Result<Vec<u8>, Vec<String>> {
     let candidates = installer_download_candidates(proxies, info);
     download_verified_installer(
@@ -106,6 +87,7 @@ async fn download_installer_for_info(
         Some(app),
         region,
         |bytes| crate::app_update::verify_download(bytes, signature, &info.version),
+        network,
     )
     .await
     .map_err(|error| vec![error])
@@ -119,6 +101,7 @@ pub(crate) async fn download_verified_installer(
     app: Option<&AppHandle>,
     region: InstallerRegion,
     verify: impl Fn(&[u8]) -> Result<(), String>,
+    network: &crate::models::NetworkConfig,
 ) -> Result<Vec<u8>, String> {
     let proxy_count = candidates
         .iter()
@@ -161,11 +144,12 @@ pub(crate) async fn download_verified_installer(
                         },
                     );
                 }
-                let result = download_installer_with_timeout(
+                let result = download_installer(
                     client,
                     &candidate.url,
                     &reporter,
                     "update.downloadingInstaller",
+                    network,
                 )
                 .await
                 .and_then(|bytes| {
@@ -198,6 +182,7 @@ pub(crate) async fn download_verified_installer(
                 result
             }
         },
+        network,
         Some(DownloadContext {
             execution: None,
             app,
@@ -213,6 +198,7 @@ async fn resolve_app_update(
     app: &AppHandle,
     info: &AppUpdateInfo,
     proxies: &GitHubProxyConfig,
+    network: &crate::models::NetworkConfig,
 ) -> Result<tauri_plugin_updater::Update, String> {
     // Package hosting can differ from the manifest mirror. Re-read the selected
     // manifest's provider, then require identical version, URL and signature.
@@ -232,8 +218,11 @@ async fn resolve_app_update(
     race_installer_channels(
         &channels,
         archive::is_download_cancelled,
-        |channel, _| async move { resolve_app_update_at(app, info, &channel.endpoint).await },
-    )
+        |channel, _| async move { resolve_app_update_at(app, info, &channel.endpoint,
+network,
+).await },
+network,
+)
     .await
 }
 
@@ -241,6 +230,7 @@ async fn resolve_app_update_at(
     app: &AppHandle,
     info: &AppUpdateInfo,
     url: &str,
+    network: &crate::models::NetworkConfig,
 ) -> Result<tauri_plugin_updater::Update, String> {
     use tauri_plugin_updater::UpdaterExt;
     let target = crate::app_update::UpdateTarget::current()?;
@@ -268,7 +258,7 @@ async fn resolve_app_update_at(
     let builder = app
         .updater_builder()
         .target(target.manifest_key())
-        .timeout(std::time::Duration::from_secs(5))
+        .timeout(network.api_timeout())
         .header("User-Agent", releases::APP_USER_AGENT)
         .map_err(|e| e.to_string())?
         .header("Cache-Control", "no-cache, no-store")
@@ -336,12 +326,21 @@ async fn prepare_and_download_installer(
     app: &AppHandle,
     proxies: &GitHubProxyConfig,
     region: InstallerRegion,
+    network: &crate::models::NetworkConfig,
 ) -> Result<VerifiedInstallerDownload, Vec<String>> {
-    let update = resolve_app_update(app, info, proxies)
+    let update = resolve_app_update(app, info, proxies, network)
         .await
         .map_err(|error| vec![error])?;
-    let bytes =
-        download_installer_for_info(client, info, app, &update.signature, proxies, region).await?;
+    let bytes = download_installer_for_info(
+        client,
+        info,
+        app,
+        &update.signature,
+        proxies,
+        region,
+        network,
+    )
+    .await?;
     Ok(VerifiedInstallerDownload { bytes, update })
 }
 
@@ -364,9 +363,9 @@ pub(crate) async fn discover_and_download_installer_update(
     let config = state.config.load_or_default();
     let region = installer_region(&config.region);
     log::info!("开始执行安装器更新流程：地区={}", region.as_str());
-    let client = releases::build_client(config.network.timeout_seconds)
-        .map_err(|error| error.to_string())?;
-    let download_client = releases::build_download_client(config.network.timeout_seconds)
+    let client =
+        releases::build_client(config.network.api_timeout()).map_err(|error| error.to_string())?;
+    let download_client = releases::build_download_client(config.network.first_byte_timeout())
         .map_err(|error| error.to_string())?;
     let target = crate::app_update::UpdateTarget::current()?;
     let current_version = semver::Version::parse(env!("CARGO_PKG_VERSION")).map_err(|error| {
@@ -390,15 +389,23 @@ pub(crate) async fn discover_and_download_installer_update(
         |info| {
             let download_client = &download_client;
             let proxies = &config.github_proxies;
+            let network = &config.network;
             async move {
                 emit_installer_phase(app, region, "download", None, Some(info.clone()));
-                let download =
-                    prepare_and_download_installer(download_client, &info, app, proxies, region)
-                        .await
-                        .map_err(|errors| errors.join("；"))?;
+                let download = prepare_and_download_installer(
+                    download_client,
+                    &info,
+                    app,
+                    proxies,
+                    region,
+                    network,
+                )
+                .await
+                .map_err(|errors| errors.join("；"))?;
                 Ok((info, download))
             }
         },
+        &config.network,
     )
     .await?;
     match result {

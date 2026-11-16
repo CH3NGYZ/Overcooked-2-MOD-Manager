@@ -242,19 +242,27 @@ async fn real_http_downloads_two_volumes_and_cleans_all_parts_after_reassembly()
         })
         .collect();
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let path = download(&client, assets, &dir.0, "test", None, |url| {
-        Ok(RepositoryDownloadPlan {
-            candidates: vec![DownloadCandidate {
-                route: DownloadRoute::Direct,
-                url: url.into(),
-            }],
-            download_threads: 1,
-            execution: DownloadExecution {
-                max_parallelism: 1,
-                race: false,
-            },
-        })
-    })
+    let path = download(
+        &client,
+        assets,
+        &dir.0,
+        "test",
+        None,
+        &crate::models::NetworkConfig::default(),
+        |url| {
+            Ok(RepositoryDownloadPlan {
+                candidates: vec![DownloadCandidate {
+                    route: DownloadRoute::Direct,
+                    url: url.into(),
+                }],
+                download_threads: 1,
+                execution: DownloadExecution {
+                    max_parallelism: 1,
+                    race: false,
+                },
+            })
+        },
+    )
     .await
     .unwrap();
     assert_eq!(server.calls.load(Ordering::Relaxed), 3);
@@ -275,21 +283,29 @@ async fn exhausted_candidates_allow_only_three_outer_retries_and_leave_no_files(
     let server = Server::new(vec![vec![1]], true);
     let assets = vec![asset("a"), asset("b")];
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let result = download(&client, assets, &dir.0, "test", None, |_| {
-        Ok(RepositoryDownloadPlan {
-            candidates: (0..3)
-                .map(|i| DownloadCandidate {
-                    route: DownloadRoute::Proxy,
-                    url: format!("{}/0/{i}", server.url),
-                })
-                .collect(),
-            download_threads: 1,
-            execution: DownloadExecution {
-                max_parallelism: 3,
-                race: true,
-            },
-        })
-    })
+    let result = download(
+        &client,
+        assets,
+        &dir.0,
+        "test",
+        None,
+        &crate::models::NetworkConfig::default(),
+        |_| {
+            Ok(RepositoryDownloadPlan {
+                candidates: (0..3)
+                    .map(|i| DownloadCandidate {
+                        route: DownloadRoute::Proxy,
+                        url: format!("{}/0/{i}", server.url),
+                    })
+                    .collect(),
+                download_threads: 1,
+                execution: DownloadExecution {
+                    max_parallelism: 3,
+                    race: true,
+                },
+            })
+        },
+    )
     .await;
     assert!(result.is_err());
     let calls = server.calls.load(Ordering::Relaxed);
@@ -348,19 +364,27 @@ async fn bad_volume_digest_retries_and_cleans_successful_companions() {
         })
         .collect();
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let result = download(&client, assets, &dir.0, "test", None, |url| {
-        Ok(RepositoryDownloadPlan {
-            candidates: vec![DownloadCandidate {
-                route: DownloadRoute::Direct,
-                url: url.into(),
-            }],
-            download_threads: 1,
-            execution: DownloadExecution {
-                max_parallelism: 1,
-                race: false,
-            },
-        })
-    })
+    let result = download(
+        &client,
+        assets,
+        &dir.0,
+        "test",
+        None,
+        &crate::models::NetworkConfig::default(),
+        |url| {
+            Ok(RepositoryDownloadPlan {
+                candidates: vec![DownloadCandidate {
+                    route: DownloadRoute::Direct,
+                    url: url.into(),
+                }],
+                download_threads: 1,
+                execution: DownloadExecution {
+                    max_parallelism: 1,
+                    race: false,
+                },
+            })
+        },
+    )
     .await;
     assert!(result.unwrap_err().starts_with("download.checksumMismatch"));
     assert_eq!(server.calls.load(Ordering::Relaxed), 6);
@@ -381,19 +405,27 @@ async fn dropping_download_cleans_completed_and_inflight_volumes() {
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
     let result = tokio::time::timeout(
         Duration::from_millis(65),
-        download(&client, assets, &dir.0, "test", None, |url| {
-            Ok(RepositoryDownloadPlan {
-                candidates: vec![DownloadCandidate {
-                    route: DownloadRoute::Direct,
-                    url: url.into(),
-                }],
-                download_threads: 1,
-                execution: DownloadExecution {
-                    max_parallelism: 1,
-                    race: false,
-                },
-            })
-        }),
+        download(
+            &client,
+            assets,
+            &dir.0,
+            "test",
+            None,
+            &crate::models::NetworkConfig::default(),
+            |url| {
+                Ok(RepositoryDownloadPlan {
+                    candidates: vec![DownloadCandidate {
+                        route: DownloadRoute::Direct,
+                        url: url.into(),
+                    }],
+                    download_threads: 1,
+                    execution: DownloadExecution {
+                        max_parallelism: 1,
+                        race: false,
+                    },
+                })
+            },
+        ),
     )
     .await;
     assert!(result.is_err());
@@ -412,6 +444,7 @@ async fn ordinary_single_file_keeps_exact_bytes_and_has_no_outer_retry() {
         &dir.0,
         "test",
         None,
+        &crate::models::NetworkConfig::default(),
         |_| {
             Ok(RepositoryDownloadPlan {
                 candidates: vec![DownloadCandidate {

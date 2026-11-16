@@ -436,7 +436,13 @@ async fn each_remote_provider_fetches_once_with_exact_ua_and_no_authentication()
     ] {
         let bytes = archive(&[("mods.toml", b"x = 1"), ("maps.toml", b"x = 2")]);
         let (address, server) = serve(vec![reply("200 OK", "application/zip", &bytes, "")]);
-        let result = fetch(provider, &format!("{address}/archive.zip"), None).await;
+        let result = fetch(
+            provider,
+            &format!("{address}/archive.zip"),
+            None,
+            &Default::default(),
+        )
+        .await;
         let requests = server.join().unwrap();
         let package = result.unwrap();
         assert_eq!(requests.len(), 1);
@@ -466,7 +472,13 @@ async fn archive_redirects_preserve_exact_anonymous_request_headers() {
             b"",
             &format!("Location: {destination}/download.zip\r\n"),
         )]);
-        let result = fetch(provider, &format!("{address}/archive.zip"), None).await;
+        let result = fetch(
+            provider,
+            &format!("{address}/archive.zip"),
+            None,
+            &Default::default(),
+        )
+        .await;
         let mut requests = server.join().unwrap();
         requests.extend(destination_server.join().unwrap());
         assert_eq!(result.unwrap().read("mods.toml").unwrap(), "x = 1");
@@ -529,6 +541,7 @@ async fn http_200_html_and_invalid_zip_bodies_are_rejected() {
             DataProvider::Github,
             &format!("{address}/archive.zip"),
             None,
+            &Default::default(),
         )
         .await;
         assert_eq!(server.join().unwrap().len(), 1);
@@ -549,6 +562,7 @@ async fn http_errors_are_not_parsed_as_source_archives() {
         DataProvider::Github,
         &format!("{address}/archive.zip"),
         None,
+        &Default::default(),
     )
     .await;
     assert_eq!(server.join().unwrap().len(), 1);
@@ -572,6 +586,7 @@ async fn oversized_content_length_is_rejected_before_reading_the_body() {
         DataProvider::Github,
         &format!("{address}/archive.zip"),
         None,
+        &Default::default(),
     )
     .await;
     assert_eq!(server.join().unwrap().len(), 1);
@@ -586,14 +601,14 @@ async fn chunked_response_limit_checks_actual_bytes_and_allows_the_exact_boundar
             "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n20\r\n{body}\r\n0\r\n\r\n",
         ).into_bytes();
         let (address, server) = serve(vec![response]);
-        let response = crate::releases::build_client(30)
+        let response = crate::releases::build_client(std::time::Duration::from_secs(30))
             .unwrap()
             .get(format!("{address}/stream"))
             .send_logged()
             .await
             .unwrap();
         assert!(response.content_length().is_none());
-        let result = download::response_bytes(response, limit).await;
+        let result = download::response_bytes(response, limit, None).await;
         assert_eq!(server.join().unwrap().len(), 1);
         if limit == 32 {
             assert_eq!(result.unwrap(), body.as_bytes());
@@ -605,17 +620,27 @@ async fn chunked_response_limit_checks_actual_bytes_and_allows_the_exact_boundar
 
 #[tokio::test]
 async fn builtin_fetch_uses_the_existing_embedded_package_without_a_request() {
-    let package = fetch(DataProvider::Builtin, "not a network address", None)
-        .await
-        .unwrap();
+    let package = fetch(
+        DataProvider::Builtin,
+        "not a network address",
+        None,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
     assert!(Arc::ptr_eq(&package, &SourcePackage::bundled()));
 }
 
 #[tokio::test]
 async fn gitee_requires_browser_instead_of_sending_an_unverified_http_request() {
-    let error = fetch(DataProvider::Gitee, "not a network address", None)
-        .await
-        .unwrap_err();
+    let error = fetch(
+        DataProvider::Gitee,
+        "not a network address",
+        None,
+        &Default::default(),
+    )
+    .await
+    .unwrap_err();
     assert_eq!(error, "source.webDownloadFailed");
 }
 
@@ -627,6 +652,7 @@ async fn gitcode_verification_html_can_use_the_same_browser_download_layer() {
             DataProvider::Gitcode,
             &format!("{address}/archive.zip"),
             None,
+            &Default::default(),
         )
         .await
         .unwrap_err();

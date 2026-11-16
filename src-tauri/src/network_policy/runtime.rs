@@ -27,8 +27,17 @@ impl NetworkPolicy {
         ACTIVE.scope(policy, Box::pin(work))
     }
 
-    pub(crate) async fn refresh_from(base: &SourceLocation, region: &str) -> Result<Self, String> {
-        async fn read(base: &SourceLocation, path: &str, region: &str) -> Result<String, String> {
+    pub(crate) async fn refresh_from(
+        base: &SourceLocation,
+        region: &str,
+        network: &crate::models::NetworkConfig,
+    ) -> Result<Self, String> {
+        async fn read(
+            base: &SourceLocation,
+            path: &str,
+            region: &str,
+            network: &crate::models::NetworkConfig,
+        ) -> Result<String, String> {
             let location =
                 SourceLocation::resolve(path, Some(base)).map_err(|_| "proxy.validationFailed")?;
             if crate::repository_sources::package_document_path(&location).is_none()
@@ -59,6 +68,7 @@ impl NetworkPolicy {
                     return crate::repository_sources::load_verified_text_document(
                         &location,
                         &verified,
+                        network,
                         |text, _| {
                             let _: toml::Value = toml::from_str(text).map_err(|_| {
                                 crate::config::ConfigError::Invalid("proxy.validationFailed".into())
@@ -70,16 +80,16 @@ impl NetworkPolicy {
                     .map_err(|_| "proxy.validationFailed".into());
                 }
             }
-            load_text_document(&location, |text, _| Ok(text.to_owned()))
+            load_text_document(&location, network, |text, _| Ok(text.to_owned()))
                 .await
                 .map_err(|_| "proxy.validationFailed".into())
         }
-        let index = read(base, "proxies.toml", region).await?;
+        let index = read(base, "proxies.toml", region, network).await?;
         let mut documents = BTreeMap::new();
         for path in proxy_documents(&index)? {
-            documents.insert(path.clone(), read(base, &path, region).await?);
+            documents.insert(path.clone(), read(base, &path, region, network).await?);
         }
-        let plans = read(base, "network-plans.toml", region).await?;
+        let plans = read(base, "network-plans.toml", region, network).await?;
         Self::parse(&index, &documents, &plans)
     }
 }

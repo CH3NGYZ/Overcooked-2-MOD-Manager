@@ -69,35 +69,42 @@ async fn remote_source_reloads_changed_content_and_rejects_not_modified() {
     );
     let location = SourceLocation::parse(&url).unwrap();
     assert_eq!(
-        load_document(&location, &Default::default())
-            .await
-            .unwrap()
-            .repositories[0]
+        load_document(
+            &location,
+            &Default::default(),
+            &crate::models::NetworkConfig::default()
+        )
+        .await
+        .unwrap()
+        .repositories[0]
             .name,
         "Old"
     );
     assert_eq!(
-        load_document(&location, &Default::default())
-            .await
-            .unwrap()
-            .repositories[0]
+        load_document(
+            &location,
+            &Default::default(),
+            &crate::models::NetworkConfig::default()
+        )
+        .await
+        .unwrap()
+        .repositories[0]
             .name,
         "New"
     );
-    assert!(load_document(&location, &Default::default()).await.is_err());
+    assert!(
+        load_document(
+            &location,
+            &Default::default(),
+            &crate::models::NetworkConfig::default()
+        )
+        .await
+        .is_err()
+    );
     server.join().unwrap();
 }
 
-/*
- * 源文档超时固定 30 秒，且**不受** `network.timeout_seconds` 影响。
- *
- * 用户把网络超时调到 5 秒是为了让下载更快失败，但索引和各级子源
- * 是串行递归的：一层被压到 5 秒，后面所有子源都没机会加载 ——
- * 表现为「源刷新随机失败、仓库列表时有时无」。
- *
- * 这里用「延迟 1.5 秒才响应」的本地服务验证读得完；如果超时仍走
- * 用户配置且被调到很小，这条会失败。
- */
+// 完整传输固定 30 秒，首字节使用新设置；旧 timeout_seconds 不再控制请求。
 #[tokio::test]
 async fn source_document_timeout_is_independent_of_user_network_config() {
     assert_eq!(SOURCE_DOCUMENT_TIMEOUT, 30);
@@ -105,11 +112,96 @@ async fn source_document_timeout_is_independent_of_user_network_config() {
     let body = "[[repositories]]\nname_i18n.zh-CN = \"Slow\"\ngroup_i18n.zh-CN = \"\"\nnote_i18n.zh-CN = \"\"\nprovider = \"github\"\nusername = \"example\"\nrepository = \"mod\"\ninstall_target = \"BepInEx/plugins\"\nenabled = true\nasset_rules = [{ type = \"glob\", value = \"*.dll\" }]\n";
     let (url, server) = serve_delayed_response("/slow.toml", body, 1500);
     let location = SourceLocation::parse(&url).unwrap();
-    let document = load_document(&location, &Default::default())
+    let network = crate::models::NetworkConfig {
+        timeout_seconds: 1,
+        api_timeout_seconds: 5,
+        first_byte_timeout_seconds: 5,
+        ..Default::default()
+    };
+    let document = load_document(&location, &Default::default(), &network)
         .await
         .expect("1.5 秒延迟应在 30 秒超时内成功");
     assert_eq!(document.repositories[0].name, "Slow");
     server.join().unwrap();
+}
+
+async fn serve_staged_document(
+    header_delay: Duration,
+    first_delay: Duration,
+    tail_delay: Duration,
+) -> (String, tokio::task::JoinHandle<()>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/source.toml", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+            stream.read_exact(&mut byte).await.unwrap();
+            request.push(byte[0]);
+        }
+        tokio::time::sleep(header_delay).await;
+        if stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n")
+            .await
+            .is_err()
+        {
+            return;
+        }
+        tokio::time::sleep(first_delay).await;
+        if stream.write_all(b"a").await.is_err() {
+            return;
+        }
+        tokio::time::sleep(tail_delay).await;
+        let _ = stream.write_all(b"b").await;
+    });
+    (url, task)
+}
+
+#[tokio::test]
+async fn verified_document_deadline_bounds_headers_and_first_payload_together() {
+    let client = releases::build_download_client(Duration::from_secs(5)).unwrap();
+    let reporter = crate::archive::DownloadReporter::new("source-first-byte");
+    for (header_delay, first_delay) in [(900, 0), (450, 450)] {
+        let (url, server) = serve_staged_document(
+            Duration::from_millis(header_delay),
+            Duration::from_millis(first_delay),
+            Duration::ZERO,
+        )
+        .await;
+        let result = crate::repository_sources::fetch_document_bytes(
+            &client,
+            &url,
+            &reporter,
+            Some(2),
+            None,
+            Duration::from_millis(700),
+        )
+        .await;
+        assert_eq!(result.unwrap_err(), "download.firstByteTimeout");
+        server.await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn verified_document_body_can_outlast_the_first_payload_deadline() {
+    let client = releases::build_download_client(Duration::from_secs(5)).unwrap();
+    let reporter = crate::archive::DownloadReporter::new("source-transfer");
+    let (url, server) =
+        serve_staged_document(Duration::ZERO, Duration::ZERO, Duration::from_millis(900)).await;
+    let bytes = crate::repository_sources::fetch_document_bytes(
+        &client,
+        &url,
+        &reporter,
+        Some(2),
+        None,
+        Duration::from_millis(700),
+    )
+    .await
+    .unwrap();
+    assert_eq!(bytes, b"ab");
+    server.await.unwrap();
 }
 
 /// 接受一次连接、睡眠 `delay_ms` 后再回 200。
@@ -177,7 +269,7 @@ async fn release_api_reloads_changed_content_and_rejects_not_modified() {
             ("304 Not Modified", String::new()),
         ],
     );
-    let client = releases::build_client(5).unwrap();
+    let client = releases::build_client(Duration::from_secs(5)).unwrap();
     for tag in ["v1.0.0", "v2.0.0"] {
         assert_eq!(
             releases::fetch_release_api(&client, &url, &crate::models::Provider::Github, None)
@@ -238,7 +330,12 @@ async fn remote_source_resolves_children_from_its_redirect_destination() {
         assert_eq!(count, 2);
     });
     let location = SourceLocation::parse(&format!("http://{address}/start.toml")).unwrap();
-    let result = load_document(&location, &Default::default()).await;
+    let result = load_document(
+        &location,
+        &Default::default(),
+        &crate::models::NetworkConfig::default(),
+    )
+    .await;
     server.join().unwrap();
     assert_eq!(
         result.unwrap().repository_sources[0].url,

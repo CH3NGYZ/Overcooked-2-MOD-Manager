@@ -1,5 +1,5 @@
 use super::channels::*;
-use super::download::{download_installer_with_timeout, download_verified_installer};
+use super::download::{download_installer, download_verified_installer};
 use super::manifest::*;
 use crate::archive::{self, DownloadRoute as AssetDownloadRoute};
 use crate::download::DownloadCandidate as AssetDownloadCandidate;
@@ -472,6 +472,7 @@ async fn github_manifests_race_and_invalid_json_does_not_win_without_tokens() {
         || false,
         |status| statuses.push(status),
         |info| std::future::ready(Ok(info)),
+        &crate::models::NetworkConfig::default(),
     )
     .await
     .unwrap();
@@ -558,6 +559,7 @@ async fn gitee_finishes_its_single_manifest_and_package_before_github_can_start(
                     Ok(info)
                 }
             },
+            &crate::models::NetworkConfig::default(),
         )
         .await
         .unwrap();
@@ -597,6 +599,7 @@ async fn latest_gitee_skips_github_and_github_exhaustion_reports_failure() {
         || false,
         |status| statuses.push(status),
         |_| std::future::ready(Err::<(), String>("must not download".into())),
+        &crate::models::NetworkConfig::default(),
     )
     .await
     .unwrap();
@@ -614,6 +617,7 @@ async fn latest_gitee_skips_github_and_github_exhaustion_reports_failure() {
         || false,
         |_| {},
         |_| std::future::ready(Ok(())),
+        &crate::models::NetworkConfig::default(),
     )
     .await
     .unwrap();
@@ -636,6 +640,7 @@ async fn cancellation_interrupts_gitee_without_starting_github() {
     let cancelled = AtomicBool::new(false);
     let client = reqwest::Client::new();
     let version = semver::Version::new(1, 0, 0);
+    let network = crate::models::NetworkConfig::default();
     let request = run_installer_manifest_routes(
         &client,
         &channels,
@@ -644,6 +649,7 @@ async fn cancellation_interrupts_gitee_without_starting_github() {
         || cancelled.load(Ordering::Acquire),
         |_| {},
         |_| std::future::ready(Ok(())),
+        &network,
     );
     let cancel = async {
         for _ in 0..100 {
@@ -724,11 +730,12 @@ async fn actual_package_stream_retains_length_checks_and_unknown_size_progress()
     ]));
     let client = reqwest::Client::new();
     let reporter = archive::DownloadReporter::new("update");
-    let bytes = download_installer_with_timeout(
+    let bytes = download_installer(
         &client,
         &format!("{}/package", server.base),
         &reporter,
         "update",
+        &crate::models::NetworkConfig::default(),
     )
     .await
     .unwrap();
@@ -737,11 +744,12 @@ async fn actual_package_stream_retains_length_checks_and_unknown_size_progress()
     assert_eq!(reporter.snapshot().downloaded, bytes.len() as u64);
     for path in ["/truncated", "/empty"] {
         assert!(
-            download_installer_with_timeout(
+            download_installer(
                 &client,
                 &format!("{}{path}", server.base),
                 &reporter,
-                "update"
+                "update",
+                &crate::models::NetworkConfig::default(),
             )
             .await
             .is_err()
@@ -795,6 +803,7 @@ async fn package_race_rejects_bad_signatures_and_can_choose_a_different_route() 
         None,
         InstallerRegion::MainlandChina,
         |bytes| crate::app_update::verify_with_key(bytes, signature, key, &info.version),
+        &crate::models::NetworkConfig::default(),
     )
     .await
     .unwrap();
@@ -838,6 +847,7 @@ async fn gitee_package_uses_one_get_without_range_requests() {
                 &info.version,
             )
         },
+        &crate::models::NetworkConfig::default(),
     )
     .await
     .unwrap();
@@ -876,6 +886,7 @@ async fn exhausted_github_package_pool_ends_the_round_without_mixing_manifests()
             attempts += 1;
             std::future::ready(Err::<(), String>("all package signatures failed".into()))
         },
+        &crate::models::NetworkConfig::default(),
     )
     .await
     .unwrap();
@@ -919,6 +930,7 @@ async fn github_pool_has_at_most_three_live_sources_and_drops_losers() {
                 Ok(channel.id.into_bytes())
             }
         },
+        &crate::models::NetworkConfig::default(),
     )
     .await
     .unwrap();
@@ -949,6 +961,7 @@ async fn cancellation_drops_the_whole_github_pool() {
     let cancelled = AtomicBool::new(false);
     let client = reqwest::Client::new();
     let current = semver::Version::new(1, 0, 0);
+    let network = crate::models::NetworkConfig::default();
     let request = run_installer_manifest_routes(
         &client,
         &channels,
@@ -957,6 +970,7 @@ async fn cancellation_drops_the_whole_github_pool() {
         || cancelled.load(Ordering::Acquire),
         |_| {},
         |_| std::future::ready(Ok(())),
+        &network,
     );
     let cancel = async {
         for _ in 0..100 {

@@ -55,7 +55,7 @@ test('region choice sits above the data source with matching controls and shared
   for (const control of controls) {
     assert.ok(control.includes('style="width: 304px; max-width: 100%"'))
     assert.ok(control.includes(':loading="switchingDataProvider"'))
-    assert.ok(control.includes(':disabled="switchingDataProvider || !config || demoActive"'))
+    assert.ok(control.includes(':disabled="switchingDataProvider || savingDownload || !config || demoActive"'))
     assert.ok(control.includes('switchDataSelection({'))
   }
   assert.match(controls[0], /switchDataSelection\(\{ region: value \}\)/)
@@ -74,17 +74,19 @@ test('region choice sits above the data source with matching controls and shared
 test('Settings selection handler skips unchanged values and protects tutorial state before coordinating either choice', async () => {
   const source = view.slice(view.indexOf('async function switchDataSelection('), view.indexOf('/* ===== API 凭据 ===== */'))
     .replace('patch: DataSelectionPatch', 'patch')
-  const switchingDataProvider = ref(false), demoActive = ref(false), userRegion = ref('global'), dataProvider = ref('github'), config = ref(null)
+  const switchingDataProvider = ref(false), savingDownload = ref(false), demoActive = ref(false), userRegion = ref('global'), dataProvider = ref('github'), config = ref(null)
   const calls = [], notices = []
   const switchSelection = async patch => { calls.push(patch); return { config: { region: patch.region ?? 'global' }, ready: true, errors: [] } }
-  const handler = new Function('switchingDataProvider', 'demoActive', 'userRegion', 'dataProvider', 'config', 'switchSelection', 'message', 't', 'fail', `${source}; return switchDataSelection`)(
-    switchingDataProvider, demoActive, userRegion, dataProvider, config, switchSelection,
+  const handler = new Function('switchingDataProvider', 'savingDownload', 'demoActive', 'userRegion', 'dataProvider', 'config', 'switchSelection', 'message', 't', 'fail', `${source}; return switchDataSelection`)(
+    switchingDataProvider, savingDownload, demoActive, userRegion, dataProvider, config, switchSelection,
     { success: value => notices.push(value), warning: () => assert.fail('unexpected warning') }, key => key, error => { throw error },
   )
   await handler({ region: 'global' }); await handler({ data_provider: 'github' })
   switchingDataProvider.value = true
   await handler({ region: 'cn' }); await handler({ data_provider: 'builtin' })
-  switchingDataProvider.value = false; demoActive.value = true
+  switchingDataProvider.value = false; savingDownload.value = true
+  await handler({ region: 'cn' }); await handler({ data_provider: 'builtin' })
+  savingDownload.value = false; demoActive.value = true
   await handler({ region: 'cn' }); await handler({ data_provider: 'builtin' })
   assert.deepEqual(calls, [])
   demoActive.value = false

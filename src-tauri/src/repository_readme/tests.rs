@@ -115,6 +115,7 @@ async fn gitee_readme_makes_one_direct_get_without_ranges_tokens_or_proxy_reques
             "main",
             &proxies,
             &AtomicBool::new(false),
+            &NetworkConfig::default(),
         )
         .await;
         if status == 200 {
@@ -139,7 +140,8 @@ async fn gitee_readme_makes_one_direct_get_without_ranges_tokens_or_proxy_reques
             "http://127.0.0.1:1/README.md",
             "main",
             &proxies,
-            &AtomicBool::new(true)
+            &AtomicBool::new(true),
+            &NetworkConfig::default(),
         )
         .await
         .unwrap_err(),
@@ -161,6 +163,7 @@ async fn any_started_404_stops_the_real_raw_race_without_waiting_for_slow_succes
                 candidate(missing, missing_route),
             ],
             &AtomicBool::new(false),
+            &NetworkConfig::default(),
         )
         .await;
         assert_eq!(result.unwrap_err(), NOT_FOUND);
@@ -189,6 +192,7 @@ async fn ordinary_failures_do_not_abort_the_raw_race_and_utf8_is_required() {
             candidate(success, DownloadRoute::Proxy),
         ],
         &AtomicBool::new(false),
+        &NetworkConfig::default(),
     )
     .await
     .unwrap();
@@ -198,10 +202,15 @@ async fn ordinary_failures_do_not_abort_the_raw_race_and_utf8_is_required() {
 
     let (invalid, task) = server(200, Duration::ZERO, vec![0xff]);
     assert!(
-        fetch_readme(&client, &invalid, &DownloadReporter::new("README"))
-            .await
-            .unwrap_err()
-            .contains("readme.invalidUtf8")
+        fetch_readme(
+            &client,
+            &invalid,
+            &DownloadReporter::new("README"),
+            &NetworkConfig::default(),
+        )
+        .await
+        .unwrap_err()
+        .contains("readme.invalidUtf8")
     );
     finish_server(task).await;
 }
@@ -211,10 +220,15 @@ async fn raw_readme_size_and_pre_cancelled_downloads_are_bounded() {
     let (large, task) = server(200, Duration::ZERO, vec![b'x'; MAX_README_BYTES + 1]);
     let client = Client::builder().no_proxy().build().unwrap();
     assert!(
-        fetch_readme(&client, &large, &DownloadReporter::new("README"))
-            .await
-            .unwrap_err()
-            .contains("readme.tooLarge")
+        fetch_readme(
+            &client,
+            &large,
+            &DownloadReporter::new("README"),
+            &NetworkConfig::default(),
+        )
+        .await
+        .unwrap_err()
+        .contains("readme.tooLarge")
     );
     finish_server(task).await;
     let result = download_readme(
@@ -224,6 +238,7 @@ async fn raw_readme_size_and_pre_cancelled_downloads_are_bounded() {
             DownloadRoute::Direct,
         )],
         &AtomicBool::new(true),
+        &NetworkConfig::default(),
     )
     .await;
     assert_eq!(result.unwrap_err(), "download.cancelled");

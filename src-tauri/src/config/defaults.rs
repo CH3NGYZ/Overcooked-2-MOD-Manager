@@ -44,11 +44,7 @@ pub(crate) fn default_config() -> AppConfig {
             // 与 serde 的字段默认值同一处定义：macOS 默认也走原生。
             runtime: GameRuntime::default(),
         },
-        network: NetworkConfig {
-            timeout_seconds: 20,
-            download_threads: 32,
-            max_retry_count: 3,
-        },
+        network: NetworkConfig::default(),
         launch: LaunchConfig {
             ask_user_to_start_from_steam: true,
             auto_restore_winhttp: true,

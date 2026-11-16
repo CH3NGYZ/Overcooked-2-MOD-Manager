@@ -138,7 +138,8 @@ pub async fn list_publish_releases(
     let token = publish_token(&state, provider)?;
     let api_endpoint = provider.api_endpoint();
     let (owner, repository) = validate_coordinates(&owner, &repository)?;
-    let client = api_client()?;
+    let network = state.config.load_or_default().network;
+    let client = api_client(&network)?;
     let releases = crate::releases::pagination::collect_release_pages(|page| {
         let url = format!(
             "{api_endpoint}/repos/{owner}/{repository}/releases?per_page={}&page={page}",
@@ -235,7 +236,8 @@ pub async fn save_publish_release(
     } else {
         validate_tag(&request.tag)?
     };
-    let client = api_client()?;
+    let network = state.config.load_or_default().network;
+    let client = api_client(&network)?;
     // 请求按是否携带 metadata 分流，不按界面步骤推断：带资料时整体写块，
     // 只改日志时保留远端块，新建且无资料时直接写正文。
     let body = match request.metadata.clone() {
@@ -351,7 +353,8 @@ pub async fn delete_publish_release(
     let api_endpoint = provider.api_endpoint();
     let token = publish_token(&state, provider)?;
     let (owner, repository) = validate_coordinates(&request.owner, &request.repository)?;
-    let client = api_client()?;
+    let network = state.config.load_or_default().network;
+    let client = api_client(&network)?;
     let response = authorized(
         client.delete(format!(
             "{api_endpoint}/repos/{owner}/{repository}/releases/{}",

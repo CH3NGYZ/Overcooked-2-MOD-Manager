@@ -1,4 +1,4 @@
-use super::client::{APP_USER_AGENT, REQUEST_START_TIMEOUT};
+use super::client::APP_USER_AGENT;
 use super::error::ReleaseError;
 use super::error::release_error_kind;
 use super::projection::parse_release_json;
@@ -9,8 +9,6 @@ use crate::models::ReleaseInfo;
 use reqwest::Client;
 use reqwest::StatusCode;
 use serde_json::Value;
-
-pub(super) const API_REQUEST_TIMEOUT: std::time::Duration = REQUEST_START_TIMEOUT;
 
 const REPOSITORY_API_ATTEMPTS: usize = 3;
 
@@ -197,7 +195,6 @@ async fn fetch_api_json(
         token.is_some()
     );
     let request = crate::providers::api_request(client, url, provider, token)?
-        .timeout(API_REQUEST_TIMEOUT)
         .header("User-Agent", APP_USER_AGENT)
         .header(
             reqwest::header::CACHE_CONTROL,

@@ -64,10 +64,15 @@ impl ProxyRuntime {
     pub(crate) fn official_root(
         &self,
         force: bool,
+        network: &crate::models::NetworkConfig,
     ) -> impl std::future::Future<Output = Result<OfficialRootSnapshot, String>> {
         // The builtin branch bypasses in_selection; bound the complete root
         // task here so neither branch propagates its size into release IPC.
-        Box::pin(self.official_root_from(force, move |provider| self.archive_address(provider)))
+        Box::pin(self.official_root_from(
+            force,
+            move |provider| self.archive_address(provider),
+            network,
+        ))
     }
 
     fn archive_address(&self, provider: DataProvider) -> String {
@@ -88,6 +93,7 @@ impl ProxyRuntime {
         &self,
         force: bool,
         address: impl Fn(DataProvider) -> String,
+        network: &crate::models::NetworkConfig,
     ) -> Result<OfficialRootSnapshot, String> {
         let manual_revision = self
             .current
@@ -96,7 +102,7 @@ impl ProxyRuntime {
             .manual_revision;
         let mut force = force;
         loop {
-            let result = self.load_official_root(force, &address).await;
+            let result = self.load_official_root(force, &address, network).await;
             // Parallel startup consumers follow the gate's own fallback. A user
             // selection cancels them, even if it returns to the same provider.
             if result
@@ -121,6 +127,7 @@ impl ProxyRuntime {
         &self,
         force: bool,
         address: &impl Fn(DataProvider) -> String,
+        network: &crate::models::NetworkConfig,
     ) -> Result<OfficialRootSnapshot, String> {
         let (selection, manual_revision, region) = {
             let snapshot = self.current.read().unwrap_or_else(|e| e.into_inner());
@@ -170,7 +177,7 @@ impl ProxyRuntime {
             let fetched = self
                 .in_selection(
                     expected,
-                    prepare_package(expected.0, address(expected.0), &region, browser),
+                    prepare_package(expected.0, address(expected.0), &region, browser, network),
                 )
                 .await;
             let mut snapshot = self.current.write().unwrap_or_else(|e| e.into_inner());
@@ -258,6 +265,7 @@ async fn prepare_package(
     address: String,
     region: &str,
     browser: Option<tauri::AppHandle>,
+    network: &crate::models::NetworkConfig,
 ) -> Result<
     (
         RepositorySourceDocument,
@@ -269,8 +277,13 @@ async fn prepare_package(
     let package = if provider == DataProvider::Builtin {
         SourcePackage::bundled()
     } else {
-        crate::repository_sources::fetch_source_package(provider, &address, browser.as_ref())
-            .await?
+        crate::repository_sources::fetch_source_package(
+            provider,
+            &address,
+            browser.as_ref(),
+            network,
+        )
+        .await?
     };
     // A valid package owns all four entry documents. Missing children remain
     // branch errors; they never fall through to another package's resources.
@@ -285,10 +298,11 @@ async fn prepare_package(
     let location =
         SourceLocation::parse(&provider.document("mods.toml")).map_err(|e| e.to_string())?;
     let (document, policy) = SourcePackage::in_snapshot(package.clone(), async {
-        let policy = crate::network_policy::NetworkPolicy::refresh_from(&location, region).await?;
+        let policy =
+            crate::network_policy::NetworkPolicy::refresh_from(&location, region, network).await?;
         let document =
             crate::network_policy::NetworkPolicy::in_snapshot(Arc::new(policy.clone()), async {
-                load_document(&location, &Default::default())
+                load_document(&location, &Default::default(), network)
                     .await
                     .map_err(|e| e.to_string())
             })

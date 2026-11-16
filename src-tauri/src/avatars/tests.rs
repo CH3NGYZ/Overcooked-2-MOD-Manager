@@ -215,10 +215,16 @@ async fn sequential_avatar_fetch_stops_after_valid_image_and_reuses_cache() {
             url: format!("http://{address}/{path}"),
         })
         .collect();
-    let bytes =
-        fetch_and_store_candidates(&client, &cache, &Provider::Gitcode, "owner", candidates)
-            .await
-            .unwrap();
+    let bytes = fetch_and_store_candidates(
+        &client,
+        &cache,
+        &Provider::Gitcode,
+        "owner",
+        candidates,
+        &crate::models::NetworkConfig::default(),
+    )
+    .await
+    .unwrap();
     assert!(bytes.starts_with(b"\x89PNG"));
     assert_eq!(
         load(

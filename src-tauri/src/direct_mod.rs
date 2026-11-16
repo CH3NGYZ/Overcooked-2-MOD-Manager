@@ -122,9 +122,13 @@ fn validate_mod_file(path: &Path, filename: &str) -> Result<(), String> {
 /// 用一次 `bytes=0-0` 的 Range 请求探测文件名（顺带暴露 404/403 或登录页）。
 ///
 /// 探测本身也响应取消：用户点了取消后不应该再等满首字节超时。
-async fn probe_remote_filename(client: &reqwest::Client, parsed: &Url) -> Result<String, String> {
+async fn probe_remote_filename(
+    client: &reqwest::Client,
+    parsed: &Url,
+    first_byte_timeout: std::time::Duration,
+) -> Result<String, String> {
     let response = tokio::select! {
-        result = client.get(parsed.clone()).timeout(archive::FIRST_BYTE_TIMEOUT).header(reqwest::header::RANGE, "bytes=0-0")
+        result = client.get(parsed.clone()).timeout(first_byte_timeout).header(reqwest::header::RANGE, "bytes=0-0")
             .header(reqwest::header::ACCEPT_ENCODING, "identity")
             .header(reqwest::header::USER_AGENT, releases::APP_USER_AGENT).send_logged() => {
             result.map_err(|_| "direct.infoFailed")?.error_for_status().map_err(|_| "direct.infoFailed")?
@@ -200,7 +204,7 @@ pub(crate) async fn download_remote_to_temp(
         configured_threads,
         racing,
     );
-    let client = releases::build_download_client(config.network.timeout_seconds)
+    let client = releases::build_download_client(config.network.first_byte_timeout())
         .map_err(|_| "direct.clientFailed")?;
     /*
      * 文件名：只有「单一候选且就是直连」时才先探测一次。
@@ -211,7 +215,7 @@ pub(crate) async fn download_remote_to_temp(
      */
     let probe_direct = candidates.len() == 1 && candidates[0].route == DownloadRoute::Direct;
     let filename = if probe_direct {
-        probe_remote_filename(&client, &parsed).await?
+        probe_remote_filename(&client, &parsed, config.network.first_byte_timeout()).await?
     } else {
         download_filename(&parsed, None)?
     };
@@ -224,6 +228,7 @@ pub(crate) async fn download_remote_to_temp(
         threads,
         filename
     );
+    let first_byte_timeout = config.network.first_byte_timeout();
     let temp = try_download_candidates(
         candidates,
         archive::is_download_cancelled,
@@ -239,7 +244,7 @@ pub(crate) async fn download_remote_to_temp(
                     label,
                     &reporter,
                     threads,
-                    Some(archive::FIRST_BYTE_TIMEOUT),
+                    Some(first_byte_timeout),
                 )
                 .await?;
                 let checked = match validation {
@@ -253,6 +258,7 @@ pub(crate) async fn download_remote_to_temp(
                 Ok(path)
             }
         },
+        &config.network,
         Some(DownloadContext {
             execution: None,
             // 传入 app：直链、Release 资产与仓库资产共用同一套下载进度事件；

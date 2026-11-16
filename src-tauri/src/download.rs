@@ -1,4 +1,5 @@
 use crate::archive::{self, DownloadPhase, DownloadProgress, DownloadReporter, DownloadRoute};
+use crate::models::NetworkConfig;
 use futures_util::StreamExt;
 use futures_util::future::{AbortHandle, Abortable};
 use futures_util::stream::FuturesUnordered;
@@ -98,15 +99,21 @@ struct RacePolicy {
     terminal_error: Option<&'static str>,
 }
 
-impl Default for RacePolicy {
-    fn default() -> Self {
+impl RacePolicy {
+    fn from_network(network: &NetworkConfig) -> Self {
         Self {
             parallelism: 3,
-            window: Duration::from_secs(5),
-            minimum_speed: 256 * 1024,
+            window: network.race_window(),
+            minimum_speed: network.race_minimum_speed(),
             tick: Duration::from_millis(250),
             terminal_error: None,
         }
+    }
+}
+
+impl Default for RacePolicy {
+    fn default() -> Self {
+        Self::from_network(&NetworkConfig::default())
     }
 }
 
@@ -123,7 +130,7 @@ impl ActiveSource {
     fn sample(&mut self, now: Instant, policy: RacePolicy) -> bool {
         let bytes = self.reporter.transferred();
         self.samples.push_back((now, bytes));
-        // Retain the sample at the beginning of the rolling five-second window.
+        // Retain the sample at the beginning of the configured rolling window.
         while self.samples.len() > 1 && now.duration_since(self.samples[1].0) >= policy.window {
             self.samples.pop_front();
         }
@@ -189,6 +196,7 @@ pub async fn try_download_candidates<T, F, Fut, C>(
     candidates: Vec<DownloadCandidate>,
     is_cancelled: C,
     download: F,
+    network: &NetworkConfig,
     context: Option<DownloadContext<'_>>,
 ) -> Result<T, String>
 where
@@ -198,9 +206,14 @@ where
     C: FnMut() -> bool,
 {
     let app = context.as_ref().and_then(|context| context.app);
-    try_download_candidates_with_progress(candidates, is_cancelled, download, context, |progress| {
-        archive::emit_progress_event(app, progress)
-    })
+    try_download_candidates_with_progress(
+        candidates,
+        is_cancelled,
+        download,
+        network,
+        context,
+        |progress| archive::emit_progress_event(app, progress),
+    )
     .await
 }
 
@@ -210,6 +223,7 @@ pub(crate) async fn try_download_candidates_with_progress<T, F, Fut, C>(
     candidates: Vec<DownloadCandidate>,
     is_cancelled: C,
     download: F,
+    network: &NetworkConfig,
     context: Option<DownloadContext<'_>>,
     report_progress: impl FnMut(DownloadProgress),
 ) -> Result<T, String>
@@ -219,7 +233,7 @@ where
     Fut: std::future::Future<Output = Result<T, String>>,
     C: FnMut() -> bool,
 {
-    let mut policy = RacePolicy::default();
+    let mut policy = RacePolicy::from_network(network);
     if let Some(execution) = context.as_ref().and_then(|value| value.execution) {
         if execution.max_parallelism == 0
             || execution.max_parallelism > 3
@@ -248,6 +262,7 @@ pub async fn try_download_candidates_until_error<T, F, Fut, C>(
     is_cancelled: C,
     download: F,
     terminal_error: &'static str,
+    network: &NetworkConfig,
 ) -> Result<T, String>
 where
     T: DownloadOutput,
@@ -262,7 +277,7 @@ where
         None,
         RacePolicy {
             terminal_error: Some(terminal_error),
-            ..RacePolicy::default()
+            ..RacePolicy::from_network(network)
         },
         |_| {},
     )
@@ -415,7 +430,7 @@ where
                 let replacements = pending.len().saturating_sub(retiring.len());
                 for id in slow.into_iter().take(replacements) {
                     if let Some(source) = sources.remove(&id) {
-                        log::info!("下载源最近五秒速度过低，释放下载槽：候选序号={}，速度={}B/s", id + 1, source.speed);
+                        log::info!("下载源最近{}秒速度过低，释放下载槽：候选序号={}，速度={}B/s，最低速度={}B/s", policy.window.as_secs(), id + 1, source.speed, policy.minimum_speed);
                         retiring.insert(id);
                         source.abort.abort();
                     }

@@ -4,7 +4,7 @@ use super::progress::VolumeProgress;
 use super::{DownloadPhase, DownloadProgress};
 use crate::download::planning::RepositoryDownloadPlan;
 use crate::download::{DownloadContext, try_download_candidates_with_progress};
-use crate::models::ReleaseAsset;
+use crate::models::{NetworkConfig, ReleaseAsset};
 use futures_util::{StreamExt, TryStreamExt, stream};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -104,6 +104,7 @@ pub(crate) async fn download<F>(
     cache: &Path,
     label: &str,
     app: Option<&AppHandle>,
+    network: &NetworkConfig,
     plan: F,
 ) -> Result<PathBuf, String>
 where
@@ -159,7 +160,7 @@ where
                                         label,
                                         &reporter,
                                         threads,
-                                        Some(super::FIRST_BYTE_TIMEOUT),
+                                        Some(network.first_byte_timeout()),
                                     )
                                     .await?;
                                 let file = TemporaryFile(Some(path));
@@ -170,6 +171,7 @@ where
                                 Ok(file.keep())
                             }
                         },
+                        network,
                         Some(DownloadContext {
                             execution: Some(planned.execution),
                             app: None,

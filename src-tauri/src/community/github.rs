@@ -11,7 +11,6 @@ use reqwest::Client;
 use reqwest::StatusCode;
 use serde_json::Value;
 use std::collections::HashSet;
-use std::time::Duration;
 use url::Url;
 
 pub const SEARCH_ENDPOINT: &str = "https://api.github.com/search/repositories";
@@ -50,7 +49,6 @@ pub(super) async fn fetch_page(
     limits.before_request(route).await?;
     let mut request = client
         .get(url)
-        .timeout(Duration::from_secs(5))
         .header(reqwest::header::ACCEPT, "application/vnd.github+json")
         .header(
             reqwest::header::CACHE_CONTROL,

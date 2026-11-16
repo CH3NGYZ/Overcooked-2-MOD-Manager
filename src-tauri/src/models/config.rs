@@ -238,6 +238,10 @@ pub struct SettingsPatch {
     pub official_api_only: Option<bool>,
     pub timeout_seconds: Option<u64>,
     pub download_threads: Option<u32>,
+    pub race_min_speed_kbps: Option<u64>,
+    pub race_window_seconds: Option<u64>,
+    pub api_timeout_seconds: Option<u64>,
+    pub first_byte_timeout_seconds: Option<u64>,
     /// MOD 元数据并行读取上限；`0` = 全部 CPU 核心。超出核心数由后端夹紧。
     pub mod_metadata_concurrency: Option<u32>,
     /// 地图 `info` 并行解析上限；`0` = 全部 CPU 核心。

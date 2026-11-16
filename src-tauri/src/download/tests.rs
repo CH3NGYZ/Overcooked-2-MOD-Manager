@@ -55,35 +55,91 @@ fn progress_keeps_the_leader_until_another_file_overtakes_it() {
 }
 
 #[test]
-fn speed_uses_the_recent_five_seconds_and_gives_new_sources_a_full_window() {
-    let now = Instant::now();
-    let mut source = source(0, now);
+fn default_policy_uses_network_defaults() {
     let policy = RacePolicy::default();
-    source.reporter.received(1024 * 1024);
-    assert!(!source.sample(now + Duration::from_secs(1), policy));
-    assert!(source.sample(now + Duration::from_secs(5), policy));
-    source.reporter.received(10 * 1024 * 1024);
-    assert!(!source.sample(now + Duration::from_secs(6), policy));
-    assert!(source.sample(now + Duration::from_secs(11), policy));
-    assert_eq!(source.speed, 0);
+    assert_eq!(policy.window, Duration::from_secs(10));
+    assert_eq!(policy.minimum_speed, 64 * 1024);
+    assert_eq!(policy.parallelism, 3);
+    assert_eq!(policy.tick, Duration::from_millis(250));
+    assert_eq!(policy.terminal_error, None);
 }
 
 #[test]
-fn default_policy_only_replaces_sources_below_256_kib_per_second() {
+fn configured_policy_converts_every_speed_choice_to_bytes_per_second() {
+    for speed in [32, 64, 128, 256, 512, 1024, 2048] {
+        for window in [5, 10, 20] {
+            let network = NetworkConfig {
+                race_min_speed_kbps: speed,
+                race_window_seconds: window,
+                ..NetworkConfig::default()
+            };
+            let policy = RacePolicy::from_network(&network);
+            assert_eq!(policy.minimum_speed, speed * 1024);
+            assert_eq!(policy.window, Duration::from_secs(window));
+            assert_eq!(policy.parallelism, 3);
+        }
+    }
+}
+
+#[test]
+fn configured_window_gives_new_sources_a_full_warmup() {
     let now = Instant::now();
-    let policy = RacePolicy::default();
-    for (speed, replace) in [
-        (256 * 1024 - 1, true),
-        (256 * 1024, false),
-        (256 * 1024 + 1, false),
-        (384 * 1024, false),
-        (512 * 1024, false),
-        (768 * 1024, false),
-    ] {
+    for window in [5, 10, 20] {
+        let network = NetworkConfig {
+            race_window_seconds: window,
+            ..NetworkConfig::default()
+        };
+        let policy = RacePolicy::from_network(&network);
+        for activation in [now, now + Duration::from_secs(100)] {
+            let mut source = source(0, activation);
+            assert!(!source.sample(activation + policy.window - Duration::from_nanos(1), policy));
+            assert!(source.sample(activation + policy.window, policy));
+        }
+    }
+}
+
+#[test]
+fn speed_uses_the_configured_rolling_window() {
+    let now = Instant::now();
+    for window in [5, 10, 20] {
+        let network = NetworkConfig {
+            race_window_seconds: window,
+            ..NetworkConfig::default()
+        };
+        let policy = RacePolicy::from_network(&network);
         let mut source = source(0, now);
-        source.reporter.received(speed * 5);
-        assert_eq!(source.sample(now + Duration::from_secs(5), policy), replace);
-        assert_eq!(source.speed, speed);
+        source.reporter.received(policy.minimum_speed * window / 2);
+        assert!(!source.sample(now + Duration::from_secs(1), policy));
+        assert!(source.sample(now + policy.window, policy));
+        source.reporter.received(10 * 1024 * 1024);
+        assert!(!source.sample(now + policy.window + Duration::from_secs(1), policy));
+        assert!(source.sample(now + policy.window * 2 + Duration::from_secs(1), policy));
+        assert_eq!(source.speed, 0);
+    }
+}
+
+#[test]
+fn configured_policy_only_replaces_sources_strictly_below_the_speed_floor() {
+    let now = Instant::now();
+    for speed in [32, 64, 128, 256, 512, 1024, 2048] {
+        for window in [5, 10, 20] {
+            let network = NetworkConfig {
+                race_min_speed_kbps: speed,
+                race_window_seconds: window,
+                ..NetworkConfig::default()
+            };
+            let policy = RacePolicy::from_network(&network);
+            for (actual, replace) in [
+                (policy.minimum_speed - 1, true),
+                (policy.minimum_speed, false),
+                (policy.minimum_speed + 1, false),
+            ] {
+                let mut source = source(0, now);
+                source.reporter.received(actual * window);
+                assert_eq!(source.sample(now + policy.window, policy), replace);
+                assert_eq!(source.speed, actual);
+            }
+        }
     }
 }
 
@@ -711,6 +767,7 @@ async fn configured_sequence_attempts_only_one_candidate_and_stops_after_success
                 }
             }
         },
+        &NetworkConfig::default(),
         Some(DownloadContext {
             app: None,
             label: "sequence",
@@ -750,6 +807,7 @@ async fn configured_race_honors_two_candidate_limit() {
                 Err("try next".into())
             }
         },
+        &NetworkConfig::default(),
         Some(DownloadContext {
             app: None,
             label: "race",

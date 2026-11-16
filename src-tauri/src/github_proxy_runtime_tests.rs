@@ -177,7 +177,7 @@ async fn bad_responses_and_timeouts_preserve_current_snapshot() {
     );
     let short_client = reqwest::Client::builder()
         .no_proxy()
-        .timeout(Duration::from_millis(30))
+        .read_timeout(Duration::from_millis(30))
         .build()
         .unwrap();
     assert!(
@@ -266,12 +266,18 @@ async fn live_official_proxy_manifest() {
     let github_urls = github_proxies::proxy_urls(&snapshot.raw_proxies, github, true, None);
     let raw_urls = github_proxies::proxy_urls(&snapshot.raw_proxies, raw, true, None);
     assert_eq!(raw_urls, github_urls);
-    let client = crate::releases::build_client(30).unwrap();
+    let client = crate::releases::build_client(Duration::from_secs(30)).unwrap();
     let reporter = crate::archive::DownloadReporter::new("live-proxy-probe");
-    let bytes =
-        repository_sources::fetch_document_bytes(&client, &raw_urls[0], &reporter, None, None)
-            .await
-            .unwrap();
+    let bytes = repository_sources::fetch_document_bytes(
+        &client,
+        &raw_urls[0],
+        &reporter,
+        None,
+        None,
+        crate::models::NetworkConfig::default().first_byte_timeout(),
+    )
+    .await
+    .unwrap();
     let text = std::str::from_utf8(&bytes).unwrap();
     repository_sources::parse_document(
         text,
@@ -290,10 +296,16 @@ async fn live_official_proxy_manifest() {
         false,
         None,
     );
-    let metadata =
-        repository_sources::fetch_document_bytes(&client, &api[0], &reporter, None, None)
-            .await
-            .unwrap();
+    let metadata = repository_sources::fetch_document_bytes(
+        &client,
+        &api[0],
+        &reporter,
+        None,
+        None,
+        crate::models::NetworkConfig::default().first_byte_timeout(),
+    )
+    .await
+    .unwrap();
     let metadata: serde_json::Value = serde_json::from_slice(&metadata).unwrap();
     let asset = metadata["assets"]
         .as_array()
@@ -323,7 +335,7 @@ async fn live_official_proxy_manifest() {
                     "live-proxy-probe",
                     &reporter,
                     1,
-                    Some(crate::archive::FIRST_BYTE_TIMEOUT),
+                    Some(crate::models::NetworkConfig::default().first_byte_timeout()),
                 )
                 .await?;
                 if let Err(error) =
@@ -336,6 +348,7 @@ async fn live_official_proxy_manifest() {
                 Ok(path)
             }
         },
+        &crate::models::NetworkConfig::default(),
         None,
     )
     .await;
@@ -469,7 +482,10 @@ async fn typed_provider_loads_the_complete_closure_and_failed_refresh_keeps_snap
         let (base, server) = serve_policy(false, 9);
         let runtime = ProxyRuntime::new(provider);
         let before = runtime.snapshot();
-        let fresh = NetworkPolicy::refresh_from(&base, "global").await.unwrap();
+        let fresh =
+            NetworkPolicy::refresh_from(&base, "global", &crate::models::NetworkConfig::default())
+                .await
+                .unwrap();
         assert_eq!(
             runtime.snapshot(),
             before,
@@ -521,7 +537,11 @@ async fn typed_provider_loads_the_complete_closure_and_failed_refresh_keeps_snap
         assert_eq!(active_threads, 2);
         let current = runtime.snapshot();
         let (base, server) = serve_policy(true, 9);
-        assert!(NetworkPolicy::refresh_from(&base, "global").await.is_err());
+        assert!(
+            NetworkPolicy::refresh_from(&base, "global", &crate::models::NetworkConfig::default())
+                .await
+                .is_err()
+        );
         assert_eq!(server.join().unwrap().len(), 9);
         assert_eq!(runtime.snapshot(), current);
         assert_eq!(
@@ -583,7 +603,9 @@ async fn changing_provider_cancels_waiting_refresh_and_bundled_mode_never_waits_
     let pending = runtime.clone();
     let task = tokio::spawn(async move {
         started.send(()).unwrap();
-        pending.refresh_policy().await
+        pending
+            .refresh_policy(&crate::models::NetworkConfig::default())
+            .await
     });
     ready.await.unwrap();
     runtime.select_provider(DataProvider::Gitee, None);
@@ -596,7 +618,8 @@ async fn changing_provider_cancels_waiting_refresh_and_bundled_mode_never_waits_
         "source.addressMismatch"
     );
     runtime.select_provider(DataProvider::Builtin, None);
-    tokio::time::timeout(Duration::from_millis(200), runtime.refresh_policy())
+    let network = crate::models::NetworkConfig::default();
+    tokio::time::timeout(Duration::from_millis(200), runtime.refresh_policy(&network))
         .await
         .unwrap()
         .unwrap();

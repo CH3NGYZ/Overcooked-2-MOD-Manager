@@ -92,7 +92,7 @@ fn bundled_tree_is_empty_offline() {
 #[ignore = "requires public GitCode network access"]
 async fn real_gitcode_bundle_loads_release_declarations() {
     let config = crate::config::default_config();
-    let client = crate::releases::build_client(30).unwrap();
+    let client = crate::releases::build_client(std::time::Duration::from_secs(30)).unwrap();
     let source = declaration("maps-oc2-map-bundle");
     let probe = super::release_tags::declaration_request(&source);
     let releases =

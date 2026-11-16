@@ -11,13 +11,47 @@ use uuid::Uuid;
 
 const FIRST_BYTE_TIMEOUT_ERROR: &str = "download.firstByteTimeout";
 
-/// 「多久没有动静就判定这个下载源已死」的唯一判定线。
-///
-/// 这份文件的所有下载入口（Release 资产、直链、BepInEx 框架包、安装器）
-/// 共用它：竞速会同时向多个候选发请求，等太久会把一个坏源拖成整批失败，
-/// 太快又会误杀慢速但可用的源。与 Release 请求和连接的最短启动窗口保持一致，
-/// 不进配置、不开放修改。
-pub const FIRST_BYTE_TIMEOUT: std::time::Duration = crate::releases::REQUEST_START_TIMEOUT;
+/// One deadline covers connection, response headers and the first nonempty payload.
+pub(crate) async fn send_before_first_byte_deadline(
+    request: reqwest::RequestBuilder,
+    deadline: Option<tokio::time::Instant>,
+) -> Result<reqwest::Response, String> {
+    let sent = if let Some(deadline) = deadline {
+        tokio::time::timeout_at(deadline, request.send_logged())
+            .await
+            .map_err(|_| FIRST_BYTE_TIMEOUT_ERROR.to_string())?
+    } else {
+        request.send_logged().await
+    };
+    sent.map_err(|error| error.without_url().to_string())
+}
+
+pub(crate) async fn first_nonempty_chunk<S>(
+    body: &mut S,
+    deadline: Option<tokio::time::Instant>,
+) -> Result<Option<bytes::Bytes>, String>
+where
+    S: futures_util::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin,
+{
+    loop {
+        let next = if let Some(deadline) = deadline {
+            tokio::time::timeout_at(deadline, body.next())
+                .await
+                .map_err(|_| FIRST_BYTE_TIMEOUT_ERROR.to_string())?
+        } else {
+            body.next().await
+        };
+        match next {
+            Some(Ok(chunk)) if chunk.is_empty() => continue,
+            Some(result) => {
+                return result
+                    .map(Some)
+                    .map_err(|error| error.without_url().to_string());
+            }
+            None => return Ok(None),
+        }
+    }
+}
 
 // Dropping an in-flight download (including HEAD, GET and range waits) must
 // close its files and remove incomplete data before switching candidates.
@@ -235,14 +269,8 @@ async fn download_stream(
         .get(url)
         .header("User-Agent", crate::releases::APP_USER_AGENT)
         .header(reqwest::header::ACCEPT_ENCODING, "identity");
-    let response = if let Some(timeout) = first_byte_timeout {
-        tokio::time::timeout(timeout, request.send_logged())
-            .await
-            .map_err(|_| FIRST_BYTE_TIMEOUT_ERROR.to_string())?
-    } else {
-        request.send_logged().await
-    }
-    .map_err(|error| error.without_url().to_string())?;
+    let deadline = first_byte_timeout.map(|timeout| tokio::time::Instant::now() + timeout);
+    let response = send_before_first_byte_deadline(request, deadline).await?;
     if !response.status().is_success() {
         return Err(crate::locale_tag::with_params(
             "download.httpStatus",
@@ -260,14 +288,8 @@ async fn download_stream(
     let mut body = response.bytes_stream();
     let started = std::time::Instant::now();
     let mut downloaded = 0_u64;
-    let first_chunk = if let Some(timeout) = first_byte_timeout {
-        tokio::time::timeout(timeout, body.next())
-            .await
-            .map_err(|_| FIRST_BYTE_TIMEOUT_ERROR.to_string())?
-    } else {
-        body.next().await
-    };
-    let mut next_chunk = first_chunk;
+    let first_chunk = first_nonempty_chunk(&mut body, deadline).await?;
+    let mut next_chunk = first_chunk.map(Ok::<_, reqwest::Error>);
     while let Some(chunk) = next_chunk {
         if is_download_cancelled() {
             return Err("download.cancelled".into());
@@ -303,19 +325,12 @@ async fn read_response_bytes(
     response: reqwest::Response,
     expected: u64,
     reporter: &DownloadReporter,
-    first_byte_timeout: Option<std::time::Duration>,
+    deadline: Option<tokio::time::Instant>,
 ) -> Result<Vec<u8>, String> {
     let mut body = response.bytes_stream();
     let mut bytes = Vec::with_capacity(expected.min(16 * 1024 * 1024) as usize);
-    let first_chunk = if let Some(timeout) = first_byte_timeout {
-        match tokio::time::timeout(timeout, body.next()).await {
-            Ok(chunk) => chunk,
-            Err(_) => return Err(FIRST_BYTE_TIMEOUT_ERROR.into()),
-        }
-    } else {
-        body.next().await
-    };
-    let mut next_chunk = first_chunk;
+    let first_chunk = first_nonempty_chunk(&mut body, deadline).await?;
+    let mut next_chunk = first_chunk.map(Ok::<_, reqwest::Error>);
     while let Some(chunk) = next_chunk {
         let chunk = chunk.map_err(|error| error.without_url().to_string())?;
         reporter.received(chunk.len() as u64);
@@ -384,8 +399,10 @@ async fn download_ranges(
                     .header("User-Agent", crate::releases::APP_USER_AGENT)
                     .header(reqwest::header::ACCEPT_ENCODING, "identity")
                     .header(reqwest::header::RANGE, format!("bytes={start}-{end}"));
-                let response = if let Some(timeout) = first_byte_timeout {
-                    match tokio::time::timeout(timeout, request.send_logged()).await {
+                let deadline =
+                    first_byte_timeout.map(|timeout| tokio::time::Instant::now() + timeout);
+                let response = if let Some(deadline) = deadline {
+                    match tokio::time::timeout_at(deadline, request.send_logged()).await {
                         Ok(result) => result,
                         Err(_) => {
                             log::warn!("分片首字节超时：范围={}-{}，尝试={}", start, end, attempt);
@@ -407,13 +424,8 @@ async fn download_ranges(
                             last_error_kind = "invalid_content_range";
                             continue;
                         }
-                        match read_response_bytes(
-                            response,
-                            end - start + 1,
-                            reporter,
-                            first_byte_timeout,
-                        )
-                        .await
+                        match read_response_bytes(response, end - start + 1, reporter, deadline)
+                            .await
                         {
                             Ok(bytes) => return Ok((start, bytes)),
                             Err(error) => {
@@ -522,3 +534,6 @@ async fn download_ranges(
     emit_progress(reporter, label, total, Some(total), started.elapsed(), true);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

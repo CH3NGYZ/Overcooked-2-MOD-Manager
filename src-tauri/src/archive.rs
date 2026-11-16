@@ -35,5 +35,6 @@ pub(crate) use progress::{
     emit_progress_event,
 };
 pub(crate) use transfer::{
-    FIRST_BYTE_TIMEOUT, download_to_temp_with_threads_and_first_byte_timeout,
+    download_to_temp_with_threads_and_first_byte_timeout, first_nonempty_chunk,
+    send_before_first_byte_deadline,
 };

@@ -38,7 +38,8 @@ pub async fn upload_publish_asset(
     let api_endpoint = provider.api_endpoint();
     let token = publish_token(&state, provider)?;
     let (owner, repository) = validate_coordinates(&request.owner, &request.repository)?;
-    let client = api_client()?;
+    let network = state.config.load_or_default().network;
+    let client = api_client(&network)?;
     let remote: ApiRelease = get_json(
         &client,
         &token,
@@ -108,7 +109,7 @@ pub async fn upload_publish_asset(
             Ok(Some((buffer, (file, sent))))
         }
     });
-    let client = upload_client()?;
+    let upload = upload_client(&network)?;
     let body = reqwest::Body::wrap_stream(stream);
     let asset = if provider == PublishProvider::Github {
         let url = format!(
@@ -116,7 +117,7 @@ pub async fn upload_publish_asset(
             encode_component(&request.release_id),
             encode_component(&name)
         );
-        let response = authorized(client.post(url), &token, provider)
+        let response = authorized(upload.post(url), &token, provider)
             .header("Content-Type", "application/zip")
             .header("Content-Length", total)
             .body(body)
@@ -134,9 +135,9 @@ pub async fn upload_publish_asset(
             encode_component(&remote.tag_name),
             encode_component(&name)
         );
-        let upload: SignedUpload =
+        let signed: SignedUpload =
             get_json(&client, &token, provider, &url, "upload-address").await?;
-        let response = signed_upload_request(&client, &upload)?
+        let response = signed_upload_request(&upload, &signed)?
             .header("Content-Length", total)
             .body(body)
             .send_logged()
@@ -226,7 +227,8 @@ pub async fn delete_publish_asset(
     let token = publish_token(&state, provider)?;
     let api_endpoint = provider.api_endpoint();
     let (owner, repository) = validate_coordinates(&owner, &repository)?;
-    let client = api_client()?;
+    let network = state.config.load_or_default().network;
+    let client = api_client(&network)?;
     let url = match provider {
         PublishProvider::Github => format!(
             "{api_endpoint}/repos/{owner}/{repository}/releases/assets/{}",

@@ -151,11 +151,11 @@ export const download: DomainMessages = {
     ja: 'ダウンロードの長さが不完全です',
   },
   firstByteTimeout: {
-    'zh-CN': '下载首字节等待超过 10 秒',
-    'zh-TW': '下載首位元組等待超過 10 秒',
-    en: 'Waited more than 10 seconds for the first byte',
-    ko: '첫 바이트를 10초 넘게 기다렸습니다',
-    ja: '最初のバイトを 10 秒以上待ちました',
+    'zh-CN': '等待下载首字节超时',
+    'zh-TW': '等待下載首位元組逾時',
+    en: 'Timed out waiting for the first download byte',
+    ko: '다운로드 첫 바이트 대기 시간이 초과되었습니다',
+    ja: 'ダウンロードの最初のバイトの待機がタイムアウトしました',
   },
   noCandidate: {
     'zh-CN': '没有可用的下载地址',

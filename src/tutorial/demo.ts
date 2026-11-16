@@ -362,7 +362,7 @@ function buildDemoConfig(): PublicConfig {
     hide_unidentified_mods: false, recycle_deleted_mods: true,
     mod_metadata_concurrency: 0, map_info_concurrency: 0, map_compression_concurrency: 0, diychef_preview_concurrency: 0,
     game: { path: demoGame.path!, runtime: 'native' },
-    network: { timeout_seconds: 30, download_threads: 4, max_retry_count: 3 },
+    network: { timeout_seconds: 30, download_threads: 4, max_retry_count: 3, race_min_speed_kbps: 64, race_window_seconds: 10, api_timeout_seconds: 10, first_byte_timeout_seconds: 10 },
     launch: { ask_user_to_start_from_steam: true, auto_restore_winhttp: true },
     official_api_only: false, github_token_set: false, gitee_token_set: false, gitcode_token_set: false,
     repositories: demoRepositories, repository_sources: demoSources,

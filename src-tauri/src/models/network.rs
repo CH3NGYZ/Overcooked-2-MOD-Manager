@@ -83,9 +83,76 @@ impl Default for ProxyMode {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NetworkConfig {
+    /// Kept for old configuration files; requests use the explicit settings below.
     pub timeout_seconds: u64,
     pub download_threads: u32,
     pub max_retry_count: u32,
+    #[serde(default = "default_race_min_speed_kbps")]
+    pub race_min_speed_kbps: u64,
+    #[serde(default = "default_network_seconds")]
+    pub race_window_seconds: u64,
+    #[serde(default = "default_network_seconds")]
+    pub api_timeout_seconds: u64,
+    #[serde(default = "default_network_seconds")]
+    pub first_byte_timeout_seconds: u64,
 }
+
+impl Default for NetworkConfig {
+    fn default() -> Self {
+        Self {
+            timeout_seconds: default_network_seconds(),
+            download_threads: 32,
+            max_retry_count: 3,
+            race_min_speed_kbps: default_race_min_speed_kbps(),
+            race_window_seconds: default_network_seconds(),
+            api_timeout_seconds: default_network_seconds(),
+            first_byte_timeout_seconds: default_network_seconds(),
+        }
+    }
+}
+
+const RACE_SPEED_OPTIONS_KBPS: [u64; 7] = [32, 64, 128, 256, 512, 1024, 2048];
+const fn default_race_min_speed_kbps() -> u64 {
+    64
+}
+const fn default_network_seconds() -> u64 {
+    10
+}
+
+impl NetworkConfig {
+    /// Used by persisted config, settings patches and runtime snapshots alike.
+    pub(crate) fn normalize(&mut self) -> bool {
+        let previous = self.clone();
+        self.race_min_speed_kbps = self.race_minimum_speed() / 1024;
+        self.race_window_seconds = self.race_window().as_secs();
+        self.api_timeout_seconds = self.api_timeout().as_secs();
+        self.first_byte_timeout_seconds = self.first_byte_timeout().as_secs();
+        *self != previous
+    }
+
+    pub(crate) fn race_minimum_speed(&self) -> u64 {
+        let kbps = if RACE_SPEED_OPTIONS_KBPS.contains(&self.race_min_speed_kbps) {
+            self.race_min_speed_kbps
+        } else {
+            default_race_min_speed_kbps()
+        };
+        kbps * 1024
+    }
+
+    pub(crate) fn race_window(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.race_window_seconds.clamp(5, 20))
+    }
+
+    pub(crate) fn api_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.api_timeout_seconds.clamp(5, 20))
+    }
+
+    pub(crate) fn first_byte_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.first_byte_timeout_seconds.clamp(5, 20))
+    }
+}
+
+#[cfg(test)]
+mod tests;

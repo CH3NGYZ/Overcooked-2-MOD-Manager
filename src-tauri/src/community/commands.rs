@@ -35,12 +35,12 @@ pub async fn refresh_community_repositories(
         results = async {
             match provider {
                 Provider::Github => {
-                    let client = releases::build_client(config.network.timeout_seconds).map_err(|error| error.to_string())?;
+                    let client = releases::build_client(config.network.api_timeout()).map_err(|error| error.to_string())?;
                     search_all(&client, SEARCH_ENDPOINT, token.as_deref(), &config.github_proxies.github_api_proxies, &mut limits).await
                 },
                 Provider::Gitee => crate::gitee_community::search_all(&app, state.config.cache_dir().join("gitee-webview"), &mut limits).await,
                 Provider::Gitcode => {
-                    let client = releases::build_client(config.network.timeout_seconds).map_err(|error| error.to_string())?;
+                    let client = releases::build_client(config.network.api_timeout()).map_err(|error| error.to_string())?;
                     super::gitcode::discover(&client, token.as_deref(), &mut limits).await
                 },
             }

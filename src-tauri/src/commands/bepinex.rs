@@ -47,7 +47,7 @@ pub async fn install_bepinex(
     if info.bepinex.installed && !reinstall {
         return Err("framework.alreadyInstalled".into());
     }
-    let client = releases::build_download_client(config.network.timeout_seconds)
+    let client = releases::build_download_client(config.network.first_byte_timeout())
         .map_err(|e| e.to_string())?;
     let download_url = package.url(&provider);
     log::debug!(
@@ -71,6 +71,7 @@ pub async fn install_bepinex(
     let candidates =
         plan_asset_download_candidates(ProxyMode::AutoDirect, download_url, proxy_urls)?;
     let cache_dir = state.config.cache_dir();
+    let first_byte_timeout = config.network.first_byte_timeout();
     let temp = try_asset_download_candidates(
         candidates,
         archive::is_download_cancelled,
@@ -85,7 +86,7 @@ pub async fn install_bepinex(
                     "BepInEx",
                     &reporter,
                     1,
-                    Some(archive::FIRST_BYTE_TIMEOUT),
+                    Some(first_byte_timeout),
                 )
                 .await?;
                 if let Err(error) =
@@ -98,6 +99,7 @@ pub async fn install_bepinex(
                 Ok(temp)
             }
         },
+        &config.network,
         Some(DownloadContext {
             execution: None,
             app: Some(&app),

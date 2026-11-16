@@ -137,6 +137,7 @@ fn serve(replies: Vec<(DataProvider, Reply)>) -> (String, std::thread::JoinHandl
 
 #[tokio::test]
 async fn invalid_archives_only_visit_the_authorized_regional_fallback_chain() {
+    let network = crate::models::NetworkConfig::default();
     let valid = documents();
     let mut invalid_root = valid.clone();
     invalid_root.insert("mods.toml".into(), "invalid [".into());
@@ -201,7 +202,7 @@ async fn invalid_archives_only_visit_the_authorized_regional_fallback_chain() {
             let (base, server) = serve(replies);
             let runtime = ProxyRuntime::new(initial);
             let root = runtime
-                .official_root_from(true, |provider| routes(&base, provider))
+                .official_root_from(true, |provider| routes(&base, provider), &network)
                 .await
                 .unwrap();
             let expected = if cloudflare_ok {
@@ -230,7 +231,11 @@ async fn invalid_archives_only_visit_the_authorized_regional_fallback_chain() {
                 assert!(snapshot.policy.is_some());
             }
             let cached = runtime
-                .official_root_from(false, |_| panic!("cached root must not resolve an address"))
+                .official_root_from(
+                    false,
+                    |_| panic!("cached root must not resolve an address"),
+                    &network,
+                )
                 .await
                 .unwrap();
             assert_eq!(cached.selection, root.selection);
@@ -242,6 +247,7 @@ async fn invalid_archives_only_visit_the_authorized_regional_fallback_chain() {
 
 #[tokio::test]
 async fn startup_and_force_consumers_coalesce_but_a_later_force_downloads_again() {
+    let network = crate::models::NetworkConfig::default();
     for initial in [
         DataProvider::Github,
         DataProvider::Gitcode,
@@ -256,20 +262,20 @@ async fn startup_and_force_consumers_coalesce_but_a_later_force_downloads_again(
         let runtime = ProxyRuntime::new(initial);
         let address = |provider| routes(&base, provider);
         let (first, second) = tokio::join!(
-            runtime.official_root_from(false, address),
-            runtime.official_root_from(true, address),
+            runtime.official_root_from(false, address, &network),
+            runtime.official_root_from(true, address, &network),
         );
         let (first, second) = (first.unwrap(), second.unwrap());
         assert_eq!(first.selection, (initial, 1));
         assert_eq!(first.selection, second.selection);
         assert!(Arc::ptr_eq(&first.package, &second.package));
-        let cached = runtime.official_root(false).await.unwrap();
+        let cached = runtime.official_root(false, &network).await.unwrap();
         assert!(Arc::ptr_eq(&cached.package, &first.package));
-        runtime.refresh_policy().await.unwrap();
+        runtime.refresh_policy(&network).await.unwrap();
         assert_eq!(runtime.selection(), first.selection);
         let (first_force, second_force) = tokio::join!(
-            runtime.official_root_from(true, address),
-            runtime.official_root_from(true, address),
+            runtime.official_root_from(true, address, &network),
+            runtime.official_root_from(true, address, &network),
         );
         let (first_force, second_force) = (first_force.unwrap(), second_force.unwrap());
         assert_eq!(first_force.selection, (initial, 2));
@@ -278,7 +284,7 @@ async fn startup_and_force_consumers_coalesce_but_a_later_force_downloads_again(
         assert!(!Arc::ptr_eq(&first_force.package, &first.package));
         assert_eq!(
             runtime
-                .official_root_from(true, address)
+                .official_root_from(true, address, &network)
                 .await
                 .unwrap()
                 .selection,
@@ -290,6 +296,7 @@ async fn startup_and_force_consumers_coalesce_but_a_later_force_downloads_again(
 
 #[tokio::test]
 async fn parallel_waiters_follow_automatic_fallback_without_cancelling_the_new_provider() {
+    let network = crate::models::NetworkConfig::default();
     let (base, server) = serve(vec![
         (DataProvider::Github, Reply::offline()),
         (DataProvider::Cloudflare, Reply::zip(archive(&documents()))),
@@ -297,8 +304,8 @@ async fn parallel_waiters_follow_automatic_fallback_without_cancelling_the_new_p
     let runtime = ProxyRuntime::new(DataProvider::Github);
     let address = |provider| routes(&base, provider);
     let (first, second) = tokio::join!(
-        runtime.official_root_from(false, address),
-        runtime.official_root_from(true, address),
+        runtime.official_root_from(false, address, &network),
+        runtime.official_root_from(true, address, &network),
     );
     let (first, second) = (first.unwrap(), second.unwrap());
     assert_eq!(first.selection, (DataProvider::Cloudflare, 2));
@@ -313,6 +320,7 @@ async fn parallel_waiters_follow_automatic_fallback_without_cancelling_the_new_p
 
 #[tokio::test]
 async fn every_official_document_alias_reads_the_captured_package_without_http() {
+    let network = crate::models::NetworkConfig::default();
     let (base, server) = serve(vec![(
         DataProvider::Github,
         Reply::zip(archive(&documents())),
@@ -321,15 +329,19 @@ async fn every_official_document_alias_reads_the_captured_package_without_http()
     for provider in [DataProvider::Github, DataProvider::Cloudflare] {
         runtime.set_official_address_for_test(provider, routes(&base, provider));
     }
-    let root = runtime.official_root(false).await.unwrap();
+    let root = runtime.official_root(false, &network).await.unwrap();
     let child = SourceLocation::parse(&root.document.repository_sources[0].url).unwrap();
     let loaded = runtime
         .in_selection(root.selection, async {
             let active = SourcePackage::active().unwrap();
             assert!(Arc::ptr_eq(&active, &root.package));
-            let child = load_document(&child, &Default::default())
-                .await
-                .map_err(|error| error.to_string())?;
+            let child = load_document(
+                &child,
+                &Default::default(),
+                &crate::models::NetworkConfig::default(),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
             assert_eq!(child.repository_sources[0].id, "leaf");
             for provider in [
                 DataProvider::Github,
@@ -339,13 +351,17 @@ async fn every_official_document_alias_reads_the_captured_package_without_http()
                 DataProvider::Builtin,
             ] {
                 let location = SourceLocation::parse(&provider.document("child.toml")).unwrap();
-                let child = load_document(&location, &Default::default())
-                    .await
-                    .map_err(|error| error.to_string())?;
+                let child = load_document(
+                    &location,
+                    &Default::default(),
+                    &crate::models::NetworkConfig::default(),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
                 assert_eq!(child.repository_sources[0].id, "leaf");
             }
             let maps = SourceLocation::parse(&DataProvider::Github.document("maps.toml")).unwrap();
-            crate::repository_sources::load_text_document(&maps, |text, origin| {
+            crate::repository_sources::load_text_document(&maps, &network, |text, origin| {
                 crate::map_sources::parse_document(text, origin, &Default::default())
             })
             .await
@@ -360,10 +376,11 @@ async fn every_official_document_alias_reads_the_captured_package_without_http()
 
 #[tokio::test]
 async fn missing_business_documents_fail_in_the_node_without_builtin_or_http_repair() {
+    let network = crate::models::NetworkConfig::default();
     // Choose an actual bundled business child as a fallback trap. All four
     // entry documents remain present in the remote archive.
     let builtin = ProxyRuntime::new(DataProvider::Builtin);
-    let bundled_root = builtin.official_root(false).await.unwrap();
+    let bundled_root = builtin.official_root(false, &network).await.unwrap();
     let bundled_child = bundled_root
         .document
         .repository_sources
@@ -386,7 +403,7 @@ async fn missing_business_documents_fail_in_the_node_without_builtin_or_http_rep
     )]);
     let runtime = ProxyRuntime::new(DataProvider::Cloudflare);
     let root = runtime
-        .official_root_from(false, |provider| routes(&base, provider))
+        .official_root_from(false, |provider| routes(&base, provider), &network)
         .await
         .unwrap();
     assert_eq!(root.selection, (DataProvider::Cloudflare, 1));
@@ -394,11 +411,15 @@ async fn missing_business_documents_fail_in_the_node_without_builtin_or_http_rep
     runtime
         .in_selection(root.selection, async {
             let child = SourceLocation::parse(&root.document.repository_sources[0].url).unwrap();
-            let error = load_document(&child, &Default::default())
-                .await
-                .err()
-                .unwrap()
-                .to_string();
+            let error = load_document(
+                &child,
+                &Default::default(),
+                &crate::models::NetworkConfig::default(),
+            )
+            .await
+            .err()
+            .unwrap()
+            .to_string();
             assert!(error.contains("source.packageFileMissing"), "{error}");
             // Both relative and official remote identities must read the active
             // archive even though the shipped package contains this exact child.
@@ -406,9 +427,11 @@ async fn missing_business_documents_fail_in_the_node_without_builtin_or_http_rep
                 SourceLocation::parse(&bundled_child).unwrap(),
                 SourceLocation::parse(&DataProvider::Cloudflare.document(&bundled_child)).unwrap(),
             ] {
-                let error = crate::repository_sources::load_text_document(&location, |text, _| {
-                    Ok(text.to_owned())
-                })
+                let error = crate::repository_sources::load_text_document(
+                    &location,
+                    &network,
+                    |text, _| Ok(text.to_owned()),
+                )
                 .await
                 .err()
                 .unwrap()
@@ -429,6 +452,7 @@ async fn missing_business_documents_fail_in_the_node_without_builtin_or_http_rep
 
 #[tokio::test]
 async fn malformed_maps_root_is_a_page_error_without_replacing_the_trusted_package() {
+    let network = crate::models::NetworkConfig::default();
     let mut documents = documents();
     documents.insert("maps.toml".into(), "invalid [".into());
     let (base, server) = serve(vec![(
@@ -437,7 +461,7 @@ async fn malformed_maps_root_is_a_page_error_without_replacing_the_trusted_packa
     )]);
     let runtime = ProxyRuntime::new(DataProvider::Cloudflare);
     let root = runtime
-        .official_root_from(false, |provider| routes(&base, provider))
+        .official_root_from(false, |provider| routes(&base, provider), &network)
         .await
         .unwrap();
     assert_eq!(root.selection, (DataProvider::Cloudflare, 1));
@@ -447,7 +471,7 @@ async fn malformed_maps_root_is_a_page_error_without_replacing_the_trusted_packa
             let maps =
                 SourceLocation::parse(&DataProvider::Cloudflare.document("maps.toml")).unwrap();
             assert!(
-                crate::repository_sources::load_text_document(&maps, |text, origin| {
+                crate::repository_sources::load_text_document(&maps, &network, |text, origin| {
                     crate::map_sources::parse_document(text, origin, &Default::default())
                 })
                 .await
@@ -467,6 +491,7 @@ async fn malformed_maps_root_is_a_page_error_without_replacing_the_trusted_packa
 
 #[tokio::test]
 async fn same_provider_package_replacement_cancels_old_scopes_and_keeps_old_arcs_immutable() {
+    let network = crate::models::NetworkConfig::default();
     let first_documents = documents();
     let mut second_documents = first_documents.clone();
     second_documents.insert(
@@ -479,7 +504,10 @@ async fn same_provider_package_replacement_cancels_old_scopes_and_keeps_old_arcs
     ]);
     let runtime = ProxyRuntime::new(DataProvider::Github);
     let address = |provider| routes(&base, provider);
-    let first = runtime.official_root_from(false, address).await.unwrap();
+    let first = runtime
+        .official_root_from(false, address, &network)
+        .await
+        .unwrap();
     let (started, ready) = tokio::sync::oneshot::channel();
     let old_scope = runtime.in_selection(first.selection, async {
         assert!(Arc::ptr_eq(
@@ -492,7 +520,10 @@ async fn same_provider_package_replacement_cancels_old_scopes_and_keeps_old_arcs
     });
     let replace = async {
         ready.await.unwrap();
-        runtime.official_root_from(true, address).await.unwrap()
+        runtime
+            .official_root_from(true, address, &network)
+            .await
+            .unwrap()
     };
     let (cancelled, second) = tokio::time::timeout(Duration::from_secs(2), async {
         tokio::join!(old_scope, replace)
@@ -528,21 +559,23 @@ async fn same_provider_package_replacement_cancels_old_scopes_and_keeps_old_arcs
 
 #[tokio::test]
 async fn user_switch_cancels_http_and_lock_waiters_and_rejects_a_b_a() {
+    let network = crate::models::NetworkConfig::default();
     let runtime = Arc::new(ProxyRuntime::new(DataProvider::Github));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = format!("http://{}/main.zip", listener.local_addr().unwrap());
     let pending = runtime.clone();
     let first_address = address.clone();
     let task = tokio::spawn(async move {
+        let network = crate::models::NetworkConfig::default();
         pending
-            .official_root_from(false, |_| first_address.clone())
+            .official_root_from(false, |_| first_address.clone(), &network)
             .await
     });
     let (_socket, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
         .await
         .unwrap()
         .unwrap();
-    let mut waiter = Box::pin(runtime.official_root_from(true, |_| address.clone()));
+    let mut waiter = Box::pin(runtime.official_root_from(true, |_| address.clone(), &network));
     // Poll the lock waiter before changing provider, rather than guessing that
     // a spawned waiter has started after a delay or a scheduler yield.
     poll_fn(|context| {
@@ -568,21 +601,26 @@ async fn user_switch_cancels_http_and_lock_waiters_and_rejects_a_b_a() {
     assert!(runtime.in_selection(old, async { Ok(()) }).await.is_err());
     let _guard = runtime.root_refresh.lock().await;
     runtime.select_provider(DataProvider::Builtin, None);
-    let builtin = tokio::time::timeout(Duration::from_secs(2), runtime.official_root(false))
-        .await
-        .unwrap()
-        .unwrap();
+    let builtin = tokio::time::timeout(
+        Duration::from_secs(2),
+        runtime.official_root(false, &network),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(builtin.selection.0, DataProvider::Builtin);
     assert!(Arc::ptr_eq(&builtin.package, &SourcePackage::bundled()));
 }
 
 #[tokio::test]
 async fn missing_native_browser_client_skips_gitee_http_and_follows_the_domestic_chain() {
+    let network = crate::models::NetworkConfig::default();
     let rejected = prepare_package(
         DataProvider::Gitee,
         "not a network address".into(),
         "cn",
         None,
+        &network,
     )
     .await
     .err()
@@ -627,10 +665,14 @@ async fn missing_native_browser_client_skips_gitee_http_and_follows_the_domestic
             let runtime = ProxyRuntime::new(initial);
             let resolved = std::sync::Mutex::new(Vec::new());
             let root = runtime
-                .official_root_from(false, |provider| {
-                    resolved.lock().unwrap().push(provider);
-                    routes(&base, provider)
-                })
+                .official_root_from(
+                    false,
+                    |provider| {
+                        resolved.lock().unwrap().push(provider);
+                        routes(&base, provider)
+                    },
+                    &network,
+                )
                 .await
                 .unwrap();
             let mut expected_chain = if initial == DataProvider::Gitcode {

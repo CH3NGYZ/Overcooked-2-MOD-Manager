@@ -145,16 +145,29 @@ test('production API request owners keep send_api rather than bypassing provider
 
 const nonApiFiles = [
   'archive/transfer.rs', 'repository_sources/transport.rs', 'repository_sources/verified.rs',
+  'repository_sources/package/download.rs',
   'repository_readme.rs', 'avatars.rs', 'app_update/manifest.rs', 'app_update/download.rs',
   'direct_mod.rs', 'commands/colorful_name.rs', 'map_publish/assets.rs',
 ]
 
-test('all ten non-API HTTP owners use the shared logged request trait', () => {
+test('all non-API HTTP owners retain shared diagnostics directly or through the first-byte helper', () => {
+  const firstByteDelegates = new Set([
+    'repository_sources/transport.rs', 'repository_sources/verified.rs', 'repository_sources/package/download.rs',
+    'repository_readme.rs', 'avatars.rs', 'app_update/download.rs',
+  ])
+  const transfer = rust.get('archive/transfer.rs')
+  assert.match(transfer, /\bfn\s+send_before_first_byte_deadline\s*\([\s\S]*?request\.send_logged\(\)/)
+  assert.match(rust.get('archive.rs'), /pub\(crate\) use transfer::\{[^}]*\bsend_before_first_byte_deadline\b/s)
   for (const path of nonApiFiles) {
     const code = rust.get(path)
     assert.ok(code, path)
-    assert.match(code, /\buse\s+crate::http_diagnostics::/, path)
-    assert.match(code, /\.\s*send_logged\s*\(\s*\)/, path)
+    if (firstByteDelegates.has(path)) {
+      assert.match(code, /\b(?:crate::)?archive::send_before_first_byte_deadline\s*\(/, path)
+      assert.match(code, /\b(?:crate::)?archive::first_nonempty_chunk\s*\(/, path)
+    } else {
+      assert.match(code, /\buse\s+crate::http_diagnostics::/, path)
+      assert.match(code, /\.\s*send_logged\s*\(\s*\)/, path)
+    }
   }
 })
 

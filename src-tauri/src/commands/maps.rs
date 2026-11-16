@@ -68,7 +68,7 @@ pub async fn refresh_map_sources(
                  * 第三方源、其中几个指着同一个仓库时，这个去重就是匿名限流（60 次/小时）
                  * 下的生死线。
                  */
-                let client = releases::build_client(config.network.timeout_seconds)
+                let client = releases::build_client(config.network.api_timeout())
                     .map_err(|error| error.to_string())?;
                 let github_token = state.config.api_token(&config, &Provider::Github);
                 let gitee_token = state.config.api_token(&config, &Provider::Gitee);
@@ -195,7 +195,7 @@ pub async fn refresh_map_releases(
             return Ok(map_to_info(&map));
         }
 
-        let client = releases::build_client(config.network.timeout_seconds)
+        let client = releases::build_client(config.network.api_timeout())
             .map_err(|error| error.to_string())?;
         let github_token = state.config.api_token(&config, &Provider::Github);
         let gitee_token = state.config.api_token(&config, &Provider::Gitee);

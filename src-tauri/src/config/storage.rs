@@ -18,6 +18,8 @@ use std::sync::MutexGuard;
 const CONFIG_FILE: &str = "config.toml";
 
 #[cfg(test)]
+mod network_tests;
+#[cfg(test)]
 mod region_tests;
 #[cfg(test)]
 mod test_support;
@@ -100,6 +102,7 @@ impl ConfigService {
     }
 
     pub(super) fn with_runtime(&self, mut config: AppConfig) -> AppConfig {
+        config.network.normalize();
         match self.proxies.configuration_snapshot() {
             Ok((provider, proxies, policy, region)) => {
                 config.region = region;
@@ -136,7 +139,8 @@ impl ConfigService {
         &self,
         force: bool,
     ) -> Result<crate::github_proxy_runtime::OfficialRootSnapshot, String> {
-        self.proxies.official_root(force).await
+        let network = self.network_snapshot();
+        self.proxies.official_root(force, &network).await
     }
 
     pub(crate) fn in_data_selection<T>(
@@ -148,7 +152,19 @@ impl ConfigService {
     }
 
     pub(crate) async fn refresh_proxies(&self) -> Result<(), String> {
-        self.proxies.refresh_policy().await
+        let network = self.network_snapshot();
+        self.proxies.refresh_policy(&network).await
+    }
+
+    // Startup diagnostics must not create or migrate configuration. Production
+    // open/load/save already refresh this cache before exposing configuration.
+    fn network_snapshot(&self) -> NetworkConfig {
+        self.cache
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .as_ref()
+            .map(|cached| cached.config.network.clone())
+            .unwrap_or_default()
     }
 
     fn cached_if_fresh(&self, path: &Path) -> Option<AppConfig> {
@@ -240,6 +256,7 @@ impl ConfigService {
         match toml::from_str::<AppConfig>(&text) {
             Ok(mut config) => {
                 let mut changed = legacy_repository_proxy_fields;
+                changed |= config.network.normalize();
                 changed |= self.initialize_region(&mut config, initialize_session);
                 config.data_provider = self.proxies.provider();
                 changed |= migrate_schema(&mut config);

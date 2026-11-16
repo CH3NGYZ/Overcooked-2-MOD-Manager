@@ -137,9 +137,10 @@ pub(super) async fn exchange_code(
     provider: PublishProvider,
     code: &str,
     verifier: Option<&str>,
+    network: &crate::models::NetworkConfig,
 ) -> Result<(PublishTokens, String), String> {
     let secret = client_secret(provider)?;
-    let client = api_client()?;
+    let client = api_client(network)?;
     let response = token_request(&client, provider, secret, Some(code), verifier, None)?
         .send_api(provider.api_provider())
         .await

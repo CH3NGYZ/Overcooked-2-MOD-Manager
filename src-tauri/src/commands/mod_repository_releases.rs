@@ -88,7 +88,7 @@ pub async fn refresh_mod_repository(
         }
 
         let client =
-            releases::build_client(config.network.timeout_seconds).map_err(|e| e.to_string())?;
+            releases::build_client(config.network.api_timeout()).map_err(|e| e.to_string())?;
         let token = state.config.mod_repository_api_token(&config, &repo);
         let api_proxies = crate::providers::api_proxies(&config, &repo.provider);
         log::debug!(

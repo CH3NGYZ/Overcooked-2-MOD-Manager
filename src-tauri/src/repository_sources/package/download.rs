@@ -1,8 +1,8 @@
 use super::{MAX_ARCHIVE_BYTES, SourcePackage, invalid, too_large};
 use crate::config::ConfigError;
-use crate::http_diagnostics::HttpRequestExt;
-use crate::models::DataProvider;
+use crate::models::{DataProvider, NetworkConfig};
 use crate::repository_sources::SourceLocation;
+use futures_util::StreamExt;
 use std::sync::Arc;
 
 const MANAGER_USER_AGENT: &str = concat!("Overcooked 2 MOD Manager/", env!("CARGO_PKG_VERSION"));
@@ -20,6 +20,7 @@ pub(crate) async fn fetch(
     provider: DataProvider,
     archive_address: &str,
     browser: Option<&tauri::AppHandle>,
+    network: &NetworkConfig,
 ) -> Result<Arc<SourcePackage>, String> {
     if provider == DataProvider::Builtin {
         return Ok(SourcePackage::bundled());
@@ -27,7 +28,7 @@ pub(crate) async fn fetch(
     let bytes = if provider == DataProvider::Gitee {
         browser_bytes(browser, archive_address, provider).await?
     } else {
-        match Box::pin(fetch_archive(archive_address, provider)).await {
+        match Box::pin(fetch_archive(archive_address, provider, network)).await {
             Ok(bytes) => bytes,
             Err(ArchiveError::Verification) if provider == DataProvider::Gitcode => {
                 browser_bytes(browser, archive_address, provider).await?
@@ -99,25 +100,33 @@ impl From<ConfigError> for ArchiveError {
     }
 }
 
-async fn fetch_archive(address: &str, provider: DataProvider) -> Result<Vec<u8>, ArchiveError> {
+async fn fetch_archive(
+    address: &str,
+    provider: DataProvider,
+    network: &NetworkConfig,
+) -> Result<Vec<u8>, ArchiveError> {
     let SourceLocation::Remote(url) = SourceLocation::parse(address)? else {
         return Err(ConfigError::Invalid("source.mustBeHttp".into()).into());
     };
     // This client has no API authorization and uses no download race. The
     // request timeout also bounds the complete streamed response body.
-    let client = crate::releases::build_client(super::super::transport::SOURCE_DOCUMENT_TIMEOUT)
+    let client = crate::releases::build_download_client(network.first_byte_timeout())
         .map_err(|error| ConfigError::Read(error.to_string()))?;
-    let response = client
+    let deadline = tokio::time::Instant::now() + network.first_byte_timeout();
+    let request = client
         .get(url)
+        .timeout(std::time::Duration::from_secs(
+            super::super::transport::SOURCE_DOCUMENT_TIMEOUT,
+        ))
         .header(reqwest::header::USER_AGENT, archive_user_agent(provider))
         .header(
             reqwest::header::CACHE_CONTROL,
             "no-cache, no-store, max-age=0",
         )
-        .header(reqwest::header::PRAGMA, "no-cache")
-        .send_logged()
+        .header(reqwest::header::PRAGMA, "no-cache");
+    let response = crate::archive::send_before_first_byte_deadline(request, Some(deadline))
         .await
-        .map_err(|error| ConfigError::Read(error.without_url().to_string()))?;
+        .map_err(ConfigError::Read)?;
     if response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
@@ -129,7 +138,7 @@ async fn fetch_archive(address: &str, provider: DataProvider) -> Result<Vec<u8>,
     if !response.status().is_success() {
         return Err(ConfigError::Read(format!("HTTP {}", response.status().as_u16())).into());
     }
-    let bytes = response_bytes(response, MAX_ARCHIVE_BYTES).await?;
+    let bytes = response_bytes(response, MAX_ARCHIVE_BYTES, Some(deadline)).await?;
     let prefix = String::from_utf8_lossy(&bytes[..bytes.len().min(512)]);
     let prefix = prefix
         .trim_start_matches('\u{feff}')
@@ -142,8 +151,9 @@ async fn fetch_archive(address: &str, provider: DataProvider) -> Result<Vec<u8>,
 }
 
 pub(super) async fn response_bytes(
-    mut response: reqwest::Response,
+    response: reqwest::Response,
     limit: usize,
+    deadline: Option<tokio::time::Instant>,
 ) -> Result<Vec<u8>, ConfigError> {
     if response
         .content_length()
@@ -152,11 +162,18 @@ pub(super) async fn response_bytes(
         return Err(too_large());
     }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
+    let mut stream = response.bytes_stream();
+    if let Some(chunk) = crate::archive::first_nonempty_chunk(&mut stream, deadline)
         .await
-        .map_err(|error| ConfigError::Read(error.without_url().to_string()))?
+        .map_err(ConfigError::Read)?
     {
+        if chunk.len() > limit {
+            return Err(too_large());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| ConfigError::Read(error.without_url().to_string()))?;
         if chunk.len() > limit.saturating_sub(bytes.len()) {
             return Err(too_large());
         }

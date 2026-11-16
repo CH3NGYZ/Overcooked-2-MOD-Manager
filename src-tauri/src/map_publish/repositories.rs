@@ -97,7 +97,8 @@ pub async fn list_publish_repositories(
 ) -> Result<PublishRepositoryList, String> {
     let service = state.config.clone();
     let token = publish_token(&state, provider)?;
-    let client = api_client()?;
+    let network = service.load_or_default().network;
+    let client = api_client(&network)?;
     if provider == PublishProvider::Gitcode {
         return gitcode_repositories(&client, &token).await;
     }

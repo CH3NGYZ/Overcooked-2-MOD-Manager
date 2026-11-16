@@ -2,8 +2,7 @@ use crate::app_state::AppState;
 use crate::archive::DownloadReporter;
 use crate::download::planning::{asset_proxy_urls, ordered_asset_download_candidates};
 use crate::download::{DownloadCandidate, try_download_candidates_until_error};
-use crate::http_diagnostics::HttpRequestExt;
-use crate::models::{GitHubProxy, Provider, ProxyMode};
+use crate::models::{GitHubProxy, NetworkConfig, Provider, ProxyMode};
 use crate::releases;
 use futures_util::StreamExt;
 use reqwest::{Client, StatusCode};
@@ -112,18 +111,21 @@ async fn fetch_readme(
     client: &Client,
     url: &str,
     reporter: &DownloadReporter,
+    network: &NetworkConfig,
 ) -> Result<Vec<u8>, String> {
-    let response = client
-        .get(url)
-        .timeout(REQUEST_TIMEOUT)
-        .header(
-            reqwest::header::CACHE_CONTROL,
-            "no-cache, no-store, max-age=0",
-        )
-        .header(reqwest::header::PRAGMA, "no-cache")
-        .send_logged()
-        .await
-        .map_err(|error| error.without_url().to_string())?;
+    let deadline = Some(tokio::time::Instant::now() + network.first_byte_timeout());
+    let response = crate::archive::send_before_first_byte_deadline(
+        client
+            .get(url)
+            .timeout(REQUEST_TIMEOUT)
+            .header(
+                reqwest::header::CACHE_CONTROL,
+                "no-cache, no-store, max-age=0",
+            )
+            .header(reqwest::header::PRAGMA, "no-cache"),
+        deadline,
+    )
+    .await?;
     let status = response.status();
     log::info!(
         "仓库说明 Raw 响应：地址={}，状态={}",
@@ -149,15 +151,21 @@ async fn fetch_readme(
     let mut progress = reporter.snapshot();
     progress.total = response.content_length();
     let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| error.without_url().to_string())?;
-        if content.len() + chunk.len() > MAX_README_BYTES {
+    let mut chunk = crate::archive::first_nonempty_chunk(&mut stream, deadline).await?;
+    while let Some(bytes) = chunk {
+        let chunk_bytes = bytes;
+        if content.len() + chunk_bytes.len() > MAX_README_BYTES {
             return Err("readme.tooLarge".into());
         }
-        content.extend_from_slice(&chunk);
-        reporter.received(chunk.len() as u64);
+        content.extend_from_slice(&chunk_bytes);
+        reporter.received(chunk_bytes.len() as u64);
         progress.downloaded = content.len() as u64;
         reporter.update(progress.clone());
+        chunk = stream
+            .next()
+            .await
+            .transpose()
+            .map_err(|error| error.without_url().to_string())?;
     }
     std::str::from_utf8(&content).map_err(|_| "readme.invalidUtf8")?;
     Ok(content)
@@ -167,12 +175,16 @@ async fn download_readme(
     client: &Client,
     candidates: Vec<DownloadCandidate>,
     cancelled: &AtomicBool,
+    network: &NetworkConfig,
 ) -> Result<Vec<u8>, String> {
     try_download_candidates_until_error(
         candidates,
         || cancelled.load(Ordering::Acquire),
-        |candidate, reporter| async move { fetch_readme(client, &candidate.url, &reporter).await },
+        |candidate, reporter| async move {
+            fetch_readme(client, &candidate.url, &reporter, network).await
+        },
         NOT_FOUND,
+        network,
     )
     .await
 }
@@ -184,13 +196,14 @@ async fn download_repository_readme(
     branch: &str,
     raw_proxies: &[GitHubProxy],
     cancelled: &AtomicBool,
+    network: &NetworkConfig,
 ) -> Result<Vec<u8>, String> {
     if cancelled.load(Ordering::Acquire) {
         return Err("download.cancelled".into());
     }
     if *provider == Provider::Gitee {
         // Gitee Raw uses exactly one direct GET, never proxy racing or ranged downloads.
-        return fetch_readme(client, url, &DownloadReporter::new("README")).await;
+        return fetch_readme(client, url, &DownloadReporter::new("README"), network).await;
     }
     let candidates = ordered_asset_download_candidates(
         ProxyMode::AutoDirect,
@@ -206,7 +219,7 @@ async fn download_repository_readme(
         ),
     );
     log::info!("仓库说明 GitHub Raw 竞速：候选数={}", candidates.len());
-    download_readme(client, candidates, cancelled).await
+    download_readme(client, candidates, cancelled, network).await
 }
 
 #[tauri::command]
@@ -233,8 +246,8 @@ pub async fn get_repository_readme(
     else {
         return Err("source.repositoryMissing".into());
     };
-    let client = releases::build_client(config.network.timeout_seconds)
-        .map_err(|error| error.to_string())?;
+    let client =
+        releases::build_client(config.network.api_timeout()).map_err(|error| error.to_string())?;
     let result = async {
         let branch = if crate::community::is_repository(repo) && !repo.branch.trim().is_empty() {
             repo.branch.clone()
@@ -268,13 +281,16 @@ pub async fn get_repository_readme(
             repo.provider,
             crate::repository_sources::safe_log_address(&url)
         );
+        let download_client = releases::build_download_client(config.network.first_byte_timeout())
+            .map_err(|error| error.to_string())?;
         match download_repository_readme(
-            &client,
+            &download_client,
             &repo.provider,
             &url,
             &branch,
             &config.github_proxies.raw_proxies,
             cancelled,
+            &config.network,
         )
         .await
         {

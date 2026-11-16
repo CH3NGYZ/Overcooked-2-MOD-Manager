@@ -138,10 +138,13 @@ impl ProxyRuntime {
             .unwrap_or_else(|e| e.into_inner()) = Some(browser);
     }
 
-    pub(crate) async fn refresh_policy(&self) -> Result<(), String> {
+    pub(crate) async fn refresh_policy(
+        &self,
+        network: &crate::models::NetworkConfig,
+    ) -> Result<(), String> {
         // The package, MOD root and complete network closure are a single
         // publication. Startup/settings consumers share the same download.
-        self.official_root(false).await.map(|_| ())
+        self.official_root(false, network).await.map(|_| ())
     }
 
     #[cfg(test)]
@@ -178,8 +181,10 @@ impl ProxyRuntime {
     pub(crate) async fn refresh(&self, region: &str) -> Result<(), String> {
         // Only refreshes serialize here; readers and unrelated settings saves never wait on HTTP.
         let _guard = self.refresh.lock().await;
-        let client = crate::releases::build_client(repository_sources::SOURCE_DOCUMENT_TIMEOUT)
-            .map_err(|_| "proxy.validationFailed")?;
+        let client = crate::releases::build_download_client(
+            crate::models::NetworkConfig::default().first_byte_timeout(),
+        )
+        .map_err(|_| "proxy.validationFailed")?;
         let mut last_error = "proxy.validationFailed".to_string();
         for candidates in manifest_routes(region, &self.snapshot())? {
             match self.refresh_from(&client, candidates).await {
@@ -197,6 +202,8 @@ impl ProxyRuntime {
         client: &reqwest::Client,
         candidates: Vec<DownloadCandidate>,
     ) -> Result<(), String> {
+        let network = crate::models::NetworkConfig::default();
+        let first_byte_timeout = network.first_byte_timeout();
         let config = try_download_candidates(
             candidates,
             || false,
@@ -207,6 +214,7 @@ impl ProxyRuntime {
                     &reporter,
                     None,
                     None,
+                    first_byte_timeout,
                 )
                 .await?;
                 let text = std::str::from_utf8(&bytes).map_err(|_| "proxy.invalidUtf8")?;
@@ -228,6 +236,7 @@ impl ProxyRuntime {
                 }
                 Ok(config)
             },
+            &network,
             None,
         )
         .await?;

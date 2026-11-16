@@ -16,7 +16,8 @@ fn official_root_bounds_unpolled_task_size_for_builtin_and_remote_providers() {
     for provider in [DataProvider::Builtin, DataProvider::Github] {
         let runtime = ProxyRuntime::new(provider);
         // Construct only: no polling, configuration reads or HTTP requests.
-        let task = runtime.official_root(false);
+        let network = Default::default();
+        let task = runtime.official_root(false, &network);
         assert_send(&task);
         assert!(
             std::mem::size_of_val(&task) <= 1024,

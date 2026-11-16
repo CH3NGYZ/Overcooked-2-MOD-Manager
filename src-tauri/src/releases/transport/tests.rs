@@ -2,7 +2,7 @@ use super::super::test_support::{ApiTestServer, api_test_client};
 use super::*;
 
 #[tokio::test]
-async fn release_api_waits_past_legacy_five_second_client_timeout() {
+async fn release_api_uses_the_client_configured_timeout() {
     use std::io::{Read, Write};
     use std::time::{Duration, Instant};
 
@@ -36,7 +36,7 @@ async fn release_api_waits_past_legacy_five_second_client_timeout() {
             assert!(count > 0 && request.len() + count <= 8192);
             request.extend_from_slice(&buffer[..count]);
         }
-        // The old five-second request deadline fails before this valid response.
+        // A configured ten-second API budget must survive the former five-second limit.
         std::thread::sleep(Duration::from_secs(6));
         socket
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n[]")
@@ -44,7 +44,7 @@ async fn release_api_waits_past_legacy_five_second_client_timeout() {
     });
     let started = Instant::now();
     let result = fetch_release_api(
-        &crate::releases::build_client(5).unwrap(),
+        &crate::releases::build_client(Duration::from_secs(10)).unwrap(),
         &url,
         &Provider::Gitee,
         None,
@@ -53,6 +53,66 @@ async fn release_api_waits_past_legacy_five_second_client_timeout() {
     server.join().unwrap();
     assert!(result.unwrap().is_empty());
     assert!(started.elapsed() >= Duration::from_secs(6));
+}
+
+#[tokio::test]
+async fn release_api_short_custom_client_timeout_is_not_overridden() {
+    use std::io::{Read, Write};
+    use std::time::{Duration, Instant};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let url = format!("http://{}/releases", listener.local_addr().unwrap());
+    let (request_received_tx, request_received_rx) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let accept_deadline = Instant::now() + Duration::from_secs(3);
+        let mut socket = loop {
+            match listener.accept() {
+                Ok((socket, _)) => break socket,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < accept_deadline);
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Err(error) => panic!("{error}"),
+            }
+        };
+        socket.set_nonblocking(false).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        socket
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut request = Vec::new();
+        while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+            let mut buffer = [0; 1024];
+            let count = socket.read(&mut buffer).unwrap();
+            assert!(count > 0 && request.len() + count <= 8192);
+            request.extend_from_slice(&buffer[..count]);
+        }
+        request_received_tx.send(Instant::now()).unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        let _ = socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n[]");
+    });
+    let result = fetch_release_api(
+        &crate::releases::build_client(Duration::from_millis(150)).unwrap(),
+        &url,
+        &Provider::Gitee,
+        None,
+    )
+    .await;
+    // Exclude the shared provider scheduler queue from the HTTP timeout budget.
+    let completed = Instant::now();
+    let request_received = request_received_rx
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap();
+    let elapsed = completed.duration_since(request_received);
+    server.join().unwrap();
+    assert!(
+        result.is_err(),
+        "a transport override must not extend the caller's timeout"
+    );
+    assert!(elapsed < Duration::from_millis(450), "elapsed={elapsed:?}");
 }
 
 #[tokio::test]

@@ -24,14 +24,17 @@ pub(crate) async fn load_document(
             crate::repository_sources::load_verified_text_document(
                 location,
                 &verified,
+                &ctx.config.network,
                 |text, origin| parse_document(text, origin, inherited),
             )
             .await
         }
         None => {
-            crate::repository_sources::load_text_document(location, |text, origin| {
-                parse_document(text, origin, inherited)
-            })
+            crate::repository_sources::load_text_document(
+                location,
+                &ctx.config.network,
+                |text, origin| parse_document(text, origin, inherited),
+            )
             .await
         }
     }

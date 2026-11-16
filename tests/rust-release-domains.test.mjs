@@ -40,7 +40,7 @@ test('Release root exports real domain owners without forwarding or replacement 
   assert.equal(files.reduce((count, [, text]) => count + [...text.matchAll(/\bstruct ApiTestServer\b/g)].length, 0), 1)
   assert.match(read('test_support.rs'), /stream\.set_nonblocking\(false\)\.unwrap\(\);/)
   assert.match(read('transport/test_support.rs'), /pub async fn fetch_release_api\(/)
-  assert.match(read('test_support.rs'), /set_read_timeout\(Some\(API_REQUEST_TIMEOUT\)\)/)
+  assert.match(read('test_support.rs'), /set_read_timeout\(Some\(FIXTURE_IO_TIMEOUT\)\)/)
 })
 
 test('Release domains keep credential isolation, shared fetch and distinct version projections', () => {
@@ -96,23 +96,25 @@ test('generic repository reads and map adapters do not construct MOD installatio
   assert.doesNotMatch(read('../models/repositories.rs'), /pub struct ModRepositoryConfig|pub plugin_guid:/)
 })
 
-test('MOD and map downloads share a ten-second startup window while independent request policies remain intact', () => {
+test('API and download clients use configured durations without a total asset timeout', () => {
   const client = read('client.rs')
-  assert.match(client, /REQUEST_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs\(10\)/)
-  assert.match(client, /Duration::from_secs\(timeout_seconds\)\.max\(REQUEST_START_TIMEOUT\)/)
   const [api, download] = client.split('pub fn build_download_client(')
-  for (const builder of [api, download]) assert.match(builder, /\.connect_timeout\(connection_timeout\(timeout_seconds\)\)/)
+  assert.match(api, /pub fn build_client\(timeout: Duration\)/)
+  assert.match(api, /\.timeout\(timeout\)/)
+  assert.match(api, /\.connect_timeout\(timeout\)/)
+  assert.match(download, /^first_byte_timeout: Duration\)/)
+  assert.match(download, /\.connect_timeout\(first_byte_timeout\)/)
   assert.doesNotMatch(download, /\.timeout\(/)
   assert.match(download, /\.read_timeout\(std::time::Duration::from_secs\(120\)\)/)
-  assert.match(read('transport.rs'), /API_REQUEST_TIMEOUT: std::time::Duration = REQUEST_START_TIMEOUT/)
-  assert.match(read('transport.rs'), /\.timeout\(API_REQUEST_TIMEOUT\)/)
-  assert.match(read('../archive/transfer.rs'), /FIRST_BYTE_TIMEOUT: std::time::Duration = crate::releases::REQUEST_START_TIMEOUT/)
+  assert.doesNotMatch(client, /REQUEST_START_TIMEOUT|connection_timeout/)
+  assert.doesNotMatch(read('transport.rs'), /API_REQUEST_TIMEOUT|\.timeout\(/)
   for (const path of ['../commands/mod_repository_install.rs', '../commands/map_install.rs']) {
-    assert.match(read(path), /releases::build_download_client\(config\.network\.timeout_seconds\)/)
+    assert.match(read(path), /releases::build_download_client\(config\.network\.first_byte_timeout\(\)\)/)
     assert.match(read(path), /archive::release_download::download\(/)
+    assert.doesNotMatch(read(path), /config\.network\.timeout_seconds/)
   }
-  for (const path of ['../community/github.rs', '../community/gitcode.rs', '../app_update/manifest.rs']) {
-    assert.match(read(path), /\.timeout\((?:std::time::)?Duration::from_secs\(5\)\)/)
+  for (const path of ['../repository_readme.rs', '../app_update/manifest.rs']) {
+    assert.match(read(path), /releases::build_client\(config\.network\.api_timeout\(\)\)/)
   }
 })
 

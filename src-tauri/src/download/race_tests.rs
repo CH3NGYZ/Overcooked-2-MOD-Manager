@@ -4,7 +4,7 @@ use super::{
     try_download_candidates as try_asset_download_candidates,
 };
 use crate::archive::{self, DownloadRoute as AssetDownloadRoute};
-use crate::models::ProxyMode;
+use crate::models::{NetworkConfig, ProxyMode};
 use std::path::PathBuf;
 
 const DIRECT: &str = "https://github.com/example/mod/releases/download/v1/mod.zip";
@@ -76,6 +76,7 @@ async fn every_fallback_candidate_can_announce_context_before_waiting() {
                 }
             }
         },
+        &NetworkConfig::default(),
         None,
     )
     .await;
@@ -117,6 +118,7 @@ async fn pool_stops_on_success_and_cancel() {
                 Ok(PathBuf::from("downloaded"))
             })
         },
+        &NetworkConfig::default(),
         None,
     )
     .await;
@@ -140,6 +142,7 @@ async fn pool_stops_on_success_and_cancel() {
             attempted += 1;
             std::future::ready(Err("download.cancelled".into()))
         },
+        &NetworkConfig::default(),
         None,
     )
     .await;
@@ -164,6 +167,7 @@ async fn pool_stops_on_success_and_cancel() {
             cancellation.set(true);
             std::future::ready(Err("网络失败".into()))
         },
+        &NetworkConfig::default(),
         None,
     )
     .await;

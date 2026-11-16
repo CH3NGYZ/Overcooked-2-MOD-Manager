@@ -8,18 +8,14 @@ fn user_agent_identifies_client_and_version() {
 }
 
 #[test]
-fn connection_timeout_allows_ten_seconds_and_preserves_longer_preferences() {
-    for seconds in [0, 1, 5, 10] {
-        assert_eq!(
-            connection_timeout(seconds),
-            std::time::Duration::from_secs(10)
-        );
+fn clients_accept_configured_operation_timeouts() {
+    for seconds in [5, 10, 20] {
+        let network = crate::models::NetworkConfig {
+            api_timeout_seconds: seconds,
+            first_byte_timeout_seconds: seconds,
+            ..Default::default()
+        };
+        assert!(build_client(network.api_timeout()).is_ok());
+        assert!(build_download_client(network.first_byte_timeout()).is_ok());
     }
-    for seconds in [20, 30, 300] {
-        assert_eq!(
-            connection_timeout(seconds),
-            std::time::Duration::from_secs(seconds)
-        );
-    }
-    assert_eq!(crate::archive::FIRST_BYTE_TIMEOUT, REQUEST_START_TIMEOUT);
 }

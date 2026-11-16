@@ -1,4 +1,4 @@
-use super::transport::API_REQUEST_TIMEOUT;
+const FIXTURE_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 use crate::releases::RepositoryRequest;
 use reqwest::Client;
 use std::io::{Read, Write};
@@ -37,7 +37,7 @@ impl ApiTestServer {
                 };
                 // Windows accepted sockets inherit the listener's mode.
                 stream.set_nonblocking(false).unwrap();
-                stream.set_read_timeout(Some(API_REQUEST_TIMEOUT)).unwrap();
+                stream.set_read_timeout(Some(FIXTURE_IO_TIMEOUT)).unwrap();
                 let mut request = Vec::new();
                 let mut buffer = [0; 1024];
                 while !request.windows(4).any(|part| part == b"\r\n\r\n") {

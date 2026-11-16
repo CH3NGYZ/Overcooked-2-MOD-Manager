@@ -89,6 +89,7 @@ async fn anonymous_latest_json_follows_mainland_order_and_closes_unused_statuses
             || false,
             |status| statuses.push(status),
             |info| std::future::ready(Ok(info)),
+            &crate::models::NetworkConfig::default(),
         )
         .await
         .unwrap();

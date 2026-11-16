@@ -146,6 +146,7 @@ fn missing_and_initialized_defaults_enable_lobby_switch_without_changing_present
             generation: 1,
             compatibility: "fastinit_2_2".into(),
             supports_custom_default: true,
+            supports_live_save: false,
         },
         catalog: catalog::read(&root, &mod_root).unwrap(),
         resources_revision: 0,

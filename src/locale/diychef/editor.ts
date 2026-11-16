@@ -42,6 +42,7 @@ export const diychefEditor: DomainMessages = {
   unknownVersion: { 'zh-CN': '未知版本', 'zh-TW': '未知版本', en: 'Unknown version', ko: '알 수 없는 버전', ja: '不明なバージョン' },
   targetDisabled: { 'zh-CN': '此副本已停用', 'zh-TW': '此副本已停用', en: 'This copy is disabled', ko: '이 사본은 비활성 상태입니다', ja: 'このコピーは無効です' },
   saved: { 'zh-CN': '已保存，重启游戏后生效', 'zh-TW': '已儲存，重新啟動遊戲後生效', en: 'Saved. Restart the game to apply changes.', ko: '저장했습니다. 게임을 다시 시작하면 적용됩니다.', ja: '保存しました。ゲームを再起動すると反映されます。' },
+  savedLive: { 'zh-CN': '已保存', 'zh-TW': '已儲存', en: 'Saved', ko: '저장했습니다', ja: '保存しました' },
   changesTitle: { 'zh-CN': '确认配置整理', 'zh-TW': '確認配置整理', en: 'Review configuration changes', ko: '설정 정리 확인', ja: '設定の整理内容を確認' },
   changesHint: { 'zh-CN': '这些记录需要一并整理，确认后保存。', 'zh-TW': '這些記錄需要一併整理，確認後儲存。', en: 'These records also need adjustment. Review them before saving.', ko: '아래 기록도 정리가 필요합니다. 확인한 후 저장하세요.', ja: 'これらの行も整理が必要です。確認後に保存します。' },
   before: { 'zh-CN': '修改前', 'zh-TW': '修改前', en: 'Before', ko: '변경 전', ja: '変更前' },

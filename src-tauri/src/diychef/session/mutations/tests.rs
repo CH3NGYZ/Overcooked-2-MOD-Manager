@@ -118,6 +118,7 @@ fn deleting_enabled_custom_chef_removes_its_txt_row_and_binding_but_keeps_native
             generation: 1,
             compatibility: "fastinit_2_2".into(),
             supports_custom_default: true,
+            supports_live_save: false,
         },
         catalog,
         resources_revision: 0,
@@ -201,6 +202,7 @@ fn rollback_after_delete_restores_original_prefer_and_complete_hat_bindings() {
                 generation: 1,
                 compatibility: "fastinit_2_2".into(),
                 supports_custom_default: true,
+                supports_live_save: false,
             },
             catalog: catalog::read(&game, &mod_root).unwrap(),
             resources_revision: 0,
@@ -348,6 +350,7 @@ fn failed_resource_restore_rolls_the_deleted_prefer_and_bindings_back() {
             generation: 1,
             compatibility: "fastinit_2_2".into(),
             supports_custom_default: true,
+            supports_live_save: false,
         },
         catalog: catalog::read(&game, &mod_root).unwrap(),
         resources_revision: 0,
@@ -414,6 +417,7 @@ fn session_commit_recovers_a_poisoned_session_mutex() {
             generation: 1,
             compatibility: "fastinit_2_2".into(),
             supports_custom_default: true,
+            supports_live_save: false,
         },
         catalog: catalog::Catalog {
             chefs: vec![],
@@ -460,6 +464,7 @@ fn deletion_is_blocked_when_it_removes_native_fallback_or_legacy_first_row() {
         generation: 1,
         compatibility: "fastinit_2_2".into(),
         supports_custom_default: true,
+        supports_live_save: false,
     };
     let mut session = Session {
         id: "session".into(),

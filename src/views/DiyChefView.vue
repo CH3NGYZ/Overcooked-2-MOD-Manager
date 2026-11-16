@@ -40,7 +40,7 @@ watch(() => dashboard.config.value?.diychef_preview_concurrency ?? 0, configureP
 const confirmation = useDiyChefConfirmations(() => editor.save())
 const editor = useDiyChefEditor({ confirmChanges: confirmation.confirmChanges, cancelChanges: confirmation.cancelChanges, demoSnapshot: () => diyChefDemoSnapshot.value, confirmMigration: () => requestLeave(),
   interactionBusy: () => !!draggingId.value || !!selection.rectangle.value || hatOpen.value || moreOpen.value || contextMenuOpen.value || deletingChef.value || leaveOpen.value || changesOpen.value })
-const { snapshot, state, opened, loading, saving, error, diagnostics, gameRunning, readOnly, stale, busy, editable, dirty, canSave, canUndo, demonstrating, pendingFiles } = editor
+const { snapshot, state, opened, loading, saving, error, diagnostics, gameRunning, saveBlockedByGame, readOnly, stale, busy, editable, dirty, canSave, canUndo, demonstrating, pendingFiles } = editor
 const { changes, changesOpen, leaveOpen } = confirmation
 const { requestLeave } = usePageLeaveGuard({ busy, dirty, confirm: confirmation.confirmLeave, cancelConfirm: confirmation.cancelLeave })
 const query = shallowRef('')
@@ -101,7 +101,7 @@ const contextOptions = computed<DropdownOption[]>(() => {
   const canEditChef = !!editable.value && !deletingChef.value && !!chef
   const canToggleChef = canEditChef && isUsableResource(chef.resource_state)
   const native = chef?.source_kind === 'native'
-  const canDeleteChef = canEditChef && !native && snapshot.value?.source.state === 'present' && !dirty.value && !pendingFiles.value && !editor.needsReload.value
+  const canDeleteChef = canEditChef && !native && !gameRunning.value && snapshot.value?.source.state === 'present' && !dirty.value && !pendingFiles.value && !editor.needsReload.value
   return [
     { key: 'toggle', label: t(contextChefEnabled.value ? 'diychef.chefContextDisable' : 'diychef.chefContextEnable'), disabled: !canToggleChef },
     { key: 'hat', label: t('diychef.chefContextChangeHat'), disabled: !canEditChef },
@@ -177,7 +177,7 @@ function deleteContextChef(chefId: string) {
   const current = snapshot.value
   const sessionId = current?.session_id
   const targetId = current?.target.id
-  if (!chef || !sessionId || !targetId || chef.source_kind !== 'custom' || !editable.value || deletingChef.value || dirty.value || current?.source.state !== 'present') return
+  if (!chef || !sessionId || !targetId || chef.source_kind !== 'custom' || !editable.value || deletingChef.value || gameRunning.value || dirty.value || current?.source.state !== 'present') return
   const name = chef.display_name
   const instance = dialog.warning({
     title: t('diychef.chefContextDeleteTitle'),
@@ -186,6 +186,7 @@ function deleteContextChef(chefId: string) {
     positiveButtonProps: { type: 'error' },
     negativeText: t('diychef.cancel'),
     onPositiveClick: async () => {
+      if (gameRunning.value) return false
       markDialogBusy(instance)
       deletingChef.value = true
       try {
@@ -267,7 +268,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', saveShortcut))
   </Teleport>
   <div ref="root" class="diychef-page" data-chef-motion="idle" data-tutorial="diychef-page" @pointerdown.capture="selection.start">
     <LegacyMigrationNotice v-if="editor.migrationVisible.value" :targets="editor.legacyTargets.value" :busy="busy" :importing="editor.migrating.value" :can-import="editor.canMigrate.value" :target-available="opened?.migration_available === true" @import="editor.migrate" @ignore="editor.ignoreMigration" />
-    <EditorNotice :snapshot="snapshot" :error="error" :game-running="gameRunning" :read-only="readOnly" :stale="stale" :busy="busy" :diagnostics="diagnostics" :identity-conflicts="identityConflicts" @reload="reload" />
+    <EditorNotice :snapshot="snapshot" :error="error" :save-blocked-by-game="saveBlockedByGame" :read-only="readOnly" :stale="stale" :busy="busy" :diagnostics="diagnostics" :identity-conflicts="identityConflicts" @reload="reload" />
     <ContentState v-if="loading && !snapshot" loading :description="t('diychef.loading')" />
     <TargetPicker v-else-if="opened?.status === 'select_target'" :candidates="opened.candidates" :busy="busy" @select="editor.open" />
     <ModNotInstalled v-else-if="opened?.status === 'not_installed'" guid="dev.gua.overcooked.diychef" name="DIYChef" />

@@ -68,6 +68,7 @@ fn target(generation: u64) -> ChefTarget {
         generation,
         compatibility: "editable".into(),
         supports_custom_default: true,
+        supports_live_save: false,
     }
 }
 

@@ -142,6 +142,7 @@ fn recovered_sources(game: &Path, recycle: &Path, generation: u64) -> Vec<Recove
                     generation,
                     compatibility: "editable".into(),
                     supports_custom_default: false,
+                    supports_live_save: false,
                 },
                 record_id: record.id.clone(),
                 plugin_root,

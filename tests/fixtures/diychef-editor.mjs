@@ -57,8 +57,9 @@ function snapshot(missing = false) {
   }
 }
 const valid = () => ({ diagnostics: [], changes: [], save_blocking: false })
-async function setup(t, { missing = false, running = false, api = {}, confirmChanges = async () => true, demoSnapshot, confirmMigration, interactionBusy, filesSubscribe } = {}) {
+async function setup(t, { missing = false, running = false, target = {}, api = {}, confirmChanges = async () => true, demoSnapshot, confirmMigration, interactionBusy, filesSubscribe } = {}) {
   const initial = snapshot(missing)
+  initial.target = { ...initial.target, ...target }
   let current = initial
   globalThis.__chefNotices = []
   globalThis.__chefFilesStopped = 0
@@ -67,7 +68,7 @@ async function setup(t, { missing = false, running = false, api = {}, confirmCha
     dashboard: async () => ({ config: { repositories: [], game: { path: 'fixture', runtime: 'native' } }, game: { path: 'fixture', kitchen_running: running } }),
     localMods: async () => ({ generation: 7, mods: [] }),
     diyChefOpen: async () => ({ status: 'ready', candidates: [initial.target], snapshot: current }),
-    diyChefInitialize: async () => ({ ...snapshot(), source: { ...snapshot().source, revision: 'initialized' } }),
+    diyChefInitialize: async () => ({ ...snapshot(), target: initial.target, source: { ...snapshot().source, revision: 'initialized' } }),
     diyChefValidate: async () => valid(),
     diyChefSave: async (_session, draft) => { current = { ...current, source: { ...current.source, revision: 'saved' }, selection: { entries: structuredClone(draft.entries), hat_bindings: structuredClone(draft.hat_bindings), lobby_switch: draft.lobby_switch } }; return current },
     ...api,

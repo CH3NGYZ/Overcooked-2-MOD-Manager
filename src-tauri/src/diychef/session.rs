@@ -1,6 +1,8 @@
 //! Sessions hold backend-owned paths, baselines and bounded editor state.
 #[cfg(test)]
 mod external_files_tests;
+#[cfg(test)]
+mod live_save_tests;
 mod mutations;
 #[cfg(test)]
 mod native_fallback_tests;

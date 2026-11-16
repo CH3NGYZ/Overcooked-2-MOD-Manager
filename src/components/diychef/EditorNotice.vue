@@ -7,7 +7,7 @@ import type { ChefDiagnostic, ChefEditorSnapshot } from '../../diychef/types'
 import type { ChefIdentityConflictGroup } from '../../diychef/projection'
 
 const props = defineProps<{
-  snapshot: ChefEditorSnapshot | null; error: string; gameRunning: boolean
+  snapshot: ChefEditorSnapshot | null; error: string; saveBlockedByGame: boolean
   readOnly: boolean; stale: boolean; busy: boolean; diagnostics: ChefDiagnostic[]
   identityConflicts: ChefIdentityConflictGroup[]
 }>()
@@ -30,7 +30,7 @@ function describeIdentityConflict(group: ChefIdentityConflictGroup) {
     </n-alert>
     <n-alert v-if="stale" type="warning">{{ t('diychef.staleTarget') }}</n-alert>
     <n-alert v-if="snapshot && readOnly" type="warning">{{ t('diychef.readOnly') }}</n-alert>
-    <n-alert v-if="gameRunning" type="info">{{ t('diychef.gameRunning') }}</n-alert>
+    <n-alert v-if="saveBlockedByGame" type="info">{{ t('diychef.gameRunning') }}</n-alert>
     <n-alert v-if="snapshot?.source.state === 'missing'" type="info">{{ t('diychef.missingConfig') }}</n-alert>
     <n-alert v-if="snapshot && !snapshot.target.enabled" type="warning">{{ t('diychef.targetDisabled') }}</n-alert>
     <n-alert v-if="identityConflicts.length" type="error">

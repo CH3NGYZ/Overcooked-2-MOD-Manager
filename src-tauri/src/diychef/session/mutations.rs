@@ -212,6 +212,7 @@ fn recheck_target(state: &AppState, s: &Session) -> Result<(), String> {
     if selected.compatibility != s.target.compatibility
         || selected.version != s.target.version
         || selected.enabled != s.target.enabled
+        || selected.supports_live_save != s.target.supports_live_save
         || target::mod_root(&s.game_root, &selected)? != s.mod_root
     {
         return Err("diychef.targetChanged".into());
@@ -408,8 +409,11 @@ pub(crate) fn save(
     }
     let (bytes, _) = crate::diychef::prefer::plan(&s.stored.document, d, &s.catalog)?;
     let _operation = state.operation.lock().map_err(|e| e.to_string())?;
-    game::ensure_game_stopped(&s.game_root)?;
     check_live(state, &s)?;
+    recheck_target(state, &s)?;
+    if !s.target.supports_live_save {
+        game::ensure_game_stopped(&s.game_root)?;
+    }
     s.stored = storage::write(
         &s.game_root,
         &s.mod_root,
@@ -449,8 +453,11 @@ pub(crate) fn initialize(
     let mut s = get(state, id)?;
     recheck_target(state, &s)?;
     let _operation = state.operation.lock().map_err(|e| e.to_string())?;
-    game::ensure_game_stopped(&s.game_root)?;
     check_live(state, &s)?;
+    recheck_target(state, &s)?;
+    if !s.target.supports_live_save {
+        game::ensure_game_stopped(&s.game_root)?;
+    }
     let (bytes, hat_bindings) = initialization_plan(&s)?;
     s.stored = storage::write(
         &s.game_root,

@@ -20,6 +20,8 @@ pub struct ChefTarget {
     pub compatibility: String,
     #[serde(default)]
     pub supports_custom_default: bool,
+    #[serde(default)]
+    pub supports_live_save: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChefSource {

@@ -51,13 +51,14 @@ export function useDiyChefEditor(options: EditorOptions) {
   const undoState = shallowRef<ChefEditState | null>(null)
   const demonstrating = computed(() => !!options.demoSnapshot?.())
   const gameRunning = computed(() => !demonstrating.value && (dashboard.game.value?.kitchen_running ?? false))
+  const saveBlockedByGame = computed(() => gameRunning.value && snapshot.value?.target.supports_live_save !== true)
   const readOnly = computed(() => snapshot.value?.target.compatibility === 'read_only')
   const stale = computed(() => !demonstrating.value && !!snapshot.value && dashboard.modsGeneration.value !== snapshot.value.target.generation)
   const busy = computed(() => loading.value || saving.value || initializing.value || migrating.value)
   const editable = computed(() => !!state.value && !busy.value && !readOnly.value)
   const baselineSignature = computed(() => snapshot.value ? draftSignature(createChefDraft(snapshot.value)) : '')
   const dirty = computed(() => !demonstrating.value && !!state.value && draftSignature(state.value.draft) !== baselineSignature.value)
-  const canSave = computed(() => dirty.value && !busy.value && !readOnly.value && !gameRunning.value && !stale.value && !needsReload.value && !pendingFiles.value && !checkingFiles.value && snapshot.value?.source.state === 'present')
+  const canSave = computed(() => dirty.value && !busy.value && !readOnly.value && !saveBlockedByGame.value && !stale.value && !needsReload.value && !pendingFiles.value && !checkingFiles.value && snapshot.value?.source.state === 'present')
   const diagnostics = computed(() => validation.value?.diagnostics ?? snapshot.value?.diagnostics ?? [])
   const legacyTargets = computed(() => opened.value?.legacy_targets ?? [])
   const migrationSignature = computed(() => legacyTargetSignature(legacyTargets.value, dashboard.config.value?.game.path ?? ''))
@@ -189,7 +190,7 @@ export function useDiyChefEditor(options: EditorOptions) {
     if (disposed || demonstrating.value) return
     const current = snapshot.value
     if (!current || current.source.state !== 'missing') { deferredMissingInitialization = false; return }
-    if (needsReload.value || stale.value || gameRunning.value || readOnly.value || busy.value || error.value) return
+    if (needsReload.value || stale.value || saveBlockedByGame.value || readOnly.value || busy.value || error.value) return
     if (pendingFiles.value || checkingFiles.value) { deferredMissingInitialization = true; return }
     deferredMissingInitialization = false
     const ticket = generation
@@ -374,17 +375,17 @@ export function useDiyChefEditor(options: EditorOptions) {
     validationGeneration += 1
     try {
       const checked = await api.diyChefValidate(current.session_id, pending.draft)
-      if (disposed || demonstrating.value || ticket !== generation) return false
+      if (disposed || demonstrating.value || ticket !== generation || saveBlockedByGame.value) return false
       validation.value = checked
       if (checked.save_blocking) { notify.error(t('diychef.validationBlocked')); return false }
       if (checked.changes.length && !await options.confirmChanges(checked.changes)) return false
-      if (disposed || demonstrating.value || ticket !== generation) return false
+      if (disposed || demonstrating.value || ticket !== generation || saveBlockedByGame.value) return false
       pending.draft.acknowledged_change_ids = checked.changes.map((change) => change.id)
       pendingDiskOperations.add(operation)
       const result = await api.diyChefSave(current.session_id, pending.draft)
       if (disposed || ticket !== generation) return false
       acceptSnapshot(result)
-      notify.success(t('diychef.saved'))
+      notify.success(t(result.target.supports_live_save === true ? 'diychef.savedLive' : 'diychef.saved'))
       return true
     } catch (reason) {
       if (!disposed && ticket === generation) reportOperationFailure(reason)
@@ -443,7 +444,7 @@ export function useDiyChefEditor(options: EditorOptions) {
   })
   return {
     snapshot, state, opened, loading, saving, initializing, migrating, error, validation, diagnostics, needsReload, pendingFiles,
-    gameRunning, readOnly, stale, busy, editable, dirty, canSave, demonstrating,
+    gameRunning, saveBlockedByGame, readOnly, stale, busy, editable, dirty, canSave, demonstrating,
     legacyTargets, migrationVisible, canMigrate, ignoreMigration, migrate,
     canUndo: computed(() => !!undoState.value && editable.value),
     open, save, applySnapshot, reportOperationFailure, toggle, setDefault, move, place, disable, enableAll, disableAll, changeHat, setLobby, removeProblem, reset, undo,

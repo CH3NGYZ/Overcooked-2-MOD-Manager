@@ -11,6 +11,14 @@ fn supports_custom_default(version: Option<&str>) -> bool {
         .and_then(|value| mods::compare_mod_versions(value, "2.2"))
         .is_some_and(|order| order != std::cmp::Ordering::Less)
 }
+fn supports_live_save(version: Option<&str>) -> bool {
+    // Live configuration reload is supported only by the 2.4 DLL series.
+    version.is_some_and(|value| {
+        mods::compare_mod_versions(value, "2.4")
+            .is_some_and(|order| order != std::cmp::Ordering::Less)
+            && mods::compare_mod_versions(value, "2.5") == Some(std::cmp::Ordering::Less)
+    })
+}
 pub(crate) fn candidates(mods: &[InstalledMod], generation: u64) -> Vec<ChefTarget> {
     mods::plugin_target::candidates(mods, GUID)
         .into_iter()
@@ -27,6 +35,7 @@ pub(crate) fn candidates(mods: &[InstalledMod], generation: u64) -> Vec<ChefTarg
             generation,
             compatibility: "editable".into(),
             supports_custom_default: supports_custom_default(m.version.as_deref()),
+            supports_live_save: supports_live_save(m.version.as_deref()),
         })
         .collect()
 }
@@ -99,6 +108,7 @@ mod tests {
             generation: 1,
             compatibility: "read_only".into(),
             supports_custom_default: supports_custom_default(v),
+            supports_live_save: supports_live_save(v),
         }
     }
     #[test]
@@ -123,6 +133,51 @@ mod tests {
         ] {
             assert!(!supports_custom_default(version), "{version:?}");
         }
+    }
+    #[test]
+    fn live_saving_is_limited_to_the_2_4_dll_series() {
+        for version in [
+            "2.4",
+            "2.4.0",
+            "v2.4.0",
+            "2.4.0.0",
+            "2.4.9.1",
+            "2.4.0-beta.1",
+        ] {
+            assert!(supports_live_save(Some(version)), "{version}");
+            let installed = serde_json::from_value(serde_json::json!({
+                "name":"DIYChef", "guid":GUID, "version":version,
+                "dll_file":"BepInEx/plugins/DIYChef/DIYChef.dll", "enabled":true,
+                "version_source":"plugin", "update_available":false,
+                "duplicate_guid":false, "status":"unknown"
+            }))
+            .unwrap();
+            assert!(
+                candidates(&[installed], 1)[0].supports_live_save,
+                "{version}"
+            );
+        }
+        for version in [
+            None,
+            Some(""),
+            Some("unknown"),
+            Some("2.3.9"),
+            Some("2.5"),
+            Some("2.5.0-beta.1"),
+            Some("3.0"),
+        ] {
+            assert!(!supports_live_save(version), "{version:?}");
+        }
+    }
+    #[test]
+    fn legacy_target_payloads_default_to_disallowing_live_save() {
+        let mut payload = serde_json::to_value(t("target", Some("2.4"), true)).unwrap();
+        payload
+            .as_object_mut()
+            .unwrap()
+            .remove("supports_live_save");
+        let legacy: ChefTarget = serde_json::from_value(payload).unwrap();
+        assert!(!legacy.supports_live_save);
     }
     #[test]
     fn older_unknown_and_non_fastinit_targets_are_editable() {

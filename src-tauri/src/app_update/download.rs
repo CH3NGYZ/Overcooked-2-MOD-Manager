@@ -1,11 +1,11 @@
 use crate::app_state::AppState;
-use crate::app_update::channels::detect_installer_region;
 use crate::app_update::channels::emit_installer_channel_status;
 use crate::app_update::channels::emit_installer_phase;
 use crate::app_update::channels::installer_channel_status;
 use crate::app_update::channels::installer_download_candidates;
 use crate::app_update::channels::installer_manifest_sources;
 use crate::app_update::channels::installer_sources_for_url;
+use crate::app_update::channels::{InstallerRegion, installer_region};
 use crate::app_update::manifest::InstallerRouteResult;
 use crate::app_update::manifest::race_installer_channels;
 use crate::app_update::manifest::run_installer_manifest_routes;
@@ -95,11 +95,18 @@ async fn download_installer_for_info(
     app: &AppHandle,
     signature: &str,
     proxies: &GitHubProxyConfig,
+    region: InstallerRegion,
 ) -> Result<Vec<u8>, Vec<String>> {
     let candidates = installer_download_candidates(proxies, info);
-    download_verified_installer(client, info, proxies, candidates, Some(app), |bytes| {
-        crate::app_update::verify_download(bytes, signature, &info.version)
-    })
+    download_verified_installer(
+        client,
+        info,
+        proxies,
+        candidates,
+        Some(app),
+        region,
+        |bytes| crate::app_update::verify_download(bytes, signature, &info.version),
+    )
     .await
     .map_err(|error| vec![error])
 }
@@ -110,6 +117,7 @@ pub(crate) async fn download_verified_installer(
     proxies: &GitHubProxyConfig,
     candidates: Vec<AssetDownloadCandidate>,
     app: Option<&AppHandle>,
+    region: InstallerRegion,
     verify: impl Fn(&[u8]) -> Result<(), String>,
 ) -> Result<Vec<u8>, String> {
     let proxy_count = candidates
@@ -146,7 +154,7 @@ pub(crate) async fn download_verified_installer(
                 if let (Some(app), Some(channel)) = (app, &channel) {
                     emit_installer_channel_status(
                         app,
-                        detect_installer_region(),
+                        region,
                         AppUpdateChannelStatus {
                             mode: mode.into(),
                             ..installer_channel_status(channel, "downloading", None)
@@ -172,7 +180,7 @@ pub(crate) async fn download_verified_installer(
                 if let (Some(app), Some(channel)) = (app, &channel) {
                     emit_installer_channel_status(
                         app,
-                        detect_installer_region(),
+                        region,
                         AppUpdateChannelStatus {
                             mode: mode.into(),
                             ..installer_channel_status(
@@ -327,16 +335,19 @@ async fn prepare_and_download_installer(
     info: &AppUpdateInfo,
     app: &AppHandle,
     proxies: &GitHubProxyConfig,
+    region: InstallerRegion,
 ) -> Result<VerifiedInstallerDownload, Vec<String>> {
     let update = resolve_app_update(app, info, proxies)
         .await
         .map_err(|error| vec![error])?;
-    let bytes = download_installer_for_info(client, info, app, &update.signature, proxies).await?;
+    let bytes =
+        download_installer_for_info(client, info, app, &update.signature, proxies, region).await?;
     Ok(VerifiedInstallerDownload { bytes, update })
 }
 
 pub(crate) enum InstallerDownloadAttempt {
     Updated {
+        region: InstallerRegion,
         info: AppUpdateInfo,
         download: VerifiedInstallerDownload,
     },
@@ -350,9 +361,9 @@ pub(crate) async fn discover_and_download_installer_update(
     state: &AppState,
     app: &AppHandle,
 ) -> Result<InstallerDownloadAttempt, String> {
-    let region = detect_installer_region();
-    log::info!("开始执行安装器更新流程：地区={}", region.as_str());
     let config = state.config.load_or_default();
+    let region = installer_region(&config.region);
+    log::info!("开始执行安装器更新流程：地区={}", region.as_str());
     let client = releases::build_client(config.network.timeout_seconds)
         .map_err(|error| error.to_string())?;
     let download_client = releases::build_download_client(config.network.timeout_seconds)
@@ -381,9 +392,10 @@ pub(crate) async fn discover_and_download_installer_update(
             let proxies = &config.github_proxies;
             async move {
                 emit_installer_phase(app, region, "download", None, Some(info.clone()));
-                let download = prepare_and_download_installer(download_client, &info, app, proxies)
-                    .await
-                    .map_err(|errors| errors.join("；"))?;
+                let download =
+                    prepare_and_download_installer(download_client, &info, app, proxies, region)
+                        .await
+                        .map_err(|errors| errors.join("；"))?;
                 Ok((info, download))
             }
         },
@@ -391,7 +403,11 @@ pub(crate) async fn discover_and_download_installer_update(
     .await?;
     match result {
         InstallerRouteResult::Updated((info, download)) => {
-            return Ok(InstallerDownloadAttempt::Updated { info, download });
+            return Ok(InstallerDownloadAttempt::Updated {
+                region,
+                info,
+                download,
+            });
         }
         InstallerRouteResult::Latest => return Ok(InstallerDownloadAttempt::Latest),
         InstallerRouteResult::Failed => {}

@@ -190,13 +190,13 @@ pub(crate) async fn download_remote_to_temp(
             &provider_for_remote_url(parsed.as_str()).ok_or("direct.invalidUrl")?,
             kind,
             parsed.as_str(),
-            crate::config::current_user_region(),
+            &config.region,
         )?,
     };
     let racing = candidates.len() > 1;
     let threads = crate::download::planning::file_download_threads(
         provider_for_remote_url(parsed.as_str()).as_ref(),
-        crate::config::current_user_region(),
+        &config.region,
         configured_threads,
         racing,
     );

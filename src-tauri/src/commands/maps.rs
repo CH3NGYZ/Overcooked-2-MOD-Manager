@@ -22,7 +22,7 @@ mod task_tests;
 #[tauri::command]
 pub fn get_maps(state: State<'_, AppState>) -> Result<Vec<MapInfo>, String> {
     let config = state.config.load_or_default();
-    let maps = crate::map_sources::available_maps(&config, crate::config::current_user_region());
+    let maps = crate::map_sources::available_maps(&config, &config.region);
     log::debug!("地图列表读取完成：数量={}", maps.len());
     Ok(maps.iter().map(map_to_info).collect())
 }
@@ -56,9 +56,10 @@ pub async fn refresh_map_sources(
         .in_data_selection(
             selection,
             crate::network_policy::NetworkPolicy::in_snapshot(policy, async {
-                let config = state.config.load_or_default();
+                // The tree, region and network policy belong to this selection snapshot.
+                let config = snapshot;
                 let provider = config.data_provider;
-                let region = crate::config::current_user_region().to_string();
+                let region = config.region.clone();
                 log::info!("开始刷新地图源：来源={:?}，地区={}", provider, region);
                 /*
                  * 源文档可以放在 Release 资产里，那时要先向同一个仓库的 API 取 size/sha256
@@ -78,6 +79,7 @@ pub async fn refresh_map_sources(
                     },
                     state.map_source_registry.clone(),
                     format!("{region}/{provider:?}"),
+                    &region,
                 );
                 let loaded = {
                     let ctx = crate::map_sources::MapSourceContext {
@@ -165,7 +167,8 @@ pub async fn refresh_map_releases(
         .unwrap_or_else(|| crate::network_policy::NetworkPolicy::active())?;
     crate::network_policy::NetworkPolicy::in_snapshot(policy, async {
         let force = force.unwrap_or(false);
-        let config = state.config.load_or_default();
+        // Keep region, credentials and network policy from the same entry snapshot.
+        let config = snapshot;
         let Some(map) = config
             .map_repositories
             .iter()
@@ -174,7 +177,7 @@ pub async fn refresh_map_releases(
         else {
             return Err("mapSource.mapMissing".into());
         };
-        if !crate::map_sources::map_is_available(&map, crate::config::current_user_region()) {
+        if !crate::map_sources::map_is_available(&map, &config.region) {
             return Err("source.repositoryUnavailableInRegion".into());
         }
 

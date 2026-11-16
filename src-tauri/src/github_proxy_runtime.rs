@@ -24,6 +24,8 @@ pub(crate) struct ProxyRuntime {
 
 struct RuntimeSnapshot {
     provider: DataProvider,
+    /// Request context projected from this ConfigService's saved user region.
+    region: String,
     revision: u64,
     manual_revision: u64,
     groups: GitHubProxyConfig,
@@ -43,6 +45,7 @@ impl ProxyRuntime {
         Self {
             current: RwLock::new(RuntimeSnapshot {
                 provider,
+                region: crate::config::REGION_INTERNATIONAL.into(),
                 revision: 0,
                 manual_revision: 0,
                 groups: github_proxies::bundled_defaults(),
@@ -67,13 +70,15 @@ impl ProxyRuntime {
             .provider
     }
 
-    pub(crate) fn select_provider(&self, provider: DataProvider) {
+    pub(crate) fn select_provider(&self, provider: DataProvider, region: Option<&str>) {
         let mut snapshot = self.current.write().unwrap_or_else(|e| e.into_inner());
-        if snapshot.provider != provider {
-            // A different provider starts from the shipped closure. Never expose
-            // the previous provider's plans while the new one is being fetched.
+        let region = region.unwrap_or(&snapshot.region);
+        if snapshot.provider != provider || snapshot.region != region {
+            // Region changes also invalidate the source generation when its
+            // default provider equals the user's current manual selection.
             *snapshot = RuntimeSnapshot {
                 provider,
+                region: region.to_owned(),
                 revision: snapshot.revision + 1,
                 manual_revision: snapshot.revision + 1,
                 groups: github_proxies::bundled_defaults(),
@@ -83,6 +88,14 @@ impl ProxyRuntime {
             };
             self.selection_changed.send_replace(snapshot.revision);
         }
+    }
+
+    pub(crate) fn region(&self) -> String {
+        self.current
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .region
+            .clone()
     }
 
     #[cfg(test)]
@@ -101,6 +114,7 @@ impl ProxyRuntime {
             DataProvider,
             GitHubProxyConfig,
             std::sync::Arc<crate::network_policy::NetworkPolicy>,
+            String,
         ),
         String,
     > {
@@ -109,7 +123,12 @@ impl ProxyRuntime {
             crate::network_policy::NetworkPolicy::shared()
                 .map(|policy| std::sync::Arc::new(policy.clone()))
         })?;
-        Ok((snapshot.provider, snapshot.groups.clone(), policy))
+        Ok((
+            snapshot.provider,
+            snapshot.groups.clone(),
+            policy,
+            snapshot.region.clone(),
+        ))
     }
 
     pub(crate) fn set_source_browser(&self, browser: tauri::AppHandle) {

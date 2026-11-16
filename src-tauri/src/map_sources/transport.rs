@@ -74,6 +74,7 @@ async fn verified_document(
             crate::releases::fetch_releases(
                 ctx.client,
                 &probe,
+                &ctx.config.region,
                 token.as_deref(),
                 official_api_only,
                 &api_proxies,
@@ -125,7 +126,7 @@ async fn verified_document(
         &reference.provider,
         crate::download::planning::RemoteUrlKind::ReleaseAsset,
         url.as_str(),
-        crate::config::current_user_region(),
+        &ctx.config.region,
     ) {
         Ok(candidates) => candidates,
         Err(error) => {

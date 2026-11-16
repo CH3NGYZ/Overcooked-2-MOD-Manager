@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Official data entry points. The running session owns the selection; it is
-/// initialized from the computer's region once, rather than restored from disk.
+/// initialized from the saved user region, rather than restored from disk.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DataProvider {

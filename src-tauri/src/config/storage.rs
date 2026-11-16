@@ -18,6 +18,8 @@ use std::sync::MutexGuard;
 const CONFIG_FILE: &str = "config.toml";
 
 #[cfg(test)]
+mod region_tests;
+#[cfg(test)]
 mod test_support;
 #[cfg(test)]
 mod tests;
@@ -32,15 +34,32 @@ impl ConfigService {
             // 哪个位置不可写（OneDrive 占位、只读的文档目录等）。
             ConfigError::Directory(format!("{}: {e}", root.display()))
         })?;
-        log::debug!("配置服务初始化完成：目录={}", root.display());
-        Ok(Self {
+        Self::open(root)
+    }
+
+    /// Initialize from disk before the service is exposed to startup network
+    /// consumers. Ordinary loads must never reset a manual session selection.
+    fn open(root: PathBuf) -> Result<Self, ConfigError> {
+        let service = Self {
             root,
             storage_lock: Default::default(),
             cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            proxies: std::sync::Arc::new(crate::github_proxy_runtime::ProxyRuntime::new(
-                DataProvider::for_region(super::availability::current_user_region()),
-            )),
-        })
+            proxies: Default::default(),
+        };
+        let guard = service
+            .storage_lock
+            .lock()
+            .map_err(|_| ConfigError::Read("lock.poisoned".into()))?;
+        match service.load_from_disk(&guard, true) {
+            Ok(config) => service.store_cache(&service.config_path(), &config),
+            // Recovery already wrote a valid default. Preserve the existing
+            // recoverable-startup behavior without hiding read/write failures.
+            Err(ConfigError::Parse(_)) => (),
+            Err(error) => return Err(error),
+        }
+        drop(guard);
+        log::debug!("配置服务初始化完成：目录={}", service.root.display());
+        Ok(service)
     }
 
     pub fn config_path(&self) -> PathBuf {
@@ -73,18 +92,17 @@ impl ConfigService {
         let path = self.config_path();
         // 文件指纹没变 → 直接返回缓存副本，避免重复读盘与 TOML 解析
         if let Some(cached) = self.cached_if_fresh(&path) {
-            drop(guard);
             return Ok(self.with_runtime(cached));
         }
-        let config = self.load_from_disk(&guard)?;
+        let config = self.load_from_disk(&guard, false)?;
         self.store_cache(&path, &config);
-        drop(guard);
         Ok(self.with_runtime(config))
     }
 
     pub(super) fn with_runtime(&self, mut config: AppConfig) -> AppConfig {
         match self.proxies.configuration_snapshot() {
-            Ok((provider, proxies, policy)) => {
+            Ok((provider, proxies, policy, region)) => {
+                config.region = region;
                 if config.data_provider != provider {
                     config.data_provider = provider;
                     synchronize_builtin_repository_sources(&mut config);
@@ -97,8 +115,9 @@ impl ConfigService {
         config
     }
 
+    #[cfg(test)]
     pub(crate) fn select_data_provider(&self, provider: DataProvider) {
-        self.proxies.select_provider(provider);
+        self.proxies.select_provider(provider, None);
     }
 
     pub(crate) fn set_source_browser(&self, browser: tauri::AppHandle) {
@@ -154,7 +173,46 @@ impl ConfigService {
         }
     }
 
-    fn load_from_disk(&self, guard: &MutexGuard<'_, ()>) -> Result<AppConfig, ConfigError> {
+    fn initialize_region(&self, config: &mut AppConfig, initialize_session: bool) -> bool {
+        let mut changed = false;
+        let normalized = super::availability::normalize_repository_region(Some(&config.region));
+        if normalized != config.region || normalized.is_empty() {
+            config.region = if normalized.is_empty() {
+                if initialize_session {
+                    super::availability::detect_system_region().into()
+                } else {
+                    self.proxies.region()
+                }
+            } else {
+                normalized
+            };
+            changed = true;
+        }
+        if initialize_session {
+            self.proxies.select_provider(
+                DataProvider::for_region(&config.region),
+                Some(&config.region),
+            );
+        }
+        changed
+    }
+
+    fn initialized_default(&self, initialize_session: bool) -> AppConfig {
+        let mut config = default_config();
+        if initialize_session {
+            // The template is deliberately deterministic; only a first disk
+            // initialization uses the system, not every default construction.
+            config.region.clear();
+            self.initialize_region(&mut config, true);
+        }
+        self.with_runtime(config)
+    }
+
+    fn load_from_disk(
+        &self,
+        guard: &MutexGuard<'_, ()>,
+        initialize_session: bool,
+    ) -> Result<AppConfig, ConfigError> {
         let path = self.config_path();
         let previous = self.root.join("config.previous.toml");
         log::debug!(
@@ -170,7 +228,7 @@ impl ConfigService {
             previous
         } else {
             log::info!("未找到配置文件，创建默认配置");
-            let config = self.with_runtime(default_config());
+            let config = self.initialized_default(initialize_session);
             self.save_locked(&config, guard)?;
             return Ok(config);
         };
@@ -182,6 +240,7 @@ impl ConfigService {
         match toml::from_str::<AppConfig>(&text) {
             Ok(mut config) => {
                 let mut changed = legacy_repository_proxy_fields;
+                changed |= self.initialize_region(&mut config, initialize_session);
                 config.data_provider = self.proxies.provider();
                 changed |= migrate_schema(&mut config);
                 changed |= synchronize_builtin_repository_sources(&mut config);
@@ -222,7 +281,7 @@ impl ConfigService {
                     Utc::now().format("%Y%m%d%H%M%S")
                 ));
                 let _ = fs::rename(&source, backup);
-                let config = self.with_runtime(default_config());
+                let config = self.initialized_default(initialize_session);
                 self.save_locked(&config, guard)?;
                 Err(ConfigError::Parse(error.to_string()))
             }
@@ -241,12 +300,14 @@ impl ConfigService {
             .storage_lock
             .lock()
             .map_err(|_| ConfigError::Write("lock.poisoned".into()))?;
-        self.save_locked(config, &guard)
+        // Other settings and stale snapshots cannot write an old user region
+        // back over a completed selection. Region changes use save_with_selection.
+        self.save_locked(&self.with_runtime(config.clone()), &guard)
     }
 
     // load owns the same transaction while it migrates or creates defaults;
     // accepting its guard prevents accidentally trying to acquire it twice.
-    fn save_locked(
+    pub(super) fn save_locked(
         &self,
         config: &AppConfig,
         _guard: &MutexGuard<'_, ()>,

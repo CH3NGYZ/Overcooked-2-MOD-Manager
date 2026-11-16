@@ -1,7 +1,7 @@
 import { readonly, shallowRef } from 'vue'
 import { api } from '../services/tauri'
 import { setRefreshSchedulingPaused } from '../refreshState'
-import type { DataProvider, PublicConfig } from '../types'
+import type { DataProvider, PublicConfig, UserRegion } from '../types'
 import { demoActive } from '../tutorial/demo'
 import { useDashboard } from './useDashboardStore'
 import { useMapSources } from './useMapSources'
@@ -11,12 +11,14 @@ import { useModRepositoryRefresh } from './useModRepositoryRefresh'
 // conflicting selection while the package or its source trees are loading.
 const switching = shallowRef(false)
 
+export type DataSelectionPatch = { region: UserRegion; data_provider?: never } | { data_provider: DataProvider; region?: never }
+
 export function useDataProviderSwitch() {
   const dashboard = useDashboard()
   const mods = useModRepositoryRefresh()
   const maps = useMapSources()
 
-  async function switchProvider(provider: DataProvider): Promise<{ config: PublicConfig; ready: boolean; errors: string[] } | null> {
+  async function switchSelection(patch: DataSelectionPatch): Promise<{ config: PublicConfig; ready: boolean; errors: string[] } | null> {
     if (switching.value || demoActive.value) return null
     switching.value = true
     setRefreshSchedulingPaused(true)
@@ -24,7 +26,9 @@ export function useDataProviderSwitch() {
     maps.invalidateRefresh()
     let schedulingResumed = false
     try {
-      const selected = await api.saveSettings({ data_provider: provider })
+      // The backend persists the region and chooses its initial provider as one
+      // operation. Manual provider selection keeps its session-only lifetime.
+      const selected = await api.saveSettings(patch)
       dashboard.applyConfigSnapshot(selected)
       let config: PublicConfig
       try {
@@ -55,5 +59,5 @@ export function useDataProviderSwitch() {
     }
   }
 
-  return { switching: readonly(switching), switchProvider }
+  return { switching: readonly(switching), switchSelection }
 }

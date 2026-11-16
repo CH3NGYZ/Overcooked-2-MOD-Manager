@@ -29,7 +29,8 @@ pub async fn refresh_mod_repository(
             repository_id,
             force
         );
-        let config = state.config.load_or_default();
+        // Keep region, credentials and network policy from the same entry snapshot.
+        let config = snapshot;
         let index = config
             .repositories
             .iter()
@@ -44,7 +45,7 @@ pub async fn refresh_mod_repository(
         if !crate::config::mod_repository_is_available(
             &config,
             &config.repositories[index],
-            crate::config::current_user_region(),
+            &config.region,
         ) {
             return Err("source.repositoryUnavailableInRegion".into());
         }
@@ -105,6 +106,7 @@ pub async fn refresh_mod_repository(
                 releases::fetch_releases(
                     &client,
                     &crate::releases::RepositoryRequest::from(&repo),
+                    &config.region,
                     token.as_deref(),
                     config.auth.official_api_only,
                     api_proxies,

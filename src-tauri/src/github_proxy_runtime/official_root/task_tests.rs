@@ -46,7 +46,7 @@ async fn selection_bounds_unpolled_task_size_and_drops_cancelled_work() {
     );
     let change = async {
         ready.await.unwrap();
-        runtime.select_provider(DataProvider::Cloudflare);
+        runtime.select_provider(DataProvider::Cloudflare, None);
     };
     let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(2), async {
         tokio::join!(scoped, change)
@@ -72,7 +72,7 @@ async fn selection_keeps_borrowed_results_and_rejects_a_late_provider_switch() {
     let old = runtime.selection();
     let result = runtime
         .in_selection(old, async {
-            runtime.select_provider(DataProvider::Cloudflare);
+            runtime.select_provider(DataProvider::Cloudflare, None);
             Ok(value.as_str())
         })
         .await;

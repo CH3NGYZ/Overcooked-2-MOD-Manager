@@ -469,7 +469,7 @@ async fn typed_provider_loads_the_complete_closure_and_failed_refresh_keeps_snap
         let (base, server) = serve_policy(false, 9);
         let runtime = ProxyRuntime::new(provider);
         let before = runtime.snapshot();
-        let fresh = NetworkPolicy::refresh_from(&base).await.unwrap();
+        let fresh = NetworkPolicy::refresh_from(&base, "global").await.unwrap();
         assert_eq!(
             runtime.snapshot(),
             before,
@@ -480,7 +480,7 @@ async fn typed_provider_loads_the_complete_closure_and_failed_refresh_keeps_snap
         assert_eq!(requests.len(), 9);
         assert!(requests.iter().any(|p| p == "/network-plans.toml"));
         assert!(requests.iter().any(|p| p == "/proxies.toml"));
-        let (selected_provider, groups, selected) = runtime.configuration_snapshot().unwrap();
+        let (selected_provider, groups, selected, _) = runtime.configuration_snapshot().unwrap();
         assert_eq!(selected_provider, provider);
         assert!(
             groups
@@ -521,7 +521,7 @@ async fn typed_provider_loads_the_complete_closure_and_failed_refresh_keeps_snap
         assert_eq!(active_threads, 2);
         let current = runtime.snapshot();
         let (base, server) = serve_policy(true, 9);
-        assert!(NetworkPolicy::refresh_from(&base).await.is_err());
+        assert!(NetworkPolicy::refresh_from(&base, "global").await.is_err());
         assert_eq!(server.join().unwrap().len(), 9);
         assert_eq!(runtime.snapshot(), current);
         assert_eq!(
@@ -546,7 +546,7 @@ fn switching_provider_resets_the_snapshot_and_rejects_late_results_including_a_b
         .publish_policy(fresh.clone(), DataProvider::Github, 0)
         .unwrap();
     assert_ne!(runtime.snapshot(), bundled.1);
-    runtime.select_provider(DataProvider::Gitee);
+    runtime.select_provider(DataProvider::Gitee, None);
     assert_eq!(runtime.provider(), DataProvider::Gitee);
     assert_eq!(runtime.snapshot(), bundled.1);
     assert_eq!(*runtime.configuration_snapshot().unwrap().2, *bundled.2);
@@ -558,7 +558,7 @@ fn switching_provider_resets_the_snapshot_and_rejects_late_results_including_a_b
         bundled.1,
         "late results from another provider are hidden"
     );
-    runtime.select_provider(DataProvider::Github);
+    runtime.select_provider(DataProvider::Github, None);
     runtime
         .publish_policy(fresh.clone(), DataProvider::Github, 0)
         .unwrap();
@@ -567,7 +567,7 @@ fn switching_provider_resets_the_snapshot_and_rejects_late_results_including_a_b
         bundled.1,
         "returning to A must not accept A's old response"
     );
-    runtime.select_provider(DataProvider::Builtin);
+    runtime.select_provider(DataProvider::Builtin, None);
     runtime
         .publish_policy(fresh, DataProvider::Gitee, 1)
         .unwrap();
@@ -586,7 +586,7 @@ async fn changing_provider_cancels_waiting_refresh_and_bundled_mode_never_waits_
         pending.refresh_policy().await
     });
     ready.await.unwrap();
-    runtime.select_provider(DataProvider::Gitee);
+    runtime.select_provider(DataProvider::Gitee, None);
     assert_eq!(
         tokio::time::timeout(Duration::from_millis(200), task)
             .await
@@ -595,7 +595,7 @@ async fn changing_provider_cancels_waiting_refresh_and_bundled_mode_never_waits_
             .unwrap_err(),
         "source.addressMismatch"
     );
-    runtime.select_provider(DataProvider::Builtin);
+    runtime.select_provider(DataProvider::Builtin, None);
     tokio::time::timeout(Duration::from_millis(200), runtime.refresh_policy())
         .await
         .unwrap()

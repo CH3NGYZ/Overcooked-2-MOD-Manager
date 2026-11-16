@@ -137,6 +137,36 @@ fn api_request_targets_order_direct_token_then_proxy() {
 }
 
 #[test]
+fn repository_api_plan_uses_the_requested_region_for_each_call() {
+    let mut repo = crate::releases::test_support::api_test_repository();
+    repo.provider = Provider::Github;
+    repo.kind = crate::models::RepositoryKind::Map;
+    repo.network_plan = toml::from_str(
+        "mainland = 'qingyuqingxue-map-proxy-only'\ninternational = 'github-public'",
+    )
+    .unwrap();
+    let official = "https://api.github.com/repos/user/repo/releases?per_page=50&page=2";
+    for region in ["cn", "global", "cn"] {
+        let targets = repository_api_targets(
+            &repo,
+            region,
+            official,
+            Some("never-forward-this"),
+            true,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            targets.iter().any(|(url, _)| url == official),
+            region == "global"
+        );
+        for (url, token) in &targets {
+            assert_eq!(*token, (url == official).then_some("never-forward-this"));
+        }
+    }
+}
+
+#[test]
 fn repository_api_plan_can_exclude_official_without_forwarding_credentials() {
     let mut repo = crate::releases::test_support::api_test_repository();
     repo.provider = Provider::Github;
@@ -146,8 +176,15 @@ fn repository_api_plan_can_exclude_official_without_forwarding_credentials() {
     )
     .unwrap();
     let official = "https://api.github.com/repos/user/repo/releases?per_page=50&page=2";
-    let targets =
-        repository_api_targets(&repo, official, Some("never-forward-this"), true, &[]).unwrap();
+    let targets = repository_api_targets(
+        &repo,
+        "global",
+        official,
+        Some("never-forward-this"),
+        true,
+        &[],
+    )
+    .unwrap();
     assert_eq!(targets.len(), 1);
     assert!(targets[0].0.starts_with("https://oc2ghapi.ch3ng.top/"));
     assert!(targets[0].0.contains("page=2"));

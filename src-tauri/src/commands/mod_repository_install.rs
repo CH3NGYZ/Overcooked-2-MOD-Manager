@@ -54,7 +54,8 @@ pub async fn install_mod_repository(
             asset_name.as_deref().unwrap_or("自动匹配"),
             asset_proxy_mode
         );
-        let config = state.config.load_or_default();
+        // Keep region, credentials and network policy from the same entry snapshot.
+        let config = snapshot;
         let info = game::detect_game(&config);
         let game_root = PathBuf::from(info.path.ok_or("game.notFound")?);
         game::ensure_game_stopped(&game_root)?;
@@ -68,11 +69,7 @@ pub async fn install_mod_repository(
             .ok_or("source.repositoryMissing")?
             .clone();
         // 安装要求仓库在当前地区可用；隐藏/地区不匹配的仓库不能作为安装入口
-        if !crate::config::mod_repository_is_available(
-            &config,
-            &repo,
-            crate::config::current_user_region(),
-        ) {
+        if !crate::config::mod_repository_is_available(&config, &repo, &config.region) {
             return Err("source.repositoryUnavailableForInstall".into());
         }
         /*
@@ -183,7 +180,7 @@ pub async fn install_mod_repository(
                     &repo.provider,
                     repo.kind,
                     &repo.network_plan,
-                    crate::config::current_user_region(),
+                    &config.region,
                     url,
                     is_raw_file.then_some(crate::github_proxies::RawProxyContext {
                         branch: &repo.branch,

@@ -14,6 +14,9 @@ pub struct AppConfig {
     #[serde(skip)]
     pub(crate) network_policy: Option<std::sync::Arc<crate::network_policy::NetworkPolicy>>,
     pub schema_version: u32,
+    /// 用户选择的地区；旧配置缺失时由配置服务按系统地区初始化并保存。
+    #[serde(default)]
+    pub region: String,
     #[serde(default = "crate::config::default_ui_zoom")]
     pub ui_zoom: f64,
     #[serde(default = "default_hide_unidentified_mods")]
@@ -95,7 +98,7 @@ pub struct AppConfig {
     pub github_proxies: GitHubProxyConfig,
     #[serde(default)]
     pub mod_notes: Vec<ModNote>,
-    /// Session selection; every new process initializes it from the computer region.
+    /// Session selection; every new process initializes it from the saved region.
     #[serde(skip)]
     pub data_provider: super::DataProvider,
 }
@@ -225,6 +228,7 @@ pub struct PublicConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsPatch {
+    pub region: Option<String>,
     pub ui_zoom: Option<f64>,
     pub hide_unidentified_mods: Option<bool>,
     /// 删除 MOD 时先移入回收站（默认 true）。关闭即直接删除，不可恢复。

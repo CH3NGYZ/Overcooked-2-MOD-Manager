@@ -16,6 +16,28 @@ use std::time::Duration;
 mod manifest_changelog_tests;
 mod manifest_mirror_tests;
 
+#[test]
+fn installer_channels_follow_the_configured_region_per_call() {
+    let proxies = GitHubProxyConfig::default();
+    for (configured, expected) in [
+        ("cn", InstallerRegion::MainlandChina),
+        ("global", InstallerRegion::International),
+        ("cn", InstallerRegion::MainlandChina),
+    ] {
+        let region = installer_region(configured);
+        assert_eq!(region, expected);
+        let sources = installer_manifest_sources(&proxies, region);
+        assert_eq!(
+            sources.first().unwrap().provider,
+            if configured == "cn" {
+                Provider::Gitee
+            } else {
+                Provider::Github
+            },
+        );
+    }
+}
+
 fn target() -> crate::app_update::UpdateTarget {
     crate::app_update::UpdateTarget::from_parts("windows", "x86_64", Some("exe")).unwrap()
 }
@@ -771,6 +793,7 @@ async fn package_race_rejects_bad_signatures_and_can_choose_a_different_route() 
         &GitHubProxyConfig::default(),
         candidates,
         None,
+        InstallerRegion::MainlandChina,
         |bytes| crate::app_update::verify_with_key(bytes, signature, key, &info.version),
     )
     .await
@@ -806,6 +829,7 @@ async fn gitee_package_uses_one_get_without_range_requests() {
         &GitHubProxyConfig::default(),
         candidates,
         None,
+        InstallerRegion::MainlandChina,
         |bytes| {
             crate::app_update::verify_with_key(
                 bytes,

@@ -1,5 +1,4 @@
 use crate::config::ConfigService;
-use crate::config::availability::current_user_region;
 use crate::config::availability::repository_source_matches_region;
 use crate::config::defaults::CONFIG_SCHEMA_VERSION;
 use crate::config::defaults::default_config;
@@ -51,7 +50,7 @@ fn default_config_follows_the_remote_index() {
     );
     assert!(config.repository_sources.iter().all(|source| source.builtin
         && source.parent_id.is_none()
-        && repository_source_matches_region(source, current_user_region())));
+        && repository_source_matches_region(source, &config.region)));
     let serialized = toml::to_string(&config).unwrap();
     assert!(!serialized.contains("\n[proxies"));
 }

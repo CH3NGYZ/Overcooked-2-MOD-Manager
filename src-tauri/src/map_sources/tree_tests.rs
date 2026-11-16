@@ -120,7 +120,7 @@ async fn root_failures_keep_branch_retry_targets_until_a_successful_root_replace
     });
     let events = Arc::new(Mutex::new(Vec::<MapTreeProgress>::new()));
     let capture = events.clone();
-    let observer = SourceObserver::new(move |event| capture.lock().unwrap().push(event));
+    let observer = SourceObserver::new("global", move |event| capture.lock().unwrap().push(event));
     let label = SourceLabel {
         id: "root".into(),
         ..Default::default()
@@ -321,7 +321,7 @@ nickname = "Failed"
     });
     let progress = Arc::new(Mutex::new(Vec::<MapTreeProgress>::new()));
     let capture = progress.clone();
-    let observer = SourceObserver::new(move |event| capture.lock().unwrap().push(event));
+    let observer = SourceObserver::new("global", move |event| capture.lock().unwrap().push(event));
     let label = SourceLabel {
         id: "root".into(),
         ..Default::default()

@@ -1,7 +1,6 @@
 use crate::config::ConfigService;
 use crate::config::availability::REGION_CHINESE_MAINLAND;
 use crate::config::availability::REGION_INTERNATIONAL;
-use crate::config::availability::current_user_region;
 use crate::config::defaults::default_config;
 use crate::config::identity::mod_repository_from_export;
 use crate::models::*;
@@ -78,7 +77,7 @@ fn export_includes_builtin_disabled_and_other_region_repositories_with_their_sou
     .remove(0);
     let mut config = default_config();
     let builtin_source = config.repository_sources[0].id.clone();
-    let other_region = if current_user_region() == REGION_CHINESE_MAINLAND {
+    let other_region = if &config.region == REGION_CHINESE_MAINLAND {
         REGION_INTERNATIONAL
     } else {
         REGION_CHINESE_MAINLAND

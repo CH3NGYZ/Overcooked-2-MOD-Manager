@@ -55,6 +55,7 @@ pub(super) async fn load_release_tag_maps(
             crate::releases::fetch_releases(
                 ctx.client,
                 &probe,
+                &ctx.config.region,
                 token.as_deref(),
                 official_api_only,
                 &api_proxies,

@@ -38,6 +38,7 @@ const { useDataProviderSwitch } = await import('../src/composables/useDataProvid
 const { useDashboard } = await import('../src/composables/useDashboardStore.ts')
 const { useMapSources } = await import('../src/composables/useMapSources.ts')
 const { useModRepositoryRefresh } = await import('../src/composables/useModRepositoryRefresh.ts')
+const { demoActive } = await import('../src/tutorial/demo.ts')
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
 function deferred() { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
 const source = (id, parent_id) => ({ id, parent_id, nickname: id, url: `${id}.toml`, enabled: true })
@@ -56,7 +57,16 @@ function setup() {
     dashboard: async () => ({ config: structuredClone(config), game: { kitchen_running: false } }),
     config: async () => structuredClone(config),
     maps: async () => [map('trusted-map')],
-    saveSettings: async patch => { calls.push(['select', patch.data_provider]); config = { ...config, data_provider: patch.data_provider }; return structuredClone(config) },
+    saveSettings: async patch => {
+      if (patch.region) {
+        calls.push(['region', patch.region])
+        config = { ...config, region: patch.region, data_provider: patch.region === 'cn' ? 'gitcode' : 'github' }
+      } else {
+        calls.push(['select', patch.data_provider])
+        config = { ...config, data_provider: patch.data_provider }
+      }
+      return structuredClone(config)
+    },
     refreshNetworkConfig: async () => {
       calls.push(['zip'])
       await packageReady.promise
@@ -84,7 +94,7 @@ function setup() {
 test('a provider switch downloads one package before both real source engines rebuild their roots and children without force', async () => {
   const f = setup(), dashboard = useDashboard(), maps = useMapSources(), mods = useModRepositoryRefresh()
   await dashboard.loadBase(); await maps.loadMaps()
-  const pending = useDataProviderSwitch().switchProvider('cloudflare')
+  const pending = useDataProviderSwitch().switchSelection({ data_provider: 'cloudflare' })
   await tick()
   assert.deepEqual(f.calls, [['select', 'cloudflare'], ['zip']])
   assert.deepEqual(maps.maps.value.map(item => item.id), ['trusted-map'])
@@ -118,7 +128,7 @@ test('switch waits for a busy old MOD request, skips its remaining queue, reject
   const oldBatch = mods.refreshMany([repository('shared-id'), ...Array.from({length: 9}, (_, i) => repository(`old-${i}`))])
   await tick()
   assert.equal(calls.length, 4)
-  const pending = useDataProviderSwitch().switchProvider('builtin')
+  const pending = useDataProviderSwitch().switchSelection({ data_provider: 'builtin' })
   await tick()
   assert.equal(f.calls.some(([kind]) => kind === 'toml'), false, 'new tree waits for the old batch to finish')
   old.resolve(); await oldBatch
@@ -138,7 +148,7 @@ test('a busy old MOD source cannot publish descendants or start their requests a
   f.api.importRepositorySource = async id => { f.calls.push(['obsolete-toml', id]); await old.promise; return { access_error: null } }
   const oldBatch = mods.refreshEverything()
   await tick()
-  const pending = useDataProviderSwitch().switchProvider('cloudflare')
+  const pending = useDataProviderSwitch().switchSelection({ data_provider: 'cloudflare' })
   await tick()
   old.resolve(); await oldBatch
   assert.deepEqual(mods.visibleRepositories.value.map(item => item.id), ['trusted-mod'])
@@ -157,7 +167,7 @@ test('a busy old map Release cannot publish success or failure after a selection
     f.api.refreshMapReleases = async () => { await old.promise; if (fail) throw Error('obsolete error'); return { ...map('trusted-map'), latest_tag: 'obsolete' } }
     const oldBatch = maps.refreshReleases([map('trusted-map')])
     await tick()
-    const pending = useDataProviderSwitch().switchProvider('builtin')
+    const pending = useDataProviderSwitch().switchSelection({ data_provider: 'builtin' })
     await tick()
     old.resolve(); await oldBatch
     assert.equal(maps.maps.value[0].latest_tag, undefined)
@@ -176,7 +186,7 @@ test('invalidated old map channel callbacks cannot mutate trusted cards while th
   f.api.refreshMapSources = async (_pass, _force, onProgress) => { publish = onProgress; await old.promise; return [map('obsolete-map')] }
   const oldBatch = maps.refreshAll()
   await tick()
-  const pending = useDataProviderSwitch().switchProvider('gitcode')
+  const pending = useDataProviderSwitch().switchSelection({ data_provider: 'gitcode' })
   await tick()
   publish({ nodes: [node('old-map-root')], maps: [map('obsolete-map')] })
   assert.deepEqual(maps.maps.value.map(item => item.id), ['trusted-map'])
@@ -192,7 +202,7 @@ test('package failure leaves both trusted source displays intact and never start
   await dashboard.loadBase(); await maps.loadMaps()
   const trustedMods = mods.visibleRepositories.value.map(item => item.id)
   f.api.refreshNetworkConfig = async () => { f.calls.push(['zip']); throw Error('invalid package') }
-  const result = await useDataProviderSwitch().switchProvider('gitee')
+  const result = await useDataProviderSwitch().switchSelection({ data_provider: 'gitee' })
   assert.equal(result.ready, false)
   assert.deepEqual(mods.visibleRepositories.value.map(item => item.id), trustedMods)
   assert.deepEqual(maps.maps.value.map(item => item.id), ['trusted-map'])
@@ -210,7 +220,7 @@ test('source switching rejects new single, group and full refresh work during pa
   const old = deferred(), refreshFresh = f.api.refreshModRepository
   f.api.refreshModRepository = async id => { f.calls.push(['old-release', id]); await old.promise; return { cached_releases: [] } }
   const oldTask = mods.refreshOne(repository('old-busy'))
-  const pending = useDataProviderSwitch().switchProvider('cloudflare')
+  const pending = useDataProviderSwitch().switchSelection({ data_provider: 'cloudflare' })
   await tick()
   const before = structuredClone(f.calls)
   async function tryRefresh() {
@@ -244,7 +254,7 @@ test('a failed provider selection releases the shared scheduling gate for both d
   const f = setup(), dashboard = useDashboard(), maps = useMapSources(), mods = useModRepositoryRefresh()
   await dashboard.loadBase(); await maps.loadMaps()
   f.api.saveSettings = async () => { throw Error('selection failed') }
-  await assert.rejects(useDataProviderSwitch().switchProvider('builtin'), /selection failed/)
+  await assert.rejects(useDataProviderSwitch().switchSelection({ data_provider: 'builtin' }), /selection failed/)
   await mods.refreshOne(repository('after-selection-error'))
   await maps.refreshReleases([map('trusted-map')])
   assert.ok(f.calls.some(([kind]) => kind === 'mod-release'))
@@ -262,7 +272,7 @@ test('an invalidated map source finally cannot roll the selected provider back t
   f.api.refreshMapSources = async () => { await old.promise; return [map('obsolete-map')] }
   const oldTask = maps.refreshAll()
   await tick()
-  const pending = useDataProviderSwitch().switchProvider('cloudflare')
+  const pending = useDataProviderSwitch().switchSelection({ data_provider: 'cloudflare' })
   await tick()
   assert.equal(dashboard.config.value.data_provider, 'cloudflare')
   // This read belongs to the invalidated old source operation; even a stale
@@ -283,7 +293,7 @@ test('a package failure keeps new scheduling paused until the invalidated old re
   f.api.refreshModRepository = async () => { await old.promise; return { cached_releases: [] } }
   const oldTask = mods.refreshOne(repository('old-busy'))
   f.api.refreshNetworkConfig = async () => { throw Error('package failure') }
-  const pending = useDataProviderSwitch().switchProvider('builtin')
+  const pending = useDataProviderSwitch().switchSelection({ data_provider: 'builtin' })
   await tick()
   assert.equal(useDataProviderSwitch().switching.value, true)
   await maps.refreshReleases([map('blocked-until-drain')])
@@ -305,7 +315,7 @@ test('an invalidated local map snapshot cannot overwrite trusted cards during pa
   const old = deferred()
   f.api.maps = async () => { await old.promise; return [map('obsolete-local-map')] }
   const oldTask = maps.loadMaps()
-  const pending = useDataProviderSwitch().switchProvider('cloudflare')
+  const pending = useDataProviderSwitch().switchSelection({ data_provider: 'cloudflare' })
   await tick()
   old.resolve(); await oldTask
   assert.deepEqual(maps.maps.value.map(item => item.id), ['trusted-map'])
@@ -316,16 +326,126 @@ test('an invalidated local map snapshot cannot overwrite trusted cards during pa
 test('the module-level switch lock blocks a second Settings instance until the selected package has applied', async () => {
   const f = setup(), dashboard = useDashboard()
   await dashboard.loadBase()
-  const first = useDataProviderSwitch().switchProvider('github')
+  const first = useDataProviderSwitch().switchSelection({ data_provider: 'github' })
   await tick()
-  assert.equal(await useDataProviderSwitch().switchProvider('cloudflare'), null)
+  assert.equal(await useDataProviderSwitch().switchSelection({ data_provider: 'cloudflare' }), null)
   assert.deepEqual(f.calls.filter(([kind]) => kind === 'select'), [['select', 'github']])
   f.packageReady.resolve(); await first
 })
 
+test('region selection delegates default source choice to the backend and refreshes both real source engines once', async () => {
+  for (const region of ['cn', 'global']) {
+    const f = setup(), dashboard = useDashboard(), maps = useMapSources(), mods = useModRepositoryRefresh()
+    f.config = { ...f.config, region: region === 'cn' ? 'global' : 'cn', data_provider: 'cloudflare' }
+    await dashboard.loadBase(); await maps.loadMaps()
+    const select = f.api.saveSettings
+    f.api.saveSettings = async patch => { assert.deepEqual(patch, { region }); return select(patch) }
+    const pending = useDataProviderSwitch().switchSelection({ region })
+    await tick()
+    assert.deepEqual(f.calls, [['region', region], ['zip']])
+    assert.equal(dashboard.config.value.region, region)
+    assert.equal(dashboard.config.value.data_provider, region === 'cn' ? 'gitcode' : 'github')
+    f.packageReady.resolve(); const result = await pending
+    assert.equal(result.ready, true)
+    assert.equal(result.config.region, region)
+    assert.equal(f.calls.filter(([kind]) => kind === 'zip').length, 1)
+    assert.deepEqual(f.calls.filter(([kind]) => kind === 'toml'), [['toml', 'root', false, false], ['toml', 'child', false, false]])
+    assert.deepEqual(f.calls.filter(([kind]) => kind === 'maps.toml'), [['maps.toml', false]])
+    assert.deepEqual(mods.visibleRepositories.value.map(item => item.id), ['fresh-mod'])
+    assert.deepEqual(maps.maps.value.map(item => item.id), ['fresh-map'])
+    assert.equal(dashboard.config.value.network_policy.id, 'new-plan')
+    assert.equal(dashboard.config.value.github_proxies.id, 'new-proxies')
+    assert.ok(f.calls.every(([kind, , force]) => !kind.endsWith('-release') || force === false))
+  }
+})
+
+test('changing region invalidates old MOD results, map channels and config projections even when the provider stays the same', async () => {
+  const f = setup(), dashboard = useDashboard(), maps = useMapSources(), mods = useModRepositoryRefresh()
+  f.config = { ...f.config, region: 'global', data_provider: 'gitcode', repositories: [repository('trusted-mod')] }
+  await dashboard.loadBase(); await maps.loadMaps()
+  const staleConfig = structuredClone(f.config), old = deferred()
+  const mapFresh = f.api.refreshMapSources, modFresh = f.api.refreshModRepository, configFresh = f.api.config
+  let publish
+  f.api.refreshMapSources = async (_pass, _force, progress) => { publish = progress; await old.promise; return [map('obsolete-map')] }
+  f.api.refreshModRepository = async () => { await old.promise; return { cached_releases: [{ tag_name: 'obsolete' }] } }
+  const oldMap = maps.refreshAll(), oldMod = mods.refreshOne(repository('trusted-mod'))
+  await tick()
+  const pending = useDataProviderSwitch().switchSelection({ region: 'cn' })
+  await tick()
+  assert.equal(dashboard.config.value.data_provider, 'gitcode')
+  publish({ nodes: [node('obsolete-map-root')], maps: [map('obsolete-map')] })
+  f.api.config = async () => staleConfig
+  old.resolve(); await Promise.all([oldMap, oldMod])
+  assert.equal(dashboard.config.value.region, 'cn')
+  assert.equal(dashboard.config.value.repositories[0].cached_releases.length, 0)
+  assert.deepEqual(maps.maps.value.map(item => item.id), ['trusted-map'])
+  f.api.refreshMapSources = mapFresh; f.api.refreshModRepository = modFresh; f.api.config = configFresh
+  f.packageReady.resolve(); await pending
+  assert.equal(dashboard.config.value.region, 'cn')
+  assert.deepEqual(maps.maps.value.map(item => item.id), ['fresh-map'])
+})
+
+test('region save failure preserves trusted configuration and releases the shared lock for retry', async () => {
+  const f = setup(), dashboard = useDashboard(), maps = useMapSources()
+  await dashboard.loadBase(); await maps.loadMaps()
+  const trusted = structuredClone(dashboard.config.value), select = f.api.saveSettings
+  f.api.saveSettings = async () => { throw Error('region save failed') }
+  await assert.rejects(useDataProviderSwitch().switchSelection({ region: 'cn' }), /region save failed/)
+  assert.deepEqual(dashboard.config.value, trusted)
+  assert.deepEqual(f.calls, [])
+  assert.equal(useDataProviderSwitch().switching.value, false)
+  f.api.saveSettings = select; f.packageReady.resolve()
+  assert.equal((await useDataProviderSwitch().switchSelection({ region: 'cn' })).ready, true)
+})
+
+test('package failure keeps the saved region and backend fallback source while preserving trusted lists', async () => {
+  const f = setup(), dashboard = useDashboard(), maps = useMapSources(), mods = useModRepositoryRefresh()
+  f.config = { ...f.config, repositories: [repository('trusted-mod')] }
+  await dashboard.loadBase(); await maps.loadMaps()
+  f.api.refreshNetworkConfig = async () => {
+    f.calls.push(['zip'])
+    f.config = { ...f.config, data_provider: 'builtin' }
+    throw Error('package failure')
+  }
+  const result = await useDataProviderSwitch().switchSelection({ region: 'cn' })
+  assert.equal(result.ready, false)
+  assert.equal(result.config.region, 'cn')
+  assert.equal(result.config.data_provider, 'builtin')
+  assert.deepEqual(mods.visibleRepositories.value.map(item => item.id), ['trusted-mod'])
+  assert.deepEqual(maps.maps.value.map(item => item.id), ['trusted-map'])
+  assert.deepEqual(f.calls, [['region', 'cn'], ['zip']])
+  assert.equal(useDataProviderSwitch().switching.value, false)
+})
+
+test('region and manual provider selection share the same cross-instance lock', async () => {
+  for (const [first, second, calls] of [
+    [{ region: 'cn' }, { data_provider: 'cloudflare' }, [['region', 'cn']]],
+    [{ data_provider: 'cloudflare' }, { region: 'cn' }, [['select', 'cloudflare']]],
+  ]) {
+    const f = setup(), dashboard = useDashboard()
+    await dashboard.loadBase()
+    const pending = useDataProviderSwitch().switchSelection(first)
+    await tick()
+    assert.equal(await useDataProviderSwitch().switchSelection(second), null)
+    assert.deepEqual(f.calls.filter(([kind]) => kind === 'select' || kind === 'region'), calls)
+    f.packageReady.resolve(); await pending
+  }
+})
+
+test('tutorial mode blocks both region and provider selection without saving or preparing a package', async () => {
+  const f = setup()
+  demoActive.value = true
+  try {
+    assert.equal(await useDataProviderSwitch().switchSelection({ region: 'cn' }), null)
+    assert.equal(await useDataProviderSwitch().switchSelection({ data_provider: 'builtin' }), null)
+    assert.deepEqual(f.calls, [])
+    assert.equal(useDataProviderSwitch().switching.value, false)
+  } finally { demoActive.value = false }
+})
+
 test('Settings uses the shared switch coordinator instead of a page-local network-only refresh', () => {
   const view = readFileSync(new URL('../src/views/SettingsView.vue', import.meta.url), 'utf8')
-  assert.match(view, /switching: switchingDataProvider, switchProvider \} = useDataProviderSwitch\(\)/)
-  assert.match(view, /const result = await switchProvider\(value\)/)
+  assert.match(view, /switching: switchingDataProvider, switchSelection \} = useDataProviderSwitch\(\)/)
+  assert.match(view, /const result = await switchSelection\(patch\)/)
   assert.doesNotMatch(view, /api\.refreshNetworkConfig\(/)
 })

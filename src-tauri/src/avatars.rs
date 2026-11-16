@@ -214,11 +214,8 @@ async fn download_and_store(
     provider: &Provider,
     owner: &str,
 ) -> Result<Vec<u8>, String> {
-    let candidates = crate::download::planning::plan_avatar_download(
-        provider,
-        crate::config::current_user_region(),
-        owner,
-    )?;
+    let candidates =
+        crate::download::planning::plan_avatar_download(provider, &config.region, owner)?;
     if candidates.is_empty() {
         log::warn!("头像没有可用下载候选：provider={provider:?} owner={owner}");
         return Err("avatar.noSource".into());

@@ -45,7 +45,8 @@ pub async fn get_repository_avatars(
                 .operation
                 .lock()
                 .map_err(|_| "lock.poisoned".to_string())?;
-            (state.config.load_or_default(), state.config.cache_dir())
+            // The batch must use the same region and policy captured at entry.
+            (snapshot, state.config.cache_dir())
         };
         log::debug!("开始读取头像：请求数={}", owners.len());
 

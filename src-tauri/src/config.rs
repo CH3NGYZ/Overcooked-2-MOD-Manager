@@ -11,13 +11,13 @@ mod metadata;
 mod migrations;
 mod public;
 mod secrets;
+mod selection;
 mod sources;
 mod storage;
 mod validation;
 
 pub use availability::REGION_CHINESE_MAINLAND;
 pub use availability::REGION_INTERNATIONAL;
-pub use availability::current_user_region;
 pub(crate) use availability::mod_repository_is_available;
 pub(crate) use availability::normalize_repository_platform;
 pub(crate) use availability::normalize_repository_region;

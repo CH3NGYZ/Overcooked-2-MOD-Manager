@@ -244,6 +244,7 @@ pub async fn get_repository_readme(
             releases::fetch_repository_default_branch(
                 &client,
                 &crate::releases::RepositoryRequest::from(repo),
+                &config.region,
                 token.as_deref(),
                 proxies,
             )

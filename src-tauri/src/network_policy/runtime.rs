@@ -27,8 +27,8 @@ impl NetworkPolicy {
         ACTIVE.scope(policy, Box::pin(work))
     }
 
-    pub(crate) async fn refresh_from(base: &SourceLocation) -> Result<Self, String> {
-        async fn read(base: &SourceLocation, path: &str) -> Result<String, String> {
+    pub(crate) async fn refresh_from(base: &SourceLocation, region: &str) -> Result<Self, String> {
+        async fn read(base: &SourceLocation, path: &str, region: &str) -> Result<String, String> {
             let location =
                 SourceLocation::resolve(path, Some(base)).map_err(|_| "proxy.validationFailed")?;
             if crate::repository_sources::package_document_path(&location).is_none()
@@ -41,7 +41,7 @@ impl NetworkPolicy {
                         &provider,
                         RepositoryKind::Mod,
                         &Default::default(),
-                        crate::config::current_user_region(),
+                        region,
                         url.as_str(),
                         Some(crate::github_proxies::RawProxyContext {
                             branch: "",
@@ -74,12 +74,12 @@ impl NetworkPolicy {
                 .await
                 .map_err(|_| "proxy.validationFailed".into())
         }
-        let index = read(base, "proxies.toml").await?;
+        let index = read(base, "proxies.toml", region).await?;
         let mut documents = BTreeMap::new();
         for path in proxy_documents(&index)? {
-            documents.insert(path.clone(), read(base, &path).await?);
+            documents.insert(path.clone(), read(base, &path, region).await?);
         }
-        let plans = read(base, "network-plans.toml").await?;
+        let plans = read(base, "network-plans.toml", region).await?;
         Self::parse(&index, &documents, &plans)
     }
 }

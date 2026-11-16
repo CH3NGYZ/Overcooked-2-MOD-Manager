@@ -18,12 +18,21 @@ use url::Url;
 pub async fn fetch_releases(
     client: &Client,
     repo: &RepositoryRequest,
+    region: &str,
     token: Option<&str>,
     official_api_only: bool,
     api_proxies: &[GitHubProxy],
 ) -> Result<Vec<ReleaseInfo>, ReleaseError> {
     super::pagination::collect_release_pages(|page| {
-        fetch_releases_page(client, repo, page, token, official_api_only, api_proxies)
+        fetch_releases_page(
+            client,
+            repo,
+            region,
+            page,
+            token,
+            official_api_only,
+            api_proxies,
+        )
     })
     .await
 }
@@ -31,6 +40,7 @@ pub async fn fetch_releases(
 async fn fetch_releases_page(
     client: &Client,
     repo: &RepositoryRequest,
+    region: &str,
     page: u32,
     token: Option<&str>,
     official_api_only: bool,
@@ -53,8 +63,14 @@ async fn fetch_releases_page(
             return Err(error);
         }
     };
-    let request_targets =
-        repository_api_targets(repo, &official, token, official_api_only, api_proxies)?;
+    let request_targets = repository_api_targets(
+        repo,
+        region,
+        &official,
+        token,
+        official_api_only,
+        api_proxies,
+    )?;
     log::debug!(
         "开始获取 Release: repository_id={} provider={:?} per_page={} page={} token_configured={} official_api_only={} api_target_count={}",
         repo.id,
@@ -183,6 +199,7 @@ async fn fetch_releases_from_targets(
 pub async fn fetch_repository_default_branch(
     client: &Client,
     repo: &RepositoryRequest,
+    region: &str,
     token: Option<&str>,
     api_proxies: &[GitHubProxy],
 ) -> Result<String, ReleaseError> {
@@ -199,7 +216,8 @@ pub async fn fetch_repository_default_branch(
     let official = url.to_string();
     let mut last_error = None;
     let mut skip_official = false;
-    for (url, request_token) in repository_api_targets(repo, &official, token, false, api_proxies)?
+    for (url, request_token) in
+        repository_api_targets(repo, region, &official, token, false, api_proxies)?
     {
         if skip_official && url == official {
             continue;

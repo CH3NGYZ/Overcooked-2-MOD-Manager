@@ -258,7 +258,8 @@ pub async fn stage_map_release(
             tag.as_deref().unwrap_or("自动选择"),
             asset_name.as_deref().unwrap_or("自动匹配")
         );
-        let config = state.config.load_or_default();
+        // Keep region, credentials and network policy from the same entry snapshot.
+        let config = snapshot;
         let Some(map) = config
             .map_repositories
             .iter()
@@ -310,7 +311,7 @@ pub async fn stage_map_release(
                     &map.provider,
                     crate::models::RepositoryKind::Map,
                     &map.network_plan,
-                    crate::config::current_user_region(),
+                    &config.region,
                     url,
                     None,
                     None,

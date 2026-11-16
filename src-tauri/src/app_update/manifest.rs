@@ -3,12 +3,12 @@ use crate::app_update::channels::INSTALLER_GITEE_REPO;
 use crate::app_update::channels::INSTALLER_GITHUB_OWNER;
 use crate::app_update::channels::INSTALLER_GITHUB_REPO;
 use crate::app_update::channels::InstallerChannel;
-use crate::app_update::channels::detect_installer_region;
 use crate::app_update::channels::emit_installer_channel_status;
 use crate::app_update::channels::emit_installer_phase;
 use crate::app_update::channels::installer_candidate;
 use crate::app_update::channels::installer_channel_status;
 use crate::app_update::channels::installer_manifest_sources;
+use crate::app_update::channels::installer_region;
 use crate::app_update::channels::{INSTALLER_GITCODE_OWNER, INSTALLER_GITCODE_REPO};
 use crate::archive;
 use crate::download::try_download_candidates as try_asset_download_candidates;
@@ -351,7 +351,7 @@ pub(crate) async fn discover_installer_update(
     config: &AppConfig,
     app: &AppHandle,
 ) -> Result<AppUpdateCheckResult, String> {
-    let region = detect_installer_region();
+    let region = installer_region(&config.region);
     emit_installer_phase(app, region, "manifest", None, None);
     let client =
         releases::build_client(config.network.timeout_seconds).map_err(|e| e.to_string())?;

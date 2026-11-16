@@ -59,6 +59,7 @@ pub(super) fn api_request_targets<'a>(
 /// credentials at a proxy origin. Token grants remain a separate capability.
 pub(super) fn repository_api_targets<'a>(
     repo: &crate::releases::RepositoryRequest,
+    region: &str,
     official: &str,
     token: Option<&'a str>,
     official_only: bool,
@@ -67,12 +68,7 @@ pub(super) fn repository_api_targets<'a>(
     use crate::network_policy::{NetworkPolicy, Step};
     let policy = NetworkPolicy::active().map_err(ReleaseError::Http)?;
     let plan = policy
-        .resolve(
-            &repo.provider,
-            repo.kind,
-            crate::config::current_user_region(),
-            &repo.network_plan,
-        )
+        .resolve(&repo.provider, repo.kind, region, &repo.network_plan)
         .map_err(ReleaseError::Http)?;
     let mut targets = Vec::new();
     for step in &plan.api.route {

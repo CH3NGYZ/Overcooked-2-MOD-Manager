@@ -47,7 +47,8 @@ pub(crate) fn normalize_repository_region_for_storage(
     }
 }
 
-pub fn current_user_region() -> &'static str {
+/// Only missing/invalid persisted user regions may consult the OS.
+pub(super) fn detect_system_region() -> &'static str {
     #[cfg(windows)]
     {
         use winapi::um::winnls::GetUserGeoID;
@@ -60,7 +61,7 @@ pub fn current_user_region() -> &'static str {
     }
     #[cfg(target_os = "macos")]
     {
-        crate::user_region::current()
+        crate::user_region::detect_region()
     }
     #[cfg(not(any(windows, target_os = "macos")))]
     {

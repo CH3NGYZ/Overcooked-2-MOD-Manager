@@ -8,6 +8,21 @@ import type { DomainMessages } from './types'
  */
 export const settings: DomainMessages = {
   dataSources: { 'zh-CN': '数据来源', 'zh-TW': '資料來源', en: 'Data sources', ko: '데이터 소스', ja: 'データソース' },
+  region: { 'zh-CN': '地区', 'zh-TW': '地區', en: 'Region', ko: '지역', ja: '地域' },
+  regionHint: {
+    'zh-CN': '地区会保存并在下次启动时继续使用。切换地区后自动选择数据来源，并刷新 MOD / 地图源。',
+    'zh-TW': '地區會儲存並在下次啟動時繼續使用。切換地區後自動選擇資料來源，並重新整理 MOD / 地圖來源。',
+    en: 'Your region is saved for future launches. Changing it automatically selects a data source and refreshes MOD / map sources.',
+    ko: '지역은 저장되어 다음 실행에도 유지됩니다. 지역을 변경하면 데이터 소스가 자동으로 선택되고 MOD / 지도 소스가 새로 고쳐집니다.',
+    ja: '地域は保存され、次回の起動時にも使われます。変更するとデータソースを自動選択し、MOD / マップソースを更新します。',
+  },
+  regionChanged: {
+    'zh-CN': '已保存地区，自动选择数据来源并刷新 MOD / 地图源',
+    'zh-TW': '已儲存地區，自動選擇資料來源並重新整理 MOD / 地圖來源',
+    en: 'Region saved, data source selected automatically, and MOD / map sources refreshed.',
+    ko: '지역을 저장하고 데이터 소스를 자동으로 선택한 뒤 MOD / 지도 소스를 새로 고쳤습니다.',
+    ja: '地域を保存し、データソースを自動選択して MOD / マップソースを更新しました。',
+  },
   dataProviderGitcode: { 'zh-CN': 'GitCode（中国大陆 - 推荐）', 'zh-TW': 'GitCode（中國大陸 - 推薦）', en: 'GitCode (Mainland China - Recommended)', ko: 'GitCode (중국 본토 - 권장)', ja: 'GitCode（中国本土 - 推奨）' },
   dataProviderGitee: { 'zh-CN': 'Gitee (中国大陆 - 备用)', 'zh-TW': 'Gitee（中國大陸 - 備用）', en: 'Gitee (Mainland China - Backup)', ko: 'Gitee (중국 본토 - 예비)', ja: 'Gitee（中国本土 - 予備）' },
   dataProviderGithub: { 'zh-CN': 'Github (国际)', 'zh-TW': 'Github（國際）', en: 'Github (International)', ko: 'Github (국제)', ja: 'Github（国際）' },

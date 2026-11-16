@@ -10,13 +10,7 @@ pub(crate) fn collect_update_status(
         .repositories
         .iter()
         // 不可用的仓库不产生更新状态：它不刷新，缓存的 Release 也就不再可信
-        .filter(|repo| {
-            crate::config::mod_repository_is_available(
-                config,
-                repo,
-                crate::config::current_user_region(),
-            )
-        })
+        .filter(|repo| crate::config::mod_repository_is_available(config, repo, &config.region))
         .map(|repo| {
             let local_mod = installed.iter().find(|item| {
                 (repo.download_mode == ModDownloadMode::RepositoryFile

@@ -551,8 +551,8 @@ async fn user_switch_cancels_http_and_lock_waiters_and_rejects_a_b_a() {
     })
     .await;
     let old = runtime.selection();
-    runtime.select_provider(DataProvider::Cloudflare);
-    runtime.select_provider(DataProvider::Github);
+    runtime.select_provider(DataProvider::Cloudflare, None);
+    runtime.select_provider(DataProvider::Github, None);
     let result = tokio::time::timeout(Duration::from_secs(2), task)
         .await
         .unwrap()
@@ -567,7 +567,7 @@ async fn user_switch_cancels_http_and_lock_waiters_and_rejects_a_b_a() {
     assert_ne!(runtime.selection(), old);
     assert!(runtime.in_selection(old, async { Ok(()) }).await.is_err());
     let _guard = runtime.root_refresh.lock().await;
-    runtime.select_provider(DataProvider::Builtin);
+    runtime.select_provider(DataProvider::Builtin, None);
     let builtin = tokio::time::timeout(Duration::from_secs(2), runtime.official_root(false))
         .await
         .unwrap()
@@ -578,10 +578,15 @@ async fn user_switch_cancels_http_and_lock_waiters_and_rejects_a_b_a() {
 
 #[tokio::test]
 async fn missing_native_browser_client_skips_gitee_http_and_follows_the_domestic_chain() {
-    let rejected = prepare_package(DataProvider::Gitee, "not a network address".into(), None)
-        .await
-        .err()
-        .unwrap();
+    let rejected = prepare_package(
+        DataProvider::Gitee,
+        "not a network address".into(),
+        "cn",
+        None,
+    )
+    .await
+    .err()
+    .unwrap();
     assert_eq!(rejected, "source.webDownloadFailed");
     for (initial, gitcode_reply) in [
         (DataProvider::Gitee, None),
@@ -653,7 +658,7 @@ async fn missing_native_browser_client_skips_gitee_http_and_follows_the_domestic
 fn explicit_selection_and_automatic_fallback_have_distinct_revision_ownership() {
     let runtime = ProxyRuntime::new(DataProvider::Github);
     let changes = runtime.selection_changes();
-    runtime.select_provider(DataProvider::Cloudflare);
+    runtime.select_provider(DataProvider::Cloudflare, None);
     assert!(changes.has_changed().unwrap());
     assert_eq!(runtime.current.read().unwrap().manual_revision, 1);
 }

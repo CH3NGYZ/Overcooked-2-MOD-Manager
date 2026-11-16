@@ -1,7 +1,6 @@
 //! 公开配置投影；隐藏密钥并叠加当前代理快照。
 
 use super::ConfigService;
-use super::availability::current_user_region;
 use crate::models::*;
 
 impl ConfigService {
@@ -17,7 +16,7 @@ impl ConfigService {
         PublicConfig {
             schema_version: config.schema_version,
             platform: std::env::consts::OS.into(),
-            region: current_user_region().into(),
+            region: config.region.clone(),
             ui_zoom: config.ui_zoom,
             hide_unidentified_mods: config.hide_unidentified_mods,
             recycle_deleted_mods: config.recycle_deleted_mods,

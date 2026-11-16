@@ -122,16 +122,10 @@ pub fn save_settings(
     if let Some(steps) = &patch.tutorial_watched_steps {
         config.record_tutorial_steps(steps);
     }
-    if let Some(provider) = patch.data_provider {
-        config.data_provider = provider;
-        crate::config::synchronize_builtin_repository_sources(&mut config);
-    }
-    state.config.save(&config).map_err(|e| e.to_string())?;
-    if let Some(provider) = patch.data_provider {
-        // The selection belongs to this session, so stale saves or external edits
-        // cannot undo it. Commit it only after the settings write succeeds.
-        state.config.select_data_provider(provider);
-    }
+    state
+        .config
+        .save_with_selection(&mut config, patch.region.as_deref(), patch.data_provider)
+        .map_err(|e| e.to_string())?;
     crate::diychef::preview::configure_concurrency(config.diychef_preview_concurrency);
     log::info!("应用设置保存完成：界面缩放={}", config.ui_zoom);
     Ok(state.config.public_config(&config))

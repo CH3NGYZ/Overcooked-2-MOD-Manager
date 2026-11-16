@@ -45,16 +45,18 @@ pub struct SourceObserver {
     nodes: Mutex<Vec<SourceNode>>,
     registry: Arc<SourceRegistry>,
     namespace: String,
+    region: String,
     send: Box<dyn Fn(MapTreeProgress) + Send + Sync>,
 }
 
 impl SourceObserver {
     #[cfg(test)]
-    pub fn new(send: impl Fn(MapTreeProgress) + Send + Sync + 'static) -> Self {
+    pub fn new(region: &str, send: impl Fn(MapTreeProgress) + Send + Sync + 'static) -> Self {
         Self {
             nodes: Mutex::new(Vec::new()),
             registry: Arc::default(),
             namespace: String::new(),
+            region: region.into(),
             send: Box::new(send),
         }
     }
@@ -63,12 +65,14 @@ impl SourceObserver {
         send: impl Fn(MapTreeProgress) + Send + Sync + 'static,
         registry: Arc<SourceRegistry>,
         namespace: String,
+        region: &str,
     ) -> Self {
         Self {
             nodes: Mutex::new(Vec::new()),
             send: Box::new(send),
             registry,
             namespace,
+            region: region.into(),
         }
     }
 
@@ -200,9 +204,7 @@ impl SourceObserver {
             nodes,
             maps: maps
                 .iter()
-                .filter(|map| {
-                    super::state::map_is_available(map, crate::config::current_user_region())
-                })
+                .filter(|map| super::state::map_is_available(map, &self.region))
                 .map(super::view::map_to_info)
                 .collect(),
         });

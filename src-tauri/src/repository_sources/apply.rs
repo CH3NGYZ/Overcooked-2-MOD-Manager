@@ -42,7 +42,7 @@ pub(crate) async fn import_repository_source_into_config(
         if !crate::config::repository_source_is_available(
             &original_config,
             source,
-            crate::config::current_user_region(),
+            &original_config.region,
         ) {
             return Err("source.sourceMissing".into());
         }

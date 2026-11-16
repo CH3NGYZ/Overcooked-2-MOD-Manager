@@ -2,11 +2,11 @@ use crate::app_state::AppState;
 use crate::app_update::cache::app_update_cache_get;
 use crate::app_update::cache::app_update_cache_store;
 use crate::app_update::channels::InstallerRegion;
-use crate::app_update::channels::detect_installer_region;
 use crate::app_update::channels::emit_installer_channel_status;
 use crate::app_update::channels::emit_installer_phase;
 use crate::app_update::channels::installer_channel_status;
 use crate::app_update::channels::installer_manifest_sources;
+use crate::app_update::channels::installer_region;
 use crate::app_update::channels::{
     INSTALLER_GITEE_OWNER, INSTALLER_GITEE_REPO, INSTALLER_GITHUB_OWNER, INSTALLER_GITHUB_REPO,
 };
@@ -21,9 +21,10 @@ use tauri::State;
 use url::Url;
 
 #[tauri::command]
-pub fn open_update_repository() -> Result<OperationResult, String> {
+pub fn open_update_repository(state: State<'_, AppState>) -> Result<OperationResult, String> {
     log::info!("打开安装器更新仓库页面");
-    let url = match detect_installer_region() {
+    let config = state.config.load_or_default();
+    let url = match installer_region(&config.region) {
         InstallerRegion::MainlandChina => {
             format!("https://gitee.com/{INSTALLER_GITEE_OWNER}/{INSTALLER_GITEE_REPO}/releases")
         }
@@ -43,7 +44,8 @@ pub async fn check_app_update(
 ) -> Result<AppUpdateCheckResult, String> {
     let _ = locale;
     let force = force.unwrap_or(false);
-    let region = detect_installer_region();
+    let config = state.config.load_or_default();
+    let region = installer_region(&config.region);
     log::info!("开始检查安装器更新：跳过缓存={force}");
     /*
      * 启动时恒检测，所以这个命令每次启动都会跑；5 分钟内重复调用直接返回
@@ -57,7 +59,6 @@ pub async fn check_app_update(
             return Ok(cached);
         }
     }
-    let config = state.config.load_or_default();
     let result = match tokio::time::timeout(
         std::time::Duration::from_secs(
             5 * installer_manifest_sources(&config.github_proxies, region).len() as u64 + 10,
@@ -125,8 +126,12 @@ pub async fn install_app_update(
     let _update_guard = archive::begin_app_update()?;
     log::info!("开始安装器自更新");
     let attempt = discover_and_download_installer_update(&state, &app).await?;
-    let (info, download) = match attempt {
-        InstallerDownloadAttempt::Updated { info, download } => (info, download),
+    let (region, info, download) = match attempt {
+        InstallerDownloadAttempt::Updated {
+            region,
+            info,
+            download,
+        } => (region, info, download),
         InstallerDownloadAttempt::Latest => {
             log::info!("安装器已是最新版本");
             return Ok(OperationResult {
@@ -142,13 +147,7 @@ pub async fn install_app_update(
     if archive::is_download_cancelled() {
         return Err("download.cancelled".into());
     }
-    emit_installer_phase(
-        &app,
-        detect_installer_region(),
-        "install",
-        None,
-        Some(info.clone()),
-    );
+    emit_installer_phase(&app, region, "install", None, Some(info.clone()));
     let version = info.version;
     log::info!(
         "开始通过 Tauri Updater 安装程序更新：版本={}，格式={}，已验签字节数={}",

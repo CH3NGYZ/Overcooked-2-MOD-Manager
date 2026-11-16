@@ -13,6 +13,35 @@ fn sample_map() -> MapRepositoryConfig {
 }
 
 #[test]
+fn progress_observers_keep_their_own_region_snapshot() {
+    let mut mainland = sample_map();
+    mainland.id = "mainland".into();
+    mainland.region = Some("cn".into());
+    let mut global = sample_map();
+    global.id = "global".into();
+    global.region = Some("global".into());
+    let maps = [mainland, global];
+    let events = Arc::new(Mutex::new(Vec::<MapTreeProgress>::new()));
+    let mainland_events = events.clone();
+    let mainland_observer = SourceObserver::new("cn", move |event| {
+        mainland_events.lock().unwrap().push(event);
+    });
+    let global_events = events.clone();
+    let global_observer = SourceObserver::new("global", move |event| {
+        global_events.lock().unwrap().push(event);
+    });
+    mainland_observer.publish("root", "ready", None, &maps);
+    global_observer.publish("root", "ready", None, &maps);
+    mainland_observer.publish("root", "ready", None, &maps);
+    let events = events.lock().unwrap();
+    assert_eq!(events.len(), 3);
+    for (event, expected) in events.iter().zip(["mainland", "global", "mainland"]) {
+        assert_eq!(event.maps.len(), 1);
+        assert_eq!(event.maps[0].id, expected);
+    }
+}
+
+#[test]
 fn source_metadata_and_ancestor_restrictions_survive_storage_and_projection() {
     let declaration: super::super::document::MapSourceDeclaration = serde_json::from_value(
         serde_json::json!({"id":"child", "nickname":"Child", "region":"chinese_mainland", "note_i18n":{"en":"Source note"}})
@@ -174,7 +203,7 @@ url='never.toml'
     });
     let events = Arc::new(Mutex::new(Vec::<MapTreeProgress>::new()));
     let capture = events.clone();
-    let observer = SourceObserver::new(move |event| capture.lock().unwrap().push(event));
+    let observer = SourceObserver::new("global", move |event| capture.lock().unwrap().push(event));
     let cache = crate::release_cache::RepoReleaseCache::default();
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
     let config = crate::config::default_config();

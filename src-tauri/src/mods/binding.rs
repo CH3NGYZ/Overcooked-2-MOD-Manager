@@ -250,21 +250,18 @@ pub(super) fn match_repository<'a>(
         .repositories
         .iter()
         .filter(|repo| {
-            crate::config::mod_repository_is_available(
-                config,
-                repo,
-                crate::config::current_user_region(),
-            ) && if let Some(binding) = binding {
-                binding.matches_repository(repo)
-            } else {
-                repository_matches_mod(
-                    repo,
-                    guid,
-                    product_name,
-                    original_filename,
-                    installed_version,
-                )
-            }
+            crate::config::mod_repository_is_available(config, repo, &config.region)
+                && if let Some(binding) = binding {
+                    binding.matches_repository(repo)
+                } else {
+                    repository_matches_mod(
+                        repo,
+                        guid,
+                        product_name,
+                        original_filename,
+                        installed_version,
+                    )
+                }
         })
         .collect::<Vec<_>>();
     let repository = if let Some(binding) = binding {

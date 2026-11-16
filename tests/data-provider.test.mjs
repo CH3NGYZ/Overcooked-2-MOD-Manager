@@ -3,16 +3,18 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { computed, ref } from 'vue'
 import { settings } from '../src/locale/settings.ts'
+import { toolsUiSettings } from '../src/locale/tools/settings.ts'
+import { normalizeRepositoryRegion } from '../src/repositoryAvailability.ts'
 
 const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const view = read('src/views/SettingsView.vue')
 
 test('Settings displays the live active provider after fallback and preserves tutorial isolation', () => {
-  const declaration = view.split('\n').find(line => line.startsWith('const dataProvider = computed('))
-  assert.ok(declaration)
+  const declarations = view.split('\n').filter(line => /^const (dataSourceConfig|dataProvider) = computed\(/.test(line)).join('\n')
+  assert.ok(declarations.includes('const dataSourceConfig'))
   const demoActive = ref(false), config = ref({ data_provider: 'github' })
   const dashboard = { config: ref({ data_provider: 'gitee' }) }
-  const active = new Function('computed', 'demoActive', 'config', 'dashboard', `${declaration}; return dataProvider`)(computed, demoActive, config, dashboard)
+  const active = new Function('computed', 'demoActive', 'config', 'dashboard', `${declarations}; return dataProvider`)(computed, demoActive, config, dashboard)
   assert.equal(active.value, 'gitee')
   dashboard.config.value = { data_provider: 'gitcode' }
   assert.equal(active.value, 'gitcode')
@@ -24,6 +26,71 @@ test('Settings displays the live active provider after fallback and preserves tu
   assert.equal(active.value, 'github')
   demoActive.value = false
   assert.equal(active.value, 'builtin')
+})
+
+test('Settings displays the shared saved region, normalizes legacy values and isolates tutorial data', () => {
+  const declarations = view.split('\n').filter(line => /^const (dataSourceConfig|userRegion) = computed\(/.test(line)).join('\n')
+  const demoActive = ref(false), config = ref({ region: 'cn' })
+  const dashboard = { config: ref({ region: 'international' }) }
+  const active = new Function('computed', 'demoActive', 'config', 'dashboard', 'normalizeRepositoryRegion', `${declarations}; return userRegion`)(computed, demoActive, config, dashboard, normalizeRepositoryRegion)
+  assert.equal(active.value, 'global')
+  dashboard.config.value = { region: 'chinese_mainland' }
+  assert.equal(active.value, 'cn')
+  dashboard.config.value = { region: 'global' }
+  assert.equal(active.value, 'global')
+  demoActive.value = true
+  assert.equal(active.value, 'cn')
+  demoActive.value = false
+  assert.equal(active.value, 'global')
+  dashboard.config.value = null
+  assert.equal(active.value, 'cn')
+})
+
+test('region choice sits above the data source with matching controls and shared tutorial and switching gates', () => {
+  const group = view.match(/<SettingsGroup :title="t\('settings.dataSources'\)"[\s\S]*?<\/SettingsGroup>/)?.[0]
+  assert.ok(group)
+  assert.ok(group.indexOf('data-testid="user-region"') < group.indexOf('data-testid="data-provider"'))
+  const controls = [...group.matchAll(/<n-select[\s\S]*?\/>/g)].map(match => match[0])
+  assert.equal(controls.length, 2)
+  for (const control of controls) {
+    assert.ok(control.includes('style="width: 304px; max-width: 100%"'))
+    assert.ok(control.includes(':loading="switchingDataProvider"'))
+    assert.ok(control.includes(':disabled="switchingDataProvider || !config || demoActive"'))
+    assert.ok(control.includes('switchDataSelection({'))
+  }
+  assert.match(controls[0], /switchDataSelection\(\{ region: value \}\)/)
+  assert.match(controls[1], /switchDataSelection\(\{ data_provider: value \}\)/)
+  assert.deepEqual([...view.matchAll(/\{ value: '(cn|global)', label: t\('(tools\.\w+)'\) \}/g)].map(match => [match[1], match[2]]), [
+    ['cn', 'tools.mainlandChina'], ['global', 'tools.international'],
+  ])
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
+    for (const key of ['region', 'regionHint', 'regionChanged']) assert.ok(settings[key][locale])
+    for (const key of ['mainlandChina', 'international']) assert.ok(toolsUiSettings[key][locale])
+  }
+  assert.match(read('src/types.ts'), /UserRegion = 'cn' \| 'global'/)
+  assert.match(read('src/types.ts'), /SettingsPatch \{ region\?: UserRegion;/)
+})
+
+test('Settings selection handler skips unchanged values and protects tutorial state before coordinating either choice', async () => {
+  const source = view.slice(view.indexOf('async function switchDataSelection('), view.indexOf('/* ===== API 凭据 ===== */'))
+    .replace('patch: DataSelectionPatch', 'patch')
+  const switchingDataProvider = ref(false), demoActive = ref(false), userRegion = ref('global'), dataProvider = ref('github'), config = ref(null)
+  const calls = [], notices = []
+  const switchSelection = async patch => { calls.push(patch); return { config: { region: patch.region ?? 'global' }, ready: true, errors: [] } }
+  const handler = new Function('switchingDataProvider', 'demoActive', 'userRegion', 'dataProvider', 'config', 'switchSelection', 'message', 't', 'fail', `${source}; return switchDataSelection`)(
+    switchingDataProvider, demoActive, userRegion, dataProvider, config, switchSelection,
+    { success: value => notices.push(value), warning: () => assert.fail('unexpected warning') }, key => key, error => { throw error },
+  )
+  await handler({ region: 'global' }); await handler({ data_provider: 'github' })
+  switchingDataProvider.value = true
+  await handler({ region: 'cn' }); await handler({ data_provider: 'builtin' })
+  switchingDataProvider.value = false; demoActive.value = true
+  await handler({ region: 'cn' }); await handler({ data_provider: 'builtin' })
+  assert.deepEqual(calls, [])
+  demoActive.value = false
+  await handler({ region: 'cn' }); await handler({ data_provider: 'builtin' })
+  assert.deepEqual(calls, [{ region: 'cn' }, { data_provider: 'builtin' }])
+  assert.deepEqual(notices, ['settings.regionChanged', 'settings.dataProviderChanged'])
 })
 
 test('all five source choices have five-language labels in regional fallback order', () => {

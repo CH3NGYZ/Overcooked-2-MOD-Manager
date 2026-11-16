@@ -130,7 +130,7 @@ test('旧地区别名按归一化后的值判断', () => {
   assert.equal(sourceMatchesRegion({ region: 'other' }, 'chinese_mainland'), false)
 })
 
-test('当前地区为空按「非中国大陆」处理，与后端 current_user_region 一致', () => {
+test('当前地区为空按「非中国大陆」处理，与后端 region_matches 一致', () => {
   const intl = repo({ region: 'international' })
   assert.equal(modRepositoryIsAvailable(intl, sources, undefined), true)
   assert.equal(modRepositoryIsAvailable(repo({ region: 'chinese_mainland' }), sources, undefined), false)

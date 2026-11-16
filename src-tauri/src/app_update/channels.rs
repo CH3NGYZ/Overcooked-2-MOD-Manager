@@ -41,8 +41,8 @@ impl InstallerRegion {
     }
 }
 
-pub(crate) fn detect_installer_region() -> InstallerRegion {
-    if crate::config::current_user_region() == crate::config::REGION_CHINESE_MAINLAND {
+pub(crate) fn installer_region(region: &str) -> InstallerRegion {
+    if region == crate::config::REGION_CHINESE_MAINLAND {
         InstallerRegion::MainlandChina
     } else {
         InstallerRegion::International

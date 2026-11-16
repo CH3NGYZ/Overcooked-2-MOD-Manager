@@ -125,17 +125,10 @@ pub fn relaunch_as_admin() -> Result<OperationResult, String> {
     })
 }
 
-/// Recheck after the tutorial rather than reuse the startup config snapshot.
+/// Startup retries respect the persisted choice instead of re-detecting the OS.
 #[tauri::command]
-pub fn refresh_user_region() -> &'static str {
-    #[cfg(target_os = "macos")]
-    {
-        crate::user_region::refresh()
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        crate::config::current_user_region()
-    }
+pub fn refresh_user_region(state: State<'_, AppState>) -> String {
+    state.config.load_or_default().region
 }
 
 #[tauri::command]

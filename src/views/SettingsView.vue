@@ -17,9 +17,10 @@ import { FOCUS_QUERY } from '../crossLink'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { useDashboard } from '../composables/useDashboardStore'
-import { useDataProviderSwitch } from '../composables/useDataProviderSwitch'
+import { useDataProviderSwitch, type DataSelectionPatch } from '../composables/useDataProviderSwitch'
 import { displayPath } from '../gameRuntime'
-import type { AppUpdateCheckResult, DataProvider, GameRuntime, PermissionStatus, PublicConfig } from '../types'
+import type { AppUpdateCheckResult, DataProvider, GameRuntime, PermissionStatus, PublicConfig, UserRegion } from '../types'
+import { normalizeRepositoryRegion } from '../repositoryAvailability'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { demoActive, withDemoConfig, withDemoDiyLevelTarget, withDemoGame, withDemoMods } from '../tutorial/demo'
 
@@ -365,9 +366,15 @@ async function confirmDisableRecycle() {
   )
 }
 
-/* ===== 官方数据来源（本次启动有效） ===== */
-const dataProvider = computed(() => (demoActive.value ? config.value : dashboard.config.value ?? config.value)?.data_provider ?? 'github')
-const { switching: switchingDataProvider, switchProvider } = useDataProviderSwitch()
+/* ===== 地区（持久化）与官方数据来源（本次启动有效） ===== */
+const dataSourceConfig = computed(() => demoActive.value ? config.value : dashboard.config.value ?? config.value)
+const dataProvider = computed(() => dataSourceConfig.value?.data_provider ?? 'github')
+const userRegion = computed(() => normalizeRepositoryRegion(dataSourceConfig.value?.region) || 'global')
+const { switching: switchingDataProvider, switchSelection } = useDataProviderSwitch()
+const regionOptions = computed(() => [
+  { value: 'cn', label: t('tools.mainlandChina') },
+  { value: 'global', label: t('tools.international') },
+])
 const dataProviderOptions = computed(() => [
   { value: 'gitcode', label: t('settings.dataProviderGitcode') },
   { value: 'gitee', label: t('settings.dataProviderGitee') },
@@ -376,15 +383,16 @@ const dataProviderOptions = computed(() => [
   { value: 'builtin', label: t('settings.dataProviderBuiltin') },
 ])
 
-async function switchDataProvider(value: DataProvider) {
-  if (value === dataProvider.value || switchingDataProvider.value || demoActive.value) return
+async function switchDataSelection(patch: DataSelectionPatch) {
+  if (switchingDataProvider.value || demoActive.value) return
+  if (patch.region ? patch.region === userRegion.value : patch.data_provider === dataProvider.value) return
   try {
-    const result = await switchProvider(value)
+    const result = await switchSelection(patch)
     if (!result) return
     config.value = result.config
     if (!result.ready) message.warning(t('settings.dataProviderNetworkFallback'))
     else if (result.errors.length) message.warning(result.errors.join('\n'))
-    else message.success(t('settings.dataProviderChanged'))
+    else message.success(patch.region ? t('settings.regionChanged') : t('settings.dataProviderChanged'))
   } catch (reason) {
     fail(reason)
   }
@@ -525,12 +533,20 @@ async function clearTokens() {
     </SettingsRow>
   </SettingsGroup>
   <SettingsGroup :title="t('settings.dataSources')" data-testid="data-sources">
+    <SettingsRow :title="t('settings.region')" :description="t('settings.regionHint')">
+      <template #right>
+        <n-select :value="userRegion" :options="regionOptions" style="width: 304px; max-width: 100%"
+          :loading="switchingDataProvider" :disabled="switchingDataProvider || !config || demoActive"
+          :aria-label="t('settings.region')" data-testid="user-region"
+          @update:value="(value: UserRegion) => switchDataSelection({ region: value })" />
+      </template>
+    </SettingsRow>
     <SettingsRow :title="t('settings.dataSources')" :description="t('settings.dataProviderHint')">
       <template #right>
         <n-select :value="dataProvider" :options="dataProviderOptions" style="width: 304px; max-width: 100%"
           :loading="switchingDataProvider" :disabled="switchingDataProvider || !config || demoActive"
           :aria-label="t('settings.dataSources')" data-testid="data-provider"
-          @update:value="switchDataProvider" />
+          @update:value="(value: DataProvider) => switchDataSelection({ data_provider: value })" />
       </template>
     </SettingsRow>
   </SettingsGroup>

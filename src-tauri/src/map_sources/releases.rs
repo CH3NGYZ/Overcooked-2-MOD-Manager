@@ -26,6 +26,7 @@ pub(crate) async fn fetch_map_release_data(
             crate::releases::fetch_releases(
                 ctx.client,
                 &probe,
+                &ctx.config.region,
                 token.as_deref(),
                 official_api_only,
                 &api_proxies,

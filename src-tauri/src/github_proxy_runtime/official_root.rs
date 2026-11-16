@@ -122,11 +122,12 @@ impl ProxyRuntime {
         force: bool,
         address: &impl Fn(DataProvider) -> String,
     ) -> Result<OfficialRootSnapshot, String> {
-        let (selection, manual_revision) = {
+        let (selection, manual_revision, region) = {
             let snapshot = self.current.read().unwrap_or_else(|e| e.into_inner());
             (
                 (snapshot.provider, snapshot.revision),
                 snapshot.manual_revision,
+                snapshot.region.clone(),
             )
         };
         // Builtin remains immediate when an obsolete HTTP request holds the
@@ -169,7 +170,7 @@ impl ProxyRuntime {
             let fetched = self
                 .in_selection(
                     expected,
-                    prepare_package(expected.0, address(expected.0), browser),
+                    prepare_package(expected.0, address(expected.0), &region, browser),
                 )
                 .await;
             let mut snapshot = self.current.write().unwrap_or_else(|e| e.into_inner());
@@ -236,6 +237,7 @@ impl ProxyRuntime {
                     );
                     *snapshot = RuntimeSnapshot {
                         provider,
+                        region: snapshot.region.clone(),
                         revision: expected.1 + 1,
                         manual_revision: snapshot.manual_revision,
                         groups: crate::github_proxies::bundled_defaults(),
@@ -254,6 +256,7 @@ impl ProxyRuntime {
 async fn prepare_package(
     provider: DataProvider,
     address: String,
+    region: &str,
     browser: Option<tauri::AppHandle>,
 ) -> Result<
     (
@@ -282,7 +285,7 @@ async fn prepare_package(
     let location =
         SourceLocation::parse(&provider.document("mods.toml")).map_err(|e| e.to_string())?;
     let (document, policy) = SourcePackage::in_snapshot(package.clone(), async {
-        let policy = crate::network_policy::NetworkPolicy::refresh_from(&location).await?;
+        let policy = crate::network_policy::NetworkPolicy::refresh_from(&location, region).await?;
         let document =
             crate::network_policy::NetworkPolicy::in_snapshot(Arc::new(policy.clone()), async {
                 load_document(&location, &Default::default())

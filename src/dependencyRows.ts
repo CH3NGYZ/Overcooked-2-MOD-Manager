@@ -31,7 +31,7 @@ import {
   stricterRelation,
   type RelationStatus,
 } from './modRelations.ts'
-import { isPrereleaseVersion, repositoryForMod } from './modStatus.ts'
+import { compareVersions, isPrereleaseVersion, repositoryForMod } from './modStatus.ts'
 import { mapForLevelSet, mapReleaseVersion } from './levelSetStatus.ts'
 import { formatVersionSpec } from './versionSpec.ts'
 import type { TagTone } from './theme'
@@ -42,7 +42,7 @@ import type {
 /**
  * 状态标签的跳转目标。
  *
- * 只有「点一下就能去解决」的状态才带它：可安装 / 可更新 都意味着安装页里
+ * 只有「点一下就能去解决」的状态才带它：可安装 / 可更新 / 可降级 都意味着安装页里
  * 有一张能提供满足区间版本的仓库卡片，跳过去就是解法的入口；缺依赖（线上
  * 根本没有这个 GUID）与冲突没有可去的地方，保持纯文字。
  */
@@ -51,6 +51,8 @@ export interface DependencyJump {
   id: string
   /** 悬停说明（已翻译），说清点了会跳到哪。 */
   title: string
+  /** 降级确认所需的真实版本；目标保留完整 Release tag，不猜区间边界。 */
+  downgrade?: { installedVersion: string; targetVersion: string }
 }
 
 export interface DependencyRow {
@@ -69,7 +71,7 @@ export interface DependencyRow {
   line?: 'prerelease' | 'stable'
   /** 版本要求文本（区间表达式原文，如 `>=1.2.0,<2.0.0`）；空表示不限版本。 */
   requirement?: string
-  /** 状态文案（已满足 / 可安装 / 可更新 / 缺依赖 / 冲突 / 未安装 …）。 */
+  /** 状态文案（已满足 / 可安装 / 可更新 / 可降级 / 缺依赖 / 冲突 …）。 */
   status: string
   /** 状态色调，走 `theme.ts` 的统一刻度。 */
   tone?: TagTone
@@ -101,7 +103,7 @@ export type DependencyPickName = (
  * 表格的展示口径。
  *
  * 只有一套：依赖由「声明了同一 GUID 的在线仓库」满足，未满足时区分
- * 「可安装 / 可更新 / 缺依赖」，能装的行可以跳过去解决。
+ * 「可安装 / 可更新 / 可降级 / 缺依赖」，能装的行可以跳过去解决。
  *
  * 地图曾经走另一套（「未安装 / 版本不符」且不可跳转），理由是「地图的依赖是
  * 框架、安装入口在设置页」。这条理由不成立：地图声明的前置就是仓库里的 MOD
@@ -233,6 +235,7 @@ export function dependencyTargetName(
 function statusFor(
   status: RelationStatus,
   translate: DependencyTranslate,
+  downgrade: boolean,
 ): { text: string; tone: TagTone } {
   const kind = status.relation.kind ?? 'requires'
   const ok = status.state === 'ok'
@@ -258,13 +261,9 @@ function statusFor(
   if (status.state !== 'installable') {
     return { text: translate('modsOnline.missingDep'), tone: 'critical' }
   }
-  /*
-   * 装了但版本不满足 →「可更新」，没装 →「可安装」。两者都要用户动手，
-   * 但「更新已有的」和「装一个没有的」是两件事，混成一个词会让人以为
-   * 本地根本没这个东西。
-   */
+  // 依赖已装时按实际候选区分升级/降级；候选只能来自已解析的关系结果。
   return status.installedMod
-    ? { text: translate('tools.updatable'), tone: 'moderate' }
+    ? { text: translate(downgrade ? 'tools.downgradable' : 'tools.updatable'), tone: 'moderate' }
     : { text: translate('tools.installable'), tone: 'moderate' }
 }
 
@@ -281,7 +280,12 @@ export function dependencyRowFromRelation(
   const status = resolveRelation(relation, mods, repositories, ownerRepository)
   const kind = relation.kind ?? 'requires'
   const line = dependencyLine(relation)
-  const { text, tone } = statusFor(status, translate)
+  const targetVersion = status.release?.tag_name || status.release?.version || ''
+  const downgrade = status.state === 'installable' && status.installedVersion
+    && compareVersions(status.installedVersion, targetVersion) === 1
+    ? { installedVersion: status.installedVersion, targetVersion }
+    : undefined
+  const { text, tone } = statusFor(status, translate, !!downgrade)
 
   const row: DependencyRow = {
     // key 必须带上发布线：同一 GUID 的「与测试版互斥 / 与正式版互斥」是两条
@@ -296,13 +300,14 @@ export function dependencyRowFromRelation(
   }
 
   /*
-   * 可安装 / 可更新指向「能提供满足区间版本的仓库卡片」：唯一一处点一下
+   * 可安装 / 可更新 / 可降级指向「能提供满足区间版本的仓库卡片」：唯一一处点一下
    * 就能把依赖补上的地方。缺依赖与冲突没有这种去处，保持纯文字。
    */
   if (jumpToRepository && status.state === 'installable' && status.repository) {
     row.jump = {
       id: status.repository.id,
       title: translate('modsOnline.viewDependencyInModInstall'),
+      ...(downgrade ? { downgrade } : {}),
     }
   }
 

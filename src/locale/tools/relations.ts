@@ -106,6 +106,22 @@ export const toolsUiRelations: DomainMessages = {
     ko: '업데이트 가능',
     ja: '更新可能',
   },
+  downgradable: {
+    'zh-CN': '可降级', 'zh-TW': '可降級', en: 'Downgrade available', ko: '다운그레이드 가능', ja: 'ダウングレード可能',
+  },
+  downgradeTitle: {
+    'zh-CN': '需要降级依赖', 'zh-TW': '需要降級相依模組', en: 'Dependency downgrade required', ko: '의존 모드 다운그레이드 필요', ja: '依存 MOD のダウングレードが必要',
+  },
+  downgradeMessage: {
+    'zh-CN': '当前安装的「{name}」为 {current}，不满足版本要求 {requirement}。请在跳转后的 MOD 卡片中选择 {target} 版本进行降级。确定后将前往该 MOD。',
+    'zh-TW': '目前安裝的「{name}」為 {current}，不符合版本要求 {requirement}。請在跳轉後的 MOD 卡片中選擇 {target} 版本進行降級。確定後將前往該 MOD。',
+    en: 'The installed version of “{name}” is {current}, which does not meet the requirement {requirement}. Select version {target} on the MOD card to downgrade. Continue to open that MOD.',
+    ko: '설치된 “{name}” 버전은 {current}이며 요구 사항 {requirement}을(를) 충족하지 않습니다. 이동한 MOD 카드에서 {target} 버전을 선택하여 다운그레이드하세요. 확인하면 해당 MOD로 이동합니다.',
+    ja: 'インストール済みの「{name}」は {current} で、バージョン要件 {requirement} を満たしていません。移動先の MOD カードで {target} を選んでダウングレードしてください。確認すると該当 MOD に移動します。',
+  },
+  downgradeGoToMod: {
+    'zh-CN': '确定并前往 MOD', 'zh-TW': '確定並前往 MOD', en: 'Continue to MOD', ko: '확인 후 MOD로 이동', ja: '確認して MOD へ移動',
+  },
   // conflicts 关系未命中（对方不在冲突区间内）
   noConflict: {
     'zh-CN': '无冲突',

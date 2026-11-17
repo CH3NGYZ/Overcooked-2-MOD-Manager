@@ -39,8 +39,9 @@ export type { DependencyJump, DependencyRow } from '../dependencyRows'
  * 以为它们是两回事。行带 `jump` 时标签变成可点标签并抛 `jump` 事件 ——
  * 组件不认识路由，「跳到哪个页面哪张卡片」由调用方决定。
  */
-import { computed } from 'vue'
-import { NTag } from 'naive-ui'
+import { computed, shallowRef } from 'vue'
+import { NButton, NTag } from 'naive-ui'
+import AppModal from './AppModal.vue'
 import { t } from '../i18n'
 import { tagColorForAny } from '../theme'
 
@@ -56,11 +57,37 @@ const props = withDefaults(defineProps<{
 const visible = computed(() => props.rows.length > 0)
 /** 状态标签被点击：只有带 `jump` 的行会发，调用方据此跳转。 */
 const emit = defineEmits<{ jump: [row: DependencyRow] }>()
+const downgradeOpen = shallowRef(false)
+const pendingDowngrade = shallowRef<DependencyRow>()
 
-/** 标签可点时才发事件：不可点的标签点下去不该有任何反应。 */
-function clickStatus(row: DependencyRow) {
+/** 降级先说明实际候选版本；其他可导航状态保持原来的直接跳转。 */
+function clickStatus(row: DependencyRow, event?: Event) {
   if (!row.jump) return
+  // 可操作标签不属于详情空白：避免 document 的收起监听改变背景卡片和滚动。
+  event?.stopPropagation()
+  if (row.jump.downgrade) {
+    pendingDowngrade.value = { ...row, jump: { ...row.jump, downgrade: { ...row.jump.downgrade } } }
+    downgradeOpen.value = true
+    return
+  }
   emit('jump', row)
+}
+
+function confirmDowngrade() {
+  if (!downgradeOpen.value) return
+  const pending = pendingDowngrade.value
+  const current = props.rows.find((row) => row.key === pending?.key)
+  downgradeOpen.value = false
+  // 弹窗期间可能刷新依赖：只跳到用户刚确认的同一个仓库、同一组版本。
+  if (!pending?.jump?.downgrade || !current?.jump?.downgrade
+    || current.jump.id !== pending.jump.id
+    || current.jump.downgrade.installedVersion !== pending.jump.downgrade.installedVersion
+    || current.jump.downgrade.targetVersion !== pending.jump.downgrade.targetVersion) return
+  emit('jump', current)
+}
+
+function afterDowngradeLeave() {
+  if (!downgradeOpen.value) pendingDowngrade.value = undefined
 }
 
 /**
@@ -112,8 +139,8 @@ function lineLabel(line: DependencyRow['line']): string {
                 :class="{ 'state-tag--link': !!row.jump }" :color="tagColorForAny(row.tone ?? 'muted')"
                 :title="row.jump?.title" :role="row.jump ? 'button' : undefined"
                 :tabindex="row.jump ? 0 : undefined"
-                @click="clickStatus(row)" @keydown.enter="clickStatus(row)"
-                @keydown.space.prevent="clickStatus(row)">
+                @click="clickStatus(row, $event)" @keydown.enter="clickStatus(row, $event)"
+                @keydown.space.prevent="clickStatus(row, $event)">
                 {{ row.status }}
               </n-tag>
             </td>
@@ -122,9 +149,29 @@ function lineLabel(line: DependencyRow['line']): string {
       </table>
     </div>
   </section>
+  <AppModal v-if="pendingDowngrade" v-model:show="downgradeOpen" :title="t('tools.downgradeTitle')"
+    max-width="min(520px, 94%)" card-class="dependency-downgrade-modal"
+    @click.stop @after-leave="afterDowngradeLeave">
+    <p class="dep-downgrade-message">{{ t('tools.downgradeMessage', {
+      name: pendingDowngrade?.name ?? '',
+      current: pendingDowngrade?.jump?.downgrade?.installedVersion ?? '',
+      target: pendingDowngrade?.jump?.downgrade?.targetVersion ?? '',
+      requirement: pendingDowngrade?.requirement ?? '',
+    }) }}</p>
+    <template #footer>
+      <NButton @click="downgradeOpen = false">{{ t('common.action.cancel') }}</NButton>
+      <NButton type="primary" @click="confirmDowngrade">{{ t('tools.downgradeGoToMod') }}</NButton>
+    </template>
+  </AppModal>
 </template>
 
 <style scoped>
+.dep-downgrade-message {
+  margin: 0;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
 .dep-block {
   display: flex;
   flex-direction: column;

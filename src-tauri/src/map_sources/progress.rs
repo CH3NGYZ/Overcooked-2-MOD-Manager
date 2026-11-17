@@ -172,6 +172,50 @@ impl SourceObserver {
         }
     }
 
+    /// Scheduling may prioritize installed repositories; display and storage use tree order.
+    pub(super) fn sort_by_source<T>(
+        &self,
+        items: &mut [T],
+        source_id: impl Fn(&T) -> Option<&str>,
+    ) {
+        let order: BTreeMap<_, _> = {
+            let all = self
+                .registry
+                .entries
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let Some(entries) = all.get(&self.namespace) else {
+                return;
+            };
+            entries
+                .iter()
+                .filter_map(|(id, target)| {
+                    let mut path = Vec::new();
+                    let mut seen = std::collections::HashSet::new();
+                    let mut current = target;
+                    loop {
+                        if !seen.insert(&current.node.id) {
+                            return None;
+                        }
+                        path.push(current.sequence);
+                        let Some(parent) = &current.node.parent_id else {
+                            break;
+                        };
+                        // An orphan or malformed cycle cannot establish a declaration rank.
+                        current = entries.get(parent)?;
+                    }
+                    path.reverse();
+                    Some((id.clone(), path))
+                })
+                .collect()
+        };
+        // Stable sorting preserves map order within a source and unknown/community tails.
+        items.sort_by_cached_key(|item| {
+            let path = source_id(item).and_then(|id| order.get(id));
+            (path.is_none(), path.cloned())
+        });
+    }
+
     pub(super) fn publish(
         &self,
         id: &str,
@@ -200,13 +244,14 @@ impl SourceObserver {
             }
             snapshot
         };
+        let mut maps: Vec<_> = maps
+            .iter()
+            .filter(|map| super::state::map_is_available(map, &self.region))
+            .collect();
+        self.sort_by_source(&mut maps, |map| map.source_id.as_deref());
         (self.send)(MapTreeProgress {
             nodes,
-            maps: maps
-                .iter()
-                .filter(|map| super::state::map_is_available(map, &self.region))
-                .map(super::view::map_to_info)
-                .collect(),
+            maps: maps.into_iter().map(super::view::map_to_info).collect(),
         });
     }
 }

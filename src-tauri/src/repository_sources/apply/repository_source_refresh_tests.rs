@@ -5,7 +5,7 @@ use std::fs;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-fn test_state() -> AppState {
+pub(super) fn test_state() -> AppState {
     AppState::with_config(ConfigService::for_test(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target/test-source-refresh")
@@ -13,7 +13,10 @@ fn test_state() -> AppState {
     ))
 }
 
-async fn refresh(state: &AppState, source: &RepositorySource) -> Result<ImportPreview, String> {
+pub(super) async fn refresh(
+    state: &AppState,
+    source: &RepositorySource,
+) -> Result<ImportPreview, String> {
     let result = import_repository_source_into_config(
         state,
         source.id.clone(),
@@ -147,44 +150,10 @@ async fn explicit_builtin_selection_is_immediate_and_legacy_forced_fallback_cann
     fs::remove_dir_all(state.config.config_path().parent().unwrap()).unwrap();
 }
 
-#[tokio::test]
-async fn live_index_changes_replace_children_and_failure_keeps_trusted_snapshots() {
+pub(super) fn serve_documents(
+    responses: Vec<(&'static str, &'static str, String)>,
+) -> (std::net::SocketAddr, std::thread::JoinHandle<()>) {
     use std::io::{BufRead, BufReader, Write};
-    let declaration = |id, nickname: &str| {
-        format!(
-            "[[repository_sources]]\nid = \"{id}\"\nnickname = \"{nickname}\"\nurl = \"{id}.toml\"\n[repository_sources.nickname_i18n]\nzh-CN = \"{nickname}\"\n"
-        )
-    };
-    let repository = |name| {
-        format!(
-            "[[repositories]]\nname = \"{name}\"\nname_i18n.zh-CN = \"{name}\"\ngroup_i18n.zh-CN = \"\"\nnote_i18n.zh-CN = \"\"\nprovider = \"github\"\nusername = \"example\"\nrepository = \"mod\"\ninstall_target = \"BepInEx/plugins\"\nenabled = true\nasset_rules = [{{type = \"glob\", value = \"*.dll\"}}]\n"
-        )
-    };
-    let responses = vec![
-        ("/index.toml", "200 OK", declaration("a", "Old source")),
-        ("/a.toml", "200 OK", repository("Old MOD")),
-        (
-            "/index.toml",
-            "200 OK",
-            format!(
-                "{}{}",
-                declaration("a", "Changed source"),
-                declaration("b", "New source")
-            ),
-        ),
-        ("/a.toml", "503 Service Unavailable", String::new()),
-        ("/a.toml", "200 OK", repository("Changed MOD")),
-        ("/index.toml", "200 OK", declaration("b", "New source")),
-        ("/b.toml", "200 OK", repository("New MOD")),
-        ("/index.toml", "503 Service Unavailable", String::new()),
-        ("/index.toml", "200 OK", "invalid = [".into()),
-        (
-            "/index.toml",
-            "200 OK",
-            declaration("b", "Recovered source"),
-        ),
-        ("/b.toml", "200 OK", repository("Recovered MOD")),
-    ];
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     listener.set_nonblocking(true).unwrap();
@@ -205,6 +174,9 @@ async fn live_index_changes_replace_children_and_failure_keeps_trusted_snapshots
             stream.set_nonblocking(false).unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(2)))
                 .unwrap();
             let mut reader = BufReader::new(stream.try_clone().unwrap());
             let mut request = String::new();
@@ -231,6 +203,46 @@ async fn live_index_changes_replace_children_and_failure_keeps_trusted_snapshots
             .unwrap();
         }
     });
+    (address, server)
+}
+
+#[tokio::test]
+async fn live_index_changes_replace_children_and_failure_keeps_trusted_snapshots() {
+    let declaration = |id, nickname: &str| {
+        format!(
+            "[[repository_sources]]\nid = \"{id}\"\nnickname = \"{nickname}\"\nurl = \"{id}.toml\"\n[repository_sources.nickname_i18n]\nzh-CN = \"{nickname}\"\n"
+        )
+    };
+    let repository = |name| {
+        format!(
+            "[[repositories]]\nname = \"{name}\"\nname_i18n.zh-CN = \"{name}\"\ngroup_i18n.zh-CN = \"\"\nnote_i18n.zh-CN = \"\"\nprovider = \"github\"\nusername = \"example\"\nrepository = \"mod\"\ninstall_target = \"BepInEx/plugins\"\nenabled = true\nasset_rules = [{{type = \"glob\", value = \"*.dll\"}}]\n"
+        )
+    };
+    let (address, server) = serve_documents(vec![
+        ("/index.toml", "200 OK", declaration("a", "Old source")),
+        ("/a.toml", "200 OK", repository("Old MOD")),
+        (
+            "/index.toml",
+            "200 OK",
+            format!(
+                "{}{}",
+                declaration("a", "Changed source"),
+                declaration("b", "New source")
+            ),
+        ),
+        ("/a.toml", "503 Service Unavailable", String::new()),
+        ("/a.toml", "200 OK", repository("Changed MOD")),
+        ("/index.toml", "200 OK", declaration("b", "New source")),
+        ("/b.toml", "200 OK", repository("New MOD")),
+        ("/index.toml", "503 Service Unavailable", String::new()),
+        ("/index.toml", "200 OK", "invalid = [".into()),
+        (
+            "/index.toml",
+            "200 OK",
+            declaration("b", "Recovered source"),
+        ),
+        ("/b.toml", "200 OK", repository("Recovered MOD")),
+    ]);
     let state = test_state();
     let mut config = state.config.load().unwrap();
     let root = RepositorySource {

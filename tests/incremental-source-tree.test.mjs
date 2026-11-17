@@ -634,3 +634,36 @@ test('MOD failed child package read stops descendants and Release checks without
   assert.equal(f.engine.sourceNodes.value.find(node => node.id === f.ids.child).status, 'error')
   assert.equal(f.engine.anyRefreshing.value, false)
 })
+
+test('MOD refreshed declarations reach the displayed tree in TOML order across additions and reversals', async () => {
+  const f = await sourceForceFixture('declared-order', true)
+  const first = { id: 'new-settings-first', parent_id: f.ids.root, nickname: 'MOD 设置管理器', url: 'settings.toml' }
+  let reversed = false
+  f.onImport = id => {
+    if (id !== f.ids.root) return
+    const byId = new Map(f.config.repository_sources.map(source => [source.id, source]))
+    const root = byId.get(f.ids.root), child = byId.get(f.ids.child), leaf = byId.get(f.ids.leaf)
+    const other = byId.get(f.ids.other)
+    f.config.repository_sources = reversed
+      ? [root, child, leaf, first, other]
+      : [root, first, child, leaf, other]
+    if (!f.config.repositories.some(row => row.id === 'settings-repo')) {
+      f.config.repositories.push(repo('settings-repo', first.id))
+    }
+  }
+  const displayedOrder = () => buildSourceGroupTree(
+    f.dashboard.config.value.repositories.map(item => ({ sourceId: item.source_id, sourceLabel: '', group: '', groupLabel: '', item })),
+    { order: f.dashboard.config.value.repository_sources.map(source => ({ id: source.id, parentId: source.parent_id, label: source.nickname })),
+      preserveEmpty: true, ungrouped: { id: '__none__', label: '未分类' } },
+  ).filter(node => node.parentId === f.ids.root).map(node => node.id)
+
+  assert.deepEqual(await f.engine.refreshEverything(), [])
+  assert.deepEqual(displayedOrder(), [first.id, f.ids.child], 'new English-leading source stays first')
+  assert.deepEqual(f.engine.sourceNodes.value.filter(node => node.parent_id === f.ids.root).map(node => node.id), [first.id, f.ids.child])
+  const unrelated = f.dashboard.config.value.repository_sources.find(source => source.id === f.ids.other)
+  reversed = true
+  assert.deepEqual(await f.engine.refreshSource(f.ids.root), [])
+  assert.deepEqual(displayedOrder(), [f.ids.child, first.id], 'existing source order follows the next declaration')
+  assert.equal(f.dashboard.config.value.repository_sources.find(source => source.id === f.ids.other), unrelated)
+  assert.ok(f.dashboard.config.value.repository_sources.some(source => source.id === f.ids.leaf && source.parent_id === f.ids.child))
+})

@@ -241,6 +241,9 @@ pub async fn load_map_tree(
     if crate::community::DISCOVERY_ENABLED {
         super::community::append_community_map_maps(&mut collected, &index, ctx).await;
     }
+    if let Some(observer) = ctx.observer {
+        observer.sort_by_source(&mut collected, |map| map.source_id.as_deref());
+    }
     log::info!("地图源树加载完成：地图={}", collected.len());
     Ok(collected)
 }
@@ -511,6 +514,9 @@ async fn load_deferred(
             }
         }
     }
+    if let Some(observer) = ctx.observer {
+        observer.sort_by_source(collected, |map| map.source_id.as_deref());
+    }
 }
 
 /// Reuse the same document loader for a cached declaration, leaving unrelated sources intact.
@@ -534,6 +540,7 @@ pub(crate) async fn load_map_branch(
     let mut deferred = Vec::new();
     if !target.label.matches_region(region) {
         observer.remove(&ids);
+        observer.sort_by_source(&mut collected, |map| map.source_id.as_deref());
         observer.publish(id, "ready", None, &collected);
         return Ok(collected);
     }
@@ -549,6 +556,7 @@ pub(crate) async fn load_map_branch(
                 match SourceLocation::resolve(&declaration.url, Some(&target.origin)) {
                     Ok(location) => location,
                     Err(error) => {
+                        observer.sort_by_source(&mut collected, |map| map.source_id.as_deref());
                         observer.publish(id, "error", Some(error.to_string()), &collected);
                         return Ok(collected);
                     }
@@ -601,6 +609,9 @@ pub(crate) async fn load_map_branch(
     Ok(collected)
 }
 
+#[cfg(test)]
+#[path = "order_tests.rs"]
+mod order_tests;
 #[cfg(test)]
 #[path = "region_tests.rs"]
 mod region_tests;

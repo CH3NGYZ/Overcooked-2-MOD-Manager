@@ -21,19 +21,34 @@ fn mod_index_has_one_closed_resource_tree_and_no_legacy_runtime_entry() {
     );
     let location = SourceLocation::parse(BUILTIN_INDEX).unwrap();
     let index = location.bundled_document().unwrap();
-    assert_eq!(index.repository_sources.len(), 8);
-    let mut repositories = 0;
+    assert!(index.repositories.is_empty());
+    assert!(!index.repository_sources.is_empty());
+    let bundled_mod_documents: HashSet<_> = BUNDLED_SOURCES
+        .iter()
+        .filter_map(|(path, _)| path.starts_with("mods/").then_some(*path))
+        .collect();
+    let mut declared_documents = HashSet::new();
     for source in index.repository_sources {
         // Source IDs remain stable while file locations change.
         assert!(source.id.starts_with("repositories-"));
         assert!(source.url.starts_with("mods/mods-"));
+        assert!(declared_documents.insert(source.url.clone()));
         let child = SourceLocation::parse(&source.url)
             .unwrap()
             .bundled_document()
             .unwrap();
-        repositories += child.repositories.len();
+        assert!(!child.repositories.is_empty(), "{}", source.url);
+        assert!(child.repository_sources.is_empty(), "{}", source.url);
     }
-    assert_eq!(repositories, 27);
+    // Source catalogs change independently of application code. Assert the
+    // closed resource tree rather than a particular catalog's item count.
+    assert_eq!(
+        declared_documents
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>(),
+        bundled_mod_documents
+    );
 }
 
 #[test]

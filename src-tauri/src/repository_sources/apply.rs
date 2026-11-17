@@ -155,7 +155,7 @@ pub(crate) async fn import_repository_source_into_config(
         .iter()
         .map(crate::config::export_key)
         .collect::<std::collections::HashSet<_>>();
-    let child_sources = document.repository_sources;
+    let mut child_sources = document.repository_sources;
     let child_source_count = child_sources.len();
     let bundle = crate::models::ModRepositoryBundle {
         format: "oc2-mod-repository-bundle".into(),
@@ -192,6 +192,29 @@ pub(crate) async fn import_repository_source_into_config(
         .iter()
         .find(|source| source.id == source_id)
         .is_some_and(|source| source.builtin);
+    // A declaration ID owned by another source was assigned a local UUID on
+    // import. Resolve it before stale detection so reorder-only refreshes keep
+    // that source's identity, descendants and cached repositories.
+    // Explicit declarations own their IDs even when they occur later or change
+    // URLs. A recovered alias must never consume one of those sibling slots.
+    let mut claimed_child_ids = child_sources.iter().map(|child| child.id.clone())
+        .collect::<HashSet<_>>();
+    for child in &mut child_sources {
+        if !crate::community::is_source(&child.id)
+            && config.repository_sources.iter().any(|source| {
+                source.id == child.id && source.parent_id.as_deref() != Some(source_id.as_str())
+            })
+            && let Some(existing) = config.repository_sources.iter().find(|source| {
+                source.parent_id.as_deref() == Some(source_id.as_str())
+                    && !claimed_child_ids.contains(&source.id)
+                    && source_address_key(&source.url, source.region.as_deref())
+                        == source_address_key(&child.url, child.region.as_deref())
+            })
+        {
+            child.id = existing.id.clone();
+            claimed_child_ids.insert(child.id.clone());
+        }
+    }
     let declared_child_ids = child_sources
         .iter()
         .filter(|source| {
@@ -234,6 +257,15 @@ pub(crate) async fn import_repository_source_into_config(
             &removed_child_ids.iter().cloned().collect(),
         );
     }
+    // Dedup against retained siblings' accepted addresses, including siblings
+    // declared later whose old URL is being released in this refresh.
+    let declared_addresses = child_sources.iter()
+        .filter(|child| !crate::community::is_source(&child.id))
+        .filter(|child| parent_url.as_deref()
+            .map(|url| !child.url.trim().eq_ignore_ascii_case(url)).unwrap_or(true))
+        .map(|child| (child.id.clone(), source_address_key(&child.url, child.region.as_deref())))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut ordered_child_ids = Vec::new();
     for child in child_sources {
         if crate::community::is_source(&child.id) {
             log::warn!("忽略源文档中的保留社区源标识：源={}", source_id);
@@ -262,10 +294,13 @@ pub(crate) async fn import_repository_source_into_config(
             existing.region = child.region.clone();
             existing.network_plan = child.network_plan.clone();
             existing.builtin = child_builtin;
+            ordered_child_ids.push(existing.id.clone());
             continue;
         }
         if config.repository_sources.iter().any(|source| {
-            source_address_key(&source.url, source.region.as_deref())
+            let declared = (source.parent_id.as_deref() == Some(source_id.as_str()))
+                .then(|| declared_addresses.get(&source.id)).flatten();
+            declared.cloned().unwrap_or_else(|| source_address_key(&source.url, source.region.as_deref()))
                 == source_address_key(&child_url, child.region.as_deref())
         }) {
             // Keep a single owner per URL and region, while allowing regional
@@ -281,6 +316,7 @@ pub(crate) async fn import_repository_source_into_config(
         } else {
             child.id.trim().to_string()
         };
+        ordered_child_ids.push(child_id.clone());
         config.repository_sources.push(RepositorySource {
             note_i18n: child.note_i18n,
             network_plan: child.network_plan.clone(),
@@ -292,6 +328,19 @@ pub(crate) async fn import_repository_source_into_config(
             builtin: child_builtin,
             parent_id: Some(source_id.clone()),
         });
+    }
+    // Rewrite only accepted direct-child slots. Descendants and other roots
+    // keep their objects and relative order; request scheduling is unrelated.
+    let ordered_children = ordered_child_ids.iter().filter_map(|id| {
+        config.repository_sources.iter().find(|source| source.id == *id).cloned()
+    }).collect::<Vec<_>>();
+    let mut ordered_children = ordered_children.into_iter();
+    for source in &mut config.repository_sources {
+        if source.parent_id.as_deref() == Some(source_id.as_str())
+            && ordered_child_ids.contains(&source.id)
+        {
+            *source = ordered_children.next().expect("accepted direct child");
+        }
     }
     let preview = state
         .config
@@ -482,3 +531,6 @@ mod repository_source_refresh_tests;
 
 #[cfg(test)]
 mod manifest_prerelease_tests;
+
+#[cfg(test)]
+mod source_order_tests;

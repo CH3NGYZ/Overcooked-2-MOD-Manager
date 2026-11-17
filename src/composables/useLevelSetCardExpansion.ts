@@ -1,6 +1,6 @@
 import { nextTick, onBeforeUnmount, onMounted } from 'vue'
 import { collapseCardWithScroll, naturalContentHeight, scrollExpandedCardIntoView } from '../expandScroll'
-import { useCardExpansion } from './useCardExpansion'
+import { isCardOverlayClick, useCardExpansion } from './useCardExpansion'
 import type { LevelSetInfo, LevelSetPlugin } from '../types'
 
 export function useLevelSetCardExpansion() {
@@ -150,6 +150,7 @@ export function useLevelSetCardExpansion() {
       cardClickHandled = false
       return
     }
+    if (isCardOverlayClick(event)) return
     const target = event.target
     const nested = target instanceof Element ? nestedPluginCard(target) : null
     if (nested) {

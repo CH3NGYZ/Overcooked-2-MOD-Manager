@@ -28,6 +28,11 @@ export interface CardExpansionOptions {
 /** 内层键的分隔符：NUL 写不进文件名，拼出来不会与别的父子对撞键。 */
 const KEY_SEP = '\u0000'
 
+/** Teleport 弹窗及遮罩不属于页面空白；关闭期间节点移除仍按原始事件路径判定。 */
+export function isCardOverlayClick(event: Event): boolean {
+  return event.composedPath().some((node) => node instanceof Element && node.matches('.n-modal-container'))
+}
+
 export function useCardExpansion(options: CardExpansionOptions = {}) {
   const singleOuter = options.singleOuter === true
   /** 已展开的外层键；`singleOuter` 下最多一个。 */

@@ -5,7 +5,7 @@ import {
   naturalContentHeight,
   scrollExpandedCardIntoView,
 } from '../expandScroll'
-import { useCardExpansion } from './useCardExpansion'
+import { isCardOverlayClick, useCardExpansion } from './useCardExpansion'
 import type { InstalledMod } from '../types'
 import type { ModPackageNode } from '../localModGroups'
 
@@ -155,6 +155,7 @@ export function useModsLocalCardExpansion() {
       cardClickHandled = false
       return
     }
+    if (isCardOverlayClick(event)) return
     /*
      * 「点空白收起」的范围只到独立卡与全部内层：包外壳的展开 / 收起由标题行
      * 自己的点击控制（`togglePackage`），点包 body 里的空白把整包装收掉会让

@@ -109,18 +109,41 @@ export const toolsUiRelations: DomainMessages = {
   downgradable: {
     'zh-CN': '可降级', 'zh-TW': '可降級', en: 'Downgrade available', ko: '다운그레이드 가능', ja: 'ダウングレード可能',
   },
+  goUpdate: {
+    'zh-CN': '去更新', 'zh-TW': '前往更新', en: 'Go to update', ko: '업데이트로 이동', ja: '更新へ進む',
+  },
+  goDowngrade: {
+    'zh-CN': '去降级', 'zh-TW': '前往降級', en: 'Go to downgrade', ko: '다운그레이드로 이동', ja: 'ダウングレードへ進む',
+  },
+  upgradeTitle: {
+    'zh-CN': '需要更新依赖', 'zh-TW': '需要更新相依模組', en: 'Dependency update required', ko: '의존 모드 업데이트 필요', ja: '依存 MOD の更新が必要',
+  },
+  upgradeMessage: {
+    'zh-CN': '当前安装的「{name}」为 {current}，不满足版本要求 {requirement}。确定后将前往该 MOD，自动选择 {target} 版本并高亮安装按钮，请确认后自行点击安装。',
+    'zh-TW': '目前安裝的「{name}」為 {current}，不符合版本要求 {requirement}。確定後將前往該 MOD，自動選擇 {target} 版本並醒目顯示安裝按鈕，請確認後自行點擊安裝。',
+    en: 'The installed version of “{name}” is {current}, which does not meet {requirement}. Continue to open that MOD, select version {target} and highlight its install button. Review the version, then click Install yourself.',
+    ko: '설치된 “{name}” 버전은 {current}이며 요구 사항 {requirement}을(를) 충족하지 않습니다. 확인하면 해당 MOD로 이동하여 {target} 버전을 선택하고 설치 버튼을 강조합니다. 버전을 확인한 뒤 직접 설치를 클릭하세요.',
+    ja: 'インストール済みの「{name}」は {current} で、要件 {requirement} を満たしていません。確認すると該当 MOD に移動し、{target} を選択してインストールボタンを強調します。内容を確認してからご自身でインストールを押してください。',
+  },
   downgradeTitle: {
     'zh-CN': '需要降级依赖', 'zh-TW': '需要降級相依模組', en: 'Dependency downgrade required', ko: '의존 모드 다운그레이드 필요', ja: '依存 MOD のダウングレードが必要',
   },
   downgradeMessage: {
-    'zh-CN': '当前安装的「{name}」为 {current}，不满足版本要求 {requirement}。请在跳转后的 MOD 卡片中选择 {target} 版本进行降级。确定后将前往该 MOD。',
-    'zh-TW': '目前安裝的「{name}」為 {current}，不符合版本要求 {requirement}。請在跳轉後的 MOD 卡片中選擇 {target} 版本進行降級。確定後將前往該 MOD。',
-    en: 'The installed version of “{name}” is {current}, which does not meet the requirement {requirement}. Select version {target} on the MOD card to downgrade. Continue to open that MOD.',
-    ko: '설치된 “{name}” 버전은 {current}이며 요구 사항 {requirement}을(를) 충족하지 않습니다. 이동한 MOD 카드에서 {target} 버전을 선택하여 다운그레이드하세요. 확인하면 해당 MOD로 이동합니다.',
-    ja: 'インストール済みの「{name}」は {current} で、バージョン要件 {requirement} を満たしていません。移動先の MOD カードで {target} を選んでダウングレードしてください。確認すると該当 MOD に移動します。',
+    'zh-CN': '当前安装的「{name}」为 {current}，不满足版本要求 {requirement}。确定后将前往该 MOD，自动选择 {target} 版本进行降级并高亮安装按钮，请确认后自行点击安装。',
+    'zh-TW': '目前安裝的「{name}」為 {current}，不符合版本要求 {requirement}。確定後將前往該 MOD，自動選擇 {target} 版本進行降級並醒目顯示安裝按鈕，請確認後自行點擊安裝。',
+    en: 'The installed version of “{name}” is {current}, which does not meet {requirement}. Continue to open that MOD, select version {target} for a downgrade and highlight its install button. Review the version, then click Install yourself.',
+    ko: '설치된 “{name}” 버전은 {current}이며 요구 사항 {requirement}을(를) 충족하지 않습니다. 확인하면 해당 MOD로 이동하여 다운그레이드할 {target} 버전을 선택하고 설치 버튼을 강조합니다. 버전을 확인한 뒤 직접 설치를 클릭하세요.',
+    ja: 'インストール済みの「{name}」は {current} で、要件 {requirement} を満たしていません。確認すると該当 MOD に移動し、ダウングレード先の {target} を選択してインストールボタンを強調します。内容を確認してからご自身でインストールを押してください。',
   },
   downgradeGoToMod: {
     'zh-CN': '确定并前往 MOD', 'zh-TW': '確定並前往 MOD', en: 'Continue to MOD', ko: '확인 후 MOD로 이동', ja: '確認して MOD へ移動',
+  },
+  dependencyTargetUnavailable: {
+    'zh-CN': '目标依赖版本已不在当前缓存，请刷新版本信息后重新选择。',
+    'zh-TW': '目標相依版本已不在目前快取中，請重新整理版本資訊後再次選擇。',
+    en: 'The target dependency version is no longer cached. Refresh version information and select it again.',
+    ko: '대상 의존 모드 버전이 현재 캐시에 없습니다. 버전 정보를 새로 고친 뒤 다시 선택하세요.',
+    ja: '対象の依存バージョンは現在のキャッシュにありません。バージョン情報を更新して選び直してください。',
   },
   // conflicts 关系未命中（对方不在冲突区间内）
   noConflict: {

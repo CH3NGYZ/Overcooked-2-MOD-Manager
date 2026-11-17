@@ -64,7 +64,8 @@ export interface ReleaseDetailVersion {
  *
  * 任何可选数据缺失都只是「那块不渲染」，不会有空白占位或塌版。
  */
-import { computed, h, nextTick, ref, watch } from 'vue'
+import { computed, h, nextTick, ref, shallowRef, watch } from 'vue'
+import type { DependencyInstallTarget } from '../composables/useDependencyInstallGuide'
 import { NButton, NDivider, NSelect, NSkeleton, NTabPane, NTabs, NTag } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
 import { CloseOutline, DownloadOutline } from '@vicons/ionicons5'
@@ -151,6 +152,10 @@ const props = withDefaults(
     installing?: boolean
     refreshing?: boolean
     gameBlocked?: boolean
+    /** 依赖跳转的精确版本；抽屉展开后引导到安装按钮。 */
+    installGuide?: DependencyInstallTarget
+    guideReady?: boolean
+    actionHint?: string
   }>(),
   {
     iconSize: 38,
@@ -183,6 +188,8 @@ const props = withDefaults(
     installing: false,
     refreshing: false,
     gameBlocked: false,
+    guideReady: false,
+    actionHint: '',
   },
 )
 
@@ -205,6 +212,17 @@ const emit = defineEmits<{
 
 /** 说明 / 下载安装；切换由面板自己持有，调用方换条目时用 `:key` 重置。 */
 const activeTab = ref<'info' | 'install'>('info')
+const guideHighlighted = shallowRef(false)
+watch([() => props.installGuide, () => props.guideReady, () => props.actionDisabled], async () => {
+  const guide = props.installGuide
+  guideHighlighted.value = false
+  if (!guide || !props.guideReady) return
+  activeTab.value = 'install'
+  await nextTick()
+  if (props.installGuide !== guide || !props.guideReady || props.actionDisabled) return
+  guideHighlighted.value = true
+  panelElement.value?.querySelector<HTMLButtonElement>('.install-primary')?.focus({ preventScroll: true })
+}, { immediate: true, flush: 'post' })
 
 const sourceUrl = computed(() =>
   repositoryHomepage(props.provider, props.owner, props.repository),
@@ -324,6 +342,7 @@ const installTag = computed(() => (props.fileLabel ? undefined : (props.version 
 const installAsset = computed(() => (props.fileLabel ? undefined : (selectedAsset.value?.name ?? undefined)))
 
 function runPrimaryAction() {
+  if (actionDisabled.value || actionLoading.value) return
   if (actionIsRefresh.value) emit('refresh')
   else emit('install', installTag.value, installAsset.value)
 }
@@ -492,6 +511,7 @@ const {
           </div>
 
           <!-- 资产选择 / 大小与下载次数 / 安装按钮 -->
+          <p v-if="actionHint" class="install-action-hint" role="alert">{{ actionHint }}</p>
           <div class="install-row">
             <!-- 左侧：可选已识别的 Release 资产（或仓库文件模式的文件） -->
             <n-select v-if="assets.length" class="asset-select" size="small"
@@ -508,7 +528,8 @@ const {
             <span v-if="fileLabel" class="muted file-hint">{{ fileHintText }}</span>
 
             <!-- 最右：安装 / 刷新 -->
-            <n-button type="primary" :loading="actionLoading" :disabled="actionDisabled" @click="runPrimaryAction">
+            <n-button type="primary" class="install-primary" :class="{ 'install-primary--guided': guideHighlighted }"
+              :loading="actionLoading" :disabled="actionDisabled" @click="runPrimaryAction">
               <DownloadOutline v-if="!actionIsRefresh" width="15" height="15" />{{ actionIsRefresh
                 ? t('common.action.refresh')
                 : t('common.action.install') }}
@@ -819,6 +840,19 @@ const {
 }
 /* 安装按钮不参与收缩，永远贴最右 */
 .install-row :deep(.n-button) { flex: 0 0 auto; }
+.install-action-hint { color: var(--oc2-danger, #dc4545); font-size: 12px; margin: 8px 0; }
+.install-primary--guided { outline: 2px solid var(--oc2-accent); outline-offset: 4px;
+}
+.install-primary--guided::after { content: ''; position: absolute; inset: -7px; border-radius: inherit;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--oc2-accent) 35%, transparent);
+  pointer-events: none; animation: dependency-install-pulse 700ms ease-out 3; opacity: 0; }
+@keyframes dependency-install-pulse {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .install-primary--guided::after, .detail-tabs :deep(.n-tab-pane) { animation: none; }
+}
 /* 仓库文件模式的说明文字：空间不足时省略，不挤压文件名与按钮 */
 .file-hint {
   flex: 0 1 auto;

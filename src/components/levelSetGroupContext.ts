@@ -57,7 +57,7 @@ export interface LevelSetGroupContext {
   activate(set: LevelSetInfo, card?: HTMLElement): void | Promise<void>
   tagsOf(set: LevelSetInfo): LevelSetCardTag[]
   tagTitle(set: LevelSetInfo, tag: LevelSetCardTag): string | undefined
-  onTagClick(tag: LevelSetCardTag): void
+  onTagClick(set: LevelSetInfo, tag: LevelSetCardTag): void
   /** 卡片状态区的一键动作（可更新 / 缺依赖 / 依赖版本冲突）。 */
   actionOf(set: LevelSetInfo): LevelSetCardAction | undefined
   /** 这一个动作正在执行（按钮转圈）。 */

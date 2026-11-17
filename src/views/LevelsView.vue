@@ -20,7 +20,8 @@ import { useListVisibility } from '../composables/useListVisibility'
 import { bulkSwitchValue as bulkSwitchValueOf } from '../listVisibility'
 import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import { cachedInstallRelease } from '../repositoryAssets'
-import { levelSetDependencyRows } from '../dependencyRows'
+import { dependencyActionLabel, dependencyRowFromStatus, levelSetDependencyRows } from '../dependencyRows'
+import { useDependencyNavigation } from '../composables/useDependencyNavigation'
 import { buildLevelSetGroups } from '../levelSetGroups'
 import {
   levelSetStatusKeys,
@@ -541,7 +542,11 @@ const toggleSummary = computed(() => summarizeLevelSetToggleStatus(sortedSets.va
  * 可更新 > 缺依赖。本页只负责把动作执行出来。
  */
 function actionOf(set: LevelSetInfo): LevelSetCardAction | undefined {
-  return levelSetCardAction(set, maps.value, mods.value, gameProbed.value, repositories.value, refreshingHint.value)
+  const action = levelSetCardAction(set, maps.value, mods.value, gameProbed.value, repositories.value, refreshingHint.value)
+  if (action?.kind === 'install-dependency' && action.dependency) {
+    return { ...action, label: dependencyActionLabel(dependencyRow(action.dependency).jump) }
+  }
+  return action
 }
 
 /** 这张卡的动作正在执行（按钮转圈）。 */
@@ -569,7 +574,12 @@ async function runCardAction(set: LevelSetInfo) {
   const action = actionOf(set)
   if (!action) return
   if (action.kind === 'install-dependency') {
-    if (action.repositoryId) linkToModRepository(action.repositoryId)
+    dependencyNavigation.request(() => {
+      const current = sets.value.find(entry => entry.dir_name === set.dir_name)
+      const currentAction = current && actionOf(current)
+      return currentAction?.kind === 'install-dependency' && currentAction.dependency
+        ? dependencyRow(currentAction.dependency) : undefined
+    })
     return
   }
   if (action.kind === 'review-conflict') {
@@ -625,10 +635,16 @@ function tagTitle(set: LevelSetInfo, tag: LevelSetCardTag): string | undefined {
   return undefined
 }
 
-function onTagClick(tag: LevelSetCardTag) {
+function onTagClick(set: LevelSetInfo, tag: LevelSetCardTag) {
   // 缺依赖：跳到**依赖的**仓库（与 MOD 管理页同一个落点）；没有来源时
   // 标签不带 repositoryId，也就不会走到这里。
-  if (tag.repositoryId) linkToModRepository(tag.repositoryId)
+  if (tag.repositoryId && tag.dependency) {
+    dependencyNavigation.request(() => {
+      const current = sets.value.find(entry => entry.dir_name === set.dir_name)
+      const latest = current && tagsOf(current).find(entry => entry.kind === tag.kind)
+      return latest?.dependency ? dependencyRow(latest.dependency) : undefined
+    })
+  }
   else if (tag.mapId) linkToMap(tag.mapId)
 }
 
@@ -669,7 +685,13 @@ function dependencyRows(set: LevelSetInfo): DependencyRow[] {
 
 /** 依赖表里可跳的行：跳到能提供它的仓库卡片（与 MOD 管理页同一个落点）。 */
 function openDependencyJump(row: DependencyRow) {
-  if (row.jump) linkToModRepository(row.jump.id)
+  if (row.jump) linkToModRepository(row.jump.id, row.jump.targetVersion)
+}
+
+const dependencyNavigation = useDependencyNavigation(openDependencyJump)
+function dependencyRow(status: import('../modRelations').RelationStatus): DependencyRow {
+  return dependencyRowFromStatus(status, { mods: mods.value, repositories: repositories.value,
+    translate: t, pickName: pickI18n, jumpToRepository: true })
 }
 
 /** 插件卡片标题：BepInPlugin 名优先，读不到就用文件名去掉 `.dll` / `.dll.disabled`。 */

@@ -10,6 +10,8 @@ import { waitForPageReady } from './pageTransition'
  * 跳转目标通过路由 query `focus` 传递，只用于高亮，不参与任何业务判断。
  */
 export const FOCUS_QUERY = 'focus'
+/** 依赖修复专用意图：精确 tag；普通 focus 仍只定位，不展开。 */
+export const INSTALL_TAG_QUERY = 'installTag'
 /** 高亮持续时间（毫秒）。 */
 export const FOCUS_DURATION = 3000
 
@@ -22,9 +24,10 @@ export function revealCard(find: () => HTMLElement | null) {
 export function useModRepositoryLink() {
   const router = useRouter()
   return {
-    linkToModRepository(repositoryId: string) {
+    linkToModRepository(repositoryId: string, targetVersion?: string) {
       if (!repositoryId) return
-      void router.push({ name: 'mods-online', query: { [FOCUS_QUERY]: repositoryId } })
+      void router.push({ name: 'mods-online', query: { [FOCUS_QUERY]: repositoryId,
+        ...(targetVersion ? { [INSTALL_TAG_QUERY]: targetVersion } : {}) } })
     },
   }
 }
@@ -151,6 +154,9 @@ export function useFocusHighlight() {
   watch(
     () => router.currentRoute.value.query[FOCUS_QUERY],
     (value) => {
+      // 带版本的依赖引导由 useDependencyInstallGuide 统一消费，避免两次滚动/replace。
+      if (typeof router.currentRoute.value.query[INSTALL_TAG_QUERY] === 'string'
+        && router.currentRoute.value.query[INSTALL_TAG_QUERY]) return
       const id = typeof value === 'string' ? value : Array.isArray(value) ? value[0] : null
       if (!id) return
       focus(id)

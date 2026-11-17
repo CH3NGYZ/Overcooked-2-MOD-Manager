@@ -102,7 +102,7 @@ function actionsOf(set: LevelSetInfo): LevelSetCardAction[] {
             :bordered="false" class="state-tag"
             :class="{ 'state-tag--link': !!(tag.repositoryId || tag.mapId) }"
             :color="tagColorForAny(tag.tone)" :title="ctx.tagTitle(set, tag)"
-            @click.stop="ctx.onTagClick(tag)">
+            @click.stop="ctx.onTagClick(set, tag)">
             {{ t(tag.text) }}
           </n-tag>
         </span>

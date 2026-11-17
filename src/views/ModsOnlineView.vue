@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useGameOperationGate } from '../composables/useGameOperationGate'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 import { NButton, NCollapse, NCollapseItem, NDrawer, NDrawerContent, NFloatButton, NTag } from 'naive-ui'
 import ContentState from '../components/ContentState.vue'
 import { LinkOutline, RefreshOutline } from '@vicons/ionicons5'
@@ -27,6 +27,7 @@ import InstallCheckDialog from '../components/InstallCheckDialog.vue'
 import InstallPlanDialog from '../components/InstallPlanDialog.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
+import { useDependencyInstallGuide } from '../composables/useDependencyInstallGuide'
 import { useFileDrop } from '../composables/useFileDrop'
 import { takePendingDrop, useDropRouting } from '../composables/useDropRouting'
 import { useModRepositoryPreview } from '../composables/useModRepositoryPreview'
@@ -69,6 +70,7 @@ const installing = ref<Record<string, boolean>>({})
 const search = ref('')
 /** 当前展开详情的仓库（同页展开，不做二级路由）。 */
 const detailId = ref<string | null>(null)
+const detailReady = shallowRef(false)
 /**
  * 安装流程：来源选择 → 预览 → 确认安装。
  *
@@ -495,6 +497,36 @@ const normalTree = computed(() => tree.value.filter((node) => !COMMUNITY_IDS.has
 const communityTree = computed(() => tree.value.filter((node) => COMMUNITY_IDS.has(node.id)))
 const hasCommunity = computed(() => communityTree.value.length > 0)
 
+/** 普通 focus 只定位；依赖修复额外携带精确版本，准备现有详情抽屉。 */
+const { target: installGuide, cancel: cancelInstallGuide } = useDependencyInstallGuide({
+  repositories: () => repositories.value.filter(repo => !isDuplicateOfOfficial(repo)),
+  loading: () => loading.value || repositoriesLoading.value,
+  reveal: repo => {
+    search.value = ''
+    const node = tree.value.find(source => source.groups.some(group => group.items.some(item => item.id === repo.id)))
+    if (!node) return
+    const sourceIds = new Set(sourcesExpanded.value)
+    sourceIds.add(node.id)
+    const visited = new Set([node.id])
+    for (let parent = node.parentId; parent;) {
+      if (visited.has(parent)) break
+      visited.add(parent)
+      sourceIds.add(parent)
+      parent = tree.value.find(source => source.id === parent)?.parentId
+    }
+    setOpenSources([...sourceIds])
+    const group = node.groups.find(group => group.items.some(item => item.id === repo.id))
+    if (group) setOpenGroups([...new Set([...groupsExpanded.value, group.key])])
+  },
+  focus: focusRepository,
+  open: id => { detailReady.value = !!detailId.value; detailId.value = id },
+  unavailable: () => message.warning(t('tools.dependencyTargetUnavailable')),
+})
+function closeDetail() {
+  cancelInstallGuide()
+  detailId.value = null
+}
+
 /*
  * 内置教程要指「第一张仓库卡」，但卡片是按分组 v-for 出来的，不能给每张都
  * 加同名的 `data-tutorial`：重复 key 时 `querySelector` 落到哪一张取决于
@@ -642,7 +674,7 @@ function install(repo: ModRepository, tag?: string, asset?: string) {
 function installFromDetail(tag?: string, asset?: string) {
   const repo = detailRepo.value
   if (!repo) return
-  detailId.value = null
+  closeDetail()
   return install(repo, tag, asset)
 }
 
@@ -790,11 +822,13 @@ defineExpose({ refreshAll, visibleCount })
   </PageLoading>
 
   <!-- 点击卡片：从右侧滑出仓库详情（指标 / 链接 / 备注 / README） -->
-  <n-drawer :show="!!detailRepo" :width="720" placement="right" @update:show="(value: boolean) => { if (!value) detailId = null }">
+  <n-drawer :show="!!detailRepo" :width="720" placement="right"
+    @after-enter="detailReady = true" @after-leave="detailReady = false"
+    @update:show="(value: boolean) => { if (!value) closeDetail() }">
     <n-drawer-content v-if="detailRepo" :native-scrollbar="false" body-content-class="drawer-detail-body">
       <ModRepositoryDetail :repo="detailRepo" :installing="!!installing[detailRepo.id]" :game-blocked="false"
-        :mods="mods" :repositories="repositories"
-        @close="detailId = null" @install="(tag?: string, asset?: string) => installFromDetail(tag, asset)" />
+        :mods="mods" :repositories="repositories" :install-guide="installGuide" :guide-ready="detailReady"
+        @close="closeDetail" @install="(tag?: string, asset?: string) => installFromDetail(tag, asset)" />
     </n-drawer-content>
   </n-drawer>
 

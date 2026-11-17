@@ -28,7 +28,8 @@ test('DIYLevel 0.11 exceeds an exclusive upper bound: downgrade to the matching 
   assert.equal(row.status, 'tools.downgradable')
   assert.equal(row.tone, 'moderate')
   assert.equal(row.jump.id, 'dev.diy')
-  assert.deepEqual(row.jump.downgrade, { installedVersion: '0.11', targetVersion: 'v0.10.6' })
+  assert.equal(row.jump.targetVersion, 'v0.10.6')
+  assert.deepEqual(row.jump.versionChange, { direction: 'downgrade', installedVersion: '0.11', targetVersion: 'v0.10.6' })
 })
 
 test('Web Runtime 4.0 requires a downgrade to 3.10.2, not an update to its newest release', () => {
@@ -37,7 +38,7 @@ test('Web Runtime 4.0 requires a downgrade to 3.10.2, not an update to its newes
     options('dev.web', '4.0', [release('v4.0.0'), release('v3.10.2')]),
   )
   assert.equal(row.status, 'tools.downgradable')
-  assert.deepEqual(row.jump.downgrade, { installedVersion: '4.0', targetVersion: 'v3.10.2' })
+  assert.deepEqual(row.jump.versionChange, { direction: 'downgrade', installedVersion: '4.0', targetVersion: 'v3.10.2' })
 })
 
 test('downgrade uses the full tag and established prerelease matching, not projected version metadata', () => {
@@ -49,7 +50,7 @@ test('downgrade uses the full tag and established prerelease matching, not proje
     ]),
   )
   assert.equal(row.status, 'tools.downgradable')
-  assert.equal(row.jump.downgrade.targetVersion, 'v0.10.8-beta.12')
+  assert.equal(row.jump.versionChange.targetVersion, 'v0.10.8-beta.12')
 })
 
 test('downgrade direction follows numeric beta ordering; an API prerelease flag alone is not a lower version', () => {
@@ -58,7 +59,7 @@ test('downgrade direction follows numeric beta ordering; an API prerelease flag 
     options('dev.fw', '2.0.0-beta.10', [release('v2.0.0-beta.2')]),
   )
   assert.equal(beta.status, 'tools.downgradable')
-  assert.deepEqual(beta.jump.downgrade, { installedVersion: '2.0.0-beta.10', targetVersion: 'v2.0.0-beta.2' })
+  assert.deepEqual(beta.jump.versionChange, { direction: 'downgrade', installedVersion: '2.0.0-beta.10', targetVersion: 'v2.0.0-beta.2' })
 
   const sameNumber = dependencyRowFromRelation(
     { guid: 'dev.fw', version: '>=2.0.0', prerelease: true },
@@ -67,7 +68,7 @@ test('downgrade direction follows numeric beta ordering; an API prerelease flag 
     }),
   )
   assert.equal(sameNumber.status, 'tools.updatable')
-  assert.equal(sameNumber.jump.downgrade, undefined)
+  assert.equal(sameNumber.jump.versionChange, undefined)
 })
 
 test('a candidate without a tag keeps the actual release version as its downgrade target', () => {
@@ -76,7 +77,8 @@ test('a candidate without a tag keeps the actual release version as its downgrad
     options('dev.web', '4.0', [release('', { version: '3.10.2' })]),
   )
   assert.equal(row.status, 'tools.downgradable')
-  assert.equal(row.jump.downgrade.targetVersion, '3.10.2')
+  assert.equal(row.jump.versionChange.targetVersion, '3.10.2')
+  assert.equal(row.jump.targetVersion, '', 'display version must not invent an installable tag')
 })
 
 test('a disabled installed mod still needs a downgrade; the row does not pretend it is absent', () => {
@@ -85,7 +87,7 @@ test('a disabled installed mod still needs a downgrade; the row does not pretend
     options('dev.web', '4.0', [release('v3.10.2')], { mods: [installed('dev.web', '4.0', { enabled: false })] }),
   )
   assert.equal(row.status, 'tools.downgradable')
-  assert.equal(row.jump.downgrade.installedVersion, '4.0')
+  assert.equal(row.jump.versionChange.installedVersion, '4.0')
 })
 
 test('upgrade, absent, satisfied, unknown-version and missing-source rows do not carry downgrade confirmations', () => {
@@ -100,7 +102,8 @@ test('upgrade, absent, satisfied, unknown-version and missing-source rows do not
   ]) {
     const row = dependencyRowFromRelation(relation, options('dev.fw', current, releases, extra))
     assert.equal(row.status, expected, `${current}: status`)
-    assert.equal(row.jump?.downgrade, undefined, `${current}: no downgrade prompt`)
+    assert.notEqual(row.jump?.versionChange?.direction, 'downgrade', `${current}: no downgrade prompt`)
+    assert.equal(row.jump?.versionChange?.direction, current === '1.0' ? 'upgrade' : undefined)
   }
 })
 

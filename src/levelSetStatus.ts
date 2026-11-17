@@ -2,7 +2,7 @@ import type { RelationSubject } from './modRelations'
 import { aggregateLevelSetVersion, isSameLevelSet, mapUpdateState, mapVersionRef, type MapVersionRef } from './mapVersion.ts'
 export { aggregateLevelSetVersion, isSameLevelSet, mapsForLevelSet, mapUpdateState, type MapVersionRef, type MapVersionOrder } from './mapVersion.ts'
 import {
-  dependencyTagFor, relationsForMapRelease, resolveRelation, resolveRelations,
+  dependencyTagFor, primaryRelation, relationsForMapRelease, resolveRelation, resolveRelations,
   type RelationStatus,
 } from './modRelations.ts'
 import type { InstalledMod, LevelSetInfo, MapInfo, ModRepository } from './types'
@@ -332,6 +332,8 @@ export interface LevelSetCardTag {
   mapId?: string
   /** 依赖的安装入口：能提供满足区间版本的仓库卡片 id（只有「缺依赖」会带）。 */
   repositoryId?: string
+  /** 标签实际选择的关系，供导航复用同一候选而非按仓库 id 反查。 */
+  dependency?: RelationStatus
 }
 
 /**
@@ -404,16 +406,15 @@ export function levelSetCardTags(
 
   if (gameProbed) {
     // 与依赖表同一条声明链：绑定的在线地图优先，没有就退回本地快照
-    const dependency = dependencyTagFor(
-      levelSetRelationStatuses(set, maps, mods, repositories),
-      true,
-    )
+    const statuses = levelSetRelationStatuses(set, maps, mods, repositories)
+    const dependency = dependencyTagFor(statuses, true)
     if (dependency) {
       tags.push({
         text: dependency.text,
         tone: dependency.tone,
         kind: 'dependency',
         repositoryId: dependency.repositoryId,
+        dependency: primaryRelation(statuses),
       })
     }
   }
@@ -456,6 +457,7 @@ export interface LevelSetCardAction {
   repositoryId?: string
   /** `review-conflict` 命中的 GUID，用来在提示里说清是哪一个依赖。 */
   guid?: string
+  dependency?: RelationStatus
 }
 
 /**
@@ -519,6 +521,7 @@ export function levelSetCardAction(
       label: 'overview.browse',
       tone: 'moderate',
       repositoryId: dependency.repositoryId,
+      dependency: primaryRelation(statuses),
     }
   }
   return undefined

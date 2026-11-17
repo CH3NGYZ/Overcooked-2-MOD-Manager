@@ -28,7 +28,9 @@ import { markdownSummary } from '../markdown'
 import { formatVersionSpec } from '../versionSpec'
 import { modRepositoryIsAvailable } from '../repositoryAvailability'
 import { useFocusHighlight, useLevelSetLink, useModRepositoryLink } from '../crossLink'
-import { dependencyTagFor } from '../modRelations'
+import { dependencyTagFor, primaryRelation } from '../modRelations'
+import { dependencyRowFromStatus } from '../dependencyRows'
+import { useDependencyNavigation } from '../composables/useDependencyNavigation'
 import {
   frameworkStates,
   levelSetForMap,
@@ -500,17 +502,21 @@ function dependencyOf(map: MapInfo): CardDependencyTag | null {
 
 /** 点依赖标签：跳到能提供它的那张仓库卡片（与 MOD 安装页同一个高亮机制）。 */
 function jumpToDependency(map: MapInfo) {
-  const tag = dependencyTagFor(
-    mapRelationStatuses(map, mods.value, repositories.value),
-    hasLocalMap(map),
-  )
-  if (tag?.repositoryId) linkToModRepository(tag.repositoryId)
+  dependencyNavigation.request(() => {
+    const current = maps.value.find(entry => entry.id === map.id)
+    if (!current || !hasLocalMap(current)) return undefined
+    const issue = primaryRelation(mapRelationStatuses(current, mods.value, repositories.value))
+    return issue ? dependencyRowFromStatus(issue, { mods: mods.value, repositories: repositories.value,
+      translate: t, pickName: pickI18n, jumpToRepository: true }) : undefined
+  })
 }
 
 /** 依赖表里可跳的行：同样落到那张仓库卡片上。 */
 function openDependencyJump(row: DependencyRow) {
-  if (row.jump) linkToModRepository(row.jump.id)
+  if (row.jump) linkToModRepository(row.jump.id, row.jump.targetVersion)
 }
+
+const dependencyNavigation = useDependencyNavigation(openDependencyJump)
 
 /**
  * 主按钮。

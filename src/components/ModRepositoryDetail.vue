@@ -11,7 +11,8 @@ import { repositoryHomepage, repositoryRawUrl } from '../providers'
  * README 的拉取与取消在 `useModRepositoryReadme`：只有 MOD 详情需要它。地图详情
  * 用条目自己的 `note_i18n` 当说明，仓库 README 不参与（仓库级内容会串味）。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
+import type { DependencyInstallTarget } from '../composables/useDependencyInstallGuide'
 import { api } from '../services/tauri'
 import { pickI18n, t } from '../i18n'
 import { formatVersion, isPrereleaseVersion } from '../modStatus'
@@ -39,6 +40,9 @@ const props = withDefaults(defineProps<{
   mods?: readonly InstalledMod[]
   /** 可安装来源（缺依赖时它从哪个仓库补；与安装前检查同一个列表）。 */
   repositories?: readonly ModRepository[]
+  /** 依赖导航仅准备指定缓存版本；无自动安装。 */
+  installGuide?: DependencyInstallTarget
+  guideReady?: boolean
 }>(), {
   installing: false,
   gameBlocked: false,
@@ -59,10 +63,18 @@ const { readme, loading, error } = useModRepositoryReadme(() => props.repo?.id ?
 /* ===== 版本选择 + 资产规则命中 ===== */
 /** 当前选中的 Release（默认最新一个）。 */
 const selectedTag = ref<string | null>(null)
+const guided = shallowRef(false)
+watch([() => props.repo?.id, () => props.installGuide?.request], ([id], previous) => {
+  guided.value = props.installGuide?.repositoryId === props.repo?.id && !!props.installGuide?.tag
+  const list = props.repo?.cached_releases ?? []
+  selectedTag.value = guided.value ? props.installGuide!.tag
+    : previous?.[0] === id && list.some(release => release.tag_name === selectedTag.value)
+      ? selectedTag.value : list[0]?.tag_name ?? null
+}, { immediate: true })
 const selectedRelease = computed(() => {
   const list = props.repo?.cached_releases ?? []
   const found = list.find((entry) => entry.tag_name === selectedTag.value)
-  return found ?? list[0] ?? null
+  return found ?? (guided.value ? null : list[0] ?? null)
 })
 const releaseOptions = computed(() =>
   (props.repo?.cached_releases ?? []).map((entry) => ({
@@ -72,14 +84,13 @@ const releaseOptions = computed(() =>
     value: entry.tag_name,
   })),
 )
-watch(() => props.repo?.id, () => { selectedTag.value = null })
 // 仓库首次加载/刷新出 Release 后，把选中版本落到最新一个（否则下拉显示空）
 watch(
   () => props.repo?.cached_releases,
   (list) => {
     if (!list?.length) return
     const exists = list.some((entry) => entry.tag_name === selectedTag.value)
-    if (!exists) selectedTag.value = list[0].tag_name
+    if (!exists && !guided.value) selectedTag.value = list[0].tag_name
   },
   { immediate: true },
 )
@@ -134,7 +145,7 @@ const dependencyRows = computed<DependencyRow[]>(() => {
 })
 
 /**
- * 依赖表里点「可安装 / 可更新」：先关抽屉，再跳到安装页那张仓库卡片。
+ * 依赖表确认目标后先关抽屉，再让安装页打开对应仓库的精确版本。
  *
  * 抽屉是右侧浮层，不关掉的话目标卡片被遮罩盖住，用户会以为点了没反应。
  */
@@ -142,7 +153,17 @@ function openDependencyJump(row: DependencyRow) {
   const id = row.jump?.id
   if (!id) return
   emit('close')
-  linkToModRepository(id)
+  linkToModRepository(id, row.jump?.targetVersion)
+}
+
+function selectVersion(value: string) {
+  guided.value = false
+  selectedTag.value = value
+}
+const guideMissing = computed(() => guided.value && !selectedRelease.value)
+function installSelected(tag?: string, asset?: string) {
+  if (guideMissing.value) return
+  emit('install', tag, asset)
 }
 
 /** 仓库文件模式：安装行左侧直接显示 `branch/file_path`。 */
@@ -208,17 +229,19 @@ async function openUrl(url: string) {
     :readme-content="readme?.content ?? ''" :readme-exists="!!readme?.exists"
     :readme-loading="loading" :readme-error="error"
     :dependencies="dependencyRows"
-    :versions="releaseOptions" :version="selectedRelease?.tag_name ?? null" :version-fallback="version"
+    :versions="releaseOptions" :version="selectedTag" :version-fallback="version"
     :binding-value="`${repo.username}/${repo.repository}`"
     :release-tag="selectedRelease?.tag_name || selectedRelease?.name || '—'"
     :published-at="selectedRelease?.published_at ?? null" :prerelease="selectedReleaseIsPrerelease"
     :release-notes="releaseNotes"
     :assets="matchedAssets" :asset-value="primaryAsset?.name ?? null" :file-label="fileLabel"
     :disabled-label="disabledLabel" :installing="installing" :game-blocked="gameBlocked"
-    @update:version="(value: string) => (selectedTag = value)"
+    :install-guide="guided ? installGuide : undefined" :guide-ready="guideReady" :action-disabled="guideMissing"
+    :action-hint="guideMissing ? t('tools.dependencyTargetUnavailable') : ''"
+    @update:version="selectVersion"
     @update:asset="(value: string) => (selectedAssetName = value)"
     @open-link="(url: string) => { void openUrl(url) }"
     @dependency-jump="openDependencyJump"
     @close="emit('close')"
-    @install="(tag?: string, asset?: string) => emit('install', tag, asset)" />
+    @install="installSelected" />
 </template>

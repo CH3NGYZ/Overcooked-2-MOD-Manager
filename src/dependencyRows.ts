@@ -51,8 +51,9 @@ export interface DependencyJump {
   id: string
   /** 悬停说明（已翻译），说清点了会跳到哪。 */
   title: string
-  /** 降级确认所需的真实版本；目标保留完整 Release tag，不猜区间边界。 */
-  downgrade?: { installedVersion: string; targetVersion: string }
+  /** 已解析可安装 Release 的真实 tag，目的页据此选择版本，不再请求候选。 */
+  targetVersion?: string
+  versionChange?: { direction: 'upgrade' | 'downgrade'; installedVersion: string; targetVersion: string }
 }
 
 export interface DependencyRow {
@@ -272,20 +273,24 @@ export function dependencyRowFromRelation(
   relation: RepositoryRelation,
   options: DependencyRowOptions = {},
 ): DependencyRow {
-  const {
-    mods = [], repositories = [], ownerRepository,
-    translate = identityTranslate, jumpToRepository = false,
-  } = options
+  const { mods = [], repositories = [], ownerRepository } = options
+  return dependencyRowFromStatus(resolveRelation(relation, mods, repositories, ownerRepository), options)
+}
 
-  const status = resolveRelation(relation, mods, repositories, ownerRepository)
+/** 卡头已持有关系结果时直接投影，和依赖表复用同一候选与版本方向。 */
+export function dependencyRowFromStatus(status: RelationStatus, options: DependencyRowOptions = {}): DependencyRow {
+  const { translate = identityTranslate, jumpToRepository = false } = options
+  const relation = status.relation
   const kind = relation.kind ?? 'requires'
   const line = dependencyLine(relation)
   const targetVersion = status.release?.tag_name || status.release?.version || ''
-  const downgrade = status.state === 'installable' && status.installedVersion
-    && compareVersions(status.installedVersion, targetVersion) === 1
-    ? { installedVersion: status.installedVersion, targetVersion }
-    : undefined
-  const { text, tone } = statusFor(status, translate, !!downgrade)
+  const installable = status.state === 'installable' || (kind === 'compatible' && status.state === 'conflict')
+  const order = installable && status.installedVersion
+    ? compareVersions(status.installedVersion, targetVersion) : null
+  const versionChange = (order === 1 || order === -1) && status.installedVersion
+    ? { direction: order === 1 ? 'downgrade' as const : 'upgrade' as const,
+        installedVersion: status.installedVersion, targetVersion } : undefined
+  const { text, tone } = statusFor(status, translate, versionChange?.direction === 'downgrade')
 
   const row: DependencyRow = {
     // key 必须带上发布线：同一 GUID 的「与测试版互斥 / 与正式版互斥」是两条
@@ -303,15 +308,24 @@ export function dependencyRowFromRelation(
    * 可安装 / 可更新 / 可降级指向「能提供满足区间版本的仓库卡片」：唯一一处点一下
    * 就能把依赖补上的地方。缺依赖与冲突没有这种去处，保持纯文字。
    */
-  if (jumpToRepository && status.state === 'installable' && status.repository) {
+  if (jumpToRepository && installable && status.repository) {
     row.jump = {
       id: status.repository.id,
       title: translate('modsOnline.viewDependencyInModInstall'),
-      ...(downgrade ? { downgrade } : {}),
+      // 空字符串表示 Release 来源异常缺 tag；未提供字段才是普通/RAW 导航。
+      ...(status.repository.download_mode === 'release' ? { targetVersion: status.release?.tag_name ?? '' } : {}),
+      ...(versionChange ? { versionChange } : {}),
     }
   }
 
   return row
+}
+
+/** 关系快捷按钮只投影已有跳转的方向，不另判版本或选择 Release。 */
+export function dependencyActionLabel(jump: DependencyJump | undefined): string {
+  return jump?.versionChange
+    ? jump.versionChange.direction === 'downgrade' ? 'tools.goDowngrade' : 'tools.goUpdate'
+    : 'overview.browse'
 }
 
 /**

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NTag } from 'naive-ui'
-import { t } from '../i18n'
+import { pickI18n, t } from '../i18n'
 import { tagColorForAny } from '../theme'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useModRepositoryRefresh } from '../composables/useModRepositoryRefresh'
@@ -10,7 +10,9 @@ import { installedModTags } from '../statusTags'
 import { runtimeModStatus } from '../modRuntimeStatus'
 import { relationJumpRepositoryId } from '../modRelations'
 import { repositoryForMod } from '../modStatus'
-import { tagTargetId, tagTargetTitle } from '../tagTargets'
+import { isDependencyTag, tagTargetId, tagTargetTitle } from '../tagTargets'
+import { dependencyRowFromStatus } from '../dependencyRows'
+import { useDependencyNavigation } from '../composables/useDependencyNavigation'
 import type { InstalledMod } from '../types'
 
 /**
@@ -38,6 +40,9 @@ const props = defineProps<{ dllFile: string }>()
 const { mods, config } = useDashboard()
 const { runtimeState } = useModRepositoryRefresh()
 const { linkToModRepository } = useModRepositoryLink()
+const dependencyNavigation = useDependencyNavigation(row => {
+  if (row.jump) linkToModRepository(row.jump.id, row.jump.targetVersion)
+})
 
 /** 始终按当前 Dashboard 取这条 MOD：单仓刷新只替换仓库缓存，这里也要跟上。 */
 const mod = computed<InstalledMod | undefined>(() =>
@@ -70,6 +75,14 @@ function titleOf(tagKey: string) {
 }
 
 function activate(tagKey: string) {
+  if (isDependencyTag(tagKey) && status.value?.issue?.relation.kind !== 'conflicts') {
+    dependencyNavigation.request(() => {
+      const issue = status.value?.issue
+      return issue ? dependencyRowFromStatus(issue, { mods: mods.value, repositories: repositories.value,
+        translate: t, pickName: pickI18n, jumpToRepository: true }) : undefined
+    })
+    return
+  }
   const id = targetOf(tagKey)
   if (id) linkToModRepository(id)
 }

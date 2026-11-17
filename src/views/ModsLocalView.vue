@@ -27,7 +27,8 @@ import {
   summarizeLocalModStatuses,
 } from '../localModGroups'
 import { statusActionFor, type StatusActionSpec } from '../statusActions'
-import { installedModDependencyRows, mergedModDependencyRows } from '../dependencyRows'
+import { dependencyActionLabel, dependencyRowFromStatus, installedModDependencyRows, mergedModDependencyRows } from '../dependencyRows'
+import { useDependencyNavigation } from '../composables/useDependencyNavigation'
 import type { DependencyRow } from '../dependencyRows'
 import { useFocusHighlight, useModRepositoryLink } from '../crossLink'
 import { useListVisibility } from '../composables/useListVisibility'
@@ -609,6 +610,7 @@ function bindingRepositoryId(mod: InstalledMod): string | undefined {
 function actionContext(labels: readonly string[] | undefined, mod: InstalledMod): {
   action: StatusActionSpec
   repository?: ModRepository
+  dependency?: DependencyRow
   /** 冲突要卸载的目标：可能是别的 MOD，不一定是当前这张卡片。 */
   conflictMod?: InstalledMod
 } | undefined {
@@ -640,7 +642,9 @@ function actionContext(labels: readonly string[] | undefined, mod: InstalledMod)
        */
       const dependency = relationIssueByDll.value[mod.dll_file]
       if (!dependency?.repository) return undefined
-      return { action, repository: dependency.repository }
+      const row = dependencyRow(dependency)
+      return { action: { ...action, label: dependencyActionLabel(row.jump) },
+        repository: dependency.repository, dependency: row }
     }
     case 'uninstall-conflict': {
       /*
@@ -711,7 +715,10 @@ function runCardAction(mod: InstalledMod) {
     void previewModRepository(context.repository)
   } else if (context.action.kind === 'install-dependency' && context.repository) {
     // 缺依赖：跳到 MOD 安装页并定位到该仓库卡片，由那边给出「安装依赖」
-    linkToModRepository(context.repository.id)
+    dependencyNavigation.request(() => {
+      const current = effectiveMods.value.find(entry => entry.dll_file === mod.dll_file)
+      return current ? cardAction(current)?.dependency : undefined
+    })
   } else if (context.action.kind === 'uninstall-conflict' && context.conflictMod) {
     // 冲突目标是对方 MOD；复用右侧垃圾桶的完整确认、整包确认、忙碌与刷新流程。
     remove(context.conflictMod)
@@ -731,7 +738,10 @@ function runPackageAction(pkg: ModPackageNode) {
   }
   if (!context.repository) return
   if (context.action.kind === 'update') void previewModRepository(context.repository)
-  else if (context.action.kind === 'install-dependency') linkToModRepository(context.repository.id)
+  else if (context.action.kind === 'install-dependency') dependencyNavigation.request(() => {
+    const current = groups.value.flatMap(group => group.packages).find(entry => entry.key === pkg.key)
+    return current ? packageAction(current)?.dependency : undefined
+  })
   else void refreshModRepository(context.repository)
 }
 
@@ -793,6 +803,17 @@ function packageTagTargetId(pkg: ModPackageNode, tagKey: string): string | undef
 }
 
 function openPackageTag(pkg: ModPackageNode, tagKey: string) {
+  const initialOwner = isDependencyTag(tagKey) ? relationOwnerMod(pkg) : undefined
+  const initialIssue = initialOwner && relationIssueByDll.value[initialOwner.dll_file]
+  if (isDependencyTag(tagKey) && initialIssue?.relation.kind !== 'conflicts') {
+    dependencyNavigation.request(() => {
+      const current = groups.value.flatMap(group => group.packages).find(entry => entry.key === pkg.key)
+      const owner = current && relationOwnerMod(current)
+      const issue = owner && relationIssueByDll.value[owner.dll_file]
+      return issue ? dependencyRow(issue) : undefined
+    })
+    return
+  }
   const id = packageTagTargetId(pkg, tagKey)
   if (id) linkToModRepository(id)
 }
@@ -857,7 +878,13 @@ function packageDependencyRows(pkg: ModPackageNode): DependencyRow[] {
  */
 function openDependencyJump(row: DependencyRow) {
   const id = row.jump?.id
-  if (id) linkToModRepository(id)
+  if (id) linkToModRepository(id, row.jump?.targetVersion)
+}
+
+const dependencyNavigation = useDependencyNavigation(openDependencyJump)
+function dependencyRow(status: RelationStatus): DependencyRow {
+  return dependencyRowFromStatus(status, { mods: mods.value, repositories: repositories.value,
+    translate: t, pickName: pickI18n, jumpToRepository: true })
 }
 
 /** 绑定仓库展示：provider + owner/repo（@tag）。 */

@@ -734,11 +734,11 @@ en = "Community Map Source (Maintained by QingyuQingxue)"
 ko = "커뮤니티 지도 소스 (QingyuQingxue 관리)"
 ja = "コミュニティマップソース (QingyuQingxue 管理)"
 [map_sources.note_i18n]
-zh-CN = "快速下载渠道来之不易，请勿频繁下载，仅在需要玩的时候更新或安装即可。"
-zh-TW = "快速下載渠道來之不易，請勿頻繁下載，僅在需要玩的時候更新或安裝即可。"
-en = "The fast download channel is not easy to come by. Please do not download frequently. Only update or install when needed."
-ko = "빠른 다운로드 채널은 얻기 어렵습니다. 자주 다운로드하지 마세요. 필요할 때만 업데이트하거나 설치하세요."
-ja = "高速ダウンロードチャネルは手に入れるのが難しいです。頻繁にダウンロードしないでください。必要な場合にのみ更新またはインストールしてください。"
+zh-CN = "此为国内公益渠道, 切勿短时间下载很多张图, 很容易被封禁"
+zh-TW = "此為中國大陸公益渠道，切勿短時間下載大量地圖，很容易被封禁"
+en = "This is a free community-supported download channel in mainland China. Do not download many maps in a short time, as this can easily lead to a ban."
+ko = "중국 본토의 무료 공익 다운로드 채널입니다. 짧은 시간에 많은 지도를 다운로드하면 쉽게 차단될 수 있으니 삼가 주세요."
+ja = "中国本土の有志による無料ダウンロードチャネルです。短時間に大量のマップをダウンロードすると、簡単にアクセスを禁止される恐れがあります。"
 ```
 
 MOD 的 `[[repository_sources]]` 同样支持这两个字段，例如：

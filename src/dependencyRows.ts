@@ -28,9 +28,12 @@ import {
   relationsForMapRelease,
   resolveRelation,
   relationsForRelease,
-  stricterRelation,
+  relationStatusFromEvaluation,
   type RelationStatus,
 } from './modRelations.ts'
+import { relationsForSubject } from './modChanges/evaluationProjection.ts'
+import type { EvaluationSubject } from './modChanges/types'
+import type { RootIntent } from './modChanges/types'
 import { compareVersions, isPrereleaseVersion, repositoryForMod } from './modStatus.ts'
 import { mapForLevelSet, mapReleaseVersion } from './levelSetStatus.ts'
 import { formatVersionSpec } from './versionSpec.ts'
@@ -47,6 +50,8 @@ import type {
  * 根本没有这个 GUID）与冲突没有可去的地方，保持纯文字。
  */
 export interface DependencyJump {
+  /** Solving this owner includes every required version and cascading disable. */
+  repair?: RootIntent
   /** 目标仓库卡片的 `data-focus-id`（安装页据此高亮）。 */
   id: string
   /** 悬停说明（已翻译），说清点了会跳到哪。 */
@@ -134,6 +139,7 @@ export interface DependencyRowOptions {
    * 传自己的本地版本。
    */
   version?: string | null
+  subject?: EvaluationSubject
 }
 
 const identityTranslate: DependencyTranslate = (key) => key
@@ -239,6 +245,9 @@ function statusFor(
   downgrade: boolean,
 ): { text: string; tone: TagTone } {
   const kind = status.relation.kind ?? 'requires'
+  if (status.state === 'unknown') return { text: translate('modChanges.relation.unknown'), tone: 'moderate' }
+  if (status.state === 'disabled') return { text: translate('modChanges.relation.disabled'), tone: 'critical' }
+  if (status.state === 'version_mismatch') return { text: translate('modChanges.relation.versionMismatch'), tone: 'critical' }
   const ok = status.state === 'ok'
 
   if (kind === 'conflicts') {
@@ -274,7 +283,7 @@ export function dependencyRowFromRelation(
   options: DependencyRowOptions = {},
 ): DependencyRow {
   const { mods = [], repositories = [], ownerRepository } = options
-  return dependencyRowFromStatus(resolveRelation(relation, mods, repositories, ownerRepository), options)
+  return dependencyRowFromStatus(resolveRelation(relation, mods, repositories, ownerRepository, options.subject), options)
 }
 
 /** 卡头已持有关系结果时直接投影，和依赖表复用同一候选与版本方向。 */
@@ -295,7 +304,7 @@ export function dependencyRowFromStatus(status: RelationStatus, options: Depende
   const row: DependencyRow = {
     // key 必须带上发布线：同一 GUID 的「与测试版互斥 / 与正式版互斥」是两条
     // 不同声明，只用 guid:kind 会让 v-for 出现重复 key
-    key: `${relation.guid}:${kind}:${line ?? 'any'}`,
+    key: `${relation.guid}:${kind}:${line ?? 'any'}:${relation.version ?? ''}`,
     name: dependencyTargetName(relation, options),
     kind,
     line,
@@ -317,12 +326,16 @@ export function dependencyRowFromStatus(status: RelationStatus, options: Depende
       ...(versionChange ? { versionChange } : {}),
     }
   }
+  if (jumpToRepository && status.repair) row.jump = {
+    id: status.repair.node_id, title: translate('modChanges.reviewSelection'), repair: status.repair,
+  }
 
   return row
 }
 
 /** 关系快捷按钮只投影已有跳转的方向，不另判版本或选择 Release。 */
 export function dependencyActionLabel(jump: DependencyJump | undefined): string {
+  if (jump?.repair) return 'modChanges.reviewSelection'
   return jump?.versionChange
     ? jump.versionChange.direction === 'downgrade' ? 'tools.goDowngrade' : 'tools.goUpdate'
     : 'overview.browse'
@@ -332,17 +345,22 @@ export function dependencyActionLabel(jump: DependencyJump | undefined): string 
  * 一组关系声明 → 表格行。
  *
  * 可选依赖（`requires` + `optional`）不参与展示：它们缺失是正常状态，
- * 列出来只是噪音。与 `resolveRelations` 的过滤口径一致。
+ * 列出来只是噪音。与后端可选关系展示的过滤口径一致。
  */
 export function dependencyRowsFor(
   relations: readonly RepositoryRelation[],
   options: DependencyRowOptions = {},
 ): DependencyRow[] {
+  const subject = options.subject ?? (options.ownerRepository
+    ? { repository_id: options.ownerRepository.id, ...(options.version ? { tag: options.version } : {}) } : undefined)
+  const evaluations = subject ? relationsForSubject(subject) : undefined
+  if (evaluations) return evaluations.filter(entry => !entry.relation.optional)
+    .map(entry => dependencyRowFromStatus(relationStatusFromEvaluation(entry, options.mods ?? []), options))
   const rows: DependencyRow[] = []
   for (const relation of relations) {
     const kind = relation.kind ?? 'requires'
     if (kind === 'requires' && relation.optional) continue
-    rows.push(dependencyRowFromRelation(relation, options))
+    rows.push(dependencyRowFromRelation(relation, { ...options, subject }))
   }
   return rows
 }
@@ -394,7 +412,7 @@ export function installedModRelations(
  * 而不是给弹窗另写一份只看快照的简化版。
  */
 export type LevelSetRelationSource =
-  Pick<LevelSetInfo, 'name' | 'author' | 'version' | 'relations'> & { name_zh?: string | null }
+  Pick<LevelSetInfo, 'name' | 'author' | 'version' | 'relations'> & { name_zh?: string | null; dir_name?: string }
 
 /** 一个关卡集该用哪份关系声明（在线地图 → 本地快照）。 */
 export function levelSetRelations(
@@ -417,6 +435,7 @@ export function installedModDependencyRows(
   return dependencyRowsFor(installedModRelations(mod, repositories), {
     ...options,
     ownerRepository: repositoryForMod([...repositories], mod),
+    subject: { dll_file: mod.dll_file },
     jumpToRepository: options.jumpToRepository ?? true,
   })
 }
@@ -445,36 +464,18 @@ export function mergedModDependencyRows(
   members: readonly InstalledMod[],
   options: Omit<DependencyRowOptions, 'ownerRepository'> = {},
 ): DependencyRow[] {
-  const repositories = options.repositories ?? []
-  const merged: RepositoryRelation[] = []
-  let ownerRepository: ModRepository | undefined
-  for (const mod of members) {
-    if (mod.is_dependency) continue
-    ownerRepository ??= repositoryForMod([...repositories], mod)
-    for (const relation of installedModRelations(mod, repositories)) {
-      const kind = relation.kind ?? 'requires'
-      const guid = relation.guid.trim().toLowerCase()
-      const index = merged.findIndex((existing) => (
-        (existing.kind ?? 'requires') === kind && existing.guid.trim().toLowerCase() === guid
-      ))
-      if (index < 0) merged.push(relation)
-      else merged[index] = stricterRelation(merged[index], relation)
-    }
-  }
-  if (!merged.length) return []
-  return dependencyRowsFor(merged, {
-    ...options,
-    ownerRepository,
-    jumpToRepository: options.jumpToRepository ?? true,
-  })
+  const rows = members.filter(mod => !mod.is_dependency).flatMap(mod => installedModDependencyRows(mod, options))
+  return rows.filter((row, index) => rows.findIndex(peer => peer.key === row.key && peer.status === row.status) === index)
 }
 
 export function mapDependencyRows(
   map: MapInfo | null | undefined,
   options: Omit<DependencyRowOptions, 'ownerRepository'> = {},
 ): DependencyRow[] {
+  if (!map) return []
   return dependencyRowsFor(mapRelations(map, options.version), {
     ...options,
+    subject: { map_id: map.id, tag: options.version ?? mapReleaseVersion(map) ?? undefined },
     jumpToRepository: options.jumpToRepository ?? true,
   })
 }
@@ -495,6 +496,7 @@ export function levelSetDependencyRows(
   const { maps, ...rest } = options
   return dependencyRowsFor(levelSetRelations(set, maps), {
     ...rest,
+    subject: set.dir_name ? { map_dir_name: set.dir_name } : undefined,
     jumpToRepository: rest.jumpToRepository ?? true,
   })
 }

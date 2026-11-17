@@ -1,4 +1,5 @@
 import type { LevelPreview, LevelPreviewDetail } from '../types'
+import type { ChangeRequest, ChangePlan, EvaluationSnapshot, EvaluationSubject, ChangeExecutionResult } from '../modChanges/types'
 import type { LocalModSnapshot, ChefEditorOpen, ChefEditorSnapshot, ChefDraft, ChefValidation, ChefFilesChanged } from '../diychef/types'
 import type { ChefPreviewScene } from '../diychef/preview/types'
 import type { PublishProvider } from '../types'
@@ -31,7 +32,6 @@ import type {
   PublicConfig,
   ReleaseInfo,
   ModRepositoryReleaseSnapshot,
-  ModRepositoryInstallOutcome,
   RepositoryReadme,
   RepositorySourceImportResult,
   RustLog,
@@ -45,7 +45,6 @@ import type {
   LevelSetZipProgress,
   MapInfo,
   MapTreeProgress,
-  MapInstallOrigin,
   PublishAsset,
   PublishAuthPoll,
   PublishAuthState,
@@ -78,6 +77,11 @@ async function readDashboard(): Promise<DashboardSummary> {
  * 后端命令仍全部注册，供后续版本按需恢复。
  */
 export const api = {
+  evaluateModChanges: (subjects?: EvaluationSubject[]) => invoke<EvaluationSnapshot>('evaluate_mod_changes', { subjects }),
+  planModChanges: (request: ChangeRequest) => invoke<ChangePlan>('plan_mod_changes', { request }),
+  prepareModChanges: (planId: string) => invoke<ChangePlan>('prepare_mod_changes', { planId }),
+  executeModChanges: (planId: string) => invoke<ChangeExecutionResult>('execute_mod_changes', { planId }),
+  cancelModChanges: (planId: string) => invoke<void>('cancel_mod_changes', { planId }),
   dashboard: readDashboard,
   localMods: () => invoke<LocalModSnapshot>('get_local_mods'),
   diyChefOpen: (generation: number, targetId?: string) => invoke<ChefEditorOpen>('open_diychef_editor', { generation, targetId }),
@@ -178,23 +182,6 @@ export const api = {
   cancelRepositoryReadme: (requestId: string) => invoke<void>('cancel_repository_readme', { requestId }),
   /** 用系统默认浏览器打开外部链接（Release 页 / 源码仓库）。 */
   openReleasePage: (url: string) => invoke<OperationResult>('open_release_page', { url }),
-  /**
-   * 安装仓库资产。
-   *
-   * `previewOnly` 为真时只下载并解析、不写入游戏目录，返回结果里带
-   * `preview` —— 仓库卡片的「安装 / 重装 / 更新」走这条路径先进预览弹窗，
-   * 用户确认后再调 `confirmModInstall`。
-   *
-   * `assetName` 是安装页下拉里选中的资产；不传时后端按 `asset_rules` 自动选。
-   * 必须与界面上显示的文件一致，否则会出现「选的 A、下载的 B」。
-   * Release 模式只读已检测/刷新出的缓存；缺少指定版本时拒绝，不补查 API。
-   */
-  installModRepository: (repositoryId: string, tag?: string, previewOnly = false, assetName?: string) =>
-    invoke<ModRepositoryInstallOutcome>('install_mod_repository', {
-      repositoryId, tag, previewOnly, assetName,
-      // 后端按它选仓库的本地化名称（下载进度标签 + 安装预览标题）
-      locale: locale.value,
-    }),
   launchNormal: () => invoke<OperationResult>('launch_normal'),
   /** 停止厨房：Steam 没有停止协议，由管理器结束游戏进程。 */
   stopGame: () => invoke<OperationResult>('stop_game'),
@@ -208,11 +195,6 @@ export const api = {
   refreshGameState: () => invoke<GameInfo>('refresh_game_state'),
   launchNoMod: () => invoke<OperationResult>('launch_no_mod'),
   switchWinhttp: (enabled: boolean) => invoke<OperationResult>('switch_winhttp', { enabled }),
-  toggleLocalMod: (dllFile: string, enabled: boolean) => invoke<OperationResult>('toggle_local_mod', { dllFile, enabled }),
-  toggleLocalModPackage: (packageId: string, enabled: boolean) => invoke<OperationResult>('toggle_local_mod_package', { packageId, enabled }),
-  /** 一次性启用/禁用 `BepInEx/plugins` 下全部插件 DLL（失败整体回滚）。 */
-  setAllLocalModsEnabled: (enabled: boolean) =>
-    invoke<OperationResult>('set_all_local_mods_enabled', { enabled }),
   openDevtools: () => invoke<OperationResult>('open_devtools'),
   resetUi: () => invoke<OperationResult>('reset_ui'),
   /** 把生成好的多彩名字推送给正在运行的多彩名字 MOD（后端逐个端口尝试）。 */
@@ -248,41 +230,12 @@ export const api = {
   flattenLevelSets: (dryRun: boolean) =>
     invoke<LevelSetFlattenReport>('flatten_level_sets', { dryRun }),
   /**
-   * 启用或停用一个关卡集（移动目录）。
-   *
-   * 地图启停允许游戏运行，后端继续校验路径和目录冲突。
-   */
-  setLevelSetEnabled: (dirName: string, enabled: boolean) =>
-    invoke<OperationResult>('set_level_set_enabled', { dirName, enabled }),
-  /**
-   * 批量切换**全部**关卡集（地图管理页的「全部启用 / 全部禁用」）。
-   *
-   * 后端在一次操作锁里扫描磁盘真实状态、只切换需要变的目录；中途失败会
-   * 按逆序回滚，不会留下半开半关的列表。游戏运行时也可执行。
-   */
-  setAllLevelSetsEnabled: (enabled: boolean) =>
-    invoke<OperationResult>('set_all_level_sets_enabled', { enabled }),
-  /**
    * 判断一个本地文件是地图包、MOD 包还是都不是。
    *
    * 拖放先过这里再决定走哪条链路：地图包即使带着修复插件也算地图包，
    * 否则「拖地图到 MOD 页」会被装成一个 0 DLL 的空 MOD。
    */
   classifyDropSource: (path: string) => invoke<DropSourceKind>('classify_drop_source', { path }),
-  /**
-   * 从本地 ZIP 导入选定的关卡集。
-   *
-   * 同身份旧装项由安装前检查先卸载，导入阶段拒绝覆盖。游戏运行时允许。
-   * 期间后端逐份发 `level-set-zip-progress`（`info` 阶段再识别一遍、`install`
-   * 阶段写盘），进度显示在来源卡片与整页遮罩上。
-   */
-  // 原样回传暂存阶段确认的主地图身份和资产版本，不从首个 info 或请求 tag 猜。
-  importLevelSets: (zipPath: string, selected: string[], origin?: MapInstallOrigin | null) =>
-    invoke<{ installed: string[] }>('import_level_sets', {
-      zipPath,
-      selected,
-      origin: origin ?? null,
-    }),
   /**
    * 暂存一份地图来源（本地 ZIP 或在线直链），返回里面识别出的关卡集。
    *
@@ -371,9 +324,6 @@ export const api = {
     invoke<StagedMapSource>('stage_map_release', {
       mapId, tag, assetName, locale: locale.value,
     }),
-  /** 切换 DIYLevel 启用状态（复用 MOD 的 .dll/.dll.disabled 逻辑）。 */
-  setDiyLevelEnabled: (enabled: boolean) =>
-    invoke<OperationResult>('set_diy_level_enabled', { enabled }),
   /** 打开 DIYLevel 的地图目录（不自动创建）。 */
   openDiyLevelDirectory: () => invoke<OperationResult>('open_diy_level_directory'),
   /** 备份 DIYLevel 目录（只含 `BepInEx/plugins/OC2DIYLevel`）。 */
@@ -439,15 +389,9 @@ export const api = {
     directory: false,
     filters: [{ name: 'MOD', extensions: ['dll', 'zip'] }],
   }),
-  /** 安装本地 MOD 文件（DLL 或 ZIP）。 */
-  installLocalMod: (sourcePath: string) => invoke<OperationResult>('install_local_mod', { sourcePath }),
-  /** 从 zip / dll 直链下载并安装（后端已有直连下载 + 布局判定 + 清单）。 */
-  installOnlineMod: (url: string) => invoke<OperationResult>('install_online_mod', { url }),
   /** 解析安装源（本地文件 / 在线直链），返回预览而不安装。 */
   analyzeModSource: (kind: ModSourceKind, value: string) =>
     invoke<ModPreview>('analyze_mod_source', { source: { kind, value } }),
-  /** 用户在预览里确认后真正安装。 */
-  confirmModInstall: (previewId: string) => invoke<OperationResult>('confirm_mod_install', { previewId }),
   /** 取消预览，删除暂存。 */
   cancelModPreview: (previewId: string) => invoke<void>('cancel_mod_preview', { previewId }),
 
@@ -515,6 +459,11 @@ export function watchDataProvider(callback: () => void): Promise<UnlistenFn> {
   return listen('data-provider-changed', () => callback())
 }
 
+/** A committed batch publishes once, after all MOD and map changes are visible. */
+export function watchModChangesApplied(callback: () => void): Promise<UnlistenFn> {
+  return listen('mod-changes-applied', () => callback())
+}
+
 /** One process-wide subscription keeps both recycle-bin surfaces current. */
 export function watchRecycleBin(callback: () => void): Promise<UnlistenFn> {
   return listen('recycle-bin-changed', () => callback())
@@ -531,8 +480,8 @@ export function watchLevelSetScan(callback: (progress: LevelSetScanProgress) => 
 }
 
 /**
- * 来源 ZIP 的识别 / 导入进度（`stage_map_source`、`stage_map_release` 与
- * `import_level_sets` 执行期间逐份上报）。
+ * 来源 ZIP 的识别 / 导入暂存进度（`stage_map_source`、`stage_map_release` 与
+ * 整链计划的私有地图暂存期间逐份上报）。
  *
  * 与 `watchLevelSetScan` 的分工：那个读游戏目录里已落盘的关卡集，这个读
  * 用户刚拖进来 / 刚下载的 ZIP —— 两种等待都要在转圈下面给出真实进度。

@@ -24,6 +24,7 @@ pub(crate) fn project_mod_releases(
         .collect();
     crate::models::ModRepositoryReleaseSnapshot {
         cached_releases: filter_channel(releases, channel),
+        cached_releases_complete: true,
         release_prerelease_metadata,
     }
 }

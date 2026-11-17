@@ -1,27 +1,14 @@
 use crate::app_state::AppState;
 use crate::archive;
 use crate::game;
-use crate::models::{ModDownloadMode, OperationResult, ProxyMode};
-use crate::mods::install::install_downloaded_mod_repository;
+use crate::models::{OperationResult, ProxyMode};
 use crate::mods::install::mod_repository_install_identity;
 use crate::recycle_bin;
-use crate::releases;
-use std::fs;
 use std::path::PathBuf;
 use tauri::AppHandle;
 use tauri::State;
 
-/// 仓库安装的结果。
-///
-/// `preview_only` 为真时只下载并解析，不写入游戏目录，`preview` 字段
-/// 携带可供安装弹窗展示的解析结果；正常安装时 `preview` 为空。
-#[derive(serde::Serialize)]
-pub struct ModRepositoryInstallOutcome {
-    pub ok: bool,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub preview: Option<crate::mod_preview::ModPreview>,
-}
+use crate::mods::repository_download::{ModRepositoryInstallOutcome, run_repository_install};
 
 #[tauri::command]
 pub async fn install_mod_repository(
@@ -37,270 +24,18 @@ pub async fn install_mod_repository(
     // 显示仓库的本地化名称；缺省时回退到仓库中文名。
     locale: Option<String>,
 ) -> Result<ModRepositoryInstallOutcome, String> {
-    let snapshot = state.config.load_or_default();
-    let policy = snapshot
-        .network_policy
-        .clone()
-        .map(Ok)
-        .unwrap_or_else(|| crate::network_policy::NetworkPolicy::active())?;
-    crate::network_policy::NetworkPolicy::in_snapshot(policy, async {
-        // The UI can cancel while we prepare metadata. Reset once at command
-        // entry, never after that wait or while switching download candidates.
-        archive::start_download();
-        log::info!(
-            "开始安装在线 MOD：仓库={}，指定版本={}，指定资产={}，代理模式={:?}",
-            repository_id,
-            tag.as_deref().unwrap_or("自动选择"),
-            asset_name.as_deref().unwrap_or("自动匹配"),
-            asset_proxy_mode
-        );
-        // Keep region, credentials and network policy from the same entry snapshot.
-        let config = snapshot;
-        let info = game::detect_game(&config);
-        let game_root = PathBuf::from(info.path.ok_or("game.notFound")?);
-        game::ensure_game_stopped(&game_root)?;
-        if info.bepinex.version.is_none() {
-            return Err("framework.bepInExRequiredBeforeMods".into());
-        }
-        let repo = config
-            .repositories
-            .iter()
-            .find(|repo| repo.id == repository_id)
-            .ok_or("source.repositoryMissing")?
-            .clone();
-        // 安装要求仓库在当前地区可用；隐藏/地区不匹配的仓库不能作为安装入口
-        if !crate::config::mod_repository_is_available(&config, &repo, &config.region) {
-            return Err("source.repositoryUnavailableForInstall".into());
-        }
-        /*
-         * 用于下载进度标签与安装预览标题的显示名。
-         *
-         * 必须在下载开始前算好：进度事件在下载过程中持续发出，label 是其中
-         * 一个字段；等下载完再改就晚了。跟随界面语言，而不是固定用中文原名。
-         */
-        let display_name = crate::config::localized_mod_repository_name(&repo, locale.as_deref());
-        let (
-            download_url,
-            download_name,
-            release_tag,
-            release_body,
-            release_prerelease,
-            download_assets,
-            is_raw_file,
-        ) = match repo.download_mode {
-            ModDownloadMode::RepositoryFile => {
-                log::debug!(
-                    "按仓库文件模式安装：仓库={}，分支={}，文件={}",
-                    repo.name,
-                    repo.branch,
-                    repo.file_path
-                );
-                let download_url = releases::repository_file_url(
-                    &repo.provider,
-                    &repo.username,
-                    &repo.repository,
-                    &repo.branch,
-                    &repo.file_path,
-                )
-                .map_err(|error| error.to_string())?;
-                let download_name = releases::repository_file_name(&repo.file_path)
-                    .map_err(|error| error.to_string())?;
-                (
-                    download_url,
-                    download_name,
-                    String::new(),
-                    String::new(),
-                    false,
-                    Vec::new(),
-                    true,
-                )
-            }
-            ModDownloadMode::Release => {
-                log::debug!(
-                    "按 Release 模式安装：仓库={}，缓存 Release 数={}",
-                    repo.name,
-                    repo.cached_releases.len()
-                );
-                let release = releases::select_cached_release(
-                    &repo.cached_releases,
-                    tag.as_deref(),
-                    repo.pinned_version.as_deref(),
-                )
-                .ok_or("source.noInstallableRelease")?;
-                let asset = releases::select_install_asset(
-                    &crate::releases::RepositoryRequest::from(&repo),
-                    &repo.asset_rules,
-                    release,
-                    asset_name.as_deref(),
-                )
-                .ok_or("source.noMatchingAsset")?;
-                log::info!(
-                    "已选择 Release 资产：仓库={}，版本={}，资产={}",
-                    repo.name,
-                    release.tag_name,
-                    asset.name
-                );
-                (
-                    asset.download_url.clone(),
-                    asset.name.clone(),
-                    release.tag_name.clone(),
-                    release.body.clone(),
-                    releases::resolve_prerelease(
-                        release.api_prerelease,
-                        release.prerelease,
-                        Some(&release.tag_name),
-                    ),
-                    archive::release_download::asset_set(asset, &release.assets)?,
-                    false,
-                )
-            }
-        };
-        let client = releases::build_download_client(config.network.first_byte_timeout())
-            .map_err(|e| e.to_string())?;
-        let cache_dir = state.config.cache_dir();
-        let assets = if is_raw_file {
-            vec![crate::models::ReleaseAsset {
-                name: download_name.clone(),
-                size: 0,
-                download_count: None,
-                download_url,
-                digest: None,
-            }]
-        } else {
-            download_assets
-        };
-        let temp = archive::release_download::download(
-            &client,
-            assets,
-            &cache_dir,
-            &display_name,
-            Some(&app),
-            &config.network,
-            |url| {
-                crate::download::planning::plan_repository_download(
-                    &repo.provider,
-                    repo.kind,
-                    &repo.network_plan,
-                    &config.region,
-                    url,
-                    is_raw_file.then_some(crate::github_proxies::RawProxyContext {
-                        branch: &repo.branch,
-                        file_path: &repo.file_path,
-                    }),
-                    asset_proxy_mode,
-                    asset_proxy_id.as_deref(),
-                )
-            },
-        )
-        .await
-        .map_err(|error| {
-            log::error!("在线 MOD 资产下载失败：仓库={}，原因={}", repo.name, error);
-            error
-        })?;
-        log::info!(
-            "仓库文件下载完成：仓库={}，文件名={}",
-            repo.name,
-            download_name
-        );
-        /*
-         * 预览模式：只下载并解析，不写入游戏目录。
-         *
-         * 复用这里已经完成的下载（含代理与竞速），把临时文件移进预览暂存，
-         * 之后由 confirm_mod_install 正式安装。这样仓库卡片的「安装 / 重装 /
-         * 更新」与手动安装、在线直链看到的是同一个预览弹窗。
-         */
-        if preview_only.unwrap_or(false) {
-            let preview = crate::mod_preview::stage_downloaded_file(
-                &state,
-                &temp,
-                &download_name,
-                &repo.id,
-                &display_name,
-                &release_tag,
-                &release_body,
-                release_prerelease,
-            )?;
-            let _ = fs::remove_file(&temp);
-            log::info!(
-                "仓库资产已下载并解析（预览模式）：仓库={}，DLL 数={}",
-                repo.name,
-                preview.total_dlls
-            );
-            return Ok(ModRepositoryInstallOutcome {
-                ok: true,
-                message: crate::locale_tag::with_params(
-                    "mods.ready",
-                    &[("name", &repo.name.to_string())],
-                ),
-                preview: Some(preview),
-            });
-        }
-        // No network awaits while the operation lock protects recycling and install.
-        let files_result = (|| {
-            let _guard = state
-                .operation
-                .lock()
-                .map_err(|_| "lock.poisoned".to_string())?;
-            if archive::is_download_cancelled() {
-                return Err("download.cancelled".into());
-            }
-            if game::is_game_running(&game_root) {
-                log::warn!("下载期间检测到厨房重新启动，取消安装：仓库={}", repo.name);
-                return Err("mods.gameRestartedDuringDownload".into());
-            }
-            let current_config = state.config.load_or_default();
-            let install_repo = mod_repository_install_identity(
-                &repo,
-                &current_config,
-                &state.config.manifests_dir(),
-            )?;
-            state.invalidate_local_mod_snapshot()?;
-            install_downloaded_mod_repository(
-                &temp,
-                &download_name,
-                &game_root,
-                &state.config.manifests_dir(),
-                &state.config.mod_recycle_bin_dir(),
-                &install_repo,
-                &release_tag,
-                release_prerelease,
-                current_config.recycle_deleted_mods,
-            )
-        })();
-        let _ = fs::remove_file(&temp);
-        match files_result {
-            Ok(file_count) => {
-                log::info!(
-                    "在线 MOD 安装完成：仓库={}，版本={}，文件数={}",
-                    repo.name,
-                    release_tag,
-                    file_count
-                );
-                Ok(ModRepositoryInstallOutcome {
-                    ok: true,
-                    message: if release_tag.is_empty() {
-                        crate::locale_tag::with_params(
-                            "mods.installCompletedSimple",
-                            &[("name", &repo.name.to_string())],
-                        )
-                    } else {
-                        crate::locale_tag::with_params(
-                            "mods.installCompletedWithVersion",
-                            &[
-                                ("name", &repo.name.to_string()),
-                                ("version", &release_tag.to_string()),
-                            ],
-                        )
-                    },
-                    preview: None,
-                })
-            }
-            Err(error) => {
-                log::error!("在线 MOD 安装失败：仓库={}，原因={}", repo.name, error);
-                Err(error)
-            }
-        }
-    })
+    run_repository_install(
+        app,
+        state.inner().clone(),
+        repository_id,
+        tag,
+        asset_name,
+        asset_proxy_mode,
+        asset_proxy_id,
+        preview_only,
+        locale,
+        true,
+    )
     .await
 }
 
@@ -328,6 +63,7 @@ fn uninstall_repository_blocking(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     state.invalidate_local_mod_snapshot()?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);

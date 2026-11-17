@@ -296,7 +296,7 @@ test('MOD group Release refresh does not publish unrelated repositories from a f
     refreshModRepository: async id => {
       requests.push(id)
       config = { ...config, repositories: [{ ...a, name: 'Refreshed A' }, { ...b, name: 'Backend B changed' }] }
-      return { cached_releases: [{ tag_name: '2', assets: [] }], release_prerelease_metadata: {} }
+      return { cached_releases: [{ tag_name: '2', assets: [] }], cached_releases_complete: true, release_prerelease_metadata: {} }
     },
   }
   await d.load()
@@ -306,6 +306,7 @@ test('MOD group Release refresh does not publish unrelated repositories from a f
   assert.equal(d.config.value.repositories[1], untouched, 'group refresh cannot replace an unrelated row at finalize')
   assert.equal(d.config.value.repositories[1].name, 'Unselected')
   assert.equal(d.config.value.repositories[0].cached_releases[0].tag_name, '2')
+  assert.equal(d.config.value.repositories[0].cached_releases_complete, true, 'complete pagination survives the immediate config snapshot patch')
 })
 
 test('MOD local source reload applies new children without replacing unrelated source data or marking it pending', async () => {

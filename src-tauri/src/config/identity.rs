@@ -145,6 +145,7 @@ pub(crate) fn mod_repository_from_export(
         ignored_version: None,
         etag: None,
         cached_releases: Vec::new(),
+        cached_releases_complete: false,
         release_prerelease_metadata: repo.release_prerelease_metadata.clone(),
         releases_cached_at: None,
         last_error: None,

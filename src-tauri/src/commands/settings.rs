@@ -53,6 +53,7 @@ pub fn save_settings(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     let mut config = state.config.load_or_default();
     if previous_game
         .as_ref()
@@ -191,20 +192,22 @@ pub fn save_tokens(state: State<'_, AppState>, patch: TokenPatch) -> Result<Publ
 
 #[tauri::command]
 pub fn reset_ui(state: State<'_, AppState>) -> Result<OperationResult, String> {
+    reset_ui_in(&state)
+}
+
+fn reset_ui_in(state: &AppState) -> Result<OperationResult, String> {
     log::info!("重置界面缓存和 Release 缓存");
-    let cache = state.config.cache_dir();
-    if cache.exists() {
-        fs::remove_dir_all(&cache).map_err(|e| e.to_string())?;
-    }
-    fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
     let _guard = state
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(state)?;
+    clear_resettable_cache(&state.config.cache_dir())?;
     let mut config = state.config.load_or_default();
     config.ui_zoom = crate::config::default_ui_zoom();
     for repo in &mut config.repositories {
         repo.cached_releases.clear();
+        repo.cached_releases_complete = false;
         // 时间戳与列表同生共死：只清列表会留下「空列表 + 新鲜时间」，
         // 下次刷新命中缓存却拿到 0 条，等于永久看不到 Release。
         repo.releases_cached_at = None;
@@ -218,3 +221,40 @@ pub fn reset_ui(state: State<'_, AppState>) -> Result<OperationResult, String> {
         message: "tools.cacheCleared".into(),
     })
 }
+
+fn clear_resettable_cache(cache: &Path) -> Result<(), String> {
+    fs::create_dir_all(cache).map_err(|error| error.to_string())?;
+    for entry in fs::read_dir(cache).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        // Converters create their backups before taking operation. Preserve the
+        // complete reserved tree, including in-flight work and pending recovery.
+        if entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.eq_ignore_ascii_case("level-compression"))
+        {
+            continue;
+        }
+        let metadata = fs::symlink_metadata(entry.path()).map_err(|error| error.to_string())?;
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            if metadata.file_attributes() & 0x400 != 0 {
+                continue;
+            }
+        }
+        if metadata.is_dir() {
+            fs::remove_dir_all(entry.path()).map_err(|error| error.to_string())?;
+        } else if metadata.is_file() {
+            fs::remove_file(entry.path()).map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "settings/cache_reset_tests.rs"]
+mod cache_reset_tests;

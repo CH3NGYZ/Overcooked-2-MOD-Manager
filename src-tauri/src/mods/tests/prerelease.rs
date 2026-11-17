@@ -53,6 +53,7 @@ fn exact_api_false_promotes_numeric_beta_after_filter_and_reopen() {
     failed.staged_release_cache.insert(
         repo.id.clone(),
         crate::models::StagedReleaseCache {
+            cached_releases_complete: repo.cached_releases_complete,
             repository_key: Some(crate::releases::repository_cache_key(
                 repo.provider,
                 &repo.username,

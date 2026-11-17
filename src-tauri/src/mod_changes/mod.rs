@@ -1,0 +1,28 @@
+//! Whole-chain relationship evaluation, planning, verified staging and durable file transactions.
+mod actions;
+pub(crate) mod candidates;
+pub(crate) mod evaluate;
+pub(crate) mod execution;
+pub(crate) mod guard;
+pub(crate) mod inventory;
+pub(crate) mod inventory_maps;
+pub(crate) mod level_trees;
+pub(crate) mod map_payload;
+pub(crate) mod model;
+pub(crate) mod mutations;
+pub(crate) mod payload;
+pub(crate) mod planning;
+pub(crate) mod preparation;
+pub(crate) mod session;
+pub(crate) mod solve;
+pub(crate) mod transaction;
+
+pub(crate) use evaluate::evaluate;
+#[cfg(test)]
+pub(crate) use solve::solve;
+pub(crate) use solve::solve_with_inventory;
+
+#[cfg(test)]
+mod orchestration_tests;
+#[cfg(test)]
+mod tests;

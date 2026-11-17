@@ -168,6 +168,7 @@ pub(crate) fn available_legacy_targets(
 
 pub(crate) fn migrate(state: &AppState, generation: u64, target_id: &str) -> Result<(), String> {
     let _operation = state.operation.lock().map_err(|_| "lock.poisoned")?;
+    crate::mod_changes::guard::ensure_recovered(state)?;
     let root = super::session::game_root(state)?;
     let snapshot = state
         .local_mod_snapshot

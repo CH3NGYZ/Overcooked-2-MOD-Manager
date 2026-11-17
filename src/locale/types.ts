@@ -44,6 +44,7 @@ export type DomainMessages = Record<string, Localized>
  * （`domain.key` 的组合是否真的存在）。
  */
 export const DOMAINS = [
+  'modChanges',
   'diychef',
   'levelPreview',
   'mapVersion',

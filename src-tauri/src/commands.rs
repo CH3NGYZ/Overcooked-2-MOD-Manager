@@ -17,6 +17,7 @@ pub(crate) mod logs;
 pub(crate) mod manager_data;
 pub(crate) mod map_install;
 pub(crate) mod maps;
+pub(crate) mod mod_changes;
 pub(crate) mod mod_repositories;
 pub(crate) mod mod_repository_install;
 pub(crate) mod mod_repository_releases;

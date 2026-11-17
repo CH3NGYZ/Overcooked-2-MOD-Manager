@@ -1,122 +1,15 @@
-//! MOD 文件与清单的统一安装事务；预览、直链和仓库安装共用。
-use crate::app_state::AppState;
+//! Installed repository identity; historical package fixtures are test-only.
+use crate::archive;
 use crate::models::*;
-use crate::{archive, game, mods, recycle_bin};
+#[cfg(test)]
+use crate::{game, recycle_bin};
+#[cfg(test)]
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
+#[cfg(test)]
 use uuid::Uuid;
-
-pub(crate) fn install_manual_mod(
-    state: &AppState,
-    source: &Path,
-    expected_game_root: Option<&Path>,
-) -> Result<OperationResult, String> {
-    log::info!("开始安装手动 MOD");
-    let _guard = state
-        .operation
-        .lock()
-        .map_err(|_| "lock.poisoned".to_string())?;
-    state.invalidate_local_mod_snapshot()?;
-    let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
-    game::ensure_game_stopped(&game_root)?;
-    if expected_game_root.is_some_and(|expected| expected != game_root) {
-        return Err("game.directoryChanged".into());
-    }
-    if !source.is_file() {
-        return Err("mods.fileMissing".into());
-    }
-    let file_name = source
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or("mods.invalidFileName")?;
-    let extension = source
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default();
-    log::debug!(
-        "本地 MOD 文件已确认：名称={}，类型={}",
-        file_name,
-        extension
-    );
-    let repository_id = format!("manual-{}", Uuid::new_v4());
-    let (pending, display_name) = if extension.eq_ignore_ascii_case("dll") {
-        log::debug!("按单 DLL 规则安装到 BepInEx/plugins：名称={}", file_name);
-        /*
-         * 显示名优先用 DLL 里的 BepInPlugin 名称 —— 用户认的是插件名，
-         * 不是 `XXX.dll` 这样的文件名。读不出元数据时退回文件名去扩展名。
-         * 仓库安装那边用仓库名，两条路径的提示体验保持一致。
-         */
-        let display =
-            mods::plugin_name_from_file(&source).unwrap_or_else(|| mods::file_stem_name(file_name));
-        let pending =
-            archive::copy_asset_pending(&source, &game_root, "BepInEx/plugins", file_name)?;
-        (pending, display)
-    } else if extension.eq_ignore_ascii_case("zip") {
-        log::debug!("按本地 ZIP 布局规则解压：名称={}", file_name);
-        let folder = source
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .ok_or("archive.invalidZipName")?;
-        if folder.is_empty()
-            || folder.contains('/')
-            || folder.contains('\\')
-            || folder.contains(':')
-        {
-            return Err("archive.invalidZipName".into());
-        }
-        let pending = archive::extract_local_mod_zip_pending(&source, &game_root, file_name)?;
-        /*
-         * 显示名：优先包内第一个 DLL 的 BepInPlugin 名称，退回 ZIP 文件名。
-         * pending 的文件此时已落盘，可以直接读元数据。
-         */
-        let display = pending
-            .files()
-            .iter()
-            .filter(|relative| relative.to_ascii_lowercase().ends_with(".dll"))
-            .find_map(|relative| mods::plugin_name_from_file(&game_root.join(relative)))
-            .unwrap_or_else(|| folder.to_string());
-        (pending, display)
-    } else {
-        return Err("mods.unsupportedFileType".into());
-    };
-    if pending.files().is_empty() {
-        log::warn!("本地 MOD 没有可安装内容：名称={}", file_name);
-        return Err("archive.noInstallableContent".into());
-    }
-    let manifest = archive::new_manifest(
-        &repository_id,
-        // release_tag 是「Release 版本标签」，手动安装没有 Release，保持空字符串。
-        // 之前这里塞了文件名，语义是错的，还会被更新判定相关的逻辑当成版本号尝试解析。
-        "",
-        // 手动安装没有仓库，包名与备注只有当前语言这一种写法
-        archive::single_language(&display_name),
-        archive::single_language(file_name),
-        pending.files().to_vec(),
-        Vec::new(),
-    );
-    if let Err(error) = archive::write_manifest(&state.config.manifests_dir(), &manifest) {
-        log::error!(
-            "本地 MOD 安装清单写入失败，已尝试回滚：名称={}，原因={}",
-            display_name,
-            error
-        );
-        return Err(error);
-    }
-    let files = pending.commit();
-    log::info!(
-        "本地 MOD 安装完成：名称={}，文件数={}",
-        display_name,
-        files.len()
-    );
-    Ok(OperationResult {
-        ok: true,
-        message: crate::locale_tag::with_params(
-            "mods.installCompleted",
-            &[("name", &display_name.to_string())],
-        ),
-    })
-}
 
 pub(crate) fn mod_repository_install_identity(
     repo: &ModRepositoryConfig,
@@ -155,81 +48,8 @@ pub(crate) fn mod_repository_install_identity(
     Ok(result)
 }
 
-/// 从预览暂存安装一个仓库资产。
-///
-/// 预览阶段已经把文件下载并解析过了，这里只做最后一跳：按仓库身份回收
-/// 该仓库的全部旧包，再解压/复制新文件。必须走这条路径而不是
-/// `install_manual_mod` —— 后者每次生成新的 `manual-<uuid>` 清单，
-/// 同仓库的旧包不会被回收，装几次就有几份副本。
-pub(crate) fn install_staged_mod_repository(
-    state: &AppState,
-    staged_file: &Path,
-    repository_id: &str,
-    release_tag: &str,
-    prerelease: bool,
-) -> Result<OperationResult, String> {
-    let _guard = state
-        .operation
-        .lock()
-        .map_err(|_| "lock.poisoned".to_string())?;
-    state.invalidate_local_mod_snapshot()?;
-    let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
-    game::ensure_game_stopped(&game_root)?;
-
-    let repo = config
-        .repositories
-        .iter()
-        .find(|repo| repo.id == repository_id)
-        .ok_or("source.repositoryMissing")?
-        .clone();
-
-    let download_name = staged_file
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or("mods.invalidFileName")?;
-
-    let manifests_dir = state.config.manifests_dir();
-    // 沿用仓库安装的身份解析：源可能已从配置消失，但旧清单仍要能被找到
-    let install_repo = mod_repository_install_identity(&repo, &config, &manifests_dir)?;
-
-    let file_count = install_downloaded_mod_repository(
-        staged_file,
-        download_name,
-        &game_root,
-        &manifests_dir,
-        &state.config.mod_recycle_bin_dir(),
-        &install_repo,
-        release_tag,
-        prerelease,
-        config.recycle_deleted_mods,
-    )?;
-
-    log::info!(
-        "从预览安装仓库资产完成：仓库={}，版本={}，文件数={}",
-        repo.name,
-        release_tag,
-        file_count
-    );
-    Ok(OperationResult {
-        ok: true,
-        message: if release_tag.is_empty() {
-            crate::locale_tag::with_params(
-                "mods.installCompletedSimple",
-                &[("name", &repo.name.to_string())],
-            )
-        } else {
-            crate::locale_tag::with_params(
-                "mods.installCompletedWithVersion",
-                &[
-                    ("name", &repo.name.to_string()),
-                    ("version", &release_tag.to_string()),
-                ],
-            )
-        },
-    })
-}
-
+// Legacy package fixtures remain test-only; live writes use mod_changes::transaction.
+#[cfg(test)]
 pub(crate) fn install_downloaded_mod_repository(
     asset_path: &Path,
     download_name: &str,

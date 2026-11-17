@@ -12,7 +12,7 @@ const owners = {
   status: ['collect_update_status', 'bound_release', 'effective_local_version', 'binding_update_state', 'repository_update_state', 'refresh_status_labels'],
   identity: ['compare_mod_versions', 'mark_duplicate_guids', 'is_safe_replacement_mod', 'note_key', 'same_plugin_identity'],
   relations: ['select_release_relations', 'effective_relations', 'effective_map_relations'],
-  file_state: ['is_ordinary_plugin', 'is_restore_staging_component', 'plugin_dll_files', 'canonical_dll_file', 'canonical_dll_name', 'disabled_dll_file', 'set_local_mod_file_state'],
+  file_state: ['is_ordinary_plugin', 'is_restore_staging_component', 'plugin_dll_files', 'canonical_dll_file', 'canonical_dll_name', 'disabled_dll_file'],
 }
 
 test('MOD domain exports actual implementations and extends existing state and status owners', () => {

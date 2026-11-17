@@ -12,6 +12,7 @@ import { repositoryHomepage, repositoryRawUrl } from '../providers'
  * 用条目自己的 `note_i18n` 当说明，仓库 README 不参与（仓库级内容会串味）。
  */
 import { computed, ref, shallowRef, watch } from 'vue'
+import { useEvaluationSubject } from '../modChanges/useEvaluationSubject'
 import type { DependencyInstallTarget } from '../composables/useDependencyInstallGuide'
 import { api } from '../services/tauri'
 import { pickI18n, t } from '../i18n'
@@ -76,6 +77,8 @@ const selectedRelease = computed(() => {
   const found = list.find((entry) => entry.tag_name === selectedTag.value)
   return found ?? (guided.value ? null : list[0] ?? null)
 })
+useEvaluationSubject(() => props.repo && selectedRelease.value
+  ? { repository_id: props.repo.id, tag: selectedRelease.value.tag_name } : undefined)
 const releaseOptions = computed(() =>
   (props.repo?.cached_releases ?? []).map((entry) => ({
     // 显示用 tag_name（原始写法，含第 4 位）；version 是 semver 归一值会丢段
@@ -138,6 +141,7 @@ const dependencyRows = computed<DependencyRow[]>(() => {
     mods: props.mods,
     repositories: props.repositories,
     ownerRepository: repo,
+    version: selectedRelease.value?.tag_name,
     translate: t,
     pickName: pickI18n,
     jumpToRepository: true,

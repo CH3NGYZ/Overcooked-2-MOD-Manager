@@ -73,7 +73,7 @@ function setup({ responses = [{ ok: true, message: '' }], blocked = false } = {}
   }
   globalThis.__modRemovalBoundary = boundary
   const issues = Object.fromEntries([[a, b], [b, a]].map(([source, target]) => [source.dll_file,
-    resolveRelation({ kind: 'conflicts', guid: target.guid }, [a, b], [])]))
+    { relation: { kind: 'conflicts', guid: target.guid }, state: 'conflict', installedMod: target, installedVersion: target.version }]))
   const actions = createActions({
     useModRemoval, statusActionFor, repositoryForMod, isDependencyTag, busy,
     blockModOperation: () => state.blocked,

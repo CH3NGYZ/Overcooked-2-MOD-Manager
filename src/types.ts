@@ -65,6 +65,8 @@ export interface ReleaseInfo {
 }
 export interface ModRepositoryReleaseSnapshot {
   cached_releases: ReleaseInfo[]
+  /** Missing on legacy responses; only true proves complete pagination. */
+  cached_releases_complete?: boolean
   release_prerelease_metadata: Record<string, boolean>
 }
 /**
@@ -74,8 +76,8 @@ export interface ModRepositoryReleaseSnapshot {
  * 有什么要求」，只是满足与违反时的含义不同：
  *
  * - `requires`   目标必须存在且版本落在区间内；否则是「缺依赖」
- * - `conflicts`  目标存在且版本落在区间内 → 冲突，需要卸载
- * - `compatible` 目标存在时版本必须落在区间内；否则不兼容，需要卸载
+ * - `conflicts`  已启用目标落在区间内 → 冲突，由整链计划处理明确禁用
+ * - `compatible` 已启用目标存在时版本必须落在区间内；否则由后端重求版本或阻断
  *
  * 三者共用 `version`：不写（或写 `*`）就是不限版本。
  */
@@ -167,6 +169,8 @@ export interface ModRepository {
   pinned_version?: string | null
   ignored_version?: string
   cached_releases: ReleaseInfo[]
+  /** Only a successful complete pagination proves this cache exhaustive; legacy absence is unknown. */
+  cached_releases_complete?: boolean
   release_prerelease_metadata?: Record<string, boolean>
   last_error?: string
 }
@@ -382,14 +386,14 @@ export interface LevelSetInfo {
  * 安装前扫描到的同身份已安装项。
  *
  * MOD 以 DLL 文件名为身份、地图以关卡集身份（名称 + 中文名 + 作者）匹配；
- * 有冲突时必须先卸载（进回收站）再安装，`same_version` 只决定提示文案，
- * 不改变「先卸载再安装」这个动作。
+ * 只供安装详情展示；实际替换、依赖与归属由后端整链计划决定。
+ * `same_version` 只决定展示文案，前端不预卸载。
  */
 export interface InstallConflict {
   /** 展示名：MOD 的 BepInPlugin 名，或关卡集的显示名。 */
   name: string
   version: string
-  /** 卸载句柄：MOD 是 DLL 文件名，地图是关卡集目录名。 */
+  /** 来源冲突定位：MOD 是 DLL 文件名，地图是关卡集目录名；不是前端卸载授权。 */
   handle: string
   /** 已安装项当前是否启用（地图开关是整目录 rename，MOD 是 `.disabled` 后缀）。 */
   enabled: boolean
@@ -573,7 +577,7 @@ export interface ModPreview {
   mod_count: number
   dependency_count: number
   entries: ModPreviewEntry[]
-  /** 已安装的同身份 MOD；非空时必须先卸载再安装。 */
+  /** 已安装的同身份 MOD；由整链变更计划检查归属并在同批事务中替换。 */
   conflicts: InstallConflict[]
   /** repository = 从在线仓库资产下载；manual = 本地文件或直链。 */
   origin: 'repository' | 'manual'

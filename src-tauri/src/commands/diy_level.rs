@@ -10,7 +10,6 @@ use crate::framework::{diy_level_backup_spec, diy_level_restore_spec};
 use crate::game;
 use crate::models::{DiyLevelInfo, InstalledMod, LocalModSnapshot, OperationResult};
 use crate::mods;
-use crate::mods::file_state::set_local_mod_file_state;
 use crate::recycle_bin;
 use crate::shell_open;
 use std::fs;
@@ -85,56 +84,14 @@ fn count_level_packs(levels_dir: &Path) -> u32 {
         .count() as u32
 }
 
-/// 切换 DIYLevel 框架的启用状态。
-///
-/// 走与 MOD 列表相同的 `.dll` / `.dll.disabled` 改名逻辑（`set_local_mod_file_state`），
-/// 不新增一套开关实现 —— 否则两处对「禁用」的定义迟早分叉。
+/// 旧客户端框架开关入口；实际变更必须通过统一计划确认。
 #[tauri::command]
 pub async fn set_diy_level_enabled(
     state: State<'_, AppState>,
     enabled: bool,
 ) -> Result<OperationResult, String> {
-    let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || set_diy_level_enabled_blocking(&state, enabled))
-        .await
-        .map_err(|error| error.to_string())?
-}
-
-fn set_diy_level_enabled_blocking(
-    state: &AppState,
-    enabled: bool,
-) -> Result<OperationResult, String> {
-    log::info!("切换 DIYLevel 框架状态：启用={enabled}");
-    let _guard = state
-        .operation
-        .lock()
-        .map_err(|_| "lock.poisoned".to_string())?;
-    let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
-    game::ensure_game_stopped(&game_root)?;
-    let (snapshot, _) = mods::snapshot::level_roots(state, &game_root)?;
-    let target = selected_target(&snapshot).ok_or("framework.diyLevelMissing")?;
-    if target.enabled == enabled {
-        return Ok(OperationResult {
-            ok: true,
-            message: if enabled {
-                "mods.stateEnabled"
-            } else {
-                "mods.stateDisabled"
-            }
-            .into(),
-        });
-    }
-    state.invalidate_local_mod_snapshot()?;
-    set_local_mod_file_state(&game_root, &target.dll_file, enabled)?;
-    Ok(OperationResult {
-        ok: true,
-        message: if enabled {
-            "message.framework.diyLevelEnabled".into()
-        } else {
-            "message.framework.diyLevelDisabled".into()
-        },
-    })
+    let _ = (state, enabled);
+    crate::mod_changes::guard::require_shared_plan()
 }
 
 /// 卸载 DIYLevel 框架（先自动备份，再按安装清单回收）。
@@ -156,6 +113,7 @@ fn uninstall_diy_level_blocking(state: &AppState) -> Result<OperationResult, Str
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
@@ -310,6 +268,7 @@ fn backup_diy_level_blocking(state: &AppState) -> Result<OperationResult, String
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
@@ -367,6 +326,7 @@ fn restore_diy_level_blocking(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
@@ -424,6 +384,7 @@ fn delete_diy_level_backup_blocking(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     let target = validate_framework_backup_in(
         Path::new(&backup_path),
         &state.config.backups_dir(),

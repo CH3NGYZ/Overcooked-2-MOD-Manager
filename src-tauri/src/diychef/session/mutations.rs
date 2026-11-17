@@ -250,6 +250,7 @@ pub(crate) fn delete_resource(
     // holding the lock immediately before the filesystem mutation.
     recheck_target(state, &s)?;
     let _operation = state.operation.lock().map_err(|e| e.to_string())?;
+    crate::mod_changes::guard::ensure_recovered(state)?;
     game::ensure_game_stopped(&s.game_root)?;
     check_live(state, &s)?;
     recheck_target(state, &s)?;
@@ -409,6 +410,7 @@ pub(crate) fn save(
     }
     let (bytes, _) = crate::diychef::prefer::plan(&s.stored.document, d, &s.catalog)?;
     let _operation = state.operation.lock().map_err(|e| e.to_string())?;
+    crate::mod_changes::guard::ensure_recovered(state)?;
     check_live(state, &s)?;
     recheck_target(state, &s)?;
     if !s.target.supports_live_save {
@@ -453,6 +455,7 @@ pub(crate) fn initialize(
     let mut s = get(state, id)?;
     recheck_target(state, &s)?;
     let _operation = state.operation.lock().map_err(|e| e.to_string())?;
+    crate::mod_changes::guard::ensure_recovered(state)?;
     check_live(state, &s)?;
     recheck_target(state, &s)?;
     if !s.target.supports_live_save {

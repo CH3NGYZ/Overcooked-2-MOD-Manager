@@ -39,6 +39,7 @@ pub fn set_game_path(state: State<'_, AppState>, path: String) -> Result<GameInf
             .operation
             .lock()
             .map_err(|_| "lock.poisoned".to_string())?;
+        crate::mod_changes::guard::ensure_recovered(&state)?;
         let mut config = state.config.load_or_default();
         if config.game != previous.game {
             return Err("game.settingsChanged".into());
@@ -62,6 +63,7 @@ pub fn reset_game_path(state: State<'_, AppState>) -> Result<GameInfo, String> {
             .operation
             .lock()
             .map_err(|_| "lock.poisoned".to_string())?;
+        crate::mod_changes::guard::ensure_recovered(&state)?;
         let mut config = state.config.load_or_default();
         state.invalidate_local_mod_snapshot()?;
         config.game.path.clear();
@@ -165,6 +167,7 @@ pub fn launch_normal(state: State<'_, AppState>) -> Result<OperationResult, Stri
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     let config = state.config.load_or_default();
     let info = game::detect_game(&config);
     let game_root = PathBuf::from(info.path.as_deref().ok_or("game.notFound")?);
@@ -193,6 +196,7 @@ pub fn launch_no_mod(state: State<'_, AppState>) -> Result<OperationResult, Stri
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     let config = state.config.load_or_default();
     let info = game::detect_game(&config);
     let game_root = PathBuf::from(info.path.as_deref().ok_or("game.notFound")?);
@@ -216,6 +220,7 @@ pub fn restore_mod(state: State<'_, AppState>) -> Result<OperationResult, String
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
@@ -241,6 +246,7 @@ pub fn switch_winhttp(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;

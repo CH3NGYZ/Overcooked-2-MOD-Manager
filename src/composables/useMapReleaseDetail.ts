@@ -1,4 +1,5 @@
 import { computed, ref, toValue, watch, type MaybeRefOrGetter } from 'vue'
+import { useEvaluationSubject } from '../modChanges/useEvaluationSubject'
 import { mapDependencyRows } from '../dependencyRows'
 import { pickI18n, t } from '../i18n'
 import { isPrereleaseVersion, formatVersion } from '../modStatus'
@@ -29,6 +30,8 @@ export function useMapReleaseDetail(options: UseMapReleaseDetailOptions) {
     const selected = selectedTag.value
     return releases.value.find((entry) => entry.tag_name === selected) ?? releases.value[0] ?? null
   })
+  useEvaluationSubject(() => map.value && release.value
+    ? { map_id: map.value.id, tag: release.value.tag_name } : undefined)
   const versions = computed(() => releases.value.map((entry) => ({
     label: formatVersion(entry.tag_name || entry.version || ''),
     value: entry.tag_name,

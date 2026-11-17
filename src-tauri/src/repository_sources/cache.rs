@@ -69,6 +69,7 @@ pub(super) fn clear_source_repositories(
             config.staged_release_cache.insert(
                 repo.id.clone(),
                 crate::models::StagedReleaseCache {
+                    cached_releases_complete: repo.cached_releases_complete,
                     repository_key: Some(crate::releases::repository_cache_key(
                         repo.provider.clone(),
                         &repo.username,

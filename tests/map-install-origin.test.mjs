@@ -8,10 +8,8 @@ const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8'
 
 test('多图 ZIP 安装只透传后端选定的主地图来源，不从请求 tag 或首张图猜版本', () => {
   const flow = read('src/composables/useLevelSetImport.ts')
-  const api = read('src/services/tauri.ts')
-  assert.match(flow, /api\.importLevelSets\(staged\.path, selected, staged\.origin\)/)
+  assert.match(flow, /map_import: \{[\s\S]*zip_path: staged\.path, selected: sets\.map\(set => set\.dir_name\), origin: staged\.origin/)
   assert.doesNotMatch(flow, /mapsetVersion/)
-  assert.match(api, /origin: origin \?\? null/)
 })
 
 test('两张地图各用自己的版本空间，更新提示与安装按钮一致', () => {

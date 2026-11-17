@@ -12,6 +12,7 @@ use super::plugin_registry::RegisteredLevelSetPlugin;
 use super::plugin_registry::forget_registered_plugins;
 use super::plugin_registry::read_registered_plugins;
 use super::scan::locate_info_file;
+#[cfg(test)]
 use super::scan::scan_level_sets;
 use std::fs;
 use std::path::Path;
@@ -21,6 +22,7 @@ use std::path::PathBuf;
 ///
 /// 返回值是移动后的新路径。目标位置已有同名目录时**拒绝**并返回错误 ——
 /// 覆盖会静默丢掉用户已有的那个关卡集，而这两个目录都是用户数据。
+#[cfg(test)]
 pub fn set_level_set_enabled(
     roots: &LevelSetRoots,
     dir_name: &str,
@@ -92,6 +94,7 @@ pub fn set_level_set_enabled(
 /// 移动的目录，保证列表不会停在半开半关的状态（与 MOD 的批量开关同语义）。
 ///
 /// 空列表表示「本来就已经是目标状态」，调用方据此给出「无需切换」提示。
+#[cfg(test)]
 pub fn set_all_level_sets_enabled(
     roots: &LevelSetRoots,
     enabled: bool,

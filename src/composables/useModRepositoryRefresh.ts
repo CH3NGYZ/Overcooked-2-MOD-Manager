@@ -156,7 +156,8 @@ function repositoryReleaseSpec(options: { force?: boolean } = {}): ReleaseFetchS
     fetch: (item) => {
       if (demoActive.value || isDemoId(item.id)) {
         skipped.add(item.id)
-        return Promise.resolve({ cached_releases: item.cached_releases ?? [], release_prerelease_metadata: item.release_prerelease_metadata ?? {} })
+        return Promise.resolve({ cached_releases: item.cached_releases ?? [], cached_releases_complete: item.cached_releases_complete === true,
+          release_prerelease_metadata: item.release_prerelease_metadata ?? {} })
       }
       return api.refreshModRepository(item.id, force)
     },
@@ -164,6 +165,7 @@ function repositoryReleaseSpec(options: { force?: boolean } = {}): ReleaseFetchS
       if (skipped.has(item.id)) return
       patchRepository(item.id, {
         ...snapshot,
+        cached_releases_complete: snapshot.cached_releases_complete === true,
         last_error: undefined,
       })
     },

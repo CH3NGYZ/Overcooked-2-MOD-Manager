@@ -5,8 +5,7 @@ use crate::download::planning::{
 };
 use crate::download::{DownloadCandidate, DownloadContext, try_download_candidates};
 use crate::http_diagnostics::HttpRequestExt;
-use crate::mods::install::install_manual_mod;
-use crate::{game, releases};
+use crate::releases;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -302,47 +301,8 @@ pub async fn install_online_mod(
     state: State<'_, AppState>,
     url: String,
 ) -> Result<crate::models::OperationResult, String> {
-    let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
-    game::ensure_game_stopped(&game_root)?;
-    let (temp, filename) = download_remote_to_temp(
-        &app,
-        &state,
-        &url,
-        "direct.onlineFile",
-        DIRECT_DOWNLOAD_THREADS,
-        RemoteValidation::ModFile,
-    )
-    .await?;
-    let cache_dir = state.config.cache_dir();
-    let staging = cache_dir.join(format!("manual-{}", uuid::Uuid::new_v4()));
-    let prepared: Result<PathBuf, String> = (|| {
-        fs::create_dir(&staging).map_err(|_| "direct.tempDirFailed".to_string())?;
-        let source = staging.join(&filename);
-        fs::rename(&temp, &source).map_err(|_| "direct.prepareFailed".to_string())?;
-        if archive::is_download_cancelled() {
-            return Err("download.cancelled".into());
-        }
-        Ok(source)
-    })();
-    let result = match prepared {
-        Ok(source) => {
-            /*
-             * 解压落盘 + 全量扫描游戏目录都是重活：`install_manual_mod` 同步
-             * 跑完会把 tokio worker 占住几秒，搬到阻塞线程池。
-             */
-            let state = state.inner().clone();
-            tauri::async_runtime::spawn_blocking(move || {
-                install_manual_mod(&state, &source, Some(&game_root))
-            })
-            .await
-            .map_err(|error| error.to_string())?
-        }
-        Err(error) => Err(error),
-    };
-    let _ = fs::remove_file(&temp);
-    let _ = fs::remove_dir_all(&staging);
-    result
+    let _ = (app, state, url);
+    crate::mod_changes::guard::require_shared_plan()
 }
 
 #[cfg(test)]

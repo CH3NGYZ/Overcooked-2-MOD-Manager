@@ -18,6 +18,7 @@ fn explicit_api_false_promotes_numeric_beta_and_overrides_legacy_cache() {
         assert!(releases[1].prerelease);
         assert!(releases[2].prerelease);
         let snapshot = project_mod_releases(releases, &Channel::Beta);
+        assert!(snapshot.cached_releases_complete);
         assert_eq!(
             snapshot.release_prerelease_metadata.get("v1.9.9.2"),
             Some(&false)
@@ -36,6 +37,15 @@ fn explicit_api_false_promotes_numeric_beta_and_overrides_legacy_cache() {
     .unwrap();
     assert_eq!(legacy.api_prerelease, None);
     assert_eq!(filter_channel(vec![legacy], &Channel::Beta).len(), 1);
+    let legacy: crate::models::ModRepositoryReleaseSnapshot =
+        serde_json::from_value(serde_json::json!({
+            "cached_releases":[], "release_prerelease_metadata":{}
+        }))
+        .unwrap();
+    assert!(!legacy.cached_releases_complete);
+    let staged: crate::models::StagedReleaseCache =
+        serde_json::from_value(serde_json::json!({})).unwrap();
+    assert!(!staged.cached_releases_complete);
 }
 
 #[test]

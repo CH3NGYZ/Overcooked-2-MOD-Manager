@@ -14,7 +14,7 @@ const PREVIEW_DIR: &str = "mod-preview";
 /// 暂存有效期：超过这个时间的目录在启动时或新建预览时被清理。
 const PREVIEW_TTL: Duration = Duration::from_secs(60 * 60);
 
-pub(super) fn preview_root(state: &AppState) -> PathBuf {
+pub(crate) fn preview_root(state: &AppState) -> PathBuf {
     state.config.cache_dir().join(PREVIEW_DIR)
 }
 
@@ -59,21 +59,19 @@ pub(super) fn stage_local(
 }
 
 /// 预览暂存目录里的来源元数据文件名。
-pub(super) const ORIGIN_FILE: &str = "origin.json";
+pub(crate) const ORIGIN_FILE: &str = "origin.json";
 
 /// 仓库来源的预览在暂存目录里留一份来源记录。
 ///
-/// `confirm_mod_install` 只拿到 `preview_id`，看不到当初是哪个仓库下的包。
-/// 若不加这份记录，确认安装只能走 `install_manual_mod` —— 那条路每次生成
-/// 新的 `manual-<uuid>` 清单，于是同仓库的旧包永远不会被回收，装完就是
-/// 「同一个仓库三份副本」。有了它，确认时才能回到仓库安装路径去先回收。
+/// 链式计划只接受预览 id；来源记录把下载时的仓库、tag 与预发布身份
+/// 绑定到暂存文件，供实际包校验再次核对，避免被当作无来源的手动包。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct PreviewOriginRecord {
-    pub(super) repository_id: String,
+pub(crate) struct PreviewOriginRecord {
+    pub(crate) repository_id: String,
     #[serde(default)]
-    pub(super) release_tag: String,
+    pub(crate) release_tag: String,
     #[serde(default)]
-    pub(super) prerelease: bool,
+    pub(crate) prerelease: bool,
 }
 
 fn write_origin_record(
@@ -87,21 +85,11 @@ fn write_origin_record(
     fs::write(dir.join(ORIGIN_FILE), text).map_err(|error| error.to_string())
 }
 
-/// 读取预览的来源记录；手动来源（本地文件 / 直链）没有这份文件。
-pub(super) fn read_origin_record(
-    state: &AppState,
-    preview_id: &str,
-) -> Option<PreviewOriginRecord> {
-    let path = preview_root(state).join(preview_id).join(ORIGIN_FILE);
-    let text = fs::read_to_string(path).ok()?;
-    serde_json::from_str(&text).ok()
-}
 /// 把「已经下载好的仓库资产」直接落进预览暂存并解析。
 ///
 /// 仓库安装流程的下载段包含代理选择与多源竞速，不适合在预览里重写一遍，
 /// 所以由 `install_mod_repository` 在 `preview_only` 模式下先完成下载，
-/// 再把临时文件交给这里解析。之后 `confirm_mod_install` 就能像处理
-/// 手动安装一样安装它。
+/// 再把临时文件交给这里解析。链式计划按同一预览 id 校验、准备与提交。
 pub(crate) fn stage_downloaded_file(
     state: &AppState,
     source: &Path,

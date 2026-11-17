@@ -95,6 +95,7 @@ pub async fn get_level_sets(
             .operation
             .lock()
             .map_err(|_| "lock.poisoned".to_string())?;
+        crate::mod_changes::guard::ensure_recovered(&state)?;
         state
             .local_mod_snapshot
             .lock()
@@ -147,6 +148,7 @@ fn prepare_level_set_scan(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     let config = state.config.load_or_default();
     let Some(game_root) = game::detect_game(&config).path else {
         return Ok(None);
@@ -163,76 +165,25 @@ fn prepare_level_set_scan(
 #[path = "levels/scan_tests.rs"]
 mod scan_tests;
 
-/// 启用或停用一个关卡集（在 `levels/` 与 `BepInEx/cache/modmanager_disabled_maps/` 之间移动目录）。
-///
-/// 地图启停允许游戏运行；路径校验、操作锁与目录冲突保护仍由既有链路负责。
+/// 旧客户端入口保留为显式阻断；地图启停统一走确认后的链式变更计划。
 #[tauri::command]
 pub fn set_level_set_enabled(
     state: State<'_, AppState>,
     dir_name: String,
     enabled: bool,
 ) -> Result<OperationResult, String> {
-    log::info!("切换关卡集状态：目录={}，启用={}", dir_name, enabled);
-    let _guard = state
-        .operation
-        .lock()
-        .map_err(|_| "lock.poisoned".to_string())?;
-    let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
-    let (_, roots) = crate::mods::snapshot::level_roots(&state, &game_root)?;
-    crate::level_sets::set_level_set_enabled(&roots, &dir_name, enabled)?;
-    Ok(OperationResult {
-        ok: true,
-        message: if enabled {
-            "message.levelSet.enabled".into()
-        } else {
-            "message.levelSet.disabled".into()
-        },
-    })
+    let _ = (state, dir_name, enabled);
+    crate::mod_changes::guard::require_shared_plan()
 }
 
-/// 批量切换全部关卡集（地图管理页的「全部启用 / 全部禁用」）。
-///
-/// 逐目录切换本身只是改名，但前端逐条发 IPC 时每条都要重新读配置、探测
-/// 游戏目录并抢一次操作锁 —— 地图一多就是一串重复开销。核心扫描与回滚在
-/// `level_sets::set_all_level_sets_enabled`（有测试），命令层只负责
-/// 加锁、定位游戏目录和把结果翻译成提示。
+/// 旧客户端批量开关入口；实际变更必须通过统一计划确认。
 #[tauri::command]
 pub fn set_all_level_sets_enabled(
     state: State<'_, AppState>,
     enabled: bool,
 ) -> Result<OperationResult, String> {
-    log::info!("批量切换全部关卡集：启用={}", enabled);
-    let _guard = state
-        .operation
-        .lock()
-        .map_err(|_| "lock.poisoned".to_string())?;
-    let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
-    let (_, roots) = crate::mods::snapshot::level_roots(&state, &game_root)?;
-    let changed = crate::level_sets::set_all_level_sets_enabled(&roots, enabled)?;
-    if changed.is_empty() {
-        return Ok(OperationResult {
-            ok: true,
-            message: "message.levelSet.nothingToToggle".into(),
-        });
-    }
-    log::info!(
-        "批量切换关卡集完成：启用={}，变更数量={}",
-        enabled,
-        changed.len()
-    );
-    Ok(OperationResult {
-        ok: true,
-        message: crate::locale_tag::with_params(
-            if enabled {
-                "message.levelSet.bulkEnabled"
-            } else {
-                "message.levelSet.bulkDisabled"
-            },
-            &[("count", &changed.len().to_string())],
-        ),
-    })
+    let _ = (state, enabled);
+    crate::mod_changes::guard::require_shared_plan()
 }
 
 /// 在系统文件管理器中打开一个关卡集目录。
@@ -288,6 +239,7 @@ fn delete_level_set_blocking(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     let (_, roots) = crate::mods::snapshot::level_roots(&state, &game_root)?;
@@ -344,6 +296,7 @@ fn flatten_level_sets_blocking(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     let (_, roots) = crate::mods::snapshot::level_roots(state, &game_root)?;
     crate::level_sets::flatten_level_sets(&roots, &recycle_root, &manifests_dir, false)
 }

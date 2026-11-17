@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { requestToggleChanges, requestAllToggleChanges } from '../modChanges/requests'
 import { useGameOperationGate } from '../composables/useGameOperationGate'
 import { computed, onMounted, provide, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -18,7 +19,6 @@ import { useLevelSetScan } from '../composables/useLevelSetScan'
 import { useFocusHighlight, useLocalModLink, useMapLink, useModRepositoryLink } from '../crossLink'
 import { useListVisibility } from '../composables/useListVisibility'
 import { bulkSwitchValue as bulkSwitchValueOf } from '../listVisibility'
-import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import { cachedInstallRelease } from '../repositoryAssets'
 import { dependencyActionLabel, dependencyRowFromStatus, levelSetDependencyRows } from '../dependencyRows'
 import { useDependencyNavigation } from '../composables/useDependencyNavigation'
@@ -40,8 +40,6 @@ import RefreshResultTag from '../components/RefreshResultTag.vue'
 import type { DependencyRow } from '../components/DependencyTable.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
 import InstallDetailDialog from '../components/InstallDetailDialog.vue'
-import InstallCheckDialog from '../components/InstallCheckDialog.vue'
-import InstallPlanDialog from '../components/InstallPlanDialog.vue'
 import BusyOverlay from '../components/BusyOverlay.vue'
 import { useFileDrop } from '../composables/useFileDrop'
 import { useDropRouting, takePendingDrop } from '../composables/useDropRouting'
@@ -69,7 +67,6 @@ import {
   aggregateLevelSetVersion,
   mapsForLevelSet,
   mapForLevelSet,
-  mapRelationSubject,
   type LevelSetCardAction,
   type LevelSetCardTag,
 } from '../levelSetStatus.ts'
@@ -345,24 +342,9 @@ const {
   importing, importSource, installRelease,
   previewOpen: importPreviewOpen, detail: importDetail,
   confirmImport, discardImport,
-  importCheck,
   zipProgress, zipProgressText,
 } = useLevelSetImport(() => reloadSets())
 
-/**
- * 卡片「更新」按钮的安装前检查。
- *
- * 与地图下载页用的是同一份 `useInstallPlanGate` + `mapRelationSubject`
- * 投影：管理页的「更新」如果跳过检查，把一张新增了依赖的地图装上去，
- * 用户会得到「更新完反而跑不起来」。地图自身安装可在运行时进行；
- * 关系计划需要安装、更新或卸载 MOD 时必须停止游戏。
- */
-const planGate = useInstallPlanGate({
-  mods: () => mods.value,
-  repositories: () => repositories.value,
-  gameBlocked: blockModOperation,
-  onApplied: () => reloadSets(),
-})
 /** 正在执行「更新」的卡片（目录名）；同一时刻只允许一个。 */
 const actionInFlight = ref<string | null>(null)
 
@@ -598,7 +580,6 @@ async function runCardAction(set: LevelSetInfo) {
     return
   }
   const targetTag = release.tag_name
-  if (!(await planGate.run(mapRelationSubject(map, targetTag), targetTag))) return
   actionInFlight.value = set.dir_name
   try {
     await installRelease(map.id, targetTag, undefined, {
@@ -638,7 +619,7 @@ function tagTitle(set: LevelSetInfo, tag: LevelSetCardTag): string | undefined {
 function onTagClick(set: LevelSetInfo, tag: LevelSetCardTag) {
   // 缺依赖：跳到**依赖的**仓库（与 MOD 管理页同一个落点）；没有来源时
   // 标签不带 repositoryId，也就不会走到这里。
-  if (tag.repositoryId && tag.dependency) {
+    if ((tag.repositoryId || tag.dependency?.repair) && tag.dependency) {
     dependencyNavigation.request(() => {
       const current = sets.value.find(entry => entry.dir_name === set.dir_name)
       const latest = current && tagsOf(current).find(entry => entry.kind === tag.kind)
@@ -704,7 +685,8 @@ async function toggle(set: LevelSetInfo, enabled: boolean) {
   if (busy.value[set.dir_name]) return
   busy.value = { ...busy.value, [set.dir_name]: true }
   try {
-    const result = await api.setLevelSetEnabled(set.dir_name, enabled)
+    const result = await requestToggleChanges({ mapDirectories: [set.dir_name], enabled })
+    if (!result) return
     if (!result.ok) {
       message.error(translateBackendMessage(result.message))
       return
@@ -859,7 +841,8 @@ async function setAllEnabled(enabled: boolean) {
   if (bulkWorking.value || !sets.value.length) return
   bulkWorking.value = true
   try {
-    const result = await api.setAllLevelSetsEnabled(enabled)
+    const result = await requestAllToggleChanges('map', enabled)
+    if (!result) return
     if (result.ok) {
       message.success(translateBackendMessage(result.message))
       await reloadSets()
@@ -874,17 +857,7 @@ async function setAllEnabled(enabled: boolean) {
 }
 
 /** 全部停用要确认：停用后游戏内不会加载任何自定义地图（可随时恢复）。 */
-function confirmDisableAll() {
-  dialog.warning({
-    title: t('levelSet.disableAllTitle'),
-    content: t('levelSet.disableAllConfirm', { count: enabledCount.value }),
-    positiveText: t('overview.disableAll'),
-    negativeText: t('recycle.cancel'),
-    onPositiveClick() {
-      void setAllEnabled(false)
-    },
-  })
-}
+function confirmDisableAll() { void setAllEnabled(false) }
 
 /**
  * 分段控件点击：只发起动作，不先改选中态。
@@ -1081,17 +1054,12 @@ visibility.reconcileStatuses(computed(() => [...statusSummary.value, ...toggleSu
     同身份冲突的检查：在「安装详情」之前挡一道（已有同一张地图时先卸载）。
     与 MOD 安装、地图下载页共用同一个弹窗与同一套执行顺序。
   -->
-  <InstallCheckDialog v-model:show="importCheck.open.value" :model="importCheck.model.value"
-    :execute="importCheck.execute"
-    @finished="(ready: boolean) => { void importCheck.finish(ready) }" />
+
 
   <!--
-    卡片「更新」的安装前检查：与地图下载页共用同一个弹窗与执行顺序。
-    没有需要处理的关系时 `planGate.run` 直接放行，不弹空窗。
+    卡片「更新」与地图下载页共用整链方案，统一确认依赖影响与执行顺序。
   -->
-  <InstallPlanDialog v-model:show="planGate.open.value" :plan="planGate.plan.value"
-    :target-label="planGate.target.value"
-    @finished="(ready: boolean) => { void planGate.finish(ready) }" />
+
 
   <!--
     导入前的「安装详情」：和 MOD 安装同一张卡片，一个地图集当一个 MOD。

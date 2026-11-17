@@ -67,6 +67,7 @@ pub(crate) fn extract_prepared_mod_zip(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn prepared_mod_zip_files(
     zip_path: &Path,
     game_root: &Path,

@@ -145,26 +145,25 @@ fn pending_or_ambiguous_scans_do_not_choose_a_historical_or_first_directory() {
 }
 
 #[test]
-fn enabling_framework_changes_only_selected_highest_dll_and_invalidates_scan() {
+fn legacy_framework_toggle_is_blocked_without_changing_disk() {
     let fixture = Fixture::new();
     let lower = fixture.plugin("Lower", "1.0", true);
     let highest = fixture.plugin("Highest", "2.0", false);
     fixture.publish(vec![lower, highest]);
-    assert!(
-        set_diy_level_enabled_blocking(&fixture.state, true)
-            .unwrap()
-            .ok
+    assert_eq!(
+        crate::mod_changes::guard::require_shared_plan::<OperationResult>().unwrap_err(),
+        "modChanges.installationBlocked"
     );
     assert!(
         fixture
             .game
-            .join("BepInEx/plugins/Highest/DIYLevel.dll")
+            .join("BepInEx/plugins/Highest/DIYLevel.dll.disabled")
             .is_file()
     );
     assert!(
         !fixture
             .game
-            .join("BepInEx/plugins/Highest/DIYLevel.dll.disabled")
+            .join("BepInEx/plugins/Highest/DIYLevel.dll")
             .exists()
     );
     assert!(
@@ -172,9 +171,6 @@ fn enabling_framework_changes_only_selected_highest_dll_and_invalidates_scan() {
             .game
             .join("BepInEx/plugins/Lower/DIYLevel.dll")
             .is_file()
-    );
-    assert!(
-        matches!(get_diy_level_info_blocking(&fixture.state), Err(error) if error == "diychef.staleScan")
     );
 }
 

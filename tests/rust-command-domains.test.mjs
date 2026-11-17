@@ -13,7 +13,8 @@ test('commands root only declares domains; registered IPC points at the real imp
   const handler = read('lib.rs').match(/generate_handler!\s*\[([\s\S]*?)\]/)?.[1]
   assert.ok(handler)
   const paths = [...handler.matchAll(/\bcommands::([a-z_]+)::([a-z_]+)\b/g)]
-  assert.equal(paths.length, 126, '既有 IPC 与暖暖编辑、迁移、真实预览、缩略图缓存及管理器数据重置命令，集合不得丢失')
+  assert.equal(paths.length, 131, '既有 IPC 与五个链式变更命令，集合不得丢失')
+  for (const name of ['evaluate_mod_changes', 'plan_mod_changes', 'prepare_mod_changes', 'execute_mod_changes', 'cancel_mod_changes']) assert.ok(paths.some(([, domain, actual]) => domain === 'mod_changes' && actual === name))
   for (const name of ['get_manager_data_directory', 'clear_all_config']) assert.ok(paths.some(([, domain, actual]) => domain === 'manager_data' && actual === name))
   for (const name of ['open_diychef_editor', 'migrate_diychef_resources', 'initialize_diychef_config', 'validate_diychef_draft', 'save_diychef_config', 'delete_diychef_resource']) assert.ok(paths.some(([, domain, actual]) => domain === 'diychef_editor' && actual === name))
   for (const name of ['get_diychef_preview', 'read_diychef_preview_asset', 'clear_diychef_cache']) assert.ok(paths.some(([, domain, actual]) => domain === 'diychef_preview' && actual === name))
@@ -22,11 +23,11 @@ test('commands root only declares domains; registered IPC points at the real imp
   assert.ok(paths.some(([, domain, name]) => domain === 'dashboard' && name === 'rebind_local_mods'))
   for (const name of ['get_level_set_preview', 'get_level_preview_detail']) assert.ok(paths.some(([, domain, actual]) => domain === 'levels' && actual === name))
   const declared = sourceFiles(resolve(root, 'commands'), ['.rs']).flatMap(path =>
-    [...readText(path).matchAll(/^#\[tauri::command\]\s*pub (?:async )?fn ([a-z_]+)\(/gm)].map(m => m[1]))
+    [...readText(path).matchAll(/^#\[tauri::command\]\s*pub(?:\(crate\))? (?:async )?fn ([a-z_]+)\(/gm)].map(m => m[1]))
   assert.equal(new Set(declared).size, declared.length, '命令不能在旧入口重复定义')
   assert.deepEqual(declared.sort(), paths.map(m => m[2]).sort())
   for (const [, domain, name] of paths) {
-    assert.match(read(`commands/${domain}.rs`), new RegExp(`#\\[tauri::command\\]\\s*pub (?:async )?fn ${name}\\(`))
+    assert.match(read(`commands/${domain}.rs`), new RegExp(`#\\[tauri::command\\]\\s*pub(?:\\(crate\\))? (?:async )?fn ${name}\\(`))
   }
 })
 
@@ -39,9 +40,10 @@ test('shared Rust domains never import command implementations', () => {
 
 test('extracted business helpers have one owner outside IPC and do not become another large file', () => {
   const owners = [
-    ['mods/install.rs', ['install_manual_mod', 'install_staged_mod_repository', 'install_downloaded_mod_repository', 'mod_repository_install_identity']],
+    ['mods/install.rs', ['mod_repository_install_identity']],
+    ['mods/repository_download.rs', ['run_repository_install']],
+    ['mod_changes/payload.rs', ['from_preview']],
     ['mods/status.rs', ['collect_update_status']],
-    ['mods/file_state.rs', ['set_local_mod_file_state']],
     ['framework.rs', ['backup_framework', 'restore_framework_backup', 'validate_framework_backup_in']],
     ['bepinex/install.rs', ['install_framework_archive']],
     ['repository_sources/apply.rs', ['import_repository_source_into_config']],

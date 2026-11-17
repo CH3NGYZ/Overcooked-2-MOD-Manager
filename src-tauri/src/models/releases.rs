@@ -25,6 +25,8 @@ pub struct ReleaseInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModRepositoryReleaseSnapshot {
     pub cached_releases: Vec<ReleaseInfo>,
+    #[serde(default)]
+    pub cached_releases_complete: bool,
     pub release_prerelease_metadata: std::collections::BTreeMap<String, bool>,
 }
 

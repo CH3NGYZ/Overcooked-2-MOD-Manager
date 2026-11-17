@@ -16,6 +16,7 @@ registerHooks({
     if (url === 'oc2-test:native-window') return { format: 'module', shortCircuit: true, source: 'export const getCurrentWindow = () => globalThis.__guardNative' }
     if (url.endsWith('/src/useNotify.ts')) return { format: 'module', shortCircuit: true, source: 'export const useNotify = () => ({error: text => globalThis.__guardNotices.push(text)})' }
     if (url.endsWith('/src/locale/backend.ts')) return { format: 'module', shortCircuit: true, source: 'export const backendMessageOf = reason => reason instanceof Error ? reason.message : String(reason)' }
+    if (url.endsWith('/src/modChanges/store.ts')) return {format:'module',shortCircuit:true,source:'export const useModChanges=()=>({state:{get value(){return globalThis.__guardChangeState}}})'}
     if (url.endsWith('/src/services/tauri.ts')) return { format: 'module', shortCircuit: true, source: 'export const api = {exitApp: () => globalThis.__guardExit()}' }
     return next(url, context)
   },
@@ -33,6 +34,7 @@ globalThis.window = new EventTarget()
 window.__TAURI_INTERNALS__ = { metadata: {} }
 
 async function setup(t, { dirty = true, busy = false, confirm = async () => false, registration, exit, guarded = true } = {}) {
+  globalThis.__guardChangeState = null
   const state = { dirty: shallowRef(dirty), busy: shallowRef(busy), confirms: 0, cancels: 0, stops: 0, closes: 0, exits: 0, subscriptions: 0 }
   const listeners = new Set()
   globalThis.__guardNotices = []
@@ -246,6 +248,13 @@ test('page replacement invalidates native confirmation; App disposal settles it 
   assert.deepEqual(globalThis.__guardNotices, [])
   assert.equal(fixture.state.cancels, 1)
   assert.equal(fixture.listeners.size, 0)
+})
+
+test('batch preparation and execution block native close before any exit IPC',async t=>{
+ const fixture=await setup(t,{dirty:false})
+ for(const phase of ['preparing','executing']){globalThis.__guardChangeState={phase};await fixture.emitClose().pending;assert.equal(fixture.state.exits,0)}
+ globalThis.__guardChangeState={phase:'confirming'};await fixture.emitClose().pending;assert.equal(fixture.state.exits,1)
+ globalThis.__guardChangeState=null
 })
 
 test('update installation and handoff reject new requests and invalidate an already pending confirmation', async t => {

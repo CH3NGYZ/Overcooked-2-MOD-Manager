@@ -12,6 +12,8 @@ import { isPrereleaseVersion, modsForRepository, versionDisplay } from '../modSt
 import { repositoryInstallAction, repositoryStatus, type InstallAction, type StatusTone } from '../statusTags'
 import { useFocusHighlight, useLocalModLink } from '../crossLink'
 import { dependencyTagFor, primaryRelation, relationJumpRepositoryId, resolveRelations, type RelationStatus } from '../modRelations'
+import { dependencyRowFromStatus, type DependencyRow } from '../dependencyRows'
+import { useDependencyNavigation } from '../composables/useDependencyNavigation'
 import { pickI18n, t } from '../i18n'
 import { tagColorFor, type TagTone } from '../theme'
 import { sourceMatchesRegion } from '../repositorySources'
@@ -22,16 +24,12 @@ import PageLoading from '../components/PageLoading.vue'
 import HeaderIconAction from '../components/HeaderIconAction.vue'
 import HeaderSearch from '../components/HeaderSearch.vue'
 import InstallSourceTags from '../components/InstallSourceTags.vue'
-import ModInstallDialog from '../components/ModInstallDialog.vue'
-import InstallCheckDialog from '../components/InstallCheckDialog.vue'
-import InstallPlanDialog from '../components/InstallPlanDialog.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
 import { useDependencyInstallGuide } from '../composables/useDependencyInstallGuide'
 import { useFileDrop } from '../composables/useFileDrop'
 import { takePendingDrop, useDropRouting } from '../composables/useDropRouting'
 import { useModRepositoryPreview } from '../composables/useModRepositoryPreview'
-import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import OnlineCard, { type CardAction, type CardDependencyTag } from '../components/OnlineCard.vue'
 import SourceGroupSlot from '../components/SourceGroupSlot.vue'
 import SourceTitle from '../components/SourceTitle.vue'
@@ -71,27 +69,13 @@ const search = ref('')
 /** 当前展开详情的仓库（同页展开，不做二级路由）。 */
 const detailId = ref<string | null>(null)
 const detailReady = shallowRef(false)
-/**
- * 安装流程：来源选择 → 预览 → 确认安装。
- *
- * 仓库卡片的「安装 / 重装 / 更新」也走同一套——先用 preview_only 让后端
- * 下载解析，再把结果交给预览弹窗，用户在弹窗里确认后才写入游戏目录。
- */
+/** 手动来源先解析，再由全局整链方案确认与执行。 */
 const {
   sourceOpen: installSourceOpen,
   sourceBusy: installSourceBusy,
-  previewOpen: installPreviewOpen,
-  preview: installPreview,
   openSource: openInstallSource,
-  openPreview: openInstallPreview,
   handleSourceSelect: handleInstallSourceSelect,
   pickSourceFile: pickInstallSourceFile,
-  discardPreview: discardInstallPreview,
-  handleInstalled: handleInstallInstalled,
-  checkOpen: installCheckOpen,
-  checkModel: installCheckModel,
-  executeCheck: executeInstallCheck,
-  finishCheck: finishInstallCheck,
 } = useModInstallFlow(() => load())
 
 /** 拖入 / 跨页跳转过来的文件：打开来源卡片后走同一条预览链路。 */
@@ -123,41 +107,15 @@ const { dragActive } = useFileDrop({
 })
 
 /** 仓库卡片 / 详情抽屉的「安装 / 重装 / 更新」：先检查关系，再下载预览。 */
-const { previewModRepository } = useModRepositoryPreview(openInstallPreview, {
+const { previewModRepository } = useModRepositoryPreview({
   gameBlocked,
   onBusyChange: (repositoryId, busy) => {
     if (busy) installing.value[repositoryId] = true
     else delete installing.value[repositoryId]
   },
-  /*
-   * 安装前把依赖 / 冲突 / 兼容一次处理完。
-   *
-   * 放在这里而不是「装完再提示」：用户点安装的意图是「让它能用」，
-   * 缺依赖时它装上也跑不起来；等装完再弹窗，用户已经离开这个页面了。
-   * 冲突同理 —— 装上之后才发现冲突，等于先制造一次故障再解释。
-   */
-  prepareInstall: (repo, tag) => runInstallPlan(repo, tag),
-})
-
-/* ===== 安装前检查（依赖 / 冲突 / 兼容） ===== */
-
-/**
- * 生成计划、弹窗、等结果 —— 与 MOD 管理页的「更新」共用同一份实现。
- *
- * 两个页面都要做这件事，写两份迟早分叉（管理页就曾因此漏掉整个检查）。
- */
-const {
-  open: installPlanOpen,
-  plan: installPlan,
-  target: installPlanTarget,
-  run: runInstallPlan,
-  finish: finishInstallPlan,
-} = useInstallPlanGate({
-  mods: () => mods.value,
-  repositories: () => repositories.value,
-  gameBlocked,
   onApplied: () => load(),
 })
+
 
 function openInstall() {
   openInstallSource()
@@ -378,8 +336,8 @@ function relationTargetName(status: RelationStatus) {
 /**
  * 点关系标签该跳到哪个仓库（`undefined` = 不可点）。
  *
- * 与 MOD 管理页共用 `relationJumpRepositoryId` —— 两处点同一个状态，
- * 落点必须相同：都是**依赖的**仓库，而不是当前这张卡自己的仓库。
+ * 与 MOD 管理页共用 `relationJumpRepositoryId`：优先返回 repair owner，
+ * 仅旧展示模型的仓库导航使用 repository id。
  */
 function relationJumpId(repo: ModRepository): string | undefined {
   return relationJumpRepositoryId(unmetRelation(repo))
@@ -393,6 +351,7 @@ function relationJumpId(repo: ModRepository): string | undefined {
 function relationTagTitle(repo: ModRepository) {
   const status = unmetRelation(repo)
   if (!status) return undefined
+  if (status.repair) return t('modChanges.reviewSelection')
   const target = relationTargetName(status)
   const detail = status.state === 'conflict'
     ? t('modsOnline.isIncompatibleWithAndMustBeUninstalled', { owner: repoName(repo), target })
@@ -403,15 +362,22 @@ function relationTagTitle(repo: ModRepository) {
 }
 
 /**
- * 点关系标签：在**本页内**高亮依赖仓库并滚过去。
- *
- * 不需要绕路由：目标卡片就在同一页，走 `focus` 直接高亮 3 秒，
- * 与从 MOD 管理页跳转过来用的是同一套高亮与滚动逻辑。
+ * 点击时重取当前 owner 的权威关系，交共享整链确认；普通仓库导航仍在页内高亮。
  */
 function jumpToRelationRepository(repo: ModRepository) {
-  const id = relationJumpId(repo)
-  if (id) focusRepository(id)
+  dependencyNavigation.request(() => {
+    const current = repositories.value.find(entry => entry.id === repo.id)
+    const issue = current && unmetRelation(current)
+    return issue ? dependencyRowFromStatus(issue, { mods: mods.value, repositories: repositories.value,
+      translate: t, pickName: pickI18n, jumpToRepository: true }) : undefined
+  })
 }
+
+function openDependencyJump(row: DependencyRow) {
+  if (row.jump) focusRepository(row.jump.id)
+}
+
+const dependencyNavigation = useDependencyNavigation(openDependencyJump)
 
 /* ===== 搜索 ===== */
 const query = computed(() => search.value.trim().toLowerCase())
@@ -647,30 +613,12 @@ function isRefreshing(repo: ModRepository): boolean {
 }
 
 
-/**
- * 仓库卡片的「安装 / 重装 / 更新」。
- *
- * 流程与手动安装统一：先让后端**只下载并解析**（preview_only），
- * 把解析结果交给 ModInstallDialog 展示，用户点「立即安装」才真正写入。
- * 下载与预发布确认都在 useModRepositoryPreview 里，两个页面共用。
- */
+/** 仓库卡片与详情共用精确根版本的整链变更入口。 */
 function install(repo: ModRepository, tag?: string, asset?: string) {
   return previewModRepository(repo, tag, asset)
 }
 
-/**
- * 从仓库详情抽屉发起安装。
- *
- * 安装前先收起抽屉：接着会弹**安装预览**（ModInstallDialog），两个
- * 右侧浮层叠在一起时，抽屉的滑出动画会和预览弹窗的淡入互相干扰，
- * 看起来像两个东西在抢同一块区域。
- *
- * 收起放在 `install()` 之前而不是之后：`install()` 会 await 整个下载
- * 与解析过程，放后面要等下载完抽屉才动，用户会觉得点了没反应。
- *
- * 先关再装还有个附带好处：下载失败时用户看到的是干净的列表页 +
- * 错误提示，而不是「抽屉里什么都没变」的困惑。
- */
+/** 收起详情后展示包含根版本与全部影响的共享方案。 */
 function installFromDetail(tag?: string, asset?: string) {
   const repo = detailRepo.value
   if (!repo) return
@@ -816,9 +764,7 @@ defineExpose({ refreshAll, visibleCount })
     安装前检查：依赖 / 冲突 / 兼容一次列清并执行。
     `finished` 携带「是否处理完毕」，前置流程据此决定是否继续装主包。
   -->
-  <InstallPlanDialog v-model:show="installPlanOpen" :plan="installPlan"
-    :target-label="installPlanTarget"
-    @finished="(ready: boolean) => { void finishInstallPlan(ready) }" />
+
   </PageLoading>
 
   <!-- 点击卡片：从右侧滑出仓库详情（指标 / 链接 / 备注 / README） -->
@@ -841,11 +787,7 @@ defineExpose({ refreshAll, visibleCount })
   <InstallSourceCard v-model:show="installSourceOpen" :busy="installSourceBusy"
     :drag-active="dragActive" :pick-file="pickInstallSourceFile"
     @select="handleInstallSourceSelect" />
-  <InstallCheckDialog v-model:show="installCheckOpen" :model="installCheckModel"
-    :execute="executeInstallCheck" @finished="finishInstallCheck" />
-  <ModInstallDialog v-model:show="installPreviewOpen" :preview="installPreview"
-    @installed="handleInstallInstalled()"
-    @discarded="discardInstallPreview" />
+
 </template>
 
 <style scoped>

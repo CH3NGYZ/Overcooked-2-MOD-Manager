@@ -108,7 +108,7 @@ pub(super) const MAX_DIR_NAME_CHARS: usize = 48;
 /// `allow_base` 为 `false` 时跳过基础名本身。同一批里有多张图共用这个基础名
 /// 时，调用方会对**每一张**都置 `false`，让它们一起带后缀，而不是「第一个
 /// 占住干净名字、其余加后缀」—— 后者会让目录名取决于条目顺序。
-pub(super) fn allocate_dir_name(
+pub(crate) fn allocate_dir_name(
     base: &str,
     metadata: &LevelSetMetadata,
     taken: &mut std::collections::HashSet<String>,

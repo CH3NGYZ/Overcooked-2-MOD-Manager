@@ -1,3 +1,4 @@
+import { evaluationSnapshot, clearEvaluation } from './helpers/mod-change-evaluations.mjs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
@@ -121,7 +122,9 @@ test('关系标签与「刷新中」并存，且关系始终在最前', () => {
   })
   const target = mod({ guid: 'com.a' })
   const state = { refreshing: { r1: true }, queued: {}, sourceRefreshing: {}, entryStateUnavailable: false }
+  evaluationSnapshot([{id:'mod:r1',repo:'r1',dlls:[target.dll_file],rows:[{relation:withRelation.relations[0],state:'missing'}]}])
   const result = runtimeModStatus(target, [target], [withRelation], state)
+  clearEvaluation()
   assert.equal(result.mod.labels[0], 'missing_dependency')
   assert.ok(result.mod.labels.includes('refreshing'))
   assert.equal(result.issue?.state, 'missing')
@@ -144,8 +147,10 @@ test('必须依赖有候选版本时仍挂「缺依赖」（能不能补上不�
     cached_releases: [release('2.0.0')],
   })
   const target = mod({ guid: 'com.a' })
+  evaluationSnapshot([{id:'mod:r1',repo:'r1',dlls:[target.dll_file],rows:[{relation:owner.relations[0],state:'missing'}]}])
   const result = runtimeModStatus(target, [target], [owner, provider], idle)
-  assert.equal(result.issue?.state, 'installable')
+  clearEvaluation()
+  assert.equal(result.issue?.state, 'missing')
   assert.equal(result.mod.labels[0], 'missing_dependency')
 })
 
@@ -162,8 +167,10 @@ test('必须依赖装着旧版且线上有够新的版本 → 仍是「缺依赖
   })
   const target = mod({ guid: 'com.a' })
   const stale = mod({ guid: 'com.b', dll_file: 'Dep.dll', version: '1.5.0' })
+  evaluationSnapshot([{id:'mod:r1',repo:'r1',dlls:[target.dll_file],rows:[{relation:owner.relations[0],state:'version_mismatch',targets:['mod:dep']}]}], [{node_id:'mod:dep',dll_files:[stale.dll_file]}])
   const result = runtimeModStatus(target, [target, stale], [owner, provider], idle)
-  assert.equal(result.issue?.state, 'installable')
+  clearEvaluation()
+  assert.equal(result.issue?.state, 'version_mismatch')
   assert.equal(result.mod.labels[0], 'missing_dependency')
 })
 

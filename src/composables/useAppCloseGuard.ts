@@ -1,6 +1,7 @@
 import { onBeforeUnmount, onMounted } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { appUpdateState } from '../appUpdateState'
+import { useModChanges } from '../modChanges/store'
 import { backendMessageOf } from '../locale/backend'
 import { isTauri } from '../runtime'
 import { api } from '../services/tauri'
@@ -14,6 +15,7 @@ interface PageCloseGuard {
 const pageGuards: PageCloseGuard[] = []
 
 export const appCloseBlocked = () => appUpdateState.stage === 'installing' || appUpdateState.stage === 'handoff'
+  || ['preparing', 'executing'].includes(useModChanges().state.value?.phase ?? '')
 
 /** Route transitions can briefly overlap page lifetimes. The newest mounted
  * page owns confirmation; removing an older registration must not remove it. */

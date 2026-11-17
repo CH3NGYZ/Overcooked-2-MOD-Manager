@@ -43,6 +43,12 @@ export function useDependencyNavigation(navigate: (row: DependencyRow) => void) 
   function request(resolve: () => DependencyRow | undefined) {
     const row = resolve()
     if (!row?.jump) return
+    if (row.jump.repair) {
+      const root = { ...row.jump.repair }
+      void import('../modChanges/store').then(({ useModChanges }) => useModChanges().run({ roots: [root] }))
+        .catch(reason => { void import('../locale/backend').then(({ backendMessageOf }) => message.error(backendMessageOf(reason))) })
+      return
+    }
     if (row.jump.targetVersion === '' || (!row.jump.targetVersion && row.jump.versionChange)) {
       message.warning(t('tools.dependencyTargetUnavailable')); return
     }

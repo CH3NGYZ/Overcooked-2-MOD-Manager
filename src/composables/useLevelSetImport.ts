@@ -5,9 +5,8 @@
  * 以及地图管理页的整窗拖放。写两份的代价不是多几十行，而是确认界面、覆盖提示、
  * 暂存清理与「装完重读」的时机各漂各的 —— 用户会在两页看到不同的东西。
  *
- * 确认界面不再是自拼的 `dialog.warning`：把每个地图集当成一个 MOD、随包插件
- * 与依赖表挂在它下面，交给和 MOD 安装共用的 `InstallDetailDialog` 展示。所以
- * 这里的职责只剩状态与顺序：暂存、打开详情、等用户表态、导入、清理暂存。
+ * 地图集与随包插件交给共享整链方案处理：先展示详情与依赖影响，再统一确认、
+ * 准备和执行。这里负责来源暂存、方案调用、成功后重读以及清理自己的暂存。
  *
  * 后端 `stage_map_source` 先把来源统一成一份可读 ZIP（本地文件原地引用、
  * 直链下载到 cache 并标记 `staged`），识别结果就是 `level_sets::
@@ -20,23 +19,15 @@ import type { UnlistenFn } from '@tauri-apps/api/event'
 import { pickI18n, t } from '../i18n'
 import { api, watchLevelSetZipProgress } from '../services/tauri'
 import { useNotify } from '../useNotify'
+import { useModChanges } from '../modChanges/store'
 import { levelSetImportDetail } from '../installDetail'
-import { levelSetDependencyRows, levelSetRelations } from '../dependencyRows'
-import { resolveRelation } from '../modRelations'
-import { useGameOperationGate } from './useGameOperationGate'
-import { uninstallMapConflict } from '../installConflicts'
-import { conflictCheckModel } from '../installCheck'
 import { backendMessageOf } from '../locale/backend'
 import { cachedInstallRelease } from '../repositoryAssets'
 import { beginDownloadTask, endDownloadTask, failDownloadTask } from '../downloadTask'
-import { modRepositoryIsAvailable } from '../repositoryAvailability'
-import { useDashboard } from './useDashboardStore'
-import { useInstallCheck } from './useInstallCheck'
 import { useMapSources } from './useMapSources'
-import type { InstallCheckRow } from '../installCheck'
 import type { InstallDetailModel } from '../installDetail'
 import type {
-  InstallConflict, InstallSource, LevelSetZipProgress, StagedMapSource, ZipLevelSet,
+  InstallSource, LevelSetZipProgress, StagedMapSource, ZipLevelSet,
 } from '../types'
 
 /** 正在等用户确认的那一批：ZIP 位置 + 识别出的关卡集。 */
@@ -48,41 +39,13 @@ interface PendingBatch {
 
 export function useLevelSetImport(onImported?: () => void | Promise<void>) {
   const message = useNotify()
-  /*
-   * 依赖表的数据来源：Dashboard 的已装 MOD 与配置里的仓库、地图源的在线条目。
-   * 确认界面里的集还没落盘，后端不会为它生成关系快照，所以关系只能在
-   * 「身份匹配到在线地图 → 否则本地 ZIP 能带出的快照」这条链上现算。
-   * 这两个都是模块级单例，取用不会额外触发请求。
-   */
-  const { config, mods } = useDashboard()
-  const { blockModOperation } = useGameOperationGate()
-
-  function blockModChanges(sets: ZipLevelSet[]) {
-    const needsModChange = sets.some((set) => set.plugins.length > 0
-      || levelSetRelations(set, maps.value).some((relation) =>
-        !relation.optional && resolveRelation(relation, mods.value, repositories.value).state !== 'ok'))
-    return needsModChange && blockModOperation()
-  }
+  const changes = useModChanges()
   const { maps } = useMapSources()
-  const repositories = computed(() => {
-    const current = config.value
-    if (!current) return []
-    return current.repositories.filter((repo) =>
-      modRepositoryIsAvailable(repo, current.repository_sources, current.region, current.platform))
-  })
   /** 正在处理一份来源：暂存 / 识别 / 等确认 / 导入，期间入口按钮转圈并禁用。 */
   const importing = ref(false)
   const pending = ref<PendingBatch | null>(null)
   /** 详情弹窗是否打开。 */
   const previewOpen = ref(false)
-
-  /**
-   * 同身份冲突的检查弹窗（共享的 `InstallCheckDialog`）。
-   *
-   * 与 `previewOpen` 一样，宿主视图只挂一个组件、绑这里的状态；「什么时候弹、
-   * 等结论、弹窗被收掉算放弃」全在本 composable 里，两页因此必然一致。
-   */
-  const importCheck = useInstallCheck()
 
   /**
    * 来源 ZIP 的识别 / 导入进度（后端 `level-set-zip-progress`）。
@@ -127,24 +90,13 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
    * 用 computed 而不是打开时算一份快照 —— 弹窗开着时切语言，标题、字段名与
    * 计数摘要要跟着变（`t()` 在 computed 里被执行，locale 变化会被追踪）。
    */
-  const detail = computed<InstallDetailModel | null>(() =>
-    pending.value
-      ? levelSetImportDetail(pending.value.path, pending.value.sets, {
-          previousVersions: set => pending.value?.previousVersions[set.dir_name] ?? [],
-          /*
-           * 弹窗里不做依赖跳转：跳走会把「等用户确认」的导入流程留在原地，
-           * 回来还得重新识别一遍 ZIP。状态列只答「够不够」，不引导离开。
-           */
-          dependencies: (set) => levelSetDependencyRows(set, {
-            maps: maps.value,
-            mods: mods.value,
-            repositories: repositories.value,
-            translate: t,
-            pickName: pickI18n,
-            jumpToRepository: false,
-          }),
-        })
-      : null)
+  const detail = computed<InstallDetailModel | null>(() => {
+    const batch = pending.value
+    if (!batch) return null
+    return { ...levelSetImportDetail(batch.path, batch.sets, {
+      previousVersions: set => batch.previousVersions[set.dir_name] ?? [],
+    }), confirmLabel: t('modChanges.reviewSelection') }
+  })
 
   /** 「立即安装」与「取消」的结论，交回 `importSource` 里那个 await。 */
   let settleApproval: ((approved: boolean) => void) | null = null
@@ -156,9 +108,9 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
   }
 
   /** 打开详情弹窗，等用户点「立即安装」或放弃。 */
-  function askApproval(path: string, sets: ZipLevelSet[], originalSets: readonly ZipLevelSet[] = sets) {
-    // Preserve the version change after the preflight has recycled old copies.
-    const previousVersions = Object.fromEntries(originalSets.map(set => [set.dir_name, (set.conflicts ?? []).map(conflict => conflict.version)]))
+  function askApproval(path: string, sets: ZipLevelSet[]) {
+    // 详情展示原版本，文件变更留给整链事务。
+    const previousVersions = Object.fromEntries(sets.map(set => [set.dir_name, (set.conflicts ?? []).map(conflict => conflict.version)]))
     pending.value = { path, sets, previousVersions }
     previewOpen.value = true
     return new Promise<boolean>((resolve) => { settleApproval = resolve })
@@ -178,7 +130,6 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
 
   /** 「立即安装」：只表态，真正的导入仍由 `importSource` 那条链负责。 */
   function confirmImport() {
-    if (pending.value && blockModChanges(pending.value.sets)) return
     resolveApproval(true)
   }
 
@@ -188,7 +139,7 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
     resolveApproval(false)
   }
 
-  /** 导入成功后的收尾与文案：两条来源各自不同，确认/卸载/导入本身是同一份。 */
+  /** 导入成功后的收尾与文案：两条来源各自不同，详情选择与整链确认由统一流程处理。 */
   interface FinishOptions {
     /**
      * 装完通知宿主。默认是构造时的 `onImported`；地图下载页的 Release 安装
@@ -198,68 +149,11 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
     afterImport?: () => void | Promise<void>
     /** 成功提示：Release 安装按地图名说「安装完成」，本地导入只说数量。 */
     successText?: (count: number) => string
-    /**
-     * 这次要装的地图名，只用于冲突检查的说明行（「安装「X」前…」）。
-     *
-     * 本地 ZIP 与直链没有可靠的目标名（暂存路径对用户没有意义），不传时
-     * 说明行用通用那句「以下已安装内容与本次安装的身份相同…」。
-     */
-    targetLabel?: string
+
   }
 
   /**
-   * 把各张卡的冲突表摊平成一份清单（按卸载句柄去重）。
-   *
-   * 去重必须在弹窗之前做：同一个已装目录可能在多张卡的冲突表里各出现一次
-   * （同身份的多份副本），而卸载只能执行一次 —— 第二次一定报「找不到」。
-   * 摊平后的下标就是检查行的 `index`，`execute` 据此取回要卸的那一项。
-   */
-  function collectConflicts(sets: readonly ZipLevelSet[]): InstallConflict[] {
-    const seen = new Set<string>()
-    const conflicts: InstallConflict[] = []
-    for (const set of sets) {
-      for (const conflict of set.conflicts ?? []) {
-        if (seen.has(conflict.handle)) continue
-        seen.add(conflict.handle)
-        conflicts.push(conflict)
-      }
-    }
-    return conflicts
-  }
-
-  /**
-   * 冲突前置门控：**在问「要不要装」之前**把同身份旧装项处理掉。
-   *
-   * 为什么不能等用户点了「立即安装」再卸：那个顺序里用户已经确认过一次，
-   * 卸载失败只能把详情弹窗留在原地，确认等于白点，还得再点一次。先处理冲突，
-   * 处理完自动进确认，用户只做一次决定。
-   *
-   * 返回处理后的关卡集列表；`null` 表示用户取消或仍有失败，整次导入到此为止。
-   * 成功时把冲突清空：那几项已经进了回收站，详情弹窗的冲突块不该再提示
-   * （`InstallDetailDialog` 里那块保留作兜底渲染，只是不再有数据）。
-   */
-  async function resolveConflicts(
-    sets: readonly ZipLevelSet[],
-    targetLabel?: string,
-  ): Promise<ZipLevelSet[] | null> {
-    const conflicts = collectConflicts(sets)
-    if (!conflicts.length) return [...sets]
-
-    const ready = await importCheck.run(
-      conflictCheckModel(conflicts, targetLabel ? { targetLabel } : {}),
-      async (row: InstallCheckRow) => {
-        const conflict = conflicts[row.index]
-        // 理论上取得到：模型与数组同源同序。取不到说明清单变了，按「已不在原位」处理
-        if (!conflict) throw new Error(t('levelSet.notFound'))
-        await uninstallMapConflict(conflict)
-      },
-    )
-    if (!ready) return null
-    return sets.map((set) => ({ ...set, conflicts: [] }))
-  }
-
-  /**
-   * 暂存成功之后的统一链：识别为空 → 处理冲突 → 确认 → 导入 → 重读。
+   * 暂存成功之后的统一链：识别为空 → 详情选择 → 整链确认 → 事务导入 → 重读。
    *
    * 本地文件/直链暂存与在线 Release 暂存只差「怎么拿到这份 ZIP」，拿到之后
    * 的确认、冲突处理、清理时机完全一样，所以只写这一份。
@@ -275,28 +169,15 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
       message.warning(t('levelSet.zipWithoutInfo'))
       return false
     }
-    if (blockModChanges(staged.sets)) return false
-    /*
-     * 冲突先处理再问「要不要装」：同一个地图身份已经装过时，直接导入会让
-     * 后端在回收旧目录与写入新目录之间打架，而卸载失败时详情弹窗只能留在
-     * 原地 —— 用户等于白确认一次。取消/失败都中止整次导入（暂存由调用方
-     * 的 finally 清掉）。
-     */
-    const sets = await resolveConflicts(staged.sets, options.targetLabel)
-    if (!sets) return false
-    if (!(await askApproval(staged.path, sets, staged.sets))) return false
-    if (blockModChanges(sets)) return false
-    /*
-     * 用户表态后先收起弹窗再导入：写盘期间进度由页面按钮转圈，弹窗留着
-     * 会一直挂着「取消」按钮，看着像还能反悔。
-     */
+    const sets = staged.sets
+    if (!(await askApproval(staged.path, sets))) return false
     closePreview()
-    const selected = sets.map((set) => set.dir_name)
-    const result = await api.importLevelSets(staged.path, selected, staged.origin)
-    // 写盘结束：后面还有依赖快照与重读，进度不该停在最后一张上
+    const result = await changes.run({ roots: [], map_import: {
+      zip_path: staged.path, selected: sets.map(set => set.dir_name), origin: staged.origin,
+    } })
     zipProgress.value = null
-    message.success(options.successText?.(result.installed.length)
-      ?? t('levelSet.imported', { count: result.installed.length }))
+    if (!result) return false
+    message.success(options.successText?.(sets.length) ?? t('levelSet.imported', { count: sets.length }))
     await afterImport?.()
     return true
   }
@@ -397,10 +278,7 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
       // 下载 + 识别结束：确认弹窗才是接下来的主角
       zipProgress.value = null
       if (staged.staged) stagedFile = staged.path
-      return await finishStaged(staged, {
-        ...options,
-        targetLabel: options.targetLabel ?? releaseLabel(mapId),
-      })
+      return await finishStaged(staged, options)
     } catch (reason) {
       failDownloadTask(token, reason)
       message.error(backendMessageOf(reason))
@@ -415,6 +293,6 @@ export function useLevelSetImport(onImported?: () => void | Promise<void>) {
 
   return {
     importing, importSource, installRelease, previewOpen, detail, confirmImport, discardImport,
-    importCheck, zipProgress, zipProgressText,
+    zipProgress, zipProgressText,
   }
 }

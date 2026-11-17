@@ -424,11 +424,13 @@ impl ConfigService {
                      * 与「源文档重新声明了这个仓库」无关。
                      */
                     let cached_releases = std::mem::take(&mut existing.cached_releases);
+                    let cached_releases_complete = existing.cached_releases_complete;
                     let metadata = std::mem::take(&mut existing.release_prerelease_metadata);
                     let releases_cached_at = existing.releases_cached_at;
                     let last_error = existing.last_error.clone();
                     *existing = mod_repository_from_export(&item, id, builtin);
                     existing.cached_releases = cached_releases;
+                    existing.cached_releases_complete = cached_releases_complete;
                     // A source re-declaration cannot overwrite locally fetched
                     // platform metadata with an older imported snapshot.
                     existing.release_prerelease_metadata.extend(metadata);

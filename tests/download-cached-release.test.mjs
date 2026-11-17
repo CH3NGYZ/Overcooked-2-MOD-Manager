@@ -20,12 +20,12 @@ registerHooks({
         globalThis.__cachedDownload.dialogs.push(options)
         options.onPositiveClick()
       }})`)
+    if (url.endsWith('/src/modChanges/store.ts')) return fixture(`export const useModChanges=()=>({run:async request=>{globalThis.__cachedDownload.plans.push(request);return {ok:true,message:''}}})`)
     if (url.endsWith('/src/services/tauri.ts')) return fixture(`
       export const watchLevelSetZipProgress = async () => () => {}
       export const api = new Proxy({}, {get: (_, key) => (...args) => {
         const state = globalThis.__cachedDownload
         state.calls.push([key, ...args])
-        if (key === 'installModRepository') return state.install(...args)
         if (key === 'stageMapRelease') return state.stage(...args)
         throw new Error('Unexpected API: ' + key)
       }})`)
@@ -63,8 +63,7 @@ const map = (overrides = {}) => ({
 })
 function reset() {
   globalThis.__cachedDownload = {
-    calls: [], errors: [], dialogs: [], maps: [],
-    install: async () => ({ ok: true, preview: { preview_id: 'preview' } }),
+    calls: [], plans: [], errors: [], dialogs: [], maps: [],
     stage: async () => ({ staged: false, path: 'fixture.zip', sets: [] }),
   }
   downloadTaskState.running = null
@@ -92,24 +91,6 @@ test('unset Rust Option values select the latest snapshot instead of a null-vers
   assert.equal(cachedInstallRelease(releases, null, ''), undefined)
 })
 
-test('MOD refreshed public-config JSON with a null pin reaches download without refreshing Release API', async () => {
-  const state = reset()
-  // ModRepositoryConfig serializes None without skip_serializing_if as null.
-  const source = JSON.parse(JSON.stringify(repo({
-    pinned_version: null,
-    cached_releases: [release('v2.0'), release('custom-tag', { version: null })],
-  })))
-  const prepared = [], previews = []
-  const flow = useModRepositoryPreview(value => previews.push(value), {
-    prepareInstall: async (_, tag) => { prepared.push(tag); return true },
-  })
-  await flow.previewModRepository(source)
-  assert.deepEqual(prepared, ['v2.0'])
-  assert.deepEqual(state.calls, [['installModRepository', 'mod', 'v2.0', true, undefined]])
-  assert.deepEqual(state.errors, [])
-  assert.equal(previews.length, 1)
-})
-
 test('MOD empty/missing snapshots stop before dialogs, dependency handling, busy state or IPC', async () => {
   for (const [source, tag] of [
     [repo({ cached_releases: [] }), undefined],
@@ -118,8 +99,7 @@ test('MOD empty/missing snapshots stop before dialogs, dependency handling, busy
   ]) {
     const state = reset()
     let sideEffects = 0
-    const flow = useModRepositoryPreview(() => { sideEffects++ }, {
-      prepareInstall: async () => { sideEffects++; return true },
+    const flow = useModRepositoryPreview({
       onBusyChange: () => { sideEffects++ },
     })
     await flow.previewModRepository(source, tag)
@@ -129,53 +109,6 @@ test('MOD empty/missing snapshots stop before dialogs, dependency handling, busy
     assert.deepEqual(state.errors, ['source.noInstallableRelease'])
     assert.equal(downloadTaskState.running, null)
   }
-})
-
-test('MOD dependency check and download freeze the selected cached tag even when the list changes', async () => {
-  const state = reset()
-  const source = repo()
-  const prepared = [], previews = []
-  const flow = useModRepositoryPreview(value => previews.push(value), {
-    prepareInstall: async (_, tag) => {
-      prepared.push(tag)
-      source.cached_releases = [release('v3.0')]
-      return true
-    },
-  })
-  await flow.previewModRepository(source)
-  assert.deepEqual(prepared, ['v2.0'])
-  assert.deepEqual(state.calls, [['installModRepository', 'mod', 'v2.0', true, undefined]])
-  assert.equal(previews.length, 1)
-})
-
-test('MOD explicit asset/version and retry keep the same snapshot without an API refresh', async () => {
-  const state = reset()
-  const source = repo({ cached_releases: [release('v2.0'), release('v1.0')] })
-  state.install = async () => { throw new Error('download failed') }
-  const flow = useModRepositoryPreview(() => {})
-  await flow.previewModRepository(source, 'v1.0', 'chosen.zip')
-  const retry = downloadTaskState.failure.retry
-  source.cached_releases = [release('v3.0')]
-  state.install = async () => ({ ok: true, preview: { preview_id: 'retry' } })
-  await retry()
-  assert.deepEqual(state.calls, Array(2).fill(['installModRepository', 'mod', 'v1.0', true, 'chosen.zip']))
-})
-
-test('MOD pin uses its cached version for both pre-release confirmation and the download', async () => {
-  const state = reset()
-  const source = repo({ pinned_version: '1.0', cached_releases: [release('v2.0'), release('v1.0', { prerelease: true })] })
-  await useModRepositoryPreview(() => {}).previewModRepository(source)
-  assert.equal(state.dialogs.length, 1)
-  assert.equal(state.calls[0][2], 'v1.0')
-})
-
-test('repository-file mode does not require a release snapshot', async () => {
-  const state = reset()
-  await useModRepositoryPreview(() => {}).previewModRepository(repo({
-    download_mode: 'repository_file', cached_releases: [], pinned_version: 'missing',
-  }))
-  assert.deepEqual(state.calls, [['installModRepository', 'mod', undefined, true, undefined]])
-  assert.deepEqual(state.errors, [])
 })
 
 test('map empty/missing selected snapshots stop before starting a download or calling IPC', async () => {
@@ -224,22 +157,37 @@ test('map retry keeps its version when the cached latest changes, and refuses a 
   assert.equal(state.errors.at(-1), 'mapSource.releaseMissing')
 })
 
-test('both map pages reject a missing cached version before any dependency-plan side effects', () => {
-  for (const name of ['MapsOnlineView', 'LevelsView']) {
-    const source = readFileSync(new URL(`../src/views/${name}.vue`, import.meta.url), 'utf8')
-    const start = source.indexOf(name === 'MapsOnlineView' ? 'async function install(' : 'async function runCardAction(')
-    const body = source.slice(start, source.indexOf('\n}', start))
-    assert.ok(body.indexOf('cachedInstallRelease(') >= 0)
-    assert.ok(body.indexOf("message.error(t('mapSource.releaseMissing'))") < body.indexOf('planGate.run('))
-    assert.ok(body.indexOf('const targetTag = release.tag_name') < body.indexOf('planGate.run('))
+test('MOD selection freezes the exact cached root version and asset in one batch request', async () => {
+  for (const [source, tag, assetName, expected] of [
+    [repo({pinned_version:null}), undefined, undefined, 'release:mod:v2.0'],
+    [repo({pinned_version:'1.0',cached_releases:[release('v2.0'),release('v1.0',{prerelease:true})]}),undefined,undefined,'release:mod:v1.0'],
+    [repo({cached_releases:[release('v2.0'),release('v1.0')]}),'v1.0','chosen.zip','release:mod:v1.0'],
+    [repo({download_mode:'repository_file',cached_releases:[]}),undefined,undefined,'raw:mod'],
+  ]) {
+    const state=reset();let applied=0
+    await useModRepositoryPreview({onApplied:()=>{applied++}})
+      .previewModRepository(source,tag,assetName)
+    assert.deepEqual(state.plans,[{roots:[{node_id:'mod:mod',candidate_id:expected,enabled:true,...(assetName?{asset_name:assetName}:{})}]}])
+    assert.deepEqual(state.calls,[],'version planning and execution are handled by the backend batch')
+    assert.equal(applied,1);assert.deepEqual(state.dialogs,[])
   }
 })
 
-test('dependency download requires its planned release before starting a task and keeps the planned tag', () => {
-  const source = readFileSync(new URL('../src/components/InstallPlanDialog.vue', import.meta.url), 'utf8')
-  const body = source.slice(source.indexOf('async function installAt('), source.indexOf('</script>'))
-  assert.match(body, /const tag = status\?\.release\?\.tag_name/)
-  assert.ok(body.indexOf("throw new Error(t('source.noInstallableRelease'))") < body.indexOf('beginDownloadTask('))
-  assert.match(body, /installModRepository\(target\.id, tag, true\)/)
-  assert.doesNotMatch(body, /refresh[A-Z]\w*\(/)
+test('both map pages reject missing cached versions before staging their exact selected tag', () => {
+  for (const name of ['MapsOnlineView','LevelsView']) {
+    const source=readFileSync(new URL(`../src/views/${name}.vue`,import.meta.url),'utf8')
+    const start=source.indexOf(name==='MapsOnlineView'?'async function install(':'async function runCardAction(')
+    const body=source.slice(start,source.indexOf('\n}',start))
+    assert.ok(body.indexOf('cachedInstallRelease(')>=0)
+    assert.ok(body.indexOf("message.error(t('mapSource.releaseMissing'))")<body.indexOf('installRelease('))
+    assert.ok(body.indexOf('const targetTag = release.tag_name')<body.indexOf('installRelease('))
+  }
+})
+
+test('the shared workflow commits one planId and the UI never executes individual action rows', () => {
+  const workflow=readFileSync(new URL('../src/modChanges/workflow.ts',import.meta.url),'utf8')
+  const ui=readFileSync(new URL('../src/modChanges/ChangePlanDialog.vue',import.meta.url),'utf8')
+  assert.equal([...workflow.matchAll(/backend\.execute\(/g)].length,1)
+  assert.match(workflow,/backend\.execute\(plan\.plan_id\)/)
+  assert.doesNotMatch(ui,/installModRepository|confirmModInstall|uninstallLocalMod|importLevelSets/)
 })

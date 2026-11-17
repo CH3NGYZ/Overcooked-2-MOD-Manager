@@ -320,6 +320,7 @@ async fn live_index_changes_replace_children_and_failure_keeps_trusted_snapshots
             .release_prerelease_metadata
             .insert("v1.0.0-beta".into(), false);
         loaded.repositories[0].releases_cached_at = Some(123);
+        loaded.repositories[0].cached_releases_complete = true;
         state.config.save(&loaded).unwrap();
     }
     let trusted = state.config.load().unwrap();
@@ -392,6 +393,7 @@ async fn live_index_changes_replace_children_and_failure_keeps_trusted_snapshots
         Some(&false)
     );
     assert_eq!(restored.repositories[0].releases_cached_at, Some(123));
+    assert!(restored.repositories[0].cached_releases_complete);
     server.join().unwrap();
     fs::remove_dir_all(state.config.config_path().parent().unwrap()).unwrap();
 }

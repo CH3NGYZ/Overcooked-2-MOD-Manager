@@ -62,6 +62,8 @@ pub struct AssetRule {
 /// 按源文档重建仓库时再取回，避免 5 分钟缓存被「重建」这件事本身作废。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StagedReleaseCache {
+    #[serde(default)]
+    pub cached_releases_complete: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository_key: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { requestToggleChanges } from '../../modChanges/requests'
 /**
  * DIYLevel 框架管理面板（放在设置页右侧抽屉里，与 BepInExPanel 同形态）。
  *
@@ -115,7 +116,10 @@ async function toggle(value: boolean) {
   switching.value = true
   let failed = false
   try {
-    const result = await api.setDiyLevelEnabled(value)
+    const target = useDashboard().diyLevelTarget.value
+    if (!target) throw new Error('modChanges.targetChanged')
+    const result = await requestToggleChanges({ dllFiles: [target], enabled: value })
+    if (!result) return
     result.ok
       ? message.success(translateBackendMessage(result.message))
       : message.error(translateBackendMessage(result.message))

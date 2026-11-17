@@ -23,19 +23,6 @@ pub(crate) struct PluginMetadata {
     pub(crate) version: Option<String>,
 }
 
-/// 从磁盘上的 DLL 读取 BepInPlugin 名称，读不出返回 None。
-///
-/// 安装完成提示要显示「用户认识的名字」：仓库安装用仓库名，
-/// 本地安装就用 DLL 里的插件名，而不是 `XXX.dll` 这样的文件名。
-pub(crate) fn plugin_name_from_file(path: &Path) -> Option<String> {
-    let bytes = fs::read(path).ok()?;
-    let plugin = parse_bepin_plugin_metadata(&bytes)?;
-    plugin
-        .name
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
 /// 文件名去掉扩展名，作为兜底显示名。
 pub(crate) fn file_stem_name(file_name: &str) -> String {
     Path::new(file_name)

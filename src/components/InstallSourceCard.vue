@@ -2,7 +2,7 @@
 /**
  * 安装来源卡片 —— 「本地文件 / 在线直链」两种取源方式只保留这一份实现。
  *
- * 与 `ModInstallDialog`（只展示预览）分工明确：本组件只负责**取到来源**并
+ * 本组件只负责**取到来源**并
  * `emit('select')`；拿到来源之后的事（MOD 走 `analyze_mod_source` 出预览、
  * 地图走 `stage_map_source` 出关卡集）由宿主决定，所以这里**不 import `api`**，
  * 连文件选择器都由宿主以 `pickFile` 传进来。

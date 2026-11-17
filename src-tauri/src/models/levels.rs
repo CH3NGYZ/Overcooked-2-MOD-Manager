@@ -181,7 +181,7 @@ pub struct LevelSetFlattenReport {
 /// 本地扫描得到的随包插件（集内 DLL 或表层包登记 DLL）。
 ///
 /// 与 [`ZipLevelSetPlugin`] 对应导入后的展示；集内 DLL 的 `enabled` 取文件后缀，
-/// 当前扫描器对存在的登记 DLL 填 `true`。它不是地图自身的启停状态。
+/// 登记 DLL 同样按实际文件的 `.disabled` 后缀读取。它不是地图自身的启停状态。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LevelSetPlugin {
     pub file_name: String,

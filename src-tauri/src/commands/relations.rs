@@ -10,15 +10,20 @@ use tauri::State;
 /// 依赖声明只存在于仓库源文档里，源下线/文件被删之后本地就查不到了；
 /// 所以安装时固化一份，刷新仓库后再按线上声明刷新 —— 在线与本地不一致时以在线为准。
 ///
-/// 只读本地文件、不扫描游戏目录、不发网络请求，所以只取短的 `operation` 锁。
+/// 在 `operation` 锁内先恢复未完成批次，再读写本地清单；不发网络请求。
 #[tauri::command]
 pub fn sync_dependency_snapshots(
     state: State<'_, AppState>,
 ) -> Result<DependencySyncResult, String> {
+    sync_dependency_snapshots_in(&state)
+}
+
+fn sync_dependency_snapshots_in(state: &AppState) -> Result<DependencySyncResult, String> {
     let _guard = state
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(state)?;
     let config = state.config.load_or_default();
     let manifest_dir = state.config.manifests_dir();
 
@@ -143,3 +148,7 @@ pub fn sync_dependency_snapshots(
         maps_updated,
     })
 }
+
+#[cfg(test)]
+#[path = "relations/recovery_tests.rs"]
+mod recovery_tests;

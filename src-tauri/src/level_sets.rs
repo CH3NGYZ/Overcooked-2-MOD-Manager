@@ -24,27 +24,33 @@ pub(crate) mod view;
 
 pub use conflicts::find_install_conflicts_with_workers;
 pub use flatten::flatten_level_sets;
+pub(crate) use identity::allocate_dir_name;
 pub use identity::level_set_identity_matches;
 pub use info_cache::clear_info_cache;
 pub(crate) use info_cache::read_info_metadata;
+#[cfg(test)]
+pub(crate) use info_cache::seed_info_metadata;
 pub use install::install_parsed_sets;
 pub use installed_versions::installed_mapset_version;
 pub use operations::locate_level_set_directory;
 pub use operations::remove_level_set;
-pub use operations::set_all_level_sets_enabled;
+#[cfg(test)]
 pub use operations::set_level_set_enabled;
 pub use paths::LevelSetRoots;
 pub use paths::disabled_root;
 pub(crate) use paths::levels_root;
 pub(crate) use paths::migrate_legacy_disabled_root;
-#[cfg(test)]
-pub use plugin_registry::LEVEL_SET_PLUGIN_REGISTRY;
+pub(crate) use plugin_registry::LEVEL_SET_PLUGIN_REGISTRY;
+pub(crate) use plugin_registry::RegisteredLevelSetPlugin;
+pub(crate) use plugin_registry::read_registered_plugins;
 pub use plugin_registry::registered_plugin_paths;
 pub use requirements::runtime_relation;
 pub use scan::LevelSetOnDisk;
 #[cfg(test)]
 pub use scan::scan_level_sets;
 pub use scan::scan_level_sets_with_progress;
+#[cfg(test)]
+pub(crate) use zip_inspect::ImportedLevelSet;
 pub use zip_inspect::classify_zip;
 #[cfg(test)]
 pub use zip_inspect::inspect_zip;

@@ -95,3 +95,60 @@ fn scan_progress_counts_each_level_set_exactly_once() {
 
     std::fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn registered_external_disabled_plugin_keeps_actual_switch_on_disabled_map() {
+    let (root, game, _) = workspace("external-disabled-state");
+    // The scanner resolves game roots before reading info; seed that same path.
+    let game = std::fs::canonicalize(game).unwrap();
+    let manifests = root.join("manifests");
+    let set_dir = disabled_root(&game).join("Off");
+    std::fs::create_dir_all(&set_dir).unwrap();
+    let info = set_dir.join("info");
+    std::fs::write(&info, b"cached metadata").unwrap();
+    let metadata = LevelSetMetadata {
+        name: "Off".into(),
+        author: "Tester".into(),
+        ..Default::default()
+    };
+    crate::level_sets::seed_info_metadata(&info, metadata.clone());
+    let relative = "BepInEx/plugins/External/Fix.dll";
+    let active = game.join(relative);
+    std::fs::create_dir_all(active.parent().unwrap()).unwrap();
+    let disabled = game.join(crate::mods::disabled_dll_file(relative));
+    std::fs::write(
+        &disabled,
+        crate::mods::plugin_blob("test-external", "External", "1.0"),
+    )
+    .unwrap();
+    write_registered_plugins(
+        &manifests,
+        &[RegisteredLevelSetPlugin {
+            dll: relative.into(),
+            owner: LevelSetPluginOwner {
+                name: metadata.name,
+                name_zh: String::new(),
+                author: metadata.author,
+            },
+        }],
+    )
+    .unwrap();
+    let roots = crate::level_sets::paths::test_roots(&game);
+    let sets = scan_level_sets_with_progress(&roots, Some(&manifests), 1, &|_, _, _| {});
+    assert_eq!(sets.len(), 1);
+    assert!(!sets[0].enabled);
+    assert_eq!(sets[0].plugins.len(), 1);
+    assert!(!sets[0].plugins[0].enabled);
+    assert_eq!(
+        sets[0].plugins[0].info.guid.as_deref(),
+        Some("test-external")
+    );
+    std::fs::rename(&disabled, &active).unwrap();
+    let sets = scan_level_sets_with_progress(&roots, Some(&manifests), 1, &|_, _, _| {});
+    assert!(!sets[0].enabled);
+    assert!(
+        sets[0].plugins[0].enabled,
+        "外置DLL不继承地图目录的禁用状态"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}

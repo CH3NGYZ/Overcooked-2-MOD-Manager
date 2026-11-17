@@ -1,129 +1,100 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {
-  dependencyRowFromRelation, installedModDependencyRows,
-  mapDependencyRows, levelSetDependencyRows,
-} from '../src/dependencyRows.ts'
+import { dependencyRowFromRelation, dependencyRowsFor, installedModDependencyRows,
+  mapDependencyRows, levelSetDependencyRows, mergedModDependencyRows } from '../src/dependencyRows.ts'
+import { relationsForSubject } from '../src/modChanges/evaluationProjection.ts'
+import { resolveRelation } from '../src/modRelations.ts'
+import { evaluationSnapshot, clearEvaluation } from './helpers/mod-change-evaluations.mjs'
 
-const release = (tag, extra = {}) => ({
-  tag_name: tag, version: tag, name: tag, body: '', assets: [], draft: false, prerelease: false, ...extra,
-})
-const source = (guid, releases, extra = {}) => ({
-  id: guid, name: guid, plugin_guid: guid, download_mode: 'release',
-  cached_releases: releases, ...extra,
-})
-const installed = (guid, version, extra = {}) => ({
-  guid, version, name: `${guid}.dll`, dll_file: `${guid}.dll`, enabled: true, ...extra,
-})
-const options = (guid, current, releases, extra = {}) => ({
-  mods: [installed(guid, current)], repositories: [source(guid, releases)],
-  jumpToRepository: true, ...extra,
-})
+const relation = { kind: 'requires', guid: 'dev.runtime', version: '>=3.10.2,<4' }
+const owner = { guid: 'dev.owner', name: 'Owner', dll_file: 'Owner.dll', enabled: true, version: '1.0', relations: [relation] }
+const target = { guid: 'dev.runtime', name: 'Runtime', dll_file: 'Runtime.dll', enabled: true, version: '4.0' }
+const online = { id: 'repo', relations: [relation], latest_tag: 'v1', name: 'Online' }
+const map = { id: 'map', relations: [relation], latest_tag: 'v1', name: 'Map', level_set_name: 'Map', author: 'A' }
+const localMap = { dir_name: 'Map', name: 'Map', author: 'A', relations: [relation] }
+const options = { mods: [owner, target], repositories: [{ id: 'runtime', name: 'Runtime', plugin_guid: relation.guid,
+  cached_releases: [{ tag_name: 'v3.10.2' }, { tag_name: 'v4.0' }] }], jumpToRepository: true }
 
-test('DIYLevel 0.11 exceeds an exclusive upper bound: downgrade to the matching cached release', () => {
-  const row = dependencyRowFromRelation(
-    { guid: 'dev.diy', version: '>=0.10.0,<0.11' },
-    options('dev.diy', '0.11', [release('v0.11.0'), release('v0.10.6'), release('v0.10.0')]),
-  )
-  assert.equal(row.status, 'tools.downgradable')
-  assert.equal(row.tone, 'moderate')
-  assert.equal(row.jump.id, 'dev.diy')
-  assert.equal(row.jump.targetVersion, 'v0.10.6')
-  assert.deepEqual(row.jump.versionChange, { direction: 'downgrade', installedVersion: '0.11', targetVersion: 'v0.10.6' })
-})
-
-test('Web Runtime 4.0 requires a downgrade to 3.10.2, not an update to its newest release', () => {
-  const row = dependencyRowFromRelation(
-    { guid: 'dev.web', version: '>=3.10.2,<4' },
-    options('dev.web', '4.0', [release('v4.0.0'), release('v3.10.2')]),
-  )
-  assert.equal(row.status, 'tools.downgradable')
-  assert.deepEqual(row.jump.versionChange, { direction: 'downgrade', installedVersion: '4.0', targetVersion: 'v3.10.2' })
-})
-
-test('downgrade uses the full tag and established prerelease matching, not projected version metadata', () => {
-  const row = dependencyRowFromRelation(
-    { guid: 'dev.diy', version: '>=0.10.0,<0.11', prerelease: true },
-    options('dev.diy', '0.11.0', [
-      release('v0.10.9'),
-      release('v0.10.8-beta.12', { version: '0.10.8', prerelease: true }),
-    ]),
-  )
-  assert.equal(row.status, 'tools.downgradable')
-  assert.equal(row.jump.versionChange.targetVersion, 'v0.10.8-beta.12')
-})
-
-test('downgrade direction follows numeric beta ordering; an API prerelease flag alone is not a lower version', () => {
-  const beta = dependencyRowFromRelation(
-    { guid: 'dev.fw', version: '<=2.0.0-beta.2' },
-    options('dev.fw', '2.0.0-beta.10', [release('v2.0.0-beta.2')]),
-  )
-  assert.equal(beta.status, 'tools.downgradable')
-  assert.deepEqual(beta.jump.versionChange, { direction: 'downgrade', installedVersion: '2.0.0-beta.10', targetVersion: 'v2.0.0-beta.2' })
-
-  const sameNumber = dependencyRowFromRelation(
-    { guid: 'dev.fw', version: '>=2.0.0', prerelease: true },
-    options('dev.fw', '2.0.0', [release('v2.0.0', { apiPrerelease: true })], {
-      mods: [installed('dev.fw', '2.0.0', { prerelease: false })],
-    }),
-  )
-  assert.equal(sameNumber.status, 'tools.updatable')
-  assert.equal(sameNumber.jump.versionChange, undefined)
-})
-
-test('a candidate without a tag keeps the actual release version as its downgrade target', () => {
-  const row = dependencyRowFromRelation(
-    { guid: 'dev.web', version: '>=3.10.2,<4' },
-    options('dev.web', '4.0', [release('', { version: '3.10.2' })]),
-  )
-  assert.equal(row.status, 'tools.downgradable')
-  assert.equal(row.jump.versionChange.targetVersion, '3.10.2')
-  assert.equal(row.jump.targetVersion, '', 'display version must not invent an installable tag')
-})
-
-test('a disabled installed mod still needs a downgrade; the row does not pretend it is absent', () => {
-  const row = dependencyRowFromRelation(
-    { guid: 'dev.web', version: '<4' },
-    options('dev.web', '4.0', [release('v3.10.2')], { mods: [installed('dev.web', '4.0', { enabled: false })] }),
-  )
-  assert.equal(row.status, 'tools.downgradable')
-  assert.equal(row.jump.versionChange.installedVersion, '4.0')
-})
-
-test('upgrade, absent, satisfied, unknown-version and missing-source rows do not carry downgrade confirmations', () => {
-  const relation = { guid: 'dev.fw', version: '>=2.0,<3' }
-  for (const [current, releases, extra, expected] of [
-    ['1.0', [release('v2.5')], {}, 'tools.updatable'],
-    [null, [release('v2.5')], { mods: [] }, 'tools.installable'],
-    ['2.5', [release('v2.5')], {}, 'tools.satisfied'],
-    ['unknown', [release('v2.5')], {}, 'tools.updatable'],
-    ['3.0', [release('v4.0')], {}, 'modsOnline.missingDep'],
-    ['3.0', [release('v2.5', { draft: true })], {}, 'modsOnline.missingDep'],
-  ]) {
-    const row = dependencyRowFromRelation(relation, options('dev.fw', current, releases, extra))
-    assert.equal(row.status, expected, `${current}: status`)
-    assert.notEqual(row.jump?.versionChange?.direction, 'downgrade', `${current}: no downgrade prompt`)
-    assert.equal(row.jump?.versionChange?.direction, current === '1.0' ? 'upgrade' : undefined)
-  }
-})
-
-test('displaying a downgrade does not enable jumping inside non-navigable installation previews', () => {
-  const row = dependencyRowFromRelation(
-    { guid: 'dev.web', version: '<4' },
-    options('dev.web', '4.0', [release('v3.10.2')], { jumpToRepository: false }),
-  )
-  assert.equal(row.status, 'tools.downgradable')
+test('absent backend evaluation remains unknown even when local data appears to satisfy a range', () => {
+  clearEvaluation()
+  const row = dependencyRowFromRelation(relation, { ...options, mods: [{ ...target, version: '3.10.2' }] })
+  assert.equal(row.status, 'modChanges.relation.unknown')
   assert.equal(row.jump, undefined)
 })
 
-test('map download, map management and installed MOD dependencies share downgrade target metadata', () => {
-  const relation = { guid: 'dev.diy', version: '>=0.10.0,<0.11' }
-  const onlineMap = { name: 'Map A', level_set_name: 'Map A', author: 'Author', relations: [relation] }
-  const localMap = { name: 'Map A', author: 'Author', version: '1.0', relations: [] }
-  const localOwner = installed('dev.owner', '1.0', { relations: [relation] })
-  const opts = options('dev.diy', '0.11', [release('v0.11'), release('v0.10.6')])
-  const expected = dependencyRowFromRelation(relation, opts)
-  assert.deepEqual(mapDependencyRows(onlineMap, opts), [expected])
-  assert.deepEqual(levelSetDependencyRows(localMap, { ...opts, maps: [onlineMap] }), [expected])
-  assert.deepEqual(installedModDependencyRows(localOwner, opts), [expected])
+for (const [state, text] of [['missing', 'modsOnline.missingDep'], ['disabled', 'modChanges.relation.disabled'],
+  ['version_mismatch', 'modChanges.relation.versionMismatch'], ['unknown', 'modChanges.relation.unknown'], ['satisfied', 'tools.satisfied']]) {
+  test(`backend ${state} is projected without choosing a release or inventing a downgrade`, () => {
+    evaluationSnapshot([{ id: 'mod:owner', dlls: ['Owner.dll'], rows: [{ relation, state, targets: ['mod:runtime'] }] }],
+      [{ node_id: 'mod:runtime', dll_files: ['Runtime.dll'] }])
+    const row = installedModDependencyRows(owner, options)[0]
+    assert.equal(row.status, text)
+    assert.equal(row.jump?.targetVersion, undefined)
+    assert.equal(row.jump?.versionChange, undefined)
+    assert.deepEqual(row.jump?.repair, ['satisfied', 'unknown'].includes(state) ? undefined : { node_id: 'mod:owner', enabled: true })
+    clearEvaluation()
+  })
+}
+
+test('all installed map and MOD rows use the same backend version-mismatch state', () => {
+  const rows = [{ relation, state: 'version_mismatch' }]
+  evaluationSnapshot([{ id: 'mod:owner', dlls: ['Owner.dll'], rows }, { id: 'map:Map', kind: 'map', dir: 'Map', rows },
+    { id: 'subject:map:v1', kind: 'map', map: 'map', tag: 'v1', rows }])
+  for (const result of [installedModDependencyRows(owner, options), levelSetDependencyRows(localMap, { ...options, maps: [map] }),
+    mapDependencyRows(map, options)]) {
+    assert.equal(result[0].status, 'modChanges.relation.versionMismatch')
+    assert.equal(result[0].jump?.versionChange, undefined)
+  }
+  assert.equal(mapDependencyRows(map, options)[0].jump, undefined, 'online map versions are fixed in the first solver release')
+  clearEvaluation()
+})
+
+test('an exact online tag never borrows the installed owner evaluation', () => {
+  evaluationSnapshot([{ id: 'mod:repo', repo: 'repo', rows: [{ relation, state: 'satisfied' }] },
+    { id: 'subject:repo:v1', repo: 'repo', tag: 'v1', candidates: [{ id: 'release:repo:v1', tag: 'v1' }],
+      rows: [{ relation, state: 'missing' }] }])
+  const old = dependencyRowsFor([], { ...options, ownerRepository: online, version: 'v1' })[0]
+  assert.equal(old.status, 'modsOnline.missingDep')
+  assert.deepEqual(old.jump.repair, { node_id: 'mod:repo', candidate_id: 'release:repo:v1', enabled: true })
+  const absent = dependencyRowsFor([relation], { ...options, ownerRepository: online, version: 'v0' })[0]
+  assert.equal(absent.status, 'modChanges.relation.unknown')
+  clearEvaluation()
+})
+
+test('known empty backend rows replace stale source declarations and optional rows stay hidden', () => {
+  evaluationSnapshot([{ id: 'mod:repo', repo: 'repo', rows: [] }])
+  assert.deepEqual(dependencyRowsFor([relation], { ownerRepository: online }), [])
+  evaluationSnapshot([{ id: 'mod:repo', repo: 'repo', rows: [{ relation: { ...relation, optional: true }, state: 'optional' }] }])
+  assert.deepEqual(dependencyRowsFor([relation], { ownerRepository: online }), [])
+  clearEvaluation()
+})
+
+test('disabled owners display backend readiness while enabled owners display runtime', () => {
+  const snapshot = evaluationSnapshot([{ id: 'mod:owner', dlls: ['Owner.dll'], enabled: false,
+    rows: [{ relation, state: 'disabled' }] }])
+  snapshot.evaluations[0].runtime = [{ relation, state: 'satisfied' }]
+  assert.equal(installedModDependencyRows(owner, options)[0].status, 'modChanges.relation.disabled')
+  clearEvaluation()
+})
+
+test('duplicate physical owner matches are unknown and conflict targets follow physical inventory ownership', () => {
+  const conflict = { ...relation, kind: 'conflicts' }
+  evaluationSnapshot([{ id: 'mod:owner', repo: 'owner', dlls: ['Owner.dll'], rows: [{ relation: conflict, state: 'conflict', targets: ['mod:real'] }] }],
+    [{ node_id: 'mod:real', dll_files: ['Real.dll'] }])
+  const duplicate = { ...target, dll_file: 'Other.dll' }, real = { ...target, dll_file: 'Real.dll' }
+  assert.equal(resolveRelation(conflict, [duplicate, real], [], { id: 'owner' }).installedMod, real)
+  const snapshot = evaluationSnapshot([{ id: 'mod:a', dlls: ['Owner.dll'] }, { id: 'mod:b', dlls: ['Owner.dll'] }])
+  assert.equal(relationsForSubject({ dll_file: 'Owner.dll' }), undefined)
+  assert.equal(snapshot.nodes.length, 2)
+  clearEvaluation()
+})
+
+test('package rows retain distinct member requirements without applying a frontend strictest-range rule', () => {
+  const member2 = { ...owner, dll_file: 'Other.dll', relations: [{ ...relation, version: '<3' }] }
+  evaluationSnapshot([{ id: 'mod:owner', dlls: ['Owner.dll'], rows: [{ relation, state: 'version_mismatch' }] },
+    { id: 'mod:other', dlls: ['Other.dll'], rows: [{ relation: member2.relations[0], state: 'missing' }] }])
+  const rows = mergedModDependencyRows([owner, member2], options)
+  assert.equal(rows.length, 2)
+  assert.notEqual(rows[0].key, rows[1].key)
+  clearEvaluation()
 })

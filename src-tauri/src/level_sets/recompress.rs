@@ -77,6 +77,25 @@ pub(crate) fn has_pending_work() -> bool {
             .is_empty()
 }
 
+/// The caller holds the game operation lock, excluding new failed replacements.
+/// Normal conversion work is cancelled by scan leases and does not block a plan.
+pub(crate) fn has_pending_recovery(game_root: &Path) -> bool {
+    let root = game_root.to_string_lossy().replace('\\', "/");
+    #[cfg(windows)]
+    let root = root.to_lowercase();
+    let prefix = format!("{}/", root.trim_end_matches('/'));
+    recovery()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .iter()
+        .any(|item| {
+            let source = item.source.to_string_lossy().replace('\\', "/");
+            #[cfg(windows)]
+            let source = source.to_lowercase();
+            source == root || source.starts_with(&prefix)
+        })
+}
+
 /// Called on a blocking exit worker, never on the window event thread.
 pub(crate) fn shutdown() -> Result<(), String> {
     let (lock, wake) = lifecycle();
@@ -324,6 +343,38 @@ static RECOVERY: OnceLock<Mutex<Vec<Recovery>>> = OnceLock::new();
 fn recovery() -> &'static Mutex<Vec<Recovery>> {
     RECOVERY.get_or_init(Default::default)
 }
+
+#[cfg(test)]
+pub(crate) struct PendingRecoveryFixture {
+    source: PathBuf,
+}
+
+#[cfg(test)]
+impl PendingRecoveryFixture {
+    pub(crate) fn new(source: PathBuf, backup: PathBuf) -> Self {
+        let hash = hash(&backup).unwrap();
+        recovery()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push(Recovery {
+                source: source.clone(),
+                backup,
+                hash,
+            });
+        Self { source }
+    }
+}
+
+#[cfg(test)]
+impl Drop for PendingRecoveryFixture {
+    fn drop(&mut self) {
+        recovery()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .retain(|item| item.source != self.source);
+    }
+}
+
 fn restore(path: &Path, backup: &Path, expected: &[u8]) -> Result<(), String> {
     fs::copy(backup, path).map_err(|e| e.to_string())?;
     fs::OpenOptions::new()

@@ -19,7 +19,7 @@ mod analysis;
 pub(crate) mod commands;
 mod conflicts;
 mod model;
-mod staging;
+pub(crate) mod staging;
 
 // Keep the pre-split module paths available; Tauri registration targets the concrete command module.
 #[allow(unused_imports)]

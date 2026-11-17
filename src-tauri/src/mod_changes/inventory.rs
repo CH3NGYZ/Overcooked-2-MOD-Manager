@@ -1,0 +1,594 @@
+//! Trusted disk inventory. UI arrays never authorize a file or select its owner.
+use super::model::*;
+use crate::{app_state::AppState, archive, game, level_sets, models::*, mods};
+use serde::Serialize;
+use std::{
+    collections::{BTreeMap, HashMap},
+    hash::{Hash, Hasher},
+    path::{Path, PathBuf},
+};
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct MemberSummary {
+    pub key: String,
+    pub dll_file: String,
+    pub enabled: bool,
+    pub guid: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct NodeSummary {
+    pub node_id: String,
+    pub label: String,
+    pub kind: NodeKind,
+    pub enabled: bool,
+    pub repository_id: Option<String>,
+    pub package_id: Option<String>,
+    pub dll_files: Vec<String>,
+    pub members: Vec<MemberSummary>,
+    pub map_dir_name: Option<String>,
+    pub map_id: Option<String>,
+    pub subject_tag: Option<String>,
+    pub candidates: Vec<CandidateSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct CandidateSummary {
+    pub id: String,
+    pub tag: Option<String>,
+}
+
+#[derive(Clone)]
+pub(crate) struct NodeFiles {
+    pub summary: NodeSummary,
+    pub manifests: Vec<archive::InstallManifest>,
+    /// All paths are backend-created game-relative paths, not display paths.
+    pub map_path: Option<String>,
+    pub map_metadata: Option<crate::asset_bundle::LevelSetMetadata>,
+}
+
+#[derive(Clone)]
+pub(crate) struct TrustedInventory {
+    pub inventory: Inventory,
+    pub files: BTreeMap<String, NodeFiles>,
+    pub revision: String,
+    pub game_root: PathBuf,
+    pub level_roots: level_sets::LevelSetRoots,
+    pub config: AppConfig,
+}
+
+pub(crate) fn relative(root: &Path, path: &Path) -> Result<String, String> {
+    path.strip_prefix(root)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .map_err(|_| "archive.pathEscape".into())
+}
+
+pub(crate) fn key(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    if cfg!(windows) {
+        normalized.to_lowercase()
+    } else {
+        normalized
+    }
+}
+
+/// A cheap freshness stamp, including external edits. Content hashes are checked by
+/// the persistent transaction before writes; scanning a huge map tree never reads models.
+pub(crate) fn revision(
+    state: &AppState,
+    root: &Path,
+    config: &AppConfig,
+) -> Result<String, String> {
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_vec(config)
+        .map_err(|e| e.to_string())?
+        .hash(&mut hash);
+    root.hash(&mut hash);
+    // Reselecting/reloading the same provider still revokes old source snapshots.
+    state.config.data_selection().1.hash(&mut hash);
+    for directory in [
+        root.join("BepInEx/plugins"),
+        level_sets::disabled_root(root),
+        state.config.manifests_dir(),
+    ] {
+        if !directory.exists() {
+            continue;
+        }
+        let mut entries = Vec::new();
+        for entry in walkdir::WalkDir::new(&directory).follow_links(false) {
+            let entry = entry.map_err(|e| e.to_string())?;
+            // Windows directory enumeration may retain the parent's timestamp
+            // from before its newest child was closed. Read current metadata by
+            // path rather than hashing WalkDir's cached enumeration metadata.
+            let meta = std::fs::symlink_metadata(entry.path()).map_err(|e| e.to_string())?;
+            if meta.file_type().is_symlink() {
+                return Err("archive.pathEscape".into());
+            }
+            entries.push((entry.path().to_path_buf(), meta.len(), meta.modified().ok()));
+        }
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        entries.hash(&mut hash);
+    }
+    Ok(format!("{:016x}", hash.finish()))
+}
+
+pub(crate) fn owned(
+    relations: Vec<RepositoryRelation>,
+    guid: Option<String>,
+) -> Vec<OwnedRelation> {
+    relations
+        .into_iter()
+        .map(|relation| OwnedRelation {
+            owner_member_key: None,
+            owner_guid: guid.clone(),
+            relation,
+        })
+        .collect()
+}
+
+fn current_candidate(
+    items: &[InstalledMod],
+    repo: Option<&ModRepositoryConfig>,
+    manifests: &[archive::InstallManifest],
+    id: &str,
+    config: &AppConfig,
+) -> Candidate {
+    let tag = manifests
+        .first()
+        .map(|m| m.release_tag.clone())
+        .filter(|t| !t.is_empty())
+        .or_else(|| {
+            items
+                .first()?
+                .repository_binding
+                .as_ref()
+                .map(|b| b.tag.clone())
+        });
+    let version = items
+        .iter()
+        .find(|i| !i.is_dependency)
+        .and_then(|i| i.version.clone());
+    let mut relations = repo
+        .map(|r| {
+            owned(
+                mods::effective_relations(r, tag.as_deref().or(version.as_deref())),
+                (!r.plugin_guid.is_empty()).then(|| r.plugin_guid.clone()),
+            )
+        })
+        .unwrap_or_else(|| {
+            items
+                .iter()
+                .flat_map(|i| {
+                    i.relations.iter().cloned().map(|relation| OwnedRelation {
+                        owner_member_key: Some(key(&i.dll_file)),
+                        owner_guid: i.guid.clone(),
+                        relation,
+                    })
+                })
+                .collect()
+        });
+    let provides = items
+        .iter()
+        .map(|i| ProvidedPlugin {
+            member_key: Some(key(&i.dll_file)),
+            guid: i.guid.clone().unwrap_or_default(),
+            version: i.version.clone(),
+            prerelease: Some(i.prerelease),
+            enabled: i.enabled,
+        })
+        .collect::<Vec<_>>();
+    let mut relations_known = repo.is_some()
+        || !manifests.is_empty()
+        || items.iter().any(|item| !item.relations.is_empty());
+    for member in &provides {
+        if member.guid.is_empty()
+            || repo.is_some_and(|repo| repo.plugin_guid.eq_ignore_ascii_case(&member.guid))
+        {
+            continue;
+        }
+        // The package tag governs its primary declaration; bundled plugins retain
+        // their own actual-version declarations exactly as verified payloads do.
+        let (member_relations, known) = super::inventory_maps::member_relations(config, member);
+        relations.extend(member_relations);
+        relations_known &= known != Some(false);
+    }
+    Candidate {
+        id: format!("installed:{id}"),
+        source_id: repo.map(|r| r.id.clone()),
+        tag,
+        version,
+        provides,
+        relations,
+        relations_known,
+        installable: true,
+        raw: false,
+        verification_pending: false,
+    }
+}
+
+pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
+    let config = state.config.load_or_default();
+    let detected = game::detect_game(&config).path.ok_or("game.notFound")?;
+    let game_root = game::resolve_existing_ancestor(Path::new(&detected))?;
+    let stamp = revision(state, &game_root, &config)?;
+    let installed =
+        mods::scan_mods_with_manifests(&game_root, &config, Some(&state.config.manifests_dir()));
+    let manifests = archive::read_manifests(&state.config.manifests_dir());
+    let frameworks = mods::plugin_target::eligible(&installed, mods::plugin_target::DIYLEVEL_GUID);
+    if frameworks.len() > 1 {
+        return Err("framework.diyLevelAmbiguous".into());
+    }
+    let package = frameworks
+        .first()
+        .map(|i| mods::plugin_target::directory(&game_root, &i.dll_file, i.enabled))
+        .transpose()?;
+    let level_roots = level_sets::LevelSetRoots::new(game_root.clone(), package);
+    let mut grouped: BTreeMap<String, Vec<InstalledMod>> = BTreeMap::new();
+    for item in installed {
+        let group = item
+            .package_id
+            .clone()
+            .map(|p| format!("package:{p}"))
+            .unwrap_or_else(|| format!("dll:{}", key(&item.dll_file)));
+        grouped.entry(group).or_default().push(item);
+    }
+    let mut repo_count: HashMap<String, usize> = HashMap::new();
+    for items in grouped.values() {
+        let ids = items
+            .iter()
+            .filter_map(|i| i.repository_id.as_ref())
+            .collect::<std::collections::BTreeSet<_>>();
+        if ids.len() == 1 {
+            *repo_count
+                .entry((*ids.first().unwrap()).clone())
+                .or_default() += 1;
+        }
+    }
+    let mut inventory = Inventory::default();
+    let mut files = BTreeMap::new();
+    for (fallback, items) in grouped {
+        let ids = items
+            .iter()
+            .filter_map(|i| i.repository_id.as_ref())
+            .collect::<std::collections::BTreeSet<_>>();
+        let repo = (ids.len() == 1)
+            .then(|| {
+                config
+                    .repositories
+                    .iter()
+                    .find(|r| Some(&r.id) == ids.first().copied())
+            })
+            .flatten();
+        let unique = repo.is_some_and(|r| repo_count.get(&r.id) == Some(&1));
+        let id = if unique {
+            format!("mod:{}", repo.unwrap().id)
+        } else {
+            fallback
+        };
+        let owned_manifests: Vec<_> = manifests
+            .iter()
+            .filter(|m| {
+                items
+                    .iter()
+                    .any(|i| i.package_id.as_deref() == Some(&m.repository_id))
+            })
+            .cloned()
+            .collect();
+        let current = current_candidate(&items, repo, &owned_manifests, &id, &config);
+        let enabled = items.iter().any(|i| i.enabled);
+        let summary = NodeSummary {
+            node_id: id.clone(),
+            label: items
+                .first()
+                .map(|i| i.package_name.clone().unwrap_or_else(|| i.name.clone()))
+                .unwrap_or_default(),
+            kind: NodeKind::Mod,
+            enabled,
+            repository_id: repo.map(|r| r.id.clone()),
+            package_id: items.first().and_then(|i| i.package_id.clone()),
+            dll_files: items.iter().map(|i| i.dll_file.clone()).collect(),
+            members: items
+                .iter()
+                .map(|i| MemberSummary {
+                    key: key(&i.dll_file),
+                    dll_file: i.dll_file.clone(),
+                    enabled: i.enabled,
+                    guid: i.guid.clone(),
+                })
+                .collect(),
+            map_dir_name: None,
+            map_id: None,
+            subject_tag: None,
+            candidates: Vec::new(),
+        };
+        let candidates = if unique {
+            super::candidates::for_repository(repo.unwrap(), Some(&current), false, &config)
+        } else {
+            Vec::new()
+        };
+        let mut safe = repo.is_none() || unique;
+        for item in &items {
+            let owners = manifests
+                .iter()
+                .filter(|manifest| {
+                    manifest
+                        .files
+                        .iter()
+                        .any(|file| key(&mods::canonical_dll_name(file)) == key(&item.dll_file))
+                })
+                .count();
+            let active = game::safe_game_path(&game_root, &item.dll_file)?;
+            let disabled =
+                game::safe_game_path(&game_root, &mods::disabled_dll_file(&item.dll_file))?;
+            if owners > 1 || (active.is_file() && disabled.is_file()) {
+                safe = false;
+            }
+        }
+        inventory.nodes.push(ChangeNode {
+            id: id.clone(),
+            kind: NodeKind::Mod,
+            current: Some(current),
+            enabled,
+            mutable: safe,
+            candidates,
+            candidates_complete: repo.is_none_or(|r| {
+                r.cached_releases_complete
+                    && r.last_error.is_none()
+                    && r.releases_cached_at.is_some()
+            }),
+        });
+        files.insert(
+            id,
+            NodeFiles {
+                summary,
+                manifests: owned_manifests,
+                map_path: None,
+                map_metadata: None,
+            },
+        );
+    }
+    for repo in &config.repositories {
+        if !crate::config::mod_repository_is_available(&config, repo, &config.region)
+            || repo_count.contains_key(&repo.id)
+        {
+            continue;
+        }
+        let id = format!("mod:{}", repo.id);
+        let candidates = super::candidates::for_repository(repo, None, false, &config);
+        inventory.nodes.push(ChangeNode {
+            id: id.clone(),
+            kind: NodeKind::Mod,
+            current: None,
+            enabled: false,
+            mutable: true,
+            candidates,
+            candidates_complete: repo.cached_releases_complete
+                && repo.last_error.is_none()
+                && repo.releases_cached_at.is_some(),
+        });
+        files.insert(
+            id.clone(),
+            NodeFiles {
+                summary: NodeSummary {
+                    node_id: id,
+                    label: repo.name.clone(),
+                    kind: NodeKind::Mod,
+                    enabled: false,
+                    repository_id: Some(repo.id.clone()),
+                    package_id: None,
+                    dll_files: vec![],
+                    members: vec![],
+                    map_dir_name: None,
+                    map_id: None,
+                    subject_tag: None,
+                    candidates: vec![],
+                },
+                manifests: vec![],
+                map_path: None,
+                map_metadata: None,
+            },
+        );
+    }
+    super::inventory_maps::append(
+        state,
+        &config,
+        &game_root,
+        &level_roots,
+        &mut inventory,
+        &mut files,
+    )?;
+    for node in &inventory.nodes {
+        if let Some(entry) = files.get_mut(&node.id) {
+            entry.summary.candidates = node
+                .current
+                .iter()
+                .chain(&node.candidates)
+                .map(|c| CandidateSummary {
+                    id: c.id.clone(),
+                    tag: c.tag.clone(),
+                })
+                .collect();
+        }
+    }
+    if revision(state, &game_root, &state.config.load_or_default())? != stamp {
+        return Err("modChanges.targetChanged".into());
+    }
+    Ok(TrustedInventory {
+        inventory,
+        files,
+        revision: stamp,
+        game_root,
+        level_roots,
+        config,
+    })
+}
+
+/// Reuse one backend-owned scan until either source selection or physical facts change.
+pub(crate) fn cached(state: &AppState) -> Result<std::sync::Arc<TrustedInventory>, String> {
+    // Evaluation must never publish half-applied facts. Writers already use this
+    // same lock; recovery invalidates the cache before a new snapshot is read.
+    let _operation = state.operation.lock().map_err(|_| "lock.poisoned")?;
+    super::guard::ensure_recovered(state)?;
+    let config = state.config.load_or_default();
+    let detected = game::detect_game(&config).path.ok_or("game.notFound")?;
+    let root = game::resolve_existing_ancestor(Path::new(&detected))?;
+    let stamp = revision(state, &root, &config)?;
+    if let Some(snapshot) = state
+        .mod_changes
+        .lock()
+        .map_err(|_| "lock.poisoned")?
+        .snapshot
+        .clone()
+        && snapshot.revision == stamp
+        && snapshot.game_root == root
+    {
+        return Ok(snapshot);
+    }
+    let snapshot = std::sync::Arc::new(build(state)?);
+    state
+        .mod_changes
+        .lock()
+        .map_err(|_| "lock.poisoned")?
+        .snapshot = Some(snapshot.clone());
+    Ok(snapshot)
+}
+
+/// Ownership and duplicate barriers apply only to the chosen roots, changed nodes
+/// and their required closure. Unrelated baseline problems never authorize writes.
+pub(crate) fn validate_solution(
+    trusted: &TrustedInventory,
+    request: &ChangeRequest,
+    solved: &Inventory,
+) -> Result<(), String> {
+    use super::evaluate::{matches, relation_active, same_guid, targets};
+    use std::collections::BTreeSet;
+    let mut affected = request
+        .roots
+        .iter()
+        .map(|root| root.node_id.clone())
+        .collect::<BTreeSet<_>>();
+    for node in &solved.nodes {
+        if trusted
+            .inventory
+            .nodes
+            .iter()
+            .find(|original| original.id == node.id)
+            .is_none_or(|original| {
+                original.current != node.current || original.enabled != node.enabled
+            })
+        {
+            affected.insert(node.id.clone());
+        }
+    }
+    loop {
+        let before = affected.len();
+        for node in &solved.nodes {
+            if !node.enabled || !affected.contains(&node.id) {
+                continue;
+            }
+            let Some(candidate) = &node.current else {
+                continue;
+            };
+            for owned in &candidate.relations {
+                if owned.relation.kind != RelationKind::Requires
+                    || owned.relation.optional
+                    || !relation_active(candidate, owned, false)
+                {
+                    continue;
+                }
+                for (index, plugin) in targets(solved, &owned.relation.guid, true) {
+                    if matches(&owned.relation, plugin) != Some(false) {
+                        affected.insert(solved.nodes[index].id.clone());
+                    }
+                }
+            }
+        }
+        if before == affected.len() {
+            break;
+        }
+    }
+    // Plugin GUIDs cannot represent the native loader. Reuse its real disk
+    // detection at every approval/write gate, including local ZIP installs.
+    // Disabling content remains possible even if the loader has been removed.
+    if solved.nodes.iter().any(|node| {
+        node.enabled
+            && affected.contains(&node.id)
+            && (trusted
+                .inventory
+                .nodes
+                .iter()
+                .find(|old| old.id == node.id)
+                .is_none_or(|old| {
+                    !old.enabled
+                        || old.current.as_ref().map(|c| &c.id)
+                            != node.current.as_ref().map(|c| &c.id)
+                        || node.current.iter().flat_map(|c| &c.provides).any(|member| {
+                            member.enabled
+                                && !old
+                                    .current
+                                    .iter()
+                                    .flat_map(|c| &c.provides)
+                                    .any(|previous| {
+                                        previous.member_key == member.member_key && previous.enabled
+                                    })
+                        })
+                })
+                || request
+                    .roots
+                    .iter()
+                    .any(|root| root.node_id == node.id && root.enabled))
+    }) && !crate::bepinex::installed(&trusted.game_root)
+    {
+        return Err("framework.bepInExRequiredBeforeMods".into());
+    }
+    let mut ids = BTreeSet::new();
+    for node in &solved.nodes {
+        if !ids.insert(&node.id) && affected.contains(&node.id) {
+            return Err("modChanges.ambiguousOwnership".into());
+        }
+        if !affected.contains(&node.id) {
+            continue;
+        }
+        if !node.mutable {
+            return Err("modChanges.ambiguousOwnership".into());
+        }
+        let Some(candidate) = &node.current else {
+            continue;
+        };
+        let mut members = BTreeSet::new();
+        for plugin in &candidate.provides {
+            if let Some(member) = &plugin.member_key {
+                let member = key(member);
+                if !members.insert(member.clone())
+                    || solved.nodes.iter().any(|other| {
+                        other.id != node.id
+                            && other.current.as_ref().is_some_and(|candidate| {
+                                candidate.provides.iter().any(|plugin| {
+                                    plugin
+                                        .member_key
+                                        .as_ref()
+                                        .is_some_and(|key_| key(key_) == member)
+                                })
+                            })
+                    })
+                {
+                    return Err("modChanges.ambiguousOwnership".into());
+                }
+            }
+            if node.enabled && plugin.enabled && !plugin.guid.trim().is_empty() {
+                let duplicates = solved
+                    .nodes
+                    .iter()
+                    .filter(|other| other.enabled)
+                    .flat_map(|other| &other.current)
+                    .flat_map(|candidate| &candidate.provides)
+                    .filter(|other| other.enabled && same_guid(&other.guid, &plugin.guid))
+                    .count();
+                if duplicates > 1 {
+                    return Err("modChanges.ambiguousOwnership".into());
+                }
+            }
+        }
+    }
+    Ok(())
+}

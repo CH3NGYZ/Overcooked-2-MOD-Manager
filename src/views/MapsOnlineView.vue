@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { useGameOperationGate } from '../composables/useGameOperationGate'
 import { computed, onMounted, ref, watch } from 'vue'
 import {
   NButton,
@@ -23,19 +22,16 @@ import HeaderSearch from '../components/HeaderSearch.vue'
 import InstallSourceTags from '../components/InstallSourceTags.vue'
 import { prefetchAvatars } from '../avatars'
 import { useDashboard } from '../composables/useDashboardStore'
-import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import { markdownSummary } from '../markdown'
 import { formatVersionSpec } from '../versionSpec'
 import { modRepositoryIsAvailable } from '../repositoryAvailability'
 import { useFocusHighlight, useLevelSetLink, useModRepositoryLink } from '../crossLink'
-import { dependencyTagFor, primaryRelation } from '../modRelations'
+import { dependencyTagFor, primaryRelation, relationJumpRepositoryId } from '../modRelations'
 import { dependencyRowFromStatus } from '../dependencyRows'
 import { useDependencyNavigation } from '../composables/useDependencyNavigation'
 import {
-  frameworkStates,
   levelSetForMap,
-  mapRelationSubject,
-  mapRelationStatuses,
+  levelSetRelationStatuses,
   type FrameworkState,
 } from '../levelSetStatus'
 import { mapCardAction, mapCardActionLabel, mapCardStatus, mapCardVersion, type MapCardState } from '../mapCardStatus'
@@ -50,8 +46,6 @@ import {
 } from '../composables/useSourceGroupTree'
 import ReleaseDetailPanel from '../components/ReleaseDetailPanel.vue'
 import type { DependencyRow } from '../components/DependencyTable.vue'
-import InstallPlanDialog from '../components/InstallPlanDialog.vue'
-import InstallCheckDialog from '../components/InstallCheckDialog.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
 import InstallDetailDialog from '../components/InstallDetailDialog.vue'
 import BusyOverlay from '../components/BusyOverlay.vue'
@@ -90,12 +84,10 @@ import { cachedInstallRelease } from '../repositoryAssets'
  * 现在进页面补一次 `scanLevelSets()`（后端对 `info` 有解析缓存，这一次调用
  * 换来的是每张卡都能回答「我装没装、要不要更新」）。
  *
- * ## 依赖判定为什么在前端
+ * ## 依赖状态使用同一批后端评估
  *
- * 后端 `get_maps` 不填 `unmet_frameworks`（契约冻结）：依赖是否满足要用
- * 当前 Dashboard 的 MOD 列表判，而这份列表前端本来就有，交给后端等于每次
- * 打开页面再扫一遍 `BepInEx/plugins`。判定本身复用 MOD 侧同一条管线
- * （`mapRelationSubject` 仅提供关系上下文，再走共享 `resolveRelations`）。
+ * 精确地图版本通过共享 store 登记 subject，Rust 批量返回 runtime/readiness。
+ * 页面只投影状态，安装与修复均提交根请求到同一整链方案。
  *
  * ## 安装入口在安装页
  *
@@ -114,10 +106,9 @@ import { cachedInstallRelease } from '../repositoryAssets'
  *   目标页与锚点：`#/levels` + 对应关卡集卡片的 `focus-flash`。
  */
 const message = useNotify()
-const { blockModOperation: gameBlocked } = useGameOperationGate()
 import { useMapSources } from '../composables/useMapSources'
 
-const { mods: realMods, game: realGame, config: realConfig, load, ensureLoaded } = useDashboard()
+const { mods: realMods, game: realGame, config: realConfig, ensureLoaded } = useDashboard()
 const mods = computed(() => withDemoMods(realMods.value))
 const game = computed(() => withDemoGame(realGame.value))
 const config = computed(() => withDemoConfig(realConfig.value))
@@ -167,7 +158,6 @@ const {
   importing, importSource, installRelease,
   previewOpen: importPreviewOpen, detail: importDetail,
   confirmImport, discardImport,
-  importCheck,
   zipProgress, zipProgressText,
 } = useLevelSetImport(() => loadLevelSets())
 /** 「安装地图」来源卡片是否打开。 */
@@ -210,21 +200,6 @@ const repositories = computed<ModRepository[]>(() =>
       config.value?.platform,
     )),
 )
-
-/**
- * 安装前检查。
- *
- * 地图的 `relations` 与 MOD 仓库的 `relations` 是同一套模型，所以判定逻辑也
- * 共用 useInstallPlanGate 的最小 RelationSubject。地图只提供身份、显示名、
- * Release 和关系上下文；依赖候选仍来自真实 MOD 仓库，不构造虚拟 MOD。
- */
-const planGate = useInstallPlanGate({
-  mods: () => mods.value,
-  repositories: () => repositories.value,
-  gameBlocked,
-  onApplied: () => load(),
-})
-
 
 /* ===== 搜索 =====
  *
@@ -476,36 +451,38 @@ async function openLink(url: string) {
 /**
  * 依赖提示标签。
  *
- * 与 MOD 安装页共用 `dependencyTagFor` 一条规则：前置没满足就写「缺依赖」；
- * 线上有能补上的仓库卡片时标签可点，落点是**那张仓库卡**（MOD 安装页）——
- * 地图的前置（DIYLevel、Web Runtime）本身就是仓库里的 MOD，所以这条跳转
- * 与 MOD 管理页的「缺依赖 → 去安装」是同一个去处。
+ * 已安装卡片读取本地图的权威评估；详情中选择的在线版本只影响详情依赖表。
+ * 标签与 MOD 页共用展示及 repair 判定，点击后审阅完整变更方案。
  */
+function mapDependencyStatuses(map: MapInfo) {
+  const set = levelSetForMap(map, sets.value)
+  return set ? levelSetRelationStatuses(set, maps.value, mods.value, repositories.value) : []
+}
+
 function dependencyOf(map: MapInfo): CardDependencyTag | null {
   if (!gameProbed.value) return null
-  const tag = dependencyTagFor(
-    mapRelationStatuses(map, mods.value, repositories.value),
-    hasLocalMap(map),
-  )
+  const statuses = mapDependencyStatuses(map)
+  const tag = dependencyTagFor(statuses, hasLocalMap(map))
   if (!tag) return null
-  const missing = frameworkStates(map, mods.value, repositories.value)
-    .filter((state) => !state.satisfied)
+  const missing = statuses.filter(status => status.state !== 'ok' && (status.relation.kind ?? 'requires') === 'requires')
+    .map(status => ({ guid: status.relation.guid, version: status.relation.version ?? '',
+      installedVersion: status.installedVersion, satisfied: false }))
   return {
     text: tag.text,
     tone: tag.tone,
     title: missing.length
       ? t('levelSet.frameworksNotMet', { list: missing.map(describeFramework).join(' · ') })
       : undefined,
-    clickable: !!tag.repositoryId,
+    clickable: !!relationJumpRepositoryId(primaryRelation(statuses)),
   }
 }
 
-/** 点依赖标签：跳到能提供它的那张仓库卡片（与 MOD 安装页同一个高亮机制）。 */
+/** 点击时重新读取当前本地图的依赖，再交共享整链确认。 */
 function jumpToDependency(map: MapInfo) {
   dependencyNavigation.request(() => {
     const current = maps.value.find(entry => entry.id === map.id)
     if (!current || !hasLocalMap(current)) return undefined
-    const issue = primaryRelation(mapRelationStatuses(current, mods.value, repositories.value))
+    const issue = primaryRelation(mapDependencyStatuses(current))
     return issue ? dependencyRowFromStatus(issue, { mods: mods.value, repositories: repositories.value,
       translate: t, pickName: pickI18n, jumpToRepository: true }) : undefined
   })
@@ -566,8 +543,6 @@ async function install(map: MapInfo, tag?: string, asset?: string) {
   }
   const targetTag = release.tag_name
   // 前置检查：地图缺框架时装上也跑不起来，必须先让用户看到
-  const ready = await planGate.run(mapRelationSubject(map, targetTag), targetTag)
-  if (!ready) return
 
   setFlag(installing, map.id, true)
   try {
@@ -811,9 +786,7 @@ const pageLoading = computed(() => loading.value && tree.value.length === 0)
   <!--
     安装前检查：缺框架时先补装（与 MOD 安装页同一个弹窗与同一套执行顺序）
   -->
-  <InstallPlanDialog v-model:show="planGate.open.value" :plan="planGate.plan.value"
-    :target-label="planGate.target.value"
-    @finished="(ready: boolean) => { void planGate.finish(ready) }" />
+
 
   <!--
     「安装地图」来源卡片：与 MOD 两页同一个组件（本地选择 / 拖放 / 直链），
@@ -834,9 +807,7 @@ const pageLoading = computed(() => loading.value && tree.value.length === 0)
     同身份冲突的检查：在「安装详情」之前挡一道（已有同一张地图时先卸载）。
     与 MOD 安装、地图管理页共用同一个弹窗与同一套执行顺序。
   -->
-  <InstallCheckDialog v-model:show="importCheck.open.value" :model="importCheck.model.value"
-    :execute="importCheck.execute"
-    @finished="(ready: boolean) => { void importCheck.finish(ready) }" />
+
 
   <!--
     导入前的「安装详情」：和 MOD 安装同一张卡片，一个地图集当一个 MOD。

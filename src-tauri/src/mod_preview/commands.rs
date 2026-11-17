@@ -1,9 +1,7 @@
 use super::analysis::{analyze_dll, analyze_zip, build_preview, source_extension};
 use super::conflicts::attach_install_conflicts;
 use super::model::{ModPreview, ModSource, ModSourceKind};
-use super::staging::{
-    ORIGIN_FILE, cleanup_stale_previews, preview_root, read_origin_record, stage_local,
-};
+use super::staging::{cleanup_stale_previews, preview_root, stage_local};
 use crate::app_state::AppState;
 use crate::models::OperationResult;
 use std::fs;
@@ -87,60 +85,8 @@ pub async fn confirm_mod_install(
     state: State<'_, AppState>,
     preview_id: String,
 ) -> Result<OperationResult, String> {
-    /*
-     * 确认安装要做两件重活：把暂存的安装包解压进游戏目录（几百 MB 按秒计），
-     * 以及按仓库身份回收旧包。同步命令会在 IPC 线程上跑完这两件事，窗口整段
-     * 不响应；搬到阻塞线程池后耗时不变，界面仍可交互。
-     */
-    let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || confirm_mod_install_blocking(&state, &preview_id))
-        .await
-        .map_err(|error| error.to_string())?
-}
-
-/// [`confirm_mod_install`] 的同步实现（在阻塞线程池里跑）。
-fn confirm_mod_install_blocking(
-    state: &AppState,
-    preview_id: &str,
-) -> Result<OperationResult, String> {
-    let dir = preview_root(&state).join(safe_preview_id(&preview_id)?);
-    let file = fs::read_dir(&dir)
-        .map_err(|_| "modPreview.expired".to_string())?
-        .flatten()
-        .map(|entry| entry.path())
-        // 跳过来源元数据：它和安装包放在同一个暂存目录里
-        .find(|path| path.is_file() && path.file_name().is_some_and(|name| name != ORIGIN_FILE))
-        .ok_or("modPreview.expired")?;
-    log::info!("确认安装预览文件：预览={preview_id}");
-
-    /*
-     * 仓库来源的预览必须走仓库安装路径。
-     *
-     * 走 install_manual_mod 会给包分配新的 `manual-<uuid>` 清单，
-     * 于是同仓库的旧包永远不会被回收 —— 用户装三次就得到三份副本。
-     * 有来源记录时改走 install_staged_mod_repository，它会先按仓库身份
-     * 回收所有旧包再解压新文件。
-     */
-    let result = match read_origin_record(&state, &preview_id) {
-        Some(origin) => {
-            log::info!(
-                "确认安装仓库资产：预览={}，仓库={}，版本={}",
-                preview_id,
-                origin.repository_id,
-                origin.release_tag
-            );
-            crate::mods::install::install_staged_mod_repository(
-                &state,
-                &file,
-                &origin.repository_id,
-                &origin.release_tag,
-                origin.prerelease,
-            )
-        }
-        None => crate::mods::install::install_manual_mod(&state, &file, None),
-    };
-    let _ = fs::remove_dir_all(&dir);
-    result
+    let _ = (state, preview_id);
+    crate::mod_changes::guard::require_shared_plan()
 }
 
 /// 预览 id 必须是合法的 UUID，避免拼出跨目录路径。

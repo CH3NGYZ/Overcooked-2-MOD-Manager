@@ -1,344 +1,88 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { registerHooks } from 'node:module'
+import { effectScope, nextTick } from 'vue'
 
-/**
- * MOD 安装「先处理同身份冲突、再问要不要装」的接线（`src/composables/useModInstallFlow.ts`）。
- *
- * 为什么要在 Node 里真跑这个 composable：它是五个安装入口的唯一收口点，判错的
- * 代价都很实在 ——
- *   · 有冲突却直接开安装详情 = 用户在详情里点「立即安装」才失败；
- *   · 检查通过了却没清 `conflicts` = 详情弹窗继续喊「卸载并安装」，把人往
- *     第二次卸载上引；
- *   · 取消后不通知宿主重扫 = 列表里还挂着已经进了回收站的旧装项。
- *
- * 这里不是读源码做正则断言，而是**执行真实 composable**：只把两处浏览器依赖
- * 换成替身 —— `services/tauri.ts`（IPC）与 `useNotify`（需要 n-message-provider）。
- * 两个替身都很薄：记录调用、返回固定结果，不模拟业务。
- */
 registerHooks({
-  resolve(specifier, context, nextResolve) {
+  resolve(specifier, context, next) {
     if (specifier.startsWith('.') && !/\.[cm]?[jt]s$/.test(specifier)) {
-      try {
-        return nextResolve(`${specifier}.ts`, context)
-      } catch {
-        // 不是单文件模块，继续试目录索引
-      }
-      try {
-        return nextResolve(`${specifier}/index.ts`, context)
-      } catch {
-        // 交给 Node 自己报错，错误里带原始 specifier 更好查
-      }
+      try { return next(`${specifier}.ts`, context) } catch {}
     }
-    return nextResolve(specifier, context)
+    return next(specifier, context)
   },
-  load(url, context, nextLoad) {
-    if (url.includes('/src/services/tauri.ts')) {
-      return { format: 'module', shortCircuit: true, source: FAKE_API }
+  load(url, context, next) {
+    const modules = {
+      '/src/services/tauri.ts': `export const watchLevelSetZipProgress=async()=>()=>{};
+        export const api=new Proxy({}, {get:(_,key)=>(...args)=>globalThis.__chainEntry.api(key,args)})`,
+      '/src/modChanges/store.ts': 'export const useModChanges=()=>({run:request=>globalThis.__chainEntry.run(request)})',
+      '/src/composables/useDashboardStore.ts': 'export const useDashboard=()=>({game:{get value(){return {kitchen_running:globalThis.__chainEntry.running}}}})',
+      '/src/composables/useMapSources.ts': 'export const useMapSources=()=>({maps:{value:[]}})',
+      '/src/useNotify.ts': 'export const useNotify=()=>new Proxy({}, {get:(_,kind)=>text=>globalThis.__chainEntry.notices.push([kind,text])})',
+      '/src/i18n.ts': 'export const t=key=>key; export const pickI18n=(_,fallback)=>fallback',
+      '/src/locale/backend.ts': 'export const backendMessageOf=String; export const translateBackendMessage=String',
     }
-    if (url.includes('/src/composables/useDashboardStore.ts')) {
-      return { format: 'module', shortCircuit: true, source: `export const useDashboard = () => ({game: {get value() { return {kitchen_running: !!globalThis.__gameRunning} }},config:{get value(){return globalThis.__noteConfig ?? null}},mods:{get value(){return globalThis.__noteMods ?? []}}})` }
-    }
-    if (url.includes('/src/composables/useMapSources.ts')) {
-      return { format: 'module', shortCircuit: true, source: `export const useMapSources = () => ({maps:{value:[]}})` }
-    }
-    if (url.includes('/src/useNotify.ts')) {
-      return { format: 'module', shortCircuit: true, source: FAKE_NOTIFY }
-    }
-    return nextLoad(url, context)
+    for (const [suffix, source] of Object.entries(modules)) if (url.endsWith(suffix)) return {format:'module',shortCircuit:true,source}
+    return next(url, context)
   },
 })
-
-/** IPC 替身：只记录调用并按需回一个成功结果。 */
-const FAKE_API = `
-const calls = () => globalThis.__installCalls
-export const watchLevelSetZipProgress = async () => () => {}
-export const api = {
-  stageMapSource: async () => ({path:'map.zip', staged:false, sets:globalThis.__mapSets}),
-  importLevelSets: async () => { calls().push(['importLevelSets']); return {installed:['map']} },
-  chooseModFile: async () => null,
-  analyzeModSource: async (kind, value) => {
-    calls().push(['analyzeModSource', kind, value])
-    return null
-  },
-  cancelModPreview: async (id) => {
-    calls().push(['cancelModPreview', id])
-    return { ok: true, message: '' }
-  },
-  confirmModInstall: async (id) => {
-    calls().push(['confirmModInstall', id])
-    return { ok: true, message: '' }
-  },
-  uninstallLocalMod: async (handle, allowUnmanaged) => {
-    calls().push(['uninstallLocalMod', handle, allowUnmanaged])
-    if (globalThis.__uninstallFails) return { ok: false, message: 'mods.uninstallFailed' }
-    return { ok: true, message: '' }
-  },
-  deleteLevelSet: async (handle, enabled) => {
-    calls().push(['deleteLevelSet', handle, enabled])
-    return { ok: true, message: '' }
-  },
-}
-`
-
-/** 通知替身：naive-ui 的 message 需要 provider，Node 里没有，只记录文案。 */
-const FAKE_NOTIFY = `
-const push = (level) => (content) => {
-  globalThis.__notices.push([level, String(content)])
-  return {}
-}
-export function useNotify() {
-  return {
-    create: push('create'),
-    info: push('info'),
-    success: push('success'),
-    warning: push('warning'),
-    error: push('error'),
-    loading: push('loading'),
-  }
-}
-`
-
 const { useModInstallFlow } = await import('../src/composables/useModInstallFlow.ts')
-const noteGate = await import('../src/modInstallNotes.ts')
-
-test('手动来源 GUID 匹配说明：取消立即放弃暂存，不进入安装详情', async (t) => {
-  globalThis.__installCalls = []
-  globalThis.__notices = []
-  globalThis.__gameRunning = false
-  globalThis.__noteConfig = { repositories: [{ id: 'manual-note', name: '手动说明',
-    plugin_guid: 'example.manual', note: '# 安装前阅读' }] }
-  t.after(() => { globalThis.__noteConfig = null; globalThis.__noteMods = null; noteGate.finishModInstallNotes() })
-  globalThis.__noteMods = [{ repository_id: 'manual-note', guid: 'example.manual' }]
-  const flow = useModInstallFlow()
-  flow.openPreview(modPreview({ entries: [{ guid: 'EXAMPLE.MANUAL', role: 'mod' }] }))
-  assert.equal(noteGate.modInstallNote.value.id, 'manual-note')
-  assert.equal(flow.previewOpen.value, false)
-  noteGate.finishModInstallNotes()
-  await flush()
-  assert.equal(flow.previewOpen.value, false)
-  assert.deepEqual(globalThis.__installCalls, [['cancelModPreview', 'preview-1']])
-})
-
-const conflict = (handle, name, version = '2.1.0') => ({
-  handle,
-  name,
-  version,
-  enabled: true,
-  same_version: true,
-})
-
-function modPreview(overrides = {}) {
-  return {
-    preview_id: 'preview-1',
-    kind: 'single',
-    package_name: 'Chef Rotation',
-    file_name: 'OC2ChefRotation.dll',
-    total_dlls: 1,
-    mod_count: 1,
-    dependency_count: 0,
-    entries: [{ path: 'OC2ChefRotation.dll', role: 'mod', name: 'Chef Rotation' }],
-    conflicts: [],
-    origin: 'manual',
-    release_tag: '',
-    release_body: '',
-    ...overrides,
-  }
+const { useLevelSetImport } = await import('../src/composables/useLevelSetImport.ts')
+const tick = () => new Promise(resolve => setImmediate(resolve))
+function fixture(extra={}) {
+  const f={calls:[],plans:[],notices:[],running:false,refreshes:0,
+    api(key,args){this.calls.push([key,...args]); if(key==='analyzeModSource')return Promise.resolve({preview_id:'preview-1'});
+      if(key==='cancelModPreview'||key==='discardMapSource')return Promise.resolve({ok:true,message:''});
+      if(key==='stageMapSource')return Promise.resolve(this.staged); throw new Error(`Unexpected API ${key}`)},
+    async run(request){this.plans.push(request);return {ok:true,message:'modChanges.completed'}},...extra}
+  globalThis.__chainEntry=f; return f
 }
 
-/** 让 `openPreview` 里的 promise 链跑完（它刻意不 await）。 */
-const flush = () => new Promise((resolve) => setTimeout(resolve, 5))
-
-/**
- * 模拟检查弹窗「给出结论并收起」。
- *
- * 真实组件是 `emit('finished', ready)` 之后紧接着 `emit('update:show', false)`，
- * 宿主再通过 `v-model:show` 把 `open` 置 false；只调 `finish` 把它留在打开态，
- * 与真实顺序不符。
- */
-function settleCheck(flow, ready) {
-  flow.finishCheck(ready)
-  flow.checkOpen.value = false
-}
-
-test.beforeEach(() => {
-  globalThis.__gameRunning = false
-  globalThis.__installCalls = []
-  globalThis.__notices = []
-  globalThis.__uninstallFails = false
+test('manual source installs one preview root through the shared batch and then releases staging',async()=>{
+  const f=fixture(),flow=useModInstallFlow(()=>{f.refreshes++})
+  await flow.handleSourceSelect({kind:'file',value:'sample.zip'})
+  assert.deepEqual(f.plans,[{roots:[{node_id:'preview:preview-1',enabled:true}]}])
+  assert.deepEqual(f.calls,[['analyzeModSource','file','sample.zip'],['cancelModPreview','preview-1']])
+  assert.equal(f.refreshes,1);assert.equal(flow.sourceBusy.value,false)
 })
 
-test('运行中点击 MOD 来源：弹全局提示且不进入来源或 IPC', async () => {
-  const { gameOperationNotice } = await import('../src/composables/useGameOperationGate.ts')
-  const flow = useModInstallFlow()
-  globalThis.__gameRunning = true
-  gameOperationNotice.value = false
-  flow.openSource()
-  await flow.handleSourceSelect({ kind: 'url', value: 'https://example.com/mod.zip' })
-  assert.equal(gameOperationNotice.value, true)
-  assert.equal(flow.sourceOpen.value, false)
-  assert.deepEqual(globalThis.__installCalls, [])
+for(const result of [null,new Error('blocked')])test(`cancelled or failed batch never pre-uninstalls and cleans its preview: ${result}`,async()=>{
+  const f=fixture({run:async function(request){this.plans.push(request);if(result instanceof Error)throw result;return result}})
+  await useModInstallFlow(()=>{f.refreshes++}).openPreview({preview_id:'preview-1',conflicts:[{handle:'old.dll'}]})
+  assert.deepEqual(f.calls,[['cancelModPreview','preview-1']]);assert.equal(f.refreshes,0)
 })
 
-test('预览返回前游戏启动：只丢弃暂存，不进入安装详情', async () => {
-  const flow = useModInstallFlow()
-  globalThis.__gameRunning = true
-  flow.openPreview(modPreview())
-  await flush()
-  assert.equal(flow.previewOpen.value, false)
-  assert.deepEqual(globalThis.__installCalls, [['cancelModPreview', 'preview-1']])
+test('running game prevents manual analysis and a received preview is still cleaned',async()=>{
+  const f=fixture({running:true}),flow=useModInstallFlow()
+  await flow.handleSourceSelect({kind:'file',value:'sample.zip'})
+  assert.deepEqual(f.calls,[]);assert.deepEqual(f.plans,[])
+  await flow.openPreview({preview_id:'preview-1'})
+  assert.deepEqual(f.calls,[['cancelModPreview','preview-1']])
 })
 
-test('冲突确认期间游戏启动：执行时复核，不调用卸载 IPC', async () => {
-  const flow = useModInstallFlow()
-  flow.openPreview(modPreview({ conflicts: [conflict('OC2ChefRotation.dll', '厨师旋转')] }))
-  globalThis.__gameRunning = true
-  await assert.rejects(flow.executeCheck(flow.checkModel.value.rows[0]), /game.running/)
-  assert.deepEqual(globalThis.__installCalls, [])
+test('source re-entry is blocked until its whole batch finishes',async()=>{
+  let finish;const f=fixture({run:request=>{f.plans.push(request);return new Promise(resolve=>{finish=resolve})}})
+  const flow=useModInstallFlow(),pending=flow.handleSourceSelect({kind:'file',value:'first.zip'})
+  await tick();await flow.handleSourceSelect({kind:'file',value:'second.zip'})
+  assert.equal(f.plans.length,1);assert.equal(flow.sourceBusy.value,true)
+  finish(null);await pending;assert.equal(flow.sourceBusy.value,false)
 })
 
-test('运行中地图无待处理关系放行；缺少 MOD 依赖（包括没有来源）时拦截', async () => {
-  const { useInstallPlanGate } = await import('../src/composables/useInstallPlanGate.ts')
-  let checks = 0
-  const gate = useInstallPlanGate({
-    mods: () => [], repositories: () => [],
-    gameBlocked: () => { checks += 1; return true }, onApplied: () => {},
-  })
-  const repo = { id: 'map', name: 'Map', cached_releases: [], relations: [] }
-  assert.equal(await gate.run(repo), true)
-  assert.equal(checks, 0)
-  assert.equal(await gate.run({ ...repo, relations: [{ guid: 'missing.runtime', kind: 'requires' }] }), false)
-  assert.equal(checks, 1)
-  assert.equal(gate.open.value, false)
+for(const staged of [false,true])test(`map detail hands the actual selected ZIP to one batch; staged=${staged}`,async t=>{
+  const item={dir_name:'Map-A',name:'Map A',author:'Author',version:'1.0',level_count:1,plugins:[],conflicts:[{handle:'old-map'}]}
+  const f=fixture({staged:{path:'map.zip',staged,sets:[item],origin:{map_id:'online'}}})
+  const scope=effectScope();const flow=scope.run(()=>useLevelSetImport(()=>{f.refreshes++}));t.after(()=>scope.stop())
+  const pending=flow.importSource({kind:'file',value:'map.zip'})
+  await tick();assert.equal(flow.previewOpen.value,true);assert.deepEqual(f.plans,[])
+  flow.confirmImport();await nextTick();await pending
+  assert.deepEqual(f.plans,[{roots:[],map_import:{zip_path:'map.zip',selected:['Map-A'],origin:{map_id:'online'}}}])
+  assert.equal(f.refreshes,1)
+  assert.deepEqual(f.calls.filter(([key])=>key==='discardMapSource'),staged?[['discardMapSource','map.zip']]:[])
+  assert.equal(f.calls.some(([key])=>['deleteLevelSet','uninstallLocalMod','importLevelSets'].includes(key)),false)
 })
 
-test('真实地图导入流程：运行中纯地图可确认导入，随包插件和无来源依赖在确认前拦截', async () => {
-  const { useLevelSetImport } = await import('../src/composables/useLevelSetImport.ts')
-  globalThis.__gameRunning = true
-  const base = {dir_name:'Map', name:'Map', author:'Author', version:'1', plugins:[], relations:[], conflicts:[]}
-  for (const extra of [{plugins:[{name:'Bundled plugin'}]}, {relations:[{guid:'missing.runtime',kind:'requires'}]}]) {
-    globalThis.__mapSets = [{...base,...extra}]
-    const flow = useLevelSetImport()
-    await flow.importSource({kind:'file',value:'map.zip'})
-    assert.equal(flow.previewOpen.value, false)
-    assert.deepEqual(globalThis.__installCalls, [])
-  }
-  globalThis.__mapSets = [base]
-  const flow = useLevelSetImport()
-  const importing = flow.importSource({kind:'file',value:'map.zip'})
-  await flush()
-  assert.equal(flow.previewOpen.value, true)
-  flow.confirmImport()
-  await importing
-  assert.deepEqual(globalThis.__installCalls, [['importLevelSets']])
-})
-
-test('没有同身份冲突：直接进安装详情，不弹检查窗', async () => {
-  const changed = []
-  const flow = useModInstallFlow(() => { changed.push('changed') })
-
-  flow.openPreview(modPreview())
-
-  assert.equal(flow.checkOpen.value, false)
-  assert.equal(flow.previewOpen.value, true)
-  assert.equal(flow.preview.value.preview_id, 'preview-1')
-  assert.deepEqual(globalThis.__installCalls, [])
-  assert.deepEqual(changed, [])
-})
-
-test('有冲突：先弹检查窗、暂不开安装详情，清单来自后端 conflicts', async () => {
-  const flow = useModInstallFlow()
-  flow.openPreview(modPreview({
-    package_name: 'Chef Rotation 重装',
-    conflicts: [conflict('OC2ChefRotation.dll', '厨师旋转')],
-  }))
-
-  assert.equal(flow.checkOpen.value, true)
-  assert.equal(flow.previewOpen.value, false)
-  assert.equal(flow.preview.value, null, '检查没结束前不该把预览交给详情弹窗')
-
-  const model = flow.checkModel.value
-  assert.equal(model.rows.length, 1)
-  assert.equal(model.rows[0].label, '厨师旋转')
-  assert.equal(model.rows[0].actionLabel, '卸载')
-  assert.equal(model.rows[0].sameVersion, true)
-  assert.ok(model.lead.includes('Chef Rotation 重装'), `说明行应点名目标：${model.lead}`)
-})
-
-test('逐行执行：走整包语义卸载本地 MOD（allow_unmanaged = true）', async () => {
-  const flow = useModInstallFlow()
-  flow.openPreview(modPreview({ conflicts: [conflict('OC2ChefRotation.dll', '厨师旋转')] }))
-
-  await flow.executeCheck(flow.checkModel.value.rows[0])
-
-  assert.deepEqual(globalThis.__installCalls.at(-1),
-    ['uninstallLocalMod', 'OC2ChefRotation.dll', true])
-})
-
-test('全部处理成功：清空 conflicts 再进详情，且不额外重扫', async () => {
-  const changed = []
-  const flow = useModInstallFlow(() => { changed.push('changed') })
-  flow.openPreview(modPreview({ conflicts: [conflict('OC2ChefRotation.dll', '厨师旋转')] }))
-
-  await flow.executeCheck(flow.checkModel.value.rows[0])
-  settleCheck(flow, true)
-  await flush()
-
-  assert.equal(flow.previewOpen.value, true)
-  assert.equal(flow.checkOpen.value, false)
-  assert.deepEqual(flow.preview.value.conflicts, [], '卸完了详情弹窗不该再喊卸载并安装')
-  assert.equal(flow.preview.value.preview_id, 'preview-1')
-  assert.equal(flow.preview.value.total_dlls, 1)
-  assert.deepEqual(changed, [], '成功路径由安装成功的 handleInstalled 刷新，这里不该多刷一次')
-})
-
-test('取消：清后端暂存并让宿主重扫（磁盘可能已经卸过旧装项）', async () => {
-  const changed = []
-  const flow = useModInstallFlow(() => { changed.push('changed') })
-  flow.openPreview(modPreview({ conflicts: [conflict('OC2ChefRotation.dll', '厨师旋转')] }))
-
-  settleCheck(flow, false)
-  await flush()
-
-  assert.equal(flow.checkOpen.value, false)
-  assert.equal(flow.previewOpen.value, false)
-  assert.deepEqual(globalThis.__installCalls, [['cancelModPreview', 'preview-1']])
-  assert.deepEqual(changed, ['changed'])
-})
-
-test('卸载失败：这一行抛出、检查窗不关、不进安装详情', async () => {
-  globalThis.__uninstallFails = true
-  const flow = useModInstallFlow()
-  flow.openPreview(modPreview({ conflicts: [conflict('OC2ChefRotation.dll', '厨师旋转')] }))
-
-  await assert.rejects(flow.executeCheck(flow.checkModel.value.rows[0]))
-
-  assert.equal(flow.checkOpen.value, true, '失败要留在原地，用户才能看到是哪一项没卸成')
-  assert.equal(flow.previewOpen.value, false)
-  assert.equal(flow.preview.value, null)
-})
-
-test('检查通过后放弃安装详情：也要通知宿主重扫（旧装项已经进回收站）', async () => {
-  const changed = []
-  const flow = useModInstallFlow(() => { changed.push('changed') })
-  flow.openPreview(modPreview({ conflicts: [conflict('OC2ChefRotation.dll', '厨师旋转')] }))
-  settleCheck(flow, true)
-  await flush()
-  assert.deepEqual(changed, [])
-
-  await flow.discardPreview(flow.preview.value)
-
-  assert.deepEqual(changed, ['changed'])
-  assert.deepEqual(globalThis.__installCalls, [['cancelModPreview', 'preview-1']])
-})
-
-test('没走过检查的预览被放弃：只清暂存，不白刷一次列表', async () => {
-  const changed = []
-  const flow = useModInstallFlow(() => { changed.push('changed') })
-  flow.openPreview(modPreview())
-
-  await flow.discardPreview(flow.preview.value)
-
-  assert.deepEqual(globalThis.__installCalls, [['cancelModPreview', 'preview-1']])
-  assert.deepEqual(changed, [])
+test('cancelling map detail makes no plan and preserves the user ZIP',async t=>{
+  const f=fixture({staged:{path:'user.zip',staged:false,sets:[{dir_name:'Map-A',name:'Map A',plugins:[],conflicts:[]}]}})
+  const scope=effectScope(),flow=scope.run(()=>useLevelSetImport());t.after(()=>scope.stop())
+  const pending=flow.importSource({kind:'file',value:'user.zip'});await tick();flow.discardImport();await pending
+  assert.deepEqual(f.plans,[]);assert.deepEqual(f.calls,[['stageMapSource','file','user.zip']])
 })

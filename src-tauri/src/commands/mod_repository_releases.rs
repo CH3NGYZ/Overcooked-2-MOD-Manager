@@ -83,6 +83,7 @@ pub async fn refresh_mod_repository(
             );
             return Ok(ModRepositoryReleaseSnapshot {
                 cached_releases: repo.cached_releases.clone(),
+                cached_releases_complete: repo.cached_releases_complete,
                 release_prerelease_metadata: repo.release_prerelease_metadata.clone(),
             });
         }
@@ -144,6 +145,7 @@ pub async fn refresh_mod_repository(
         match fetched {
             Ok(snapshot) => {
                 latest_repo.cached_releases = snapshot.cached_releases.clone();
+                latest_repo.cached_releases_complete = snapshot.cached_releases_complete;
                 latest_repo.release_prerelease_metadata =
                     snapshot.release_prerelease_metadata.clone();
                 // 只有真正拿到结果才刷新时间戳：失败后必须让下一次请求重新打 API

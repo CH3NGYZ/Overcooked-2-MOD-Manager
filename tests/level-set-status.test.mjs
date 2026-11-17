@@ -1,5 +1,7 @@
+import { evaluationSnapshot, clearEvaluation } from './helpers/mod-change-evaluations.mjs'
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import test, { afterEach } from 'node:test'
+afterEach(clearEvaluation)
 
 /**
  * 关卡集状态判定（`src/levelSetStatus.ts`）。
@@ -80,6 +82,7 @@ function map(overrides = {}) {
 function mod(overrides = {}) {
   return {
     guid: 'com.rw.diylevel',
+    dll_file: 'DIYLevel.dll',
     version: '1.1.0',
     enabled: true,
     ...overrides,
@@ -112,6 +115,14 @@ function repo(overrides = {}) {
     }],
     ...overrides,
   }
+}
+
+function backendRelations(target, states, installed = [], enabled = true) {
+  const relations = target.relations ?? target.required_frameworks?.map(relation => ({kind:'requires', ...relation})) ?? []
+  const rows = states.map((state,index) => ({relation:relations[index],state,targets:installed.map((_,i)=>`mod:dep${i}`)}))
+  evaluationSnapshot([{id:'map:RW_LevelSet',kind:'map',dir:'RW_LevelSet',enabled,rows},
+    {id:`subject:${target.id}:${target.latest_tag}`,kind:'map',map:target.id,tag:target.latest_tag,enabled:false,rows}],
+    installed.map((mod,i)=>({node_id:`mod:dep${i}`,dll_files:[mod.dll_file]})))
 }
 
 test('页头状态 key 区分标签类型并附带开关状态', () => {
@@ -434,6 +445,7 @@ test('没有 cached_releases 时用 latest_release 兜底，保持仓库同形',
 
 test('框架依赖：装了且在区间内才算满足', () => {
   const target = map({ required_frameworks: [{ guid: 'com.rw.diylevel', version: '>=1.0.0' }] })
+  backendRelations(target, ['satisfied'], [mod({version:'1.1.0'})])
   const ok = frameworkStates(target, [mod({ version: '1.1.0' })])
   assert.deepEqual(ok, [{
     guid: 'com.rw.diylevel',
@@ -443,11 +455,13 @@ test('框架依赖：装了且在区间内才算满足', () => {
   }])
 
   // 版本低于依赖要求：装了也不算满足，但要保留已装版本（界面要说明）
+  backendRelations(target, ['version_mismatch'], [mod({version:'0.9.0'})])
   const old = frameworkStates(target, [mod({ version: '0.9.0' })])
   assert.equal(old[0].satisfied, false)
   assert.equal(old[0].installedVersion, '0.9.0')
 
   // 完全没装
+  backendRelations(target, ['missing'])
   const none = frameworkStates(target, [])
   assert.equal(none[0].satisfied, false)
   assert.equal(none[0].installedVersion, null)
@@ -455,6 +469,7 @@ test('框架依赖：装了且在区间内才算满足', () => {
 
 test('框架依赖：GUID 比较忽略大小写', () => {
   const target = map({ required_frameworks: [{ guid: 'Com.RW.DIYLevel' }] })
+  backendRelations(target, ['satisfied'], [mod()])
   const states = frameworkStates(target, [mod({ guid: 'com.rw.diylevel' })])
   assert.equal(states[0].satisfied, true)
 })
@@ -466,7 +481,9 @@ test('依赖缺失：不知道游戏状态时不判缺失', () => {
   // 游戏已探测但一张地图都没有：不算缺依赖
   assert.equal(mapDependencyMissing(undefined, [], true), false)
   // 已探测且确实缺
+  backendRelations(target, ['missing'])
   assert.equal(mapDependencyMissing(target, [], true), true)
+  backendRelations(target, ['satisfied'], [mod()])
   assert.equal(mapDependencyMissing(target, [mod()], true), false)
 })
 
@@ -477,7 +494,9 @@ test('DIYLevel 与 DIYLevel Web Runtime 任一缺失都算依赖缺失', () => {
       { guid: 'com.rw.diylevel.web' },
     ],
   })
+  backendRelations(target, ['satisfied', 'missing'], [mod()])
   assert.equal(mapDependencyMissing(target, [mod()], true), true)
+  backendRelations(target, ['satisfied', 'satisfied'], [mod(), mod({guid:'com.rw.diylevel.web'})])
   assert.equal(mapDependencyMissing(target, [mod(), mod({ guid: 'com.rw.diylevel.web' })], true), false)
 })
 
@@ -486,6 +505,7 @@ test('卡片标签：先依赖提醒，再版本结论', () => {
     required_frameworks: [{ guid: 'com.rw.diylevel' }],
     latest_tag: 'v0.74',
   })
+  backendRelations(target, ['missing'])
   const tags = levelSetCardTags(set({ version: '0.73' }), [target], [], true)
   // 文案与 MOD 卡片是同一枚 key（「缺依赖」三个字），不再自造「依赖缺失」
   assert.deepEqual(tags.map((tag) => tag.text), ['modsOnline.missingDep', 'tools.update'])
@@ -499,13 +519,15 @@ test('卡片标签：先依赖提醒，再版本结论', () => {
 test('卡片标签：必须依赖缺了就写「缺依赖」，线上有候选仓库时可点', () => {
   const target = map({ required_frameworks: [{ guid: 'com.rw.diylevel' }] })
   const diy = repo({ id: 'diy', plugin_guid: 'com.rw.diylevel' })
+  backendRelations(target, ['missing'])
   const tags = levelSetCardTags(set(), [target], [], true, [diy])
   assert.equal(tags[0].kind, 'dependency')
   // `requires` 是必须依赖：缺了就是缺了，线上能装只是让标签可点、可跳过去补装
   assert.equal(tags[0].text, 'modsOnline.missingDep')
   assert.equal(tags[0].tone, 'critical')
   // 有候选仓库 → 标签可点，落点是提供依赖的仓库卡，而不是这张图自己
-  assert.equal(tags[0].repositoryId, 'diy')
+  assert.equal(tags[0].dependency.repair.node_id, 'map:RW_LevelSet')
+  assert.equal(tags[0].repositoryId, undefined, 'the owner is repaired as a complete plan rather than navigating to a locally chosen candidate')
 })
 
 test('卡片标签：最新版也带跳转目标（与 MOD 管理页一致），未绑定没有目标', () => {
@@ -531,6 +553,7 @@ test('卡片标签：游戏未探测时不显示依赖缺失，但版本结论�
 
 test('卡片标签：停用且缺依赖时两条都显示（重新启用前就该知道）', () => {
   const target = map({ required_frameworks: [{ guid: 'com.rw.diylevel' }] })
+  backendRelations(target, ['missing'], [], false)
   const tags = levelSetCardTags(set({ enabled: false }), [target], [], true)
   assert.deepEqual(tags.map((tag) => tag.text), ['modsOnline.missingDep', 'modsLocal.disabled'])
 })

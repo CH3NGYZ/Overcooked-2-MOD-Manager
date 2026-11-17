@@ -2,9 +2,10 @@ import type { RelationSubject } from './modRelations'
 import { aggregateLevelSetVersion, isSameLevelSet, mapUpdateState, mapVersionRef, type MapVersionRef } from './mapVersion.ts'
 export { aggregateLevelSetVersion, isSameLevelSet, mapsForLevelSet, mapUpdateState, type MapVersionRef, type MapVersionOrder } from './mapVersion.ts'
 import {
-  dependencyTagFor, primaryRelation, relationsForMapRelease, resolveRelation, resolveRelations,
+  dependencyTagFor, primaryRelation, relationsForMapRelease, relationStatusFromEvaluation,
   type RelationStatus,
 } from './modRelations.ts'
+import { relationsForSubject } from './modChanges/evaluationProjection.ts'
 import type { InstalledMod, LevelSetInfo, MapInfo, ModRepository } from './types'
 
 /**
@@ -247,16 +248,16 @@ export interface FrameworkState {
  * 详情里却列着一条缺依赖。
  */
 export function levelSetRelationStatuses(
-  set: Pick<LevelSetInfo, 'name' | 'author' | 'version' | 'relations'>,
+  set: Pick<LevelSetInfo, 'name' | 'author' | 'version' | 'relations'> & { dir_name?: string },
   maps: readonly MapInfo[],
   mods: readonly InstalledMod[],
-  repositories: readonly ModRepository[] = [],
+  _repositories: readonly ModRepository[] = [],
 ): RelationStatus[] {
+  const rows = set.dir_name ? relationsForSubject({ map_dir_name: set.dir_name }) : undefined
+  if (rows) return rows.filter(entry => !entry.relation.optional).map(entry => relationStatusFromEvaluation(entry, mods))
   const bound = mapForLevelSet(set, maps)
-  // 已安装的图按**本地版本**取覆盖表：卡片说的是「这一版跑不跑得起来」，
-  // 不是「最新版要不要什么」。
-  if (bound) return mapRelationStatuses(bound, mods, repositories, set.version)
-  return (set.relations ?? []).map((relation) => resolveRelation(relation, mods, repositories))
+  const relations = bound ? relationsForMapRelease(bound, set.version) : set.relations ?? []
+  return relations.filter(relation => !relation.optional).map(relation => ({ relation, state: 'unknown', installedVersion: null }))
 }
 
 /**
@@ -271,11 +272,14 @@ export function levelSetRelationStatuses(
 export function mapRelationStatuses(
   map: MapInfo | null | undefined,
   mods: readonly InstalledMod[],
-  repositories: readonly ModRepository[] = [],
+  _repositories: readonly ModRepository[] = [],
   version?: string | null,
 ): RelationStatus[] {
   if (!map) return []
-  return resolveRelations(mapRelationSubject(map, version), mods, repositories)
+  const rows = relationsForSubject({ map_id: map.id, tag: version ?? mapReleaseVersion(map) ?? undefined })
+  if (rows) return rows.filter(entry => !entry.relation.optional).map(entry => relationStatusFromEvaluation(entry, mods))
+  return relationsForMapRelease(map, version ?? mapReleaseVersion(map)).filter(relation => !relation.optional)
+    .map(relation => ({ relation, state: 'unknown', installedVersion: null }))
 }
 
 /**
@@ -315,7 +319,9 @@ export function mapDependencyMissing(
 ): boolean | null {
   if (!gameProbed) return null
   if (!map) return false
-  return frameworkStates(map, mods, repositories).some((state) => !state.satisfied)
+  const states = mapRelationStatuses(map, mods, repositories)
+  if (states.some(state => state.state !== 'ok' && state.state !== 'unknown')) return true
+  return states.some(state => state.state === 'unknown') ? null : false
 }
 
 /** 关卡集卡片状态区的一个标签。 */
@@ -515,13 +521,14 @@ export function levelSetCardAction(
 
   if (!set.enabled) return undefined
   const dependency = dependencyTagFor(statuses, true)
-  if (dependency?.repositoryId) {
+  const repair = primaryRelation(statuses)
+  if (dependency?.repositoryId || repair?.repair) {
     return {
       kind: 'install-dependency',
       label: 'overview.browse',
       tone: 'moderate',
-      repositoryId: dependency.repositoryId,
-      dependency: primaryRelation(statuses),
+      repositoryId: dependency?.repositoryId,
+      dependency: repair,
     }
   }
   return undefined

@@ -108,7 +108,7 @@ test('API and download clients use configured durations without a total asset ti
   assert.match(download, /\.read_timeout\(std::time::Duration::from_secs\(120\)\)/)
   assert.doesNotMatch(client, /REQUEST_START_TIMEOUT|connection_timeout/)
   assert.doesNotMatch(read('transport.rs'), /API_REQUEST_TIMEOUT|\.timeout\(/)
-  for (const path of ['../commands/mod_repository_install.rs', '../commands/map_install.rs']) {
+  for (const path of ['../mods/repository_download.rs', '../commands/map_install.rs']) {
     assert.match(read(path), /releases::build_download_client\(config\.network\.first_byte_timeout\(\)\)/)
     assert.match(read(path), /archive::release_download::download\(/)
     assert.doesNotMatch(read(path), /config\.network\.timeout_seconds/)
@@ -119,7 +119,7 @@ test('API and download clients use configured durations without a total asset ti
 })
 
 test('MOD and map download commands consume cached versions without Release API fallbacks', () => {
-  for (const file of ['../commands/mod_repository_install.rs', '../commands/map_install.rs']) {
+  for (const file of ['../mods/repository_download.rs', '../commands/map_install.rs']) {
     const command = read(file)
     assert.match(command, /releases::select_cached_release\(/)
     assert.doesNotMatch(command, /fetch_releases|fetch_map_release_data|refresh_(?:map|repository)_releases|\.release_cache\b/)

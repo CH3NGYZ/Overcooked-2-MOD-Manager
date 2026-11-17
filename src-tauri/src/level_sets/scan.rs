@@ -59,6 +59,7 @@ pub type ScanProgress<'a> = &'a (dyn Fn(usize, usize, &str) + Sync);
 /// 扫描一个游戏目录下的全部关卡集（启用与停用）。
 ///
 /// 单测与旧调用方的默认入口：并行度取 `map_info_concurrency` 的默认值（全部核心）。
+#[cfg(test)]
 pub fn scan_level_sets(roots: &LevelSetRoots) -> Vec<LevelSetOnDisk> {
     scan_level_sets_inner(
         roots,
@@ -161,27 +162,34 @@ pub(super) fn scan_level_sets_inner(
     let registered = manifests_dir
         .map(read_registered_plugins)
         .unwrap_or_default();
-    let active_registered: Vec<&RegisteredLevelSetPlugin> = registered
+    let active_registered: Vec<(&RegisteredLevelSetPlugin, PathBuf, bool)> = registered
         .iter()
-        .filter(|entry| {
-            let path = game_root.join(&entry.dll);
-            path.is_file()
-                && !targets
-                    .iter()
-                    .any(|target| target.plugins.iter().any(|(local, _, _)| local == &path))
+        .filter_map(|entry| {
+            let active = game_root.join(&entry.dll);
+            let disabled = game_root.join(crate::mods::disabled_dll_file(&entry.dll));
+            let (path, enabled) = if active.is_file() {
+                (active, true)
+            } else if disabled.is_file() {
+                (disabled, false)
+            } else {
+                return None;
+            };
+            (!targets
+                .iter()
+                .any(|target| target.plugins.iter().any(|(local, _, _)| local == &path)))
+            .then_some((entry, path, enabled))
         })
         .collect();
     let mut registered_requests: Vec<usize> = Vec::with_capacity(active_registered.len());
-    for entry in &active_registered {
-        let file_name = entry
-            .dll
-            .rsplit('/')
-            .next()
+    for (entry, path, _) in &active_registered {
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
             .unwrap_or(&entry.dll)
             .to_string();
         registered_requests.push(requests.len());
         requests.push(MetadataRequest {
-            path: game_root.join(&entry.dll),
+            path: path.clone(),
             display_name: file_name,
             kind: MetadataKind::ModDll,
         });
@@ -245,14 +253,13 @@ pub(super) fn scan_level_sets_inner(
                 active_registered
                     .iter()
                     .enumerate()
-                    .filter_map(|(reg_index, entry)| {
+                    .filter_map(|(reg_index, (entry, path, enabled))| {
                         if !entry.owner.matches(metadata) {
                             return None;
                         }
-                        let file_name = entry
-                            .dll
-                            .rsplit('/')
-                            .next()
+                        let file_name = path
+                            .file_name()
+                            .and_then(|name| name.to_str())
                             .unwrap_or(&entry.dll)
                             .to_string();
                         // 登记项的元数据按 reg_index 对齐（registered_outcomes 就是按
@@ -266,7 +273,7 @@ pub(super) fn scan_level_sets_inner(
                             .unwrap_or_else(|| fallback_plugin_info(&file_name));
                         Some(LevelSetPlugin {
                             file_name,
-                            enabled: true,
+                            enabled: *enabled,
                             info,
                         })
                     })

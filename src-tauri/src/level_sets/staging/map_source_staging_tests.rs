@@ -4,11 +4,11 @@ use crate::level_sets::view::{bind_map_relation_snapshot, level_set_to_info};
 use crate::models::MapInstallOrigin;
 
 #[test]
-fn discard_accepts_only_files_inside_the_cache_directory() {
+fn discard_accepts_only_generated_downloads_directly_inside_the_cache_directory() {
     let root = std::env::temp_dir().join(format!("oc2-stage-{}", uuid::Uuid::new_v4()));
     let cache = root.join("cache");
     fs::create_dir_all(&cache).unwrap();
-    let staged = cache.join("staged.zip");
+    let staged = cache.join(format!("{}.download", uuid::Uuid::new_v4()));
     fs::write(&staged, b"zip").unwrap();
     let outside = root.join("user.zip");
     fs::write(&outside, b"zip").unwrap();
@@ -18,6 +18,26 @@ fn discard_accepts_only_files_inside_the_cache_directory() {
         cache_file_to_discard(&cache, &staged.to_string_lossy()).unwrap(),
         Some(fs::canonicalize(&staged).unwrap())
     );
+    let merged = cache.join(format!("{}.zip", uuid::Uuid::new_v4()));
+    fs::write(&merged, b"merged zip").unwrap();
+    assert_eq!(
+        cache_file_to_discard(&cache, &merged.to_string_lossy()).unwrap(),
+        Some(fs::canonicalize(&merged).unwrap())
+    );
+    let user_cache_file = cache.join("source.txt");
+    fs::write(&user_cache_file, b"not a download").unwrap();
+    assert!(cache_file_to_discard(&cache, &user_cache_file.to_string_lossy()).is_err());
+    let work = cache.join("level-compression/recovery");
+    fs::create_dir_all(&work).unwrap();
+    for name in [
+        "original-bundle".to_string(),
+        format!("{}.download", uuid::Uuid::new_v4()),
+    ] {
+        let protected = work.join(name);
+        fs::write(&protected, b"only recovery copy").unwrap();
+        assert!(cache_file_to_discard(&cache, &protected.to_string_lossy()).is_err());
+        assert_eq!(fs::read(&protected).unwrap(), b"only recovery copy");
+    }
     // 已经不在了：视为已清理，不报错
     assert!(
         cache_file_to_discard(&cache, &cache.join("missing.zip").to_string_lossy())
@@ -29,6 +49,35 @@ fn discard_accepts_only_files_inside_the_cache_directory() {
     assert!(cache_file_to_discard(&cache, &cache.to_string_lossy()).is_err());
     assert!(outside.exists(), "缓存目录外的文件不能被删除");
     fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn discard_rejects_a_junction_alias_of_compression_recovery() {
+    let temporary = tempfile::tempdir().unwrap();
+    let cache = temporary.path().join("cache");
+    let work = cache.join("level-compression").join("recovery");
+    fs::create_dir_all(&work).unwrap();
+    let name = format!("{}.download", uuid::Uuid::new_v4());
+    let backup = work.join(&name);
+    fs::write(&backup, b"only recovery copy").unwrap();
+    let alias = cache.join("download-alias");
+    let result = std::process::Command::new("cmd")
+        .args(["/d", "/c", "mklink", "/J"])
+        .arg(&alias)
+        .arg(&work)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    assert!(cache_file_to_discard(&cache, &alias.join(name).to_string_lossy()).is_err());
+
+    assert_eq!(fs::read(backup).unwrap(), b"only recovery copy");
+    fs::remove_dir(alias).unwrap();
 }
 
 fn zip_level_set(name: &str, name_zh: Option<&str>, author: &str) -> ZipLevelSet {

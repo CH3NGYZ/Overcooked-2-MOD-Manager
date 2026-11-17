@@ -298,6 +298,7 @@ pub fn save_mod_repository(
         ignored_version: None,
         etag: None,
         cached_releases: Vec::new(),
+        cached_releases_complete: false,
         release_prerelease_metadata: Default::default(),
         releases_cached_at: None,
         last_error: None,

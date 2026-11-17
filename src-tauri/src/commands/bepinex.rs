@@ -113,6 +113,7 @@ pub async fn install_bepinex(
             .operation
             .lock()
             .map_err(|_| "lock.poisoned".to_string())?;
+        crate::mod_changes::guard::ensure_recovered(&state)?;
         if state.config.load_or_default().game != config.game {
             return Err("game.settingsChanged".into());
         }
@@ -187,6 +188,7 @@ pub fn repair_native_bepinex_overlay(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     let config = state.config.load_or_default();
     if std::env::consts::OS != "macos" || config.game.runtime != GameRuntime::Native {
         return Err("framework.overlayMacNativeOnly".into());
@@ -221,6 +223,7 @@ fn uninstall_bepinex_blocking(state: &AppState) -> Result<OperationResult, Strin
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     let config = state.config.load_or_default();
     let info = game::detect_game(&config);
     let game_root = PathBuf::from(info.path.ok_or("game.notFound")?);
@@ -396,6 +399,7 @@ fn backup_bepinex_blocking(state: &AppState) -> Result<OperationResult, String> 
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
@@ -438,6 +442,7 @@ fn restore_bepinex_blocking(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;
@@ -484,6 +489,7 @@ fn delete_bepinex_backup_blocking(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
     game::ensure_game_stopped(&game_root)?;

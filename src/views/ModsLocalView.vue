@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { requestToggleChanges, requestAllToggleChanges } from '../modChanges/requests'
 import { useGameOperationGate } from '../composables/useGameOperationGate'
 import { pickI18n, t } from '../i18n'
 import { tagColorForAny } from '../theme'
@@ -54,9 +55,6 @@ import {
   type ModPackageNode,
 } from '../components/levelSetGroupContext'
 import ModConfigEditor from '../components/ModConfigEditor.vue'
-import ModInstallDialog from '../components/ModInstallDialog.vue'
-import InstallCheckDialog from '../components/InstallCheckDialog.vue'
-import InstallPlanDialog from '../components/InstallPlanDialog.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
 import PageLoading from '../components/PageLoading.vue'
 import RefreshResultTag from '../components/RefreshResultTag.vue'
@@ -64,7 +62,6 @@ import { useModInstallFlow } from '../composables/useModInstallFlow'
 import { useFileDrop } from '../composables/useFileDrop'
 import { takePendingDrop, useDropRouting } from '../composables/useDropRouting'
 import { useModRepositoryPreview } from '../composables/useModRepositoryPreview'
-import { useInstallPlanGate } from '../composables/useInstallPlanGate'
 import { useModRemoval } from '../composables/useModRemoval'
 import { useModsLocalCardExpansion } from '../composables/useModsLocalCardExpansion'
 import { useLocalGroupExpansion } from '../composables/useLocalGroupExpansion'
@@ -391,7 +388,8 @@ async function setAllEnabled(enabled: boolean) {
   if (bulkWorking.value || !effectiveMods.value.length) return
   bulkWorking.value = true
   try {
-    const result = await api.setAllLocalModsEnabled(enabled)
+    const result = await requestAllToggleChanges('mod', enabled)
+    if (!result) return
     if (result.ok) {
       message.success(translateBackendMessage(result.message))
       await load()
@@ -401,18 +399,7 @@ async function setAllEnabled(enabled: boolean) {
   } catch (reason) { fail(reason) } finally { bulkWorking.value = false }
 }
 
-function confirmDisableAll() {
-  dialog.warning({
-    title: t('overview.disableAllMods'),
-    content: t('overview.allModsWillBeDisabledTheGameWillLoadNoneOfThemYouCanReEnableThemAnytime',
-      { count: effectiveMods.value.length }),
-    positiveText: t('overview.disableAll'),
-    negativeText: t('recycle.cancel'),
-    onPositiveClick() {
-      void setAllEnabled(false)
-    },
-  })
-}
+function confirmDisableAll() { void setAllEnabled(false) }
 
 /**
  * 按「已安装时绑定的仓库分类」分组。
@@ -563,7 +550,8 @@ async function toggle(mod: InstalledMod, enabled: boolean) {
   if (blockModOperation()) return
   busy.value[mod.dll_file] = true
   try {
-    const result = await api.toggleLocalMod(mod.dll_file, enabled)
+    const result = await requestToggleChanges({ dllFiles: [mod.dll_file], enabled })
+    if (!result) return
     result.ok
       ? message.success(result.message ? translateBackendMessage(result.message) : (enabled ? t('modsLocal.enabled2') : t('modsLocal.disabled')))
       : message.error(translateBackendMessage(result.message))
@@ -641,10 +629,10 @@ function actionContext(labels: readonly string[] | undefined, mod: InstalledMod)
        * 跳过去也无处可去，只留「缺依赖」标签说明情况。
        */
       const dependency = relationIssueByDll.value[mod.dll_file]
-      if (!dependency?.repository) return undefined
+      if (!dependency?.repository && !dependency?.repair) return undefined
       const row = dependencyRow(dependency)
       return { action: { ...action, label: dependencyActionLabel(row.jump) },
-        repository: dependency.repository, dependency: row }
+        repository: dependency.repository ?? repository, dependency: row }
     }
     case 'uninstall-conflict': {
       /*
@@ -713,7 +701,7 @@ function runCardAction(mod: InstalledMod) {
   if (context.action.kind === 'update' && blockModOperation()) return
   if (context.action.kind === 'update' && context.repository) {
     void previewModRepository(context.repository)
-  } else if (context.action.kind === 'install-dependency' && context.repository) {
+  } else if (context.action.kind === 'install-dependency' && context.dependency) {
     // 缺依赖：跳到 MOD 安装页并定位到该仓库卡片，由那边给出「安装依赖」
     dependencyNavigation.request(() => {
       const current = effectiveMods.value.find(entry => entry.dll_file === mod.dll_file)
@@ -736,13 +724,12 @@ function runPackageAction(pkg: ModPackageNode) {
     remove(context.conflictMod)
     return
   }
-  if (!context.repository) return
-  if (context.action.kind === 'update') void previewModRepository(context.repository)
-  else if (context.action.kind === 'install-dependency') dependencyNavigation.request(() => {
+  if (context.action.kind === 'install-dependency') dependencyNavigation.request(() => {
     const current = groups.value.flatMap(group => group.packages).find(entry => entry.key === pkg.key)
     return current ? packageAction(current)?.dependency : undefined
   })
-  else void refreshModRepository(context.repository)
+  else if (context.repository && context.action.kind === 'update') void previewModRepository(context.repository)
+  else if (context.repository) void refreshModRepository(context.repository)
 }
 
 /** 单仓刷新：复用刷新引擎，只更新这一条仓库的缓存。 */
@@ -794,8 +781,9 @@ const visibleUnitCount = computed(() => visiblePackageKeys.value.size)
 function packageTagTargetId(pkg: ModPackageNode, tagKey: string): string | undefined {
   if (isDependencyTag(tagKey)) {
     for (const mod of pkg.mods) {
-      const repository = relationIssueByDll.value[mod.dll_file]?.repository
-      if (repository) return repository.id
+        const issue = relationIssueByDll.value[mod.dll_file]
+        if (issue?.repair) return issue.repair.node_id
+        if (issue?.repository) return issue.repository.id
     }
     return undefined
   }
@@ -803,9 +791,7 @@ function packageTagTargetId(pkg: ModPackageNode, tagKey: string): string | undef
 }
 
 function openPackageTag(pkg: ModPackageNode, tagKey: string) {
-  const initialOwner = isDependencyTag(tagKey) ? relationOwnerMod(pkg) : undefined
-  const initialIssue = initialOwner && relationIssueByDll.value[initialOwner.dll_file]
-  if (isDependencyTag(tagKey) && initialIssue?.relation.kind !== 'conflicts') {
+  if (isDependencyTag(tagKey)) {
     dependencyNavigation.request(() => {
       const current = groups.value.flatMap(group => group.packages).find(entry => entry.key === pkg.key)
       const owner = current && relationOwnerMod(current)
@@ -963,27 +949,12 @@ async function openModsDirectory() {
   } catch (reason) { fail(reason) }
 }
 
-/**
- * 安装流程：来源选择 → 预览 → 确认安装。
- *
- * 三段都由共用组件承担（InstallSourceCard / ModInstallDialog），
- * 本页只持有流程状态；暂存清理在流程 composable 里、拖放监听在页面
- * （`useFileDrop`：拖放是窗口能力，不归来源卡片）。
- */
+/** 手动来源、拖放与在线更新共用全局整链方案；清理暂存由流程持有。 */
 const {
   sourceOpen: installSourceOpen,
   sourceBusy: installSourceBusy,
-  previewOpen: installPreviewOpen,
-  preview: installPreview,
-  openPreview: openInstallPreview,
   handleSourceSelect: handleInstallSourceSelect,
   pickSourceFile: pickInstallSourceFile,
-  discardPreview: discardInstallPreview,
-  handleInstalled: handleInstallInstalled,
-  checkOpen: installCheckOpen,
-  checkModel: installCheckModel,
-  executeCheck: executeInstallCheck,
-  finishCheck: finishInstallCheck,
 } = useModInstallFlow(() => load())
 
 /** 拖入 / 跨页跳转过来的文件：打开来源卡片后走同一条预览链路。 */
@@ -1013,40 +984,14 @@ const { dragActive } = useFileDrop({
   },
 })
 
-/**
- * MOD 卡片的「更新」按钮：和仓库卡片的安装共用同一条预览链路
- * （preview_only 下载 → 安装详情弹窗 → 用户确认后才写入）。
- */
+/** 更新锁定选定根版本，下载验证后整批提交。 */
 const previewing = ref<Record<string, boolean>>({})
-const { previewModRepository } = useModRepositoryPreview(openInstallPreview, {
+const { previewModRepository } = useModRepositoryPreview({
   gameBlocked: blockModOperation,
   onBusyChange: (repositoryId, busy) => {
     if (busy) previewing.value[repositoryId] = true
     else delete previewing.value[repositoryId]
   },
-  /*
-   * 更新也要走安装前检查。
-   *
-   * 之前这里不传 `prepareInstall`，理由是「依赖在首次安装时就该齐了」。
-   * 这个假设不成立：依赖可能被用户单独删掉、被别的包顶掉，或者新版本
-   * 增删了依赖 —— 更新一个新增了依赖的版本，装完照样跑不起来。
-   * 与安装页共用同一份门控（`useInstallPlanGate`），所以判定与弹窗一致。
-   */
-  prepareInstall: (repo, tag) => runInstallPlan(repo, tag),
-})
-
-/* ===== 安装前检查（更新时的依赖 / 冲突 / 兼容） ===== */
-
-const {
-  open: installPlanOpen,
-  plan: installPlan,
-  target: installPlanTarget,
-  run: runInstallPlan,
-  finish: finishInstallPlan,
-} = useInstallPlanGate({
-  mods: () => mods.value,
-  repositories: () => repositories.value,
-  gameBlocked: blockModOperation,
   onApplied: () => load(),
 })
 
@@ -1058,14 +1003,15 @@ const {
  * 默认收起时，新扫出来的包不在集合里，本身就是默认收起，不需要额外登记。
  */
 
-/** 包级开关：走后端已有的 toggle_local_mod_package，一次切换整包。 */
+/** 包级开关：提交整包根到共享计划，一次确认切换整包。 */
 async function togglePackageEnabled(node: ModPackageNode, enabled: boolean) {
   if (blockModOperation()) return
   const packageId = node.mods[0]?.package_id
   if (!packageId) return
   for (const mod of node.mods) busy.value[mod.dll_file] = true
   try {
-    const result = await api.toggleLocalModPackage(packageId, enabled)
+    const result = await requestToggleChanges({ dllFiles: node.mods.map(mod => mod.dll_file), enabled, wholeNodes: true })
+    if (!result) return
     if (result.ok) {
       /*
        * 提示带上子 MOD 数量：整包开关一次改掉包内每个 DLL。
@@ -1255,18 +1201,12 @@ visibility.reconcileStatuses(computed(() => [...statusTagsPrimary.value, ...stat
   <InstallSourceCard v-model:show="installSourceOpen" :busy="installSourceBusy"
     :drag-active="dragActive" :pick-file="pickInstallSourceFile"
     @select="handleInstallSourceSelect" />
-  <InstallCheckDialog v-model:show="installCheckOpen" :model="installCheckModel"
-    :execute="executeInstallCheck" @finished="finishInstallCheck" />
-  <ModInstallDialog v-model:show="installPreviewOpen" :preview="installPreview"
-    @installed="handleInstallInstalled()"
-    @discarded="discardInstallPreview" />
+
   <!--
     安装前检查：更新一个已装 MOD 时，若它的新版本还缺依赖 / 有冲突，
     在这里一次处理完再继续安装。与 MOD 安装页共用同一个弹窗与判定。
   -->
-  <InstallPlanDialog v-model:show="installPlanOpen" :plan="installPlan"
-    :target-label="installPlanTarget"
-    @finished="(ready: boolean) => { void finishInstallPlan(ready) }" />
+
 
   <!--
     页头标题后的聚合标签已经承载了状态统计（数量、启用、可更新都在标签里），

@@ -233,7 +233,7 @@ test('page actions consume captured mapId/tag and all-source highlights retain l
   const view = read('src/views/LevelsView.vue'), engine = read('src/composables/useMapSources.ts')
   assert.match(view, /maps\.value\.find\(map => map\.id === action\.mapId\)/)
   assert.match(view, /cachedInstallRelease\(map\.cached_releases, action\.tag\)/)
-  assert.match(view, /planGate\.run\(mapRelationSubject\(map, targetTag\), targetTag\)/)
+  assert.match(view, /installRelease\(map\.id, targetTag/)
   assert.match(view, /candidates\.some\(candidate => candidate\.mapId === requested\)/)
   assert.match(engine, /sourceOrder: sourceNodes\.value\.map\(node => node\.id\)/)
   assert.match(engine, /refresh: \(\) => refreshReleases\(maps\.value\.filter\(map => installed\.some/)

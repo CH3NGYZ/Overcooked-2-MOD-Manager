@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 pub struct AppState {
     pub config: ConfigService,
     pub(crate) local_mod_snapshot: Arc<Mutex<crate::mods::snapshot::LocalModSnapshots>>,
+    pub(crate) mod_changes: Arc<Mutex<crate::mod_changes::session::ChangeSessions>>,
     pub(crate) diychef_sessions: Arc<Mutex<crate::diychef::session::ChefSessions>>,
     pub(crate) diychef_watch: Arc<crate::diychef::watch::ChefWatcher>,
     pub(crate) recycle_watch: Arc<crate::recycle_bin::watch::RecycleWatcher>,
@@ -53,6 +54,10 @@ pub struct CachedAppUpdateCheck {
 impl AppState {
     /// Call immediately before a plugin/game-root mutation while operation is held.
     pub(crate) fn invalidate_local_mod_snapshot(&self) -> Result<(), String> {
+        self.mod_changes
+            .lock()
+            .map_err(|_| "lock.poisoned".to_string())?
+            .invalidate();
         self.local_mod_snapshot
             .lock()
             .map_err(|_| "lock.poisoned".to_string())?
@@ -71,6 +76,7 @@ impl AppState {
         Self {
             config,
             local_mod_snapshot: Arc::default(),
+            mod_changes: Arc::default(),
             diychef_sessions: Arc::default(),
             diychef_watch,
             recycle_watch: Arc::default(),

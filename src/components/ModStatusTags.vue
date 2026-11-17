@@ -75,7 +75,7 @@ function titleOf(tagKey: string) {
 }
 
 function activate(tagKey: string) {
-  if (isDependencyTag(tagKey) && status.value?.issue?.relation.kind !== 'conflicts') {
+  if (isDependencyTag(tagKey)) {
     dependencyNavigation.request(() => {
       const issue = status.value?.issue
       return issue ? dependencyRowFromStatus(issue, { mods: mods.value, repositories: repositories.value,

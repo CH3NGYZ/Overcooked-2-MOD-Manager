@@ -169,6 +169,10 @@ pub struct ModRepositoryConfig {
     pub etag: Option<String>,
     #[serde(default)]
     pub cached_releases: Vec<ReleaseInfo>,
+    /// Only a successful complete pagination proves that cached channel history is exhaustive.
+    /// Legacy snapshots remain unknown even when their timestamp is recent.
+    #[serde(default)]
+    pub cached_releases_complete: bool,
     /// Complete successful API tag verdicts, captured before channel filtering.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub release_prerelease_metadata: BTreeMap<String, bool>,

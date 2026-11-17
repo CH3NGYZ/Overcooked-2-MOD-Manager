@@ -38,6 +38,7 @@ fn cache_survives_clear_and_is_restorable_by_id() {
         .unwrap(),
     ];
     entry.releases_cached_at = Some(now);
+    entry.cached_releases_complete = true;
     config.repositories = vec![entry];
 
     // 第一步：整批刷新前的清理
@@ -54,6 +55,7 @@ fn cache_survives_clear_and_is_restorable_by_id() {
     rebuilt.id = "repo-1".into();
     if let Some(pulled) = config.staged_release_cache.remove("repo-1") {
         rebuilt.cached_releases = pulled.releases;
+        rebuilt.cached_releases_complete = pulled.cached_releases_complete;
         rebuilt.releases_cached_at = pulled.cached_at;
         rebuilt.last_error = pulled.last_error;
     }
@@ -62,6 +64,7 @@ fn cache_survives_clear_and_is_restorable_by_id() {
     // 重建后的仓库必须带着原缓存，且时间戳仍能让 TTL 判定通过
     assert_eq!(config.repositories[0].cached_releases.len(), 1);
     assert_eq!(config.repositories[0].releases_cached_at, Some(now));
+    assert!(config.repositories[0].cached_releases_complete);
     assert!(config.staged_release_cache.is_empty(), "认领后暂存表应为空");
 }
 

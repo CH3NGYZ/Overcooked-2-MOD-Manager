@@ -112,8 +112,7 @@ fn preview_id_must_be_a_uuid() {
 
 #[test]
 fn origin_record_round_trips_repository_identity() {
-    // 确认安装时要靠这份记录回到仓库安装路径：
-    // 丢了它就只能走 install_manual_mod，同仓库旧包永远不被回收。
+    // 链式计划按这份记录核对仓库/tag，不把受管资产误认成手动包。
     let record = PreviewOriginRecord {
         repository_id: "repo-1".into(),
         release_tag: "v1.8.7.23".into(),

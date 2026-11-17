@@ -26,7 +26,8 @@ const modsOnline = read('src/views/ModsOnlineView.vue')
 const modsLocal = read('src/views/ModsLocalView.vue')
 const levels = read('src/views/LevelsView.vue')
 const dropRouting = read('src/composables/useDropRouting.ts')
-const installDialog = read('src/components/ModInstallDialog.vue')
+const modInstallFlow = read('src/composables/useModInstallFlow.ts')
+const planDialog = read('src/modChanges/ChangePlanDialog.vue')
 const detailDialog = read('src/components/InstallDetailDialog.vue')
 const installDetailSource = read('src/installDetail.ts')
 const importFlowSource = read('src/composables/useLevelSetImport.ts')
@@ -110,8 +111,9 @@ test('地图 ZIP 的导入只有一份实现，两个地图页共用', () => {
   for (const [name, source] of [['MapsOnlineView', mapsOnline], ['LevelsView', levels]]) {
     assert.match(source, /<InstallDetailDialog/, `${name} 要用共用的安装详情弹窗`)
   }
-  assert.match(installDialog, /<InstallDetailDialog/, 'MOD 安装也要用同一个详情弹窗')
-  assert.doesNotMatch(installDialog, /class="preview-row"/, '卡片样式只许留在共用弹窗里')
+  assert.match(modInstallFlow, /changes\.run\(\{ roots:/, 'MOD 拖放预览进入统一整链方案')
+  assert.match(planDialog, /plan\?\.roots\.length/, '统一弹窗必须展示根身份')
+  assert.doesNotMatch(modInstallFlow, /confirmModInstall|uninstallLocalMod/, '拖放不能绕过批次执行')
 })
 
 /**

@@ -29,6 +29,7 @@ fn get_mod_recycle_bin_blocking(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     recycle_bin::list(&state.config.mod_recycle_bin_dir())
         .map(|entries| {
             // 记录里存的是删除时的 canonical 路径，只在送给前端时换成展示形态。
@@ -65,6 +66,7 @@ fn restore_recycled_mod_blocking(state: &AppState, id: &str) -> Result<Operation
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     state.invalidate_local_mod_snapshot()?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
@@ -106,6 +108,7 @@ fn delete_recycled_mod_blocking(state: &AppState, id: &str) -> Result<OperationR
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     recycle_bin::delete(&state.config.mod_recycle_bin_dir(), &id).map_err(|error| {
         log::warn!("彻底删除回收站 MOD 失败：ID={}，原因={}", id, error);
         error
@@ -134,6 +137,7 @@ fn delete_all_recycled_mods_blocking(state: &AppState) -> Result<OperationResult
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     let removed =
         recycle_bin::delete_all(&state.config.mod_recycle_bin_dir()).map_err(|error| {
             log::warn!("清空回收站失败：原因={}", error);

@@ -69,9 +69,8 @@ pub(crate) fn zip_level_sets(
 
 /// 校验「这个路径可以当作暂存文件丢弃」，返回解析后的真实路径。
 ///
-/// 只接受 `cache_dir` 之内的普通文件；`None` 表示文件已经不在（重复清理、
-/// 或安装流程自己搬走了），调用方按成功处理。路径来自前端，必须先
-/// canonicalize 再比较 —— 否则 `..`、符号链接、目录联接都能绕过前缀判断。
+/// 只接受下载器直接放在缓存根的 UUID.download / 分卷合并 UUID.zip，
+/// 不能删除压缩恢复材料或其它缓存。`None` 表示文件已经不在（重复清理）。
 pub(crate) fn cache_file_to_discard(
     cache_dir: &Path,
     path: &str,
@@ -80,7 +79,20 @@ pub(crate) fn cache_file_to_discard(
         return Ok(None);
     };
     let cache_dir = fs::canonicalize(cache_dir).map_err(|_| "levelSet.outsideCache".to_string())?;
-    if !target.is_file() || !target.starts_with(&cache_dir) {
+    let generated_download = target
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .and_then(|name| {
+            uuid::Uuid::parse_str(name)
+                .ok()
+                .map(|id| id.to_string() == name)
+        })
+        .unwrap_or(false)
+        && target
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| matches!(extension, "download" | "zip"));
+    if !target.is_file() || target.parent() != Some(cache_dir.as_path()) || !generated_download {
         return Err("levelSet.outsideCache".into());
     }
     Ok(Some(target))

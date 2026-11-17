@@ -29,7 +29,7 @@ fn all_release_install_sources_persist_repository_tags_and_recycle_the_original_
             assert_eq!(binding.provider, repo.provider);
             assert_eq!(binding.tag, "v1.0.0");
             assert_eq!(binding.channel, repo.channel);
-            let scanned = mods::scan_mods_with_manifests(
+            let scanned = crate::mods::scan_mods_with_manifests(
                 &workspace.game,
                 &config(vec![repo.clone()]),
                 Some(&workspace.manifests),

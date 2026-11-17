@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { requestToggleChanges } from '../modChanges/requests'
 /*
  * 总览页：把「框架 → 在线 → 本地」摆成两条纵列，回答「现在要不要管」。
  *
@@ -181,7 +182,10 @@ async function toggleDiyLevel(enabled: boolean) {
   if (working.value) return
   working.value = true
   try {
-    const result = await api.setDiyLevelEnabled(enabled)
+    const target = useDashboard().diyLevelTarget.value
+    if (!target) throw new Error('modChanges.targetChanged')
+    const result = await requestToggleChanges({ dllFiles: [target], enabled })
+    if (!result) return
     if (result.ok) {
       message.success(translateBackendMessage(result.message))
     } else {

@@ -3,10 +3,7 @@ use crate::archive;
 use crate::game;
 use crate::models::{OperationResult, UninstallLocalModResult};
 use crate::mods;
-use crate::mods::file_state::{set_local_mod_file_state, toggle_local_mod_file};
-use crate::mods::install::install_manual_mod;
 use crate::recycle_bin;
-use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 use tauri::State;
@@ -36,6 +33,7 @@ pub fn save_mod_note(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     let mut config = state.config.load_or_default();
     state.config.set_mod_note(&mut config, &note_key, &note);
     state.config.save(&config).map_err(|e| e.to_string())?;
@@ -59,13 +57,8 @@ pub async fn install_local_mod(
     state: State<'_, AppState>,
     source_path: String,
 ) -> Result<OperationResult, String> {
-    // 解压 ZIP 落盘是重活：同步命令在 IPC 线程上跑，界面会整段冻住
-    let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        install_manual_mod(&state, &PathBuf::from(source_path), None)
-    })
-    .await
-    .map_err(|error| error.to_string())?
+    let _ = (state, source_path);
+    crate::mod_changes::guard::require_shared_plan()
 }
 
 /// 是否需要先让用户确认「连整个 MOD 包一起删」。
@@ -126,6 +119,7 @@ fn uninstall_local_mod_blocking(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     state.invalidate_local_mod_snapshot()?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
@@ -354,6 +348,7 @@ fn uninstall_mod_dll_blocking(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
+    crate::mod_changes::guard::ensure_recovered(&state)?;
     state.invalidate_local_mod_snapshot()?;
     let config = state.config.load_or_default();
     let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
@@ -456,26 +451,8 @@ pub fn toggle_local_mod(
     dll_file: String,
     enabled: bool,
 ) -> Result<OperationResult, String> {
-    log::info!("切换本地 MOD：文件={}，启用={}", dll_file, enabled);
-    let _guard = state
-        .operation
-        .lock()
-        .map_err(|_| "lock.poisoned".to_string())?;
-    state.invalidate_local_mod_snapshot()?;
-    let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
-    game::ensure_game_stopped(&game_root)?;
-    let relative = mods::canonical_dll_name(&dll_file.replace('\\', "/"));
-    toggle_local_mod_file(&game_root, &relative, enabled)?;
-    log::info!("本地 MOD 状态切换完成：文件={}，启用={}", relative, enabled);
-    Ok(OperationResult {
-        ok: true,
-        message: if enabled {
-            "mods.enabled".into()
-        } else {
-            "mods.disabled".into()
-        },
-    })
+    let _ = (state, dll_file, enabled);
+    crate::mod_changes::guard::require_shared_plan()
 }
 
 #[tauri::command]
@@ -484,140 +461,18 @@ pub fn toggle_local_mod_package(
     package_id: String,
     enabled: bool,
 ) -> Result<OperationResult, String> {
-    log::info!("切换 MOD 包：包={}，启用={}", package_id, enabled);
-    let _guard = state
-        .operation
-        .lock()
-        .map_err(|_| "lock.poisoned".to_string())?;
-    state.invalidate_local_mod_snapshot()?;
-    let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
-    game::ensure_game_stopped(&game_root)?;
-    let manifest = archive::read_manifest(&state.config.manifests_dir(), &package_id)
-        .ok_or("mods.packageManifestMissing")?;
-    let mut dll_files = manifest
-        .files
-        .iter()
-        .map(|file| mods::canonical_dll_name(file))
-        .filter(|file| {
-            file.to_ascii_lowercase().starts_with("bepinex/plugins/")
-                && Path::new(file)
-                    .extension()
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case("dll"))
-        })
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    dll_files.sort_by_key(|file| file.to_ascii_lowercase());
-    if dll_files.is_empty() {
-        return Err("mods.packageNoToggleableDll".into());
-    }
-    let mut changed = Vec::new();
-    for dll_file in dll_files {
-        match set_local_mod_file_state(&game_root, &dll_file, enabled) {
-            Ok(true) => changed.push(dll_file),
-            Ok(false) => {}
-            Err(error) => {
-                log::error!(
-                    "切换 MOD 包失败，开始回滚：包={}，原因={}",
-                    package_id,
-                    error
-                );
-                for previous in changed.into_iter().rev() {
-                    let _ = toggle_local_mod_file(&game_root, &previous, !enabled);
-                }
-                return Err(error);
-            }
-        }
-    }
-    log::info!(
-        "MOD 包状态切换完成：包={}，启用={}，变更文件数={}",
-        package_id,
-        enabled,
-        changed.len()
-    );
-    Ok(OperationResult {
-        ok: true,
-        message: if enabled {
-            "mods.packageEnabled".into()
-        } else {
-            "mods.packageDisabled".into()
-        },
-    })
+    let _ = (state, package_id, enabled);
+    crate::mod_changes::guard::require_shared_plan()
 }
 
-/// 一次性启用或禁用**全部**已安装的插件 DLL。
-///
-/// 与单包切换共用 `set_local_mod_file_state`（负责路径归属校验、
-/// `.disabled` 成对检查与只读位清理），因此安全边界完全一致。
-///
-/// 失败时回滚已经改过的文件：批量操作必须要么全成、要么全不动。
-/// 不回滚会留下「一半启用一半禁用」的中间态，用户看到的是随机结果。
-///
-/// 不切换 `BepInEx/plugins` 之外的 DLL（`patchers`、`core` 里的管理器自身
-/// 组件等）：那些不是 MOD，改了会破坏框架。
+/// 旧客户端批量开关入口；实际变更必须通过统一计划确认。
 #[tauri::command]
 pub fn set_all_local_mods_enabled(
     state: State<'_, AppState>,
     enabled: bool,
 ) -> Result<OperationResult, String> {
-    log::info!("批量切换全部本地 MOD：启用={}", enabled);
-    let _guard = state
-        .operation
-        .lock()
-        .map_err(|_| "lock.poisoned".to_string())?;
-    state.invalidate_local_mod_snapshot()?;
-    let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
-    game::ensure_game_stopped(&game_root)?;
-
-    /*
-     * 直接从磁盘扫描，不依赖 Dashboard 快照：
-     * 快照可能过期，而用户点「全部启用」时期望覆盖磁盘上真实存在的每一个插件。
-     */
-    let dll_files = mods::plugin_dll_files(&game_root, Some(&state.config.manifests_dir()))?;
-    if dll_files.is_empty() {
-        return Err("mods.noPluginDll".into());
-    }
-
-    let mut changed = Vec::new();
-    for dll_file in dll_files {
-        // 统一成启用态路径再交给状态机：它自己会按 `.disabled` 找源文件
-        let relative = dll_file.trim_end_matches(".disabled").to_string();
-        match set_local_mod_file_state(&game_root, &relative, enabled) {
-            Ok(true) => changed.push(relative),
-            Ok(false) => {}
-            Err(error) => {
-                log::error!("批量切换失败，开始回滚：文件={}，原因={}", relative, error);
-                for previous in changed.into_iter().rev() {
-                    let _ = toggle_local_mod_file(&game_root, &previous, !enabled);
-                }
-                return Err(crate::locale_tag::with_params(
-                    "mods.toggleFailed",
-                    &[
-                        ("relative", &relative.to_string()),
-                        ("error", &error.to_string()),
-                    ],
-                ));
-            }
-        }
-    }
-    log::info!(
-        "批量切换完成：启用={}，变更文件数={}",
-        enabled,
-        changed.len()
-    );
-    Ok(OperationResult {
-        ok: true,
-        message: crate::locale_tag::with_params(
-            if enabled {
-                "message.mods.bulkToggleEnabled"
-            } else {
-                "message.mods.bulkToggleDisabled"
-            },
-            &[("count", &changed.len().to_string())],
-        ),
-    })
+    let _ = (state, enabled);
+    crate::mod_changes::guard::require_shared_plan()
 }
 
 #[cfg(test)]

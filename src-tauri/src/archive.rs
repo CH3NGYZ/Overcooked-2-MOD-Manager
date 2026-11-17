@@ -19,9 +19,11 @@ pub(crate) use control::{
     app_update_in_progress, begin_app_update, cancel_download, is_download_cancelled,
     start_download,
 };
+#[cfg(test)]
+pub(crate) use install::prepared_mod_zip_files;
 pub(crate) use install::{
     copy_asset_pending, extract_framework_zip_pending, extract_local_mod_zip_pending,
-    extract_prepared_mod_zip, prepare_repository_mod_zip, prepared_mod_zip_files,
+    extract_prepared_mod_zip, prepare_repository_mod_zip,
 };
 pub(crate) use integrity::{validate_download_bytes, validate_download_file, validate_zip};
 pub(crate) use manifests::{

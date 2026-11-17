@@ -1,6 +1,7 @@
 import type { InstalledMod, InstalledModStatusLabel, ModRepository } from './types'
+import { relationsForSubject } from './modChanges/evaluationProjection.ts'
 import { repositoryForMod } from './modStatus.ts'
-import { primaryRelation, relationTagView, resolveRelations, type RelationStatus } from './modRelations.ts'
+import { primaryRelation, relationTagView, relationStatusFromEvaluation, type RelationStatus } from './modRelations.ts'
 import { modUpdateVerdict, replaceVersionConclusion } from './statusTags.ts'
 
 /**
@@ -94,6 +95,7 @@ const RELATION_LABELS = new Set<string>([
 export function relationStatusLabel(
   issue: RelationStatus | undefined,
 ): InstalledModStatusLabel | undefined {
+  if (issue?.state === 'unknown') return undefined
   const view = relationTagView(issue)
   if (!view) return undefined
   if (view.kind === 'conflict') return 'dependency_conflict'
@@ -124,13 +126,9 @@ export function runtimeModStatus(
   state: RuntimeRefreshState,
 ): RuntimeModStatus {
   const repo = repositoryForMod([...repositories], mod)
-  const issue = mod.is_dependency
-    ? undefined
-    : (() => {
-        if (!repo) return undefined
-        // 用**已安装版本**筛关系表：装的是 1.0 就该按 1.0 的要求算
-        return primaryRelation(resolveRelations(repo, [...mods], [...repositories], mod.version))
-      })()
+  const issue = mod.is_dependency ? undefined : primaryRelation(
+    (relationsForSubject({ dll_file: mod.dll_file }) ?? [])
+      .filter(entry => !entry.relation.optional).map(entry => relationStatusFromEvaluation(entry, mods)))
   const refreshing = repositoryRefreshing(repo, state)
 
   /** 关系标签永远置顶，且不和版本结论互相覆盖。 */

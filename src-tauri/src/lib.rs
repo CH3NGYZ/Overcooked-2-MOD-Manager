@@ -49,6 +49,7 @@ mod map_note;
 mod map_publish;
 // 元数据并行读取的中间层：MOD 的 DLL 与地图的 info 都走它编排
 mod metadata_read;
+mod mod_changes;
 mod mod_config;
 mod mod_preview;
 mod models;
@@ -220,6 +221,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::mod_changes::evaluate_mod_changes,
+            commands::mod_changes::plan_mod_changes,
+            commands::mod_changes::prepare_mod_changes,
+            commands::mod_changes::execute_mod_changes,
+            commands::mod_changes::cancel_mod_changes,
             commands::dashboard::get_dashboard,
             commands::dashboard::get_local_mods,
             commands::diychef_editor::open_diychef_editor,

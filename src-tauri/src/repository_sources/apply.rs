@@ -371,6 +371,7 @@ pub(crate) async fn import_repository_source_into_config(
                  */
                 if let Some(staged) = config.staged_release_cache.remove(previous_id) {
                     repo.cached_releases = staged.releases;
+                    repo.cached_releases_complete = staged.cached_releases_complete;
                     repo.release_prerelease_metadata = staged.release_prerelease_metadata;
                     repo.releases_cached_at = staged.cached_at;
                     repo.last_error = staged.last_error;

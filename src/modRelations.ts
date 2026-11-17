@@ -1,37 +1,20 @@
 /**
- * MOD 关系判定：依赖 / 排斥 / 兼容共用一条管线。
- *
- * 三种关系本质上是同一个问题 ——「对某个 GUID 的版本区间有什么要求」，
- * 差别只在满足与违反时的含义：
- *
- *   requires    目标**必须存在**且版本落在区间内   → 缺失/版本不符 = 缺依赖
- *   conflicts   目标**若存在**且版本落在区间内     → 命中 = 冲突，需要卸载
- *   compatible  目标**若存在**，版本必须落在区间内 → 出区间 = 不兼容，需要卸载
- *
- * 为什么合成一张表：作者关心的是「我跟谁有关系」，不是「这属于哪一类关系」；
- * 拆成三张表会让同一件事在三处配置，前端也要三套判定。合成后前端只有
- * `resolveRelations` 一个入口，新增关系种类只加一个 kind 分支。
- *
- * 判定结果分五种，前端据此决定「显示什么」：
- *   ok          没有需要处理的问题
- *   installable 依赖未满足，能匹配到装有该 GUID 的在线仓库 → 给「安装依赖」
- *   missing     依赖未满足，且没有可安装来源 → 只显示「缺依赖」标签
- *   conflict    冲突关系命中，或兼容关系不满足 → 显示「冲突」并给卸载入口
- *
- * 为什么不把冲突也做成「可安装」：装一个东西解决不了「你装了不该装的」，
- * 唯一的解法是卸掉。所以冲突只给卸载，不给安装。
+ * Rust 关系评估的前端投影，以及来源声明的展示、版本覆盖与名称格式化。
+ * 运行状态只读取 modChanges/evaluationProjection 的批量快照；这里不求解安装候选。
  */
 // 带 .ts 扩展名：Node 24 直接执行 TS 时靠它解析相对导入；
 // 该文件同时被 Vite 打包，两种加载方式都要能用（与 statusTags 的写法一致）。
 import { compareVersions, isPrereleaseVersion } from './modStatus.ts'
+import { relationForSubject, relationsForSubject, repairRoot, targetMod } from './modChanges/evaluationProjection.ts'
+import type { EvaluationSubject, RelationEvaluation, RootIntent } from './modChanges/types'
 import { parseVersionSpec, versionMatches } from './versionSpec.ts'
 import type { TagTone } from './theme'
 import type {
-  InstalledMod, MapInfo, RelationKind, ReleaseInfo, ReleaseRelationOverride, ModRepository,
+  InstalledMod, MapInfo, ReleaseInfo, ReleaseRelationOverride, ModRepository,
   RepositoryRelation,
 } from './types'
 
-export type RelationState = 'ok' | 'installable' | 'missing' | 'conflict'
+export type RelationState = 'ok' | 'installable' | 'missing' | 'conflict' | 'unknown' | 'disabled' | 'version_mismatch'
 
 export interface RelationStatus {
   relation: RepositoryRelation
@@ -49,6 +32,7 @@ export interface RelationStatus {
    * 「装它」根本解决不了依赖，必须提前判定为没有来源。
    */
   release?: ReleaseInfo
+  repair?: RootIntent
 }
 
 /** GUID 比较忽略大小写与首尾空白。 */
@@ -72,47 +56,6 @@ function versionSpecLowerBound(spec: string | null | undefined): string {
     if (!best || (compareVersions(clause.version, best) ?? 0) > 0) best = clause.version
   }
   return best
-}
-
-/**
- * 两条同类关系里更严格的一条（包级依赖表合并用）。
- *
- * 多 DLL 包里每个成员按自己的版本筛 `release_relations`，同一个 GUID 可能拿到
- * 不同要求：低版本成员只有仓库级声明（不设区间），高版本成员命中覆盖规则
- * （`>=0.10.0`）。包对外只需要一个结论，取更严的那条 —— 「至少满足到哪」才有
- * 意义，取松的会把真实的缺依赖藏起来。
- *
- * 只对 `requires` 有严格性概念：`conflicts` / `compatible` 的区间表达的是
- * 「允许的范围」，两个声明并存时该并集而不是取一，所以原样保留先出现的。
- */
-export function stricterRelation(
-  left: RepositoryRelation,
-  right: RepositoryRelation,
-): RepositoryRelation {
-  if ((left.kind ?? 'requires') !== 'requires' || (right.kind ?? 'requires') !== 'requires') {
-    return left
-  }
-  const rightBound = versionSpecLowerBound(right.version)
-  if (!rightBound) return left
-  const leftBound = versionSpecLowerBound(left.version)
-  if (!leftBound) return right
-  return (compareVersions(rightBound, leftBound) ?? 0) > 0 ? right : left
-}
-
-/**
- * 版本是否满足一条区间表达式。
- *
- * 空表达式（`""` / `"*"`）表示不设版本要求：只要目标存在就算满足，
- * 哪怕本地读不出版本号 —— 这与「写了要求但读不出版本」必须判不满足
- * 是两件事（后者无法证明满足）。
- */
-function matchesVersionSpec(
-  spec: string | null | undefined,
-  version: string | null | undefined,
-): boolean {
-  const text = spec?.trim() ?? ''
-  if (!text || text === '*') return true
-  return versionMatches(text, version ?? '')
 }
 
 /**
@@ -202,158 +145,29 @@ export function installedForGuid(mods: readonly InstalledMod[], guid: string): I
   return mods.filter((mod) => !!mod.guid && sameGuid(mod.guid, guid))
 }
 
-/**
- * 本地副本和在线来源共用版本区间与发布线规则。
- *
- * `prerelease` 不写表示两种都算；写了就只在「是不是预发布」相符时才成立。
- * 平台/安装清单标记与历史快照由同一个预发布入口解析，不从显示版本猜发布线。
- */
-function relationMatchesVersion(
-  relation: RepositoryRelation,
-  version: string | null | undefined,
-  prerelease?: boolean | null,
-  legacyPrerelease?: boolean | null,
-): boolean {
-  const wantPrerelease = relation.prerelease
-  if (wantPrerelease !== undefined
-    && isPrereleaseVersion(version, prerelease, legacyPrerelease) !== wantPrerelease) return false
-  return matchesVersionSpec(relation.version, version)
+/** Project an authoritative relation result into the existing display model. */
+export function relationStatusFromEvaluation(
+  evaluation: RelationEvaluation,
+  mods: readonly InstalledMod[],
+): RelationStatus {
+  const installedMod = targetMod(evaluation, mods)
+  const state: RelationState = evaluation.state === 'satisfied' || evaluation.state === 'optional'
+    ? 'ok' : evaluation.state
+  return { relation: evaluation.relation, state, installedMod, installedVersion: installedMod?.version ?? null,
+    ...(state !== 'ok' && state !== 'unknown' ? { repair: repairRoot(evaluation.owner_id) } : {}) }
 }
 
-/**
- * 在来源仓库里挑一个**满足版本要求**的 Release。
- *
- * 为什么不能只看仓库：要求 B ≥2.0 而该仓库最高版本只有 1.9 时，
- * 装了也解决不了依赖 —— 那种情况必须归为「没有可安装来源」，
- * 而不是给一个点了也没用的按钮。
- *
- * `cached_releases` 已按后端顺序（新的在前）排列，所以从前往后找第一个
- * 满足要求的即可。草稿不可安装；预发布按关系的三态约束匹配，
- * 未限定发布线时不能遗漏满足区间的测试版依赖。
- */
-function matchingRelease(
-  repo: ModRepository,
-  relation: RepositoryRelation,
-): ReleaseInfo | undefined {
-  return (repo.cached_releases ?? []).find((release) => {
-    if (release.draft) return false
-    const version = release.tag_name || release.version
-    return relationMatchesVersion(relation, version, release.apiPrerelease, release.prerelease)
-  })
-}
-
-/**
- * 找到能提供该 GUID、且**有满足区间版本**的在线仓库。
- *
- * 要求仓库本身可用（地区/启用已由调用方筛过）、是 Release 模式、
- * 且缓存里有满足区间的 Release。RAW 仓库不能用来满足关系 ——
- * 它没有版本概念，也没法比较版本要求。
- *
- * `excludeRepositoryId` 排除仓库自身：一个 MOD 声明关于自己的关系时，
- * 「装自己」既解决不了依赖也消不掉冲突，只会产生一个点不动按钮。
- */
-function installSourceFor(
-  guid: string,
-  repositories: readonly ModRepository[],
-  relation: RepositoryRelation,
-  excludeRepositoryId?: string,
-): { repository: ModRepository; release: ReleaseInfo } | undefined {
-  for (const repo of repositories) {
-    if (repo.id === excludeRepositoryId) continue
-    if (!repo.plugin_guid || !sameGuid(repo.plugin_guid, guid)) continue
-    if (repo.download_mode !== 'release') continue
-    const release = matchingRelease(repo, relation)
-    if (release) return { repository: repo, release }
-  }
-  return undefined
-}
-
-/**
- * 解析一条关系声明的状态。
- *
- * 三种 kind 的判定差异集中在这里，其它地方不需要再判断 kind：
- *   requires    装了且版本在区间内 → ok；否则找安装来源（installable/missing）
- *   conflicts   装了且命中区间 → conflict；否则 ok（没装就没有冲突）
- *   compatible  没装 → ok（不兼容只在对方存在时才成立）；
- *               装了但版本在区间外 → conflict
- *
- * `owner` 是**声明这条关系的仓库**，只用于排除「装自己」这种无意义来源。
- *
- * 自冲突（正式版声明「与同 GUID 的测试版互斥」）靠 `prerelease` 三态自然
- * 消解：owner 自己的副本必定在标志的另一侧，不会命中。因此 `conflicts` /
- * `compatible` 指向自己的 `plugin_guid` 时必须写这个标志 —— 导入校验会拒绝
- * 没有标志的自冲突（那是「我不能和自己共存」，永远为真）。
- */
+/** No local fallback: absence of an authoritative snapshot means unknown. */
 export function resolveRelation(
   relation: RepositoryRelation,
   mods: readonly InstalledMod[],
-  repositories: readonly ModRepository[],
+  _repositories: readonly ModRepository[],
   owner?: Pick<RelationSubject, 'id'>,
+  subject?: EvaluationSubject,
 ): RelationStatus {
-  const kind: RelationKind = relation.kind ?? 'requires'
-  // 依赖看全部副本（存在即可）；冲突/兼容同样看全部，靠 prerelease 区分发布线
-  const installed = installedForGuid(mods, relation.guid)
-  const target = installed[0]
-  const installedVersion = target?.version ?? null
-
-  if (kind === 'requires') {
-    // 装了且版本落在区间内才算满足；装了多份时任一份满足即可
-    if (installed.some((mod) => relationMatchesVersion(relation, mod.version, mod.prerelease))) {
-      return { relation, state: 'ok', installedVersion, installedMod: target }
-    }
-    /*
-     * 已装但版本不符：仍然要给出「可安装」入口 —— 用户需要的是升级/降级到
-     * 依赖要求的那个版本，而不是再装一遍。
-     */
-    const source = installSourceFor(relation.guid, repositories, relation, owner?.id)
-    return {
-      relation,
-      state: source ? 'installable' : 'missing',
-      installedVersion,
-      installedMod: target,
-      repository: source?.repository,
-      release: source?.release,
-    }
-  }
-
-  if (kind === 'conflicts') {
-    // 目标存在且命中（版本区间 + 发布线）→ 冲突
-    const hit = installed.find((mod) => relationMatchesVersion(relation, mod.version, mod.prerelease))
-    if (!hit) return { relation, state: 'ok', installedVersion }
-    /*
-     * 冲突的解法看它是哪一类：
-     *   · 纯版本区间冲突（同一发布线内）→ 线上有区间外版本就换版本；
-     *   · 发布线互斥（写了 prerelease）→ 换版本等于换发布线，装同一
-     *     GUID 的另一个包并不能把旧发布线的文件清干净，所以只能卸载。
-     */
-    const source = relation.prerelease === undefined
-      ? compatibleSourceFor(relation, repositories, owner?.id)
-      : undefined
-    return {
-      relation,
-      state: 'conflict',
-      installedVersion: hit.version ?? null,
-      installedMod: hit,
-      repository: source?.repository,
-      release: source?.release,
-    }
-  }
-
-  // kind === 'compatible'：对方存在时版本必须落在区间内
-  if (!target) return { relation, state: 'ok', installedVersion: null }
-  if (relationMatchesVersion(relation, target.version, target.prerelease)) {
-    return { relation, state: 'ok', installedVersion, installedMod: target }
-  }
-  // 不在兼容区间内：线上有区间内的版本就能靠升级/降级救回来
-  const source = installSourceFor(relation.guid, repositories, relation, owner?.id)
-  return {
-    relation,
-    state: 'conflict',
-    installedVersion,
-    installedMod: target,
-    repository: source?.repository,
-    release: source?.release,
-  }
+  const evaluation = relationForSubject(relation, subject ?? (owner ? { repository_id: owner.id } : undefined))
+  return evaluation ? relationStatusFromEvaluation(evaluation, mods)
+    : { relation, state: 'unknown', installedVersion: null }
 }
 
 /** 这个本地 MOD 是否来自该仓库（按 id 或结构化绑定判断）。 */
@@ -367,59 +181,18 @@ export function belongsToRepository(mod: InstalledMod, repo: ModRepository): boo
     && binding.repository.toLowerCase() === repo.repository.toLowerCase()
 }
 
-/**
- * 为冲突关系找一个「装上就不冲突」的版本。
- *
- * 需要的是**不满足**这条关系版本要求的版本 —— 通常比冲突区间更新
- * （修复了冲突）或更旧（还没引入冲突）。只在「纯版本冲突」时使用；
- * 发布线互斥（写了 `prerelease`）不走这条路，原因见 `resolveRelation`。
- */
-function compatibleSourceFor(
-  relation: RepositoryRelation,
-  repositories: readonly ModRepository[],
-  excludeRepositoryId?: string,
-): { repository: ModRepository; release: ReleaseInfo } | undefined {
-  for (const repo of repositories) {
-    if (repo.id === excludeRepositoryId) continue
-    if (!repo.plugin_guid || !sameGuid(repo.plugin_guid, relation.guid)) continue
-    if (repo.download_mode !== 'release') continue
-    const release = (repo.cached_releases ?? []).find((entry) => {
-      if (entry.draft || isPrereleaseVersion(entry.tag_name || entry.version, entry.apiPrerelease, entry.prerelease)) return false
-      const version = entry.tag_name || entry.version
-      // 只要不满足版本要求就可用
-      return !matchesVersionSpec(relation.version, version)
-    })
-    if (release) return { repository: repo, release }
-  }
-  return undefined
-}
-
-/**
- * 一个仓库声明的所有关系的状态。
- *
- * 可选依赖（`optional: true`）不参与判定：它们缺失是正常状态，
- * 提示出来只会变成噪音。
- *
- * `releaseVersion` 用于按 Release 覆盖关系表：同一 MOD 的不同大版本可以
- * 依赖不同版本的基础库（A 1.0 要 B ≥2.0，A 1.1 要 B ≥3.0）。
- * 不传时只用仓库级默认声明。
- */
+/** A subject's rows come from the backend, including empty overrides. */
 export function resolveRelations(
   repo: RelationSubject,
   mods: readonly InstalledMod[],
-  repositories: readonly ModRepository[],
+  _repositories: readonly ModRepository[],
   releaseVersion?: string | null,
 ): RelationStatus[] {
-  const declared = relationsForRelease(repo, releaseVersion)
-  const relevant = declared.filter((relation) =>
-    !(relation.kind === 'requires' && relation.optional))
-  if (!relevant.length) return []
-  /*
-   * 候选来源排除仓库自身：一个 MOD 声明依赖自己的 GUID 是配置错误，
-   * 若把自己当作来源，按钮会「安装自己」，永远不解决依赖。
-   */
-  const candidates = repositories.filter((candidate) => candidate.id !== repo.id)
-  return relevant.map((relation) => resolveRelation(relation, mods, candidates, repo))
+  const subject = { repository_id: repo.id, ...(releaseVersion ? { tag: releaseVersion } : {}) }
+  const evaluations = relationsForSubject(subject)
+  if (evaluations) return evaluations.filter(entry => !entry.relation.optional).map(entry => relationStatusFromEvaluation(entry, mods))
+  return relationsForRelease(repo, releaseVersion).filter(relation => !relation.optional)
+    .map(relation => ({ relation, state: 'unknown' as const, installedVersion: null }))
 }
 
 /** 汇总：所有未满足的状态（用于决定卡片显示什么、按钮指向哪条）。 */
@@ -495,6 +268,7 @@ export function primaryRelation(
   const unmet = unmetRelations(statuses)
   return unmet.find((status) => status.state === 'conflict')
     ?? unmet.find((status) => status.state === 'installable')
+    ?? unmet.find((status) => status.state !== 'unknown')
     ?? unmet[0]
 }
 
@@ -509,86 +283,9 @@ export function primaryRelation(
  * 无处可去，标签就该保持不可点。
  */
 export function relationJumpRepositoryId(
-  status: Pick<RelationStatus, 'relation' | 'repository'> | undefined,
+  status: Pick<RelationStatus, 'relation' | 'repository' | 'repair'> | undefined,
 ): string | undefined {
-  return status?.repository?.id
-}
-
-/* ===== 安装前计划 ===== */
-
-/**
- * 安装一个 MOD 之前要做的全部事情。
- *
- * 三件事合成一个计划，是因为它们的解法互相影响：
- *   1. **卸载冲突**：装了不该装的东西，必须先清掉，否则装上也白装
- *   2. **改版本**：兼容关系不满足、依赖版本不符时，装对的版本比卸载更好
- *   3. **装依赖**：缺的东西最后补，此时其它关系已经理顺
- *
- * 顺序固定为 卸载 → 改版本 → 装依赖：先腾地方，再补版本，最后补缺件。
- * 反过来的话，「装依赖」可能装上一个马上要被卸掉的版本。
- */
-export interface InstallPlan {
-  /** 必须先卸载的本地 MOD（同 GUID 冲突、区间命中）。 */
-  uninstall: RelationStatus[]
-  /** 需要装（升级或降级到指定 Release）的条目，按声明顺序。 */
-  install: RelationStatus[]
-  /** 无法自动处理、只能提醒用户的关系。 */
-  blocked: RelationStatus[]
-}
-
-/**
- * 生成安装前计划。
- *
- * `releaseVersion` 是**这次要装的版本**：关系表按它筛 `release_relations`，
- * 因为不同大版本可能声明不同关系（1.0 依赖 B≥2，1.1 依赖 B≥3）。
- *
- * 自动可处理的判定：
- *   - 冲突（conflicts 命中）→ 线上有非冲突区间版本时「改版本」，
- *     否则「卸载」；两者都做不到才算 blocked
- *   - 不兼容（compatible 不满足）→ 线上有区间内版本时「改版本」，
- *     否则 blocked（卸载对方也解决不了，问题在版本上）
- *   - 缺依赖 → 线上有满足区间的版本时「装依赖」，否则 blocked
- */
-export function buildInstallPlan(
-  repo: RelationSubject,
-  mods: readonly InstalledMod[],
-  repositories: readonly ModRepository[],
-  releaseVersion?: string | null,
-): InstallPlan {
-  const statuses = resolveRelations(repo, mods, repositories, releaseVersion)
-  const plan: InstallPlan = { uninstall: [], install: [], blocked: [] }
-
-  for (const status of statuses) {
-    if (status.state === 'ok') continue
-    const kind = status.relation.kind ?? 'requires'
-    const hasSource = !!status.repository && !!status.release
-
-    if (kind === 'conflicts') {
-      // 有「不在冲突区间内的版本」就优先换版本，比卸载更贴合用户意图
-      if (hasSource) plan.install.push(status)
-      else plan.uninstall.push(status)
-      continue
-    }
-
-    if (kind === 'compatible') {
-      // 不在兼容区间内：线上有区间内版本就能靠升级/降级救回来
-      if (hasSource) plan.install.push(status)
-      // 卸载对方并不能解决「版本不对」，只能提醒
-      else plan.blocked.push(status)
-      continue
-    }
-
-    // requires：有满足区间的来源就装，没有就只能提醒
-    if (status.state === 'installable' && hasSource) plan.install.push(status)
-    else plan.blocked.push(status)
-  }
-
-  return plan
-}
-
-/** 计划里是否有任何需要用户决定的动作。 */
-export function planHasActions(plan: InstallPlan): boolean {
-  return plan.uninstall.length > 0 || plan.install.length > 0 || plan.blocked.length > 0
+  return status?.repair?.node_id ?? status?.repository?.id
 }
 
 /**
@@ -661,6 +358,9 @@ export interface DependencyTagView {
  */
 export function relationTagView(status: RelationStatus | undefined): DependencyTagView | undefined {
   if (!status || status.state === 'ok') return undefined
+  if (status.state === 'unknown') return { text: 'modChanges.relation.unknown', tone: 'moderate', kind: 'missingDependency' }
+  if (status.state === 'disabled') return { text: 'modChanges.relation.disabled', tone: 'critical', kind: 'missingDependency' }
+  if (status.state === 'version_mismatch') return { text: 'modChanges.relation.versionMismatch', tone: 'critical', kind: 'missingDependency' }
   const kind = status.relation.kind ?? 'requires'
   /*
    * 先按 `kind` 分派，再看 `state`：`compatible` 不满足时 `resolveRelation`

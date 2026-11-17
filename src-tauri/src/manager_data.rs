@@ -175,6 +175,7 @@ pub(crate) fn clear_and_exit(state: &crate::app_state::AppState) -> Result<(), S
     let _repositories = state.repository_cache.try_lock().map_err(|_| BUSY)?;
     {
         let _operation = state.operation.try_lock().map_err(|_| BUSY)?;
+        crate::mod_changes::guard::ensure_recovered(state)?;
     }
     let mut helper = handoff::PreparedHelper::start(&paths, &executable)?;
     crate::level_sets::recompress::shutdown().map_err(|error| {
@@ -182,6 +183,7 @@ pub(crate) fn clear_and_exit(state: &crate::app_state::AppState) -> Result<(), S
         "assetBundle.recoveryPending".to_string()
     })?;
     let _operation = state.operation.try_lock().map_err(|_| BUSY)?;
+    crate::mod_changes::guard::ensure_recovered(state)?;
     // Helper preparation/shutdown may take time. Re-read both game-path sources
     // under operation so a settings change cannot bypass the final handoff gate.
     validate_protected_paths(&paths, state, &executable)?;

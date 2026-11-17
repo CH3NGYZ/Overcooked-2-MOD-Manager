@@ -35,6 +35,7 @@ fn clearing_a_source_stages_the_release_cache_instead_of_dropping_it() {
         .unwrap(),
     ];
     entry.releases_cached_at = Some(1_700_000_000_000);
+    entry.cached_releases_complete = true;
     config.repositories = vec![entry];
 
     clear_source_cache(&mut config, &["src".to_string()]);
@@ -48,6 +49,7 @@ fn clearing_a_source_stages_the_release_cache_instead_of_dropping_it() {
         .expect("缓存必须被暂存，否则重建后永远命中不了");
     assert_eq!(staged.releases.len(), 1);
     assert_eq!(staged.cached_at, Some(1_700_000_000_000));
+    assert!(staged.cached_releases_complete);
 }
 
 #[test]
@@ -61,7 +63,9 @@ fn empty_caches_are_not_staged() {
         .unwrap(),
     ];
     // 从没成功刷新过：空列表 + 没有时间戳
-    config.repositories = vec![repo("repo-1", "src")];
+    let legacy = repo("repo-1", "src");
+    assert!(!legacy.cached_releases_complete);
+    config.repositories = vec![legacy];
 
     clear_source_cache(&mut config, &["src".to_string()]);
 
@@ -80,6 +84,7 @@ fn empty_beta_channel_keeps_platform_verdicts_across_staging_and_toml() {
         .release_prerelease_metadata
         .insert("v1.0.0-beta".into(), false);
     entry.releases_cached_at = Some(123);
+    entry.cached_releases_complete = true;
     config.repositories = vec![entry];
     clear_source_cache(&mut config, &["src".to_string()]);
     let persisted = toml::to_string(&config).unwrap();
@@ -91,5 +96,6 @@ fn empty_beta_channel_keeps_platform_verdicts_across_staging_and_toml() {
         Some(&false)
     );
     assert_eq!(staged.cached_at, Some(123));
+    assert!(staged.cached_releases_complete);
     assert_eq!(staged.repository_key.as_deref(), Some("Github:u:r"));
 }

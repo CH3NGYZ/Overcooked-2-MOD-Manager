@@ -100,7 +100,7 @@ function actionsOf(set: LevelSetInfo): LevelSetCardAction[] {
         <span class="tag-group">
           <n-tag v-for="tag in ctx.tagsOf(set)" :key="tag.kind + tag.text" size="tiny"
             :bordered="false" class="state-tag"
-            :class="{ 'state-tag--link': !!(tag.repositoryId || tag.mapId) }"
+            :class="{ 'state-tag--link': !!(tag.repositoryId || tag.mapId || tag.dependency?.repair) }"
             :color="tagColorForAny(tag.tone)" :title="ctx.tagTitle(set, tag)"
             @click.stop="ctx.onTagClick(set, tag)">
             {{ t(tag.text) }}

@@ -48,6 +48,27 @@ pub(super) fn info_cache_key(info_path: &Path) -> PathBuf {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn seed_info_metadata(info_path: &Path, metadata: LevelSetMetadata) {
+    let key = info_cache_key(info_path);
+    let stats = fs::metadata(&key).unwrap();
+    let mtime_nanos = stats
+        .modified()
+        .unwrap()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    info_cache().lock().unwrap().insert(
+        key,
+        InfoCacheEntry {
+            len: stats.len(),
+            mtime_nanos,
+            result: Ok(metadata),
+            parses: 0,
+        },
+    );
+}
+
 /// 磁盘缓存目录名（位于数据根的 `cache/` 下）。
 const INFO_DISK_CACHE_DIR: &str = "level-info";
 

@@ -52,8 +52,10 @@ fn platform_prerelease_verdicts_roundtrip_without_changing_repository_identity()
     config.repositories[0]
         .release_prerelease_metadata
         .insert("v1.0.0-beta".into(), true);
+    config.repositories[0].cached_releases_complete = true;
     service.import_bundle(&mut config, &bundle, "overwrite");
     assert_eq!(config.repositories[0].id, "promoted");
+    assert!(config.repositories[0].cached_releases_complete);
     assert_eq!(
         config.repositories[0]
             .release_prerelease_metadata

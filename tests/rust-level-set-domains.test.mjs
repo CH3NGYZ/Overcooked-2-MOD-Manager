@@ -57,5 +57,6 @@ test('map operations no longer probe game state while actual MOD writes retain t
   for (const path of ['operations.rs', 'install.rs', 'bepinex_layer.rs']) {
     assert.match(readText(resolve(root, path)), /crate::game::ensure_game_stopped\(game_root\)/)
   }
-  assert.match(readText(resolve(root, '../commands/mod_repository_install.rs')), /game::is_game_running/)
+  assert.match(readText(resolve(root, '../mod_changes/execution.rs')), /game::ensure_game_stopped/)
+  assert.match(readText(resolve(root, '../mods/repository_download.rs')), /game::ensure_game_stopped/)
 })

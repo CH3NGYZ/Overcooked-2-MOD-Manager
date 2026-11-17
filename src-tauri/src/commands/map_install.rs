@@ -1,16 +1,14 @@
 use crate::app_state::AppState;
 use crate::archive;
 use crate::display_path::display_path;
-use crate::game;
 use crate::level_sets::staging::cache_file_to_discard;
 use crate::level_sets::staging::validate_map_release_sets;
 use crate::level_sets::staging::zip_level_sets;
-use crate::models::{LevelSetImportResult, LevelSetZipProgress, MapInstallOrigin, StagedMapSource};
+use crate::models::{LevelSetImportResult, MapInstallOrigin, StagedMapSource};
 use crate::releases;
 use std::fs;
 use std::path::PathBuf;
 use tauri::AppHandle;
-use tauri::Emitter;
 use tauri::State;
 
 /// 准备一个地图来源：本地 ZIP 只解析，直链先下载到缓存目录。
@@ -118,105 +116,8 @@ pub async fn import_level_sets(
     selected: Vec<String>,
     origin: Option<MapInstallOrigin>,
 ) -> Result<LevelSetImportResult, String> {
-    // `State` 不能跨 await：需要的值（配置快照、游戏根、操作锁）在同步段取好
-    let config = state.config.load_or_default();
-    let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
-    let manifests_dir = state.config.manifests_dir();
-    let operation = state.operation.clone();
-    let compression_state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        log::info!("开始导入关卡集：文件={}，选择={}", zip_path, selected.len());
-        let _guard = operation.lock().map_err(|_| "lock.poisoned".to_string())?;
-        let (_, roots) = crate::mods::snapshot::level_roots(&compression_state, &game_root)?;
-        let zip = PathBuf::from(&zip_path);
-        let info_app = app.clone();
-        let sets = crate::level_sets::inspect_zip_with_progress(
-            &zip,
-            crate::concurrency::workers_from(config.map_info_concurrency),
-            crate::concurrency::workers_from(config.mod_metadata_concurrency),
-            &move |done, total, current| {
-                let _ = info_app.emit(
-                    "level-set-zip-progress",
-                    LevelSetZipProgress {
-                        phase: "info".into(),
-                        done,
-                        total,
-                        current: current.to_string(),
-                    },
-                );
-            },
-        )?;
-        /*
-         * BepInEx 表层包是整包语义：一次解压写完整份目录结构，不能按集循环
-         * （循环会重复解压同一个 ZIP、重复写登记表）。历史形态仍逐个集落盘，
-         * 任一失败就停下并保留已成功的（它们已经在磁盘上），错误如实上报。
-         */
-        if sets
-            .iter()
-            .any(|set| set.layout == crate::models::LevelSetLayout::Bepinex)
-        {
-            let _ = app.emit(
-                "level-set-zip-progress",
-                LevelSetZipProgress {
-                    phase: "install".into(),
-                    done: 0,
-                    total: selected.len(),
-                    current: String::new(),
-                },
-            );
-            let installed = crate::level_sets::install_parsed_sets(
-                &sets,
-                &zip,
-                &roots,
-                &manifests_dir,
-                &selected,
-                origin.as_ref(),
-            )?;
-            log::info!("关卡集导入完成（BepInEx 表层包）：数量={}", installed.len());
-            crate::level_sets::recompress::enqueue_installed(
-                &compression_state,
-                &app,
-                Some(&installed),
-            );
-            return Ok(LevelSetImportResult { installed });
-        }
-        /*
-         * 逐个集落盘，而不是一次性全装：任一失败就停下并保留已成功的（它们
-         * 已经在磁盘上），错误如实上报 —— 悄悄跳过会让用户以为全装上了。
-         * 每张开始前发一条 `install` 阶段进度，用户能看到卡在哪张图上。
-         */
-        let mut installed = Vec::new();
-        let total = selected.len();
-        for (index, name) in selected.iter().enumerate() {
-            let _ = app.emit(
-                "level-set-zip-progress",
-                LevelSetZipProgress {
-                    phase: "install".into(),
-                    done: index,
-                    total,
-                    current: name.clone(),
-                },
-            );
-            let single = crate::level_sets::install_parsed_sets(
-                &sets,
-                &zip,
-                &roots,
-                &manifests_dir,
-                std::slice::from_ref(name),
-                origin.as_ref(),
-            )?;
-            crate::level_sets::recompress::enqueue_installed(
-                &compression_state,
-                &app,
-                Some(&single),
-            );
-            installed.extend(single);
-        }
-        log::info!("关卡集导入完成：数量={}", installed.len());
-        Ok(LevelSetImportResult { installed })
-    })
-    .await
-    .map_err(|error| error.to_string())?
+    let _ = (app, state, zip_path, selected, origin);
+    crate::mod_changes::guard::require_shared_plan()
 }
 
 /// 把一个地图 Release 暂存成「可确认的导入来源」。

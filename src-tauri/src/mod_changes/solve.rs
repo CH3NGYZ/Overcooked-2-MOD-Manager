@@ -10,22 +10,32 @@ const MAX_SEARCH_STATES: usize = 30_000;
 struct SearchState {
     inventory: Inventory,
     decided: BTreeSet<usize>,
-    /// Only explicit/conflict disablement may initiate a reverse-disable cascade.
+    /// Explicit/conflict disablement preserves its immediate reverse cascade.
     disabled_guids: BTreeSet<String>,
+    /// Dependency fallback cascades search compatible owner versions before disabling.
+    fallback_disabled_guids: BTreeSet<String>,
     causes: BTreeMap<usize, BTreeSet<String>>,
+}
+
+#[derive(Clone, Copy)]
+enum DisableSource {
+    Immediate,
+    DependencyFallback,
 }
 
 struct Search<'a> {
     original: &'a Inventory,
     fixed: BTreeSet<usize>,
     roots: BTreeSet<usize>,
-    visited: BTreeSet<String>,
+    visited: BTreeMap<String, bool>,
     baseline: BTreeSet<String>,
-    incomplete: bool,
     failure: Option<Diagnostic>,
     catalog_unknown: bool,
     fixed_members: BTreeSet<(usize, String)>,
+    allow_dependency_disable: bool,
 }
+
+mod visit;
 
 fn relation_key(owner: &str, relation: &RepositoryRelation) -> String {
     format!(
@@ -256,7 +266,6 @@ impl Search<'_> {
         incomplete: bool,
         code: &str,
     ) {
-        self.incomplete |= incomplete;
         self.failure = Some(Diagnostic {
             code: code.into(),
             owner_id: Some(owner.id.clone()),
@@ -339,6 +348,7 @@ impl Search<'_> {
         guid: Option<&str>,
         cause: usize,
         protected: &BTreeSet<usize>,
+        source: DisableSource,
     ) -> Option<SearchState> {
         let node = &state.inventory.nodes[index];
         if self.fixed.contains(&index) || !node.mutable {
@@ -350,8 +360,11 @@ impl Search<'_> {
         let mut switched = false;
         for plugin in &mut candidate.provides {
             if plugin.enabled && guid.is_none_or(|guid| same_guid(&plugin.guid, guid)) {
-                next.disabled_guids
-                    .insert(plugin.guid.trim().to_lowercase());
+                match source {
+                    DisableSource::Immediate => &mut next.disabled_guids,
+                    DisableSource::DependencyFallback => &mut next.fallback_disabled_guids,
+                }
+                .insert(plugin.guid.trim().to_lowercase());
                 plugin.enabled = false;
                 switched = true;
             }
@@ -407,7 +420,7 @@ impl Search<'_> {
         owner: usize,
         issue: &RelationEvaluation,
         protected: &BTreeSet<usize>,
-    ) -> Vec<SearchState> {
+    ) -> (Vec<SearchState>, Option<SearchState>) {
         let relation = &issue.relation;
         let mut branches = Vec::new();
         if matches!(
@@ -431,15 +444,27 @@ impl Search<'_> {
                     _ => false,
                 };
                 if incompatible {
-                    if let Some(next) =
-                        self.disable(state, index, Some(&relation.guid), owner, protected)
-                    {
+                    if let Some(next) = self.disable(
+                        state,
+                        index,
+                        Some(&relation.guid),
+                        owner,
+                        protected,
+                        DisableSource::Immediate,
+                    ) {
                         branches.push(next);
                     }
                 }
             }
             // A fixed target can instead force its conflicting, nonrequired owner off.
-            if let Some(next) = self.disable(state, owner, None, owner, protected) {
+            if let Some(next) = self.disable(
+                state,
+                owner,
+                None,
+                owner,
+                protected,
+                DisableSource::Immediate,
+            ) {
                 branches.push(next)
             }
         }
@@ -448,7 +473,14 @@ impl Search<'_> {
                 .disabled_guids
                 .contains(&relation.guid.trim().to_lowercase())
         {
-            if let Some(next) = self.disable(state, owner, None, owner, protected) {
+            if let Some(next) = self.disable(
+                state,
+                owner,
+                None,
+                owner,
+                protected,
+                DisableSource::Immediate,
+            ) {
                 branches.push(next)
             }
         }
@@ -536,112 +568,29 @@ impl Search<'_> {
         if !fixed_target {
             branches.extend(self.replacements(state, owner, owner))
         }
-        branches
-    }
-
-    fn visit(&mut self, state: SearchState) -> Option<SearchState> {
-        if self.visited.len() >= MAX_SEARCH_STATES {
-            self.incomplete = true;
-            return None;
-        }
-        let key = serde_json::to_string(&(&state.inventory, &state.decided, &state.disabled_guids))
-            .ok()?;
-        if !self.visited.insert(key) {
-            return None;
-        }
-        let protected = self.protected(&state);
-        let changed_guids = self.changed_guids(&state);
-        let evaluations = evaluate(&state.inventory);
-        // Roots and their required closure cannot be accepted with unknown declarations.
-        for (index, node) in state.inventory.nodes.iter().enumerate() {
-            if node.enabled
-                && (protected.contains(&index) || changed(self.original, &state.inventory, index))
-                && node
-                    .current
-                    .as_ref()
-                    .is_some_and(|candidate| !candidate.relations_known)
-            {
-                self.mark_failure(node, None, true, "candidate_relations_unknown");
-                return None;
+        let mut fallback = None;
+        // Only a complete version-only search may unlock this second-pass fallback.
+        // Never discard a newly installed requirement to make its own install succeed.
+        if self.allow_dependency_disable
+            && relation.kind == RelationKind::Requires
+            && issue.state != EvaluationState::Unknown
+            && self.original.nodes[owner].enabled
+            && self.original.nodes[owner].current.is_some()
+        {
+            let mut installed = state.clone();
+            installed.inventory.nodes[owner].current = self.original.nodes[owner].current.clone();
+            if let Some(next) = self.disable(
+                &installed,
+                owner,
+                None,
+                owner,
+                protected,
+                DisableSource::DependencyFallback,
+            ) {
+                fallback = Some(next);
             }
         }
-        let mut issues = Vec::new();
-        for (index, evaluation) in evaluations.iter().enumerate() {
-            for issue in &evaluation.runtime {
-                if issue.state.is_issue()
-                    && self.relevant(&state, index, &issue.relation, &protected, &changed_guids)
-                {
-                    issues.push((index, issue.clone()));
-                }
-            }
-        }
-        let distances = self.order(&state);
-        issues.sort_by_key(|(index, issue)| {
-            (
-                self.node_order(&state, &distances, *index),
-                issue.relation.guid.to_lowercase(),
-            )
-        });
-        if let Some((owner, issue)) = issues.first() {
-            let branches = self.repair(&state, *owner, issue, &protected);
-            for branch in branches {
-                if let Some(solution) = self.visit(branch) {
-                    return Some(solution);
-                }
-            }
-            let missing_data = issue.state == EvaluationState::Unknown
-                || state.inventory.nodes.iter().any(|node| {
-                    !node.candidates_complete
-                        && (node
-                            .current
-                            .as_ref()
-                            .is_some_and(|candidate| provides(candidate, &issue.relation.guid))
-                            || node
-                                .candidates
-                                .iter()
-                                .any(|candidate| provides(candidate, &issue.relation.guid))
-                            || node.id == state.inventory.nodes[*owner].id)
-                });
-            self.mark_failure(
-                &state.inventory.nodes[*owner],
-                Some(&issue.relation),
-                missing_data || self.catalog_unknown,
-                "relation_has_no_solution",
-            );
-            return None;
-        }
-        // Select the newest compatible version for each required node, then backtrack
-        // over its entire downstream closure. Cycles terminate through decided nodes.
-        let mut pending = protected
-            .iter()
-            .copied()
-            .filter(|index| !state.decided.contains(index))
-            .collect::<Vec<_>>();
-        pending.sort_by_key(|index| self.node_order(&state, &distances, *index));
-        if let Some(index) = pending.first().copied() {
-            let node = &state.inventory.nodes[index];
-            if node.kind == NodeKind::Mod && node.mutable {
-                for candidate in ordered_candidates(node) {
-                    if node
-                        .current
-                        .as_ref()
-                        .is_some_and(|current| !preserves_members(current, &candidate))
-                    {
-                        continue;
-                    }
-                    let next = self.with_candidate(&state, index, candidate, None, index);
-                    if let Some(solution) = self.visit(next) {
-                        return Some(solution);
-                    }
-                }
-            } else {
-                let mut next = state;
-                next.decided.insert(index);
-                return self.visit(next);
-            }
-            return None;
-        }
-        Some(state)
+        (branches, fallback)
     }
 }
 
@@ -692,6 +641,7 @@ fn solve_inner(
         inventory: inventory.clone(),
         decided: BTreeSet::new(),
         disabled_guids: BTreeSet::new(),
+        fallback_disabled_guids: BTreeSet::new(),
         causes: BTreeMap::new(),
     };
     let mut roots = BTreeSet::new();
@@ -841,19 +791,31 @@ fn solve_inner(
         fixed: roots.clone(),
         roots,
         fixed_members,
-        visited: BTreeSet::new(),
+        visited: BTreeMap::new(),
         baseline,
-        incomplete: false,
         failure: None,
         catalog_unknown: inventory.nodes.iter().any(|node| !node.candidates_complete),
+        allow_dependency_disable: false,
     };
     let initial = state.clone();
-    let Some(solution) = search.visit(state) else {
-        let mut blocker = search
-            .failure
-            .unwrap_or_else(|| diagnostic("search_exhausted", None, search.incomplete));
-        blocker.incomplete |= search.incomplete;
-        return Err(blocker);
+    let mut solution = search.visit(state);
+    if matches!(solution, Err(false)) {
+        // Exhaust every compatible-version branch before allowing dependency owners
+        // off. Unknown declarations, incomplete history and search limits block this.
+        search.allow_dependency_disable = true;
+        search.visited.clear();
+        search.failure = None;
+        solution = search.visit(initial.clone());
+    }
+    let solution = match solution {
+        Ok(solution) => solution,
+        Err(incomplete) => {
+            let mut blocker = search
+                .failure
+                .unwrap_or_else(|| diagnostic("search_exhausted", None, incomplete));
+            blocker.incomplete |= incomplete;
+            return Err(blocker);
+        }
     };
     let actions = super::actions::build_actions(inventory, &solution.inventory, &solution.causes);
     let mut impacts = solution

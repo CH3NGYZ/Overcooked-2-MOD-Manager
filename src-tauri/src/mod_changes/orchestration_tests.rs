@@ -4,6 +4,8 @@ use super::{inventory, model::*, planning, preparation, session::*, transaction:
 use crate::{app_state::AppState, archive, config::ConfigService, models::*, mods};
 use std::{collections::BTreeMap, fs, path::Path};
 
+#[path = "orchestration_tests/disable_fallback.rs"]
+mod disable_fallback;
 #[path = "orchestration_tests/installed_relations.rs"]
 mod installed_relations;
 

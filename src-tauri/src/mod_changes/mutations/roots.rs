@@ -198,9 +198,9 @@ pub(super) fn toggle_map(
         builder.map_paths.push((directory.into(), target));
     } else {
         for (key, enabled) in internal {
-            let from = builder.physical(&key)?;
+            let from = builder.physical(&node.id, &key)?;
             builder.ensure_owner(&from, &node.id)?;
-            let canonical = mods::canonical_dll_name(&key);
+            let canonical = mods::canonical_dll_name(&from);
             let to = if enabled {
                 canonical
             } else {

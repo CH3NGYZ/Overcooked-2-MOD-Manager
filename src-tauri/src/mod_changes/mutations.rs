@@ -7,6 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod physical;
 mod roots;
 pub(crate) use roots::final_package;
 
@@ -92,11 +93,12 @@ pub(crate) fn assemble(
                     .ok_or("modChanges.targetChanged")?;
                 let enabled = node.enabled && member.enabled;
                 if before.enabled != enabled {
-                    let from = builder.physical(key)?;
+                    let from = builder.physical(&node.id, key)?;
+                    let canonical = mods::canonical_dll_name(&from);
                     let to = if enabled {
-                        mods::canonical_dll_name(key)
+                        canonical
                     } else {
-                        mods::disabled_dll_file(&mods::canonical_dll_name(key))
+                        mods::disabled_dll_file(&canonical)
                     };
                     builder.ensure_owner(&from, &node.id)?;
                     builder.add_move(&node.id, &from, &to)?;
@@ -172,18 +174,6 @@ impl Builder<'_> {
             }
         }
         Ok(())
-    }
-
-    pub fn physical(&self, canonical: &str) -> Result<String, String> {
-        let canonical = mods::canonical_dll_name(canonical);
-        let disabled = mods::disabled_dll_file(&canonical);
-        let active = game(&canonical).resolve(&self.roots)?;
-        let inactive = game(&disabled).resolve(&self.roots)?;
-        match (active.is_file(), inactive.is_file()) {
-            (true, false) => Ok(canonical),
-            (false, true) => Ok(disabled),
-            _ => Err("modChanges.ambiguousOwnership".into()),
-        }
     }
 
     pub fn ensure_owner(&self, relative: &str, owner: &str) -> Result<(), String> {

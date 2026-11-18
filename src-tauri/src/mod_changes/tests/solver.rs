@@ -1,5 +1,7 @@
 use super::*;
 
+mod disable_fallback;
+
 #[test]
 fn user_save_fix_downgrades_framework_and_reverse_web_dependency() {
     let fw10 = candidate("diy", "0.10.0", vec![]);

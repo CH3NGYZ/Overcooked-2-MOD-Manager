@@ -19,10 +19,21 @@ fn explicit_map_root_can_update_but_auto_reverse_map_version_is_fixed() {
     let inventory = Inventory {
         nodes: vec![node("fw", Some(fw1), vec![fw2.clone()]), map],
     };
+    let (result, solved) = solve_with_inventory(&inventory, &intent("fw", Some(fw2.id), true));
+    assert_eq!(result.status, SolveStatus::Ready, "{result:?}");
+    let solved = solved.unwrap();
+    assert!(!solved.nodes[1].enabled);
     assert_eq!(
-        solve(&inventory, &intent("fw", Some(fw2.id), true)).status,
-        SolveStatus::Unsatisfiable
+        solved.nodes[1].current,
+        inventory.nodes[1].current.as_ref().map(|candidate| {
+            let mut candidate = candidate.clone();
+            for member in &mut candidate.provides {
+                member.enabled = false;
+            }
+            candidate
+        })
     );
+    action_for(&result, "map", ActionKind::Disable);
     assert_eq!(
         solve(&inventory, &intent("map", Some(map2.id), true)).status,
         SolveStatus::Ready
@@ -30,7 +41,7 @@ fn explicit_map_root_can_update_but_auto_reverse_map_version_is_fixed() {
 }
 
 #[test]
-fn disabled_map_cannot_force_a_framework_change_but_enabled_map_blocks_it() {
+fn disabled_map_only_reports_readiness_and_incompatible_enabled_nonroot_map_can_disable() {
     let fw1 = candidate("fw", "1.0", vec![]);
     let fw2 = candidate("fw", "2.0", vec![]);
     let mut map = node(
@@ -52,10 +63,9 @@ fn disabled_map_cannot_force_a_framework_change_but_enabled_map_blocks_it() {
         SolveStatus::Ready
     );
     inventory.nodes[1].enabled = true;
-    assert_eq!(
-        solve(&inventory, &intent("fw", Some(fw2.id), true)).status,
-        SolveStatus::Unsatisfiable
-    );
+    let result = solve(&inventory, &intent("fw", Some(fw2.id), true));
+    assert_eq!(result.status, SolveStatus::Ready, "{result:?}");
+    action_for(&result, "map", ActionKind::Disable);
 }
 
 #[test]

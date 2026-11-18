@@ -5,6 +5,9 @@ use crate::mod_changes::{
 };
 use std::{collections::HashMap, time::Instant};
 
+#[path = "physical_tests.rs"]
+mod physical_tests;
+
 struct Fixture {
     _temp: tempfile::TempDir,
     roots: TransactionRoots,

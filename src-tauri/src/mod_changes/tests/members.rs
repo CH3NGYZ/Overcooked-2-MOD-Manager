@@ -231,9 +231,20 @@ fn existing_member_cannot_vanish_by_selecting_unrelated_package_version() {
             node("web", Some(web), vec![impostor]),
         ],
     };
+    let (result, solved) = solve_with_inventory(&inventory, &intent("fw", Some(fw2.id), true));
+    assert_eq!(result.status, SolveStatus::Ready, "{result:?}");
+    let solved = solved.unwrap();
+    assert!(!solved.nodes[1].enabled);
     assert_eq!(
-        solve(&inventory, &intent("fw", Some(fw2.id), true)).status,
-        SolveStatus::Unsatisfiable
+        solved.nodes[1].current.as_ref().unwrap().provides[0].guid,
+        "web"
+    );
+    action_for(&result, "web", ActionKind::Disable);
+    assert!(
+        result
+            .actions
+            .iter()
+            .all(|action| action.node_id != "web" || action.kind == ActionKind::Disable)
     );
 }
 

@@ -11,6 +11,8 @@ mod bundled_maps_tests;
 mod bundled_members_tests;
 #[path = "physical_tests.rs"]
 mod physical_tests;
+#[path = "release_asset_adoption_tests.rs"]
+mod release_asset_adoption_tests;
 
 struct Fixture {
     _temp: tempfile::TempDir,
@@ -186,7 +188,9 @@ fn payload(fixture: &mut Fixture, id: &str, path: &str, enabled: bool) {
         id.into(),
         Payload {
             candidate: actual,
+            stage_fingerprint: Fingerprint::capture(&stage).unwrap(),
             stage_root: stage,
+            release_files: None,
             files: vec![path.into()],
             manifest: Some(crate::archive::new_manifest(
                 id,

@@ -239,8 +239,10 @@ pub(super) fn update_registry(
         return Ok(());
     }
     let relative = format!("manifests/{}", crate::level_sets::LEVEL_SET_PLUGIN_REGISTRY);
-    let path = data(&relative).resolve(&builder.roots)?;
-    if Fingerprint::capture(&path)? == Fingerprint::Missing {
+    let target = data(&relative);
+    let path = target.resolve(&builder.roots)?;
+    let expected = Fingerprint::capture(&path)?;
+    if expected == Fingerprint::Missing {
         return Ok(());
     }
     let staged = generated(
@@ -262,7 +264,15 @@ pub(super) fn update_registry(
             .unwrap_or(""),
         &map_paths,
     )? {
-        builder.write("map-plugin-registry", data(&relative), Some(staged))?;
+        builder.write(
+            "map-plugin-registry",
+            FileChange {
+                target,
+                source: Some(StagedFile::capture(staged)?),
+                expected,
+                require_single_link: false,
+            },
+        )?;
     }
     Ok(())
 }

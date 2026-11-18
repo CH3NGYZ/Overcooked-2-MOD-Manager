@@ -11,6 +11,7 @@ mod tree;
 mod types;
 
 pub(crate) use durable::rename as durable_rename;
+pub(crate) use paths::{has_single_link, key as path_key};
 pub(crate) use prepare::prepare;
 pub(crate) use recovery::remove_private_tree;
 pub(crate) use recovery::{has_pending, recover_all};
@@ -19,8 +20,8 @@ pub(crate) use tree::preserve_replaced_permissions as preserve_replaced_tree_per
 #[cfg(test)]
 pub(crate) use types::JournalState;
 pub(crate) use types::{
-    FileChange, Fingerprint, MoveChange, Mutation, RootKind, TransactionPath, TransactionRoots,
-    TreeChange,
+    FileChange, Fingerprint, MoveChange, Mutation, RootKind, StagedFile, TransactionPath,
+    TransactionRoots, TreeChange,
 };
 
 pub(crate) struct PreparedTransaction {

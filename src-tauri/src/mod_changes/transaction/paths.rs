@@ -26,6 +26,34 @@ pub(super) fn is_link(metadata: &fs::Metadata) -> bool {
     false
 }
 
+#[cfg(unix)]
+pub(crate) fn has_single_link(file: &fs::File) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    file.metadata().is_ok_and(|info| info.nlink() == 1)
+}
+
+#[cfg(windows)]
+pub(crate) fn has_single_link(file: &fs::File) -> bool {
+    use std::{mem::MaybeUninit, os::windows::io::AsRawHandle};
+    use winapi::um::fileapi::{BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle};
+
+    let mut info = MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+    // The borrowed handle is live; the API initializes the struct on success.
+    unsafe {
+        GetFileInformationByHandle(file.as_raw_handle().cast(), info.as_mut_ptr()) != 0
+            && info.assume_init().nNumberOfLinks == 1
+    }
+}
+
+pub(super) fn guard_single_link(path: &Path) -> Result<(), String> {
+    if fs::File::open(path).is_ok_and(|file| has_single_link(&file)) {
+        Ok(())
+    } else {
+        log::warn!("已验证的资源文件不再具有唯一链接：{}", path.display());
+        Err(MODIFIED.into())
+    }
+}
+
 pub(super) fn validate_absolute(path: &Path) -> Result<(), String> {
     if !path.is_absolute() {
         return Err(UNSAFE.into());
@@ -82,7 +110,7 @@ impl TransactionPath {
     }
 }
 
-pub(super) fn key(path: &Path) -> String {
+pub(crate) fn key(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/").to_lowercase()
 }
 

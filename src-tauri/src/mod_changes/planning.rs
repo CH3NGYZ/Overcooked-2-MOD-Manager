@@ -477,30 +477,30 @@ pub(crate) fn resolve(session: &mut PlanSession) -> Result<(), String> {
 }
 
 pub(crate) fn remember_payloads(session: &mut PlanSession) -> Result<(), String> {
-    session.payload_fingerprints.clear();
-    for payload in session.payloads.values() {
-        session.payload_fingerprints.insert(
-            payload.stage_root.clone(),
-            super::transaction::Fingerprint::capture(&payload.stage_root)?,
-        );
-    }
-    for payload in session.verified_payloads.values() {
-        session.payload_fingerprints.insert(
-            payload.stage_root.clone(),
-            super::transaction::Fingerprint::capture(&payload.stage_root)?,
-        );
-    }
+    let mut fingerprints = session
+        .payloads
+        .values()
+        .chain(session.verified_payloads.values())
+        .map(|payload| {
+            (
+                payload.stage_root.clone(),
+                payload.stage_fingerprint.clone(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
     if let Some(payload) = &session.map_payload {
         for path in [&payload.stage_root, &payload.manifests_root] {
-            session.payload_fingerprints.insert(
-                path.clone(),
-                super::transaction::Fingerprint::capture(path)?,
-            );
+            let expected = match session.payload_fingerprints.get(path) {
+                Some(expected) => expected.clone(),
+                None => super::transaction::Fingerprint::capture(path)?,
+            };
+            fingerprints.insert(path.clone(), expected);
         }
-        session.payload_fingerprints.insert(
+        fingerprints.insert(
             payload.source_path.clone(),
             payload.source_fingerprint.clone(),
         );
     }
+    session.payload_fingerprints = fingerprints;
     Ok(())
 }

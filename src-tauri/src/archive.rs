@@ -25,7 +25,10 @@ pub(crate) use install::{
     copy_asset_pending, extract_framework_zip_pending, extract_local_mod_zip_pending,
     extract_prepared_mod_zip, prepare_repository_mod_zip,
 };
-pub(crate) use integrity::{validate_download_bytes, validate_download_file, validate_zip};
+pub(crate) use integrity::{
+    validate_download_bytes, validate_download_digest, validate_download_file,
+    validate_download_size, validate_zip,
+};
 pub(crate) use manifests::{
     InstallManifest, new_manifest, package_display_name, primary_translation, read_manifest,
     read_manifests, single_language, write_manifest,

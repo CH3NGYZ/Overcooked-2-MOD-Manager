@@ -8,6 +8,7 @@ use std::{
 };
 
 mod physical;
+mod release_ownership;
 mod roots;
 pub(crate) use roots::final_package;
 
@@ -17,6 +18,7 @@ pub(crate) struct Builder<'a> {
     pub writes: BTreeMap<String, (String, Mutation)>,
     pub moves: Vec<Mutation>,
     pub ownership: BTreeMap<String, BTreeSet<String>>,
+    ownership_paths: BTreeSet<String>,
     pub protected_maps: Vec<String>,
     pub map_paths: Vec<(String, String)>,
 }
@@ -48,6 +50,7 @@ pub(crate) fn assemble(
         writes: BTreeMap::new(),
         moves: Vec::new(),
         ownership: BTreeMap::new(),
+        ownership_paths: BTreeSet::new(),
         protected_maps: Vec::new(),
         map_paths: Vec::new(),
     };
@@ -168,6 +171,7 @@ impl Builder<'_> {
                             .entry(inventory::key(&mods::canonical_dll_name(&file)))
                             .or_default()
                             .insert(owner.clone());
+                        self.ownership_paths.insert(file);
                     }
                 }
             }
@@ -178,6 +182,7 @@ impl Builder<'_> {
                     .entry(inventory::key(&mods::canonical_dll_name(&member.dll_file)))
                     .or_default()
                     .insert(id.clone());
+                self.ownership_paths.insert(member.dll_file.clone());
             }
             if let Some(path) = &node.map_path {
                 self.protected_maps.push(path.clone());
@@ -252,15 +257,14 @@ impl Builder<'_> {
         Ok(())
     }
 
-    pub fn write(
-        &mut self,
-        owner: &str,
-        target: TransactionPath,
-        source: Option<PathBuf>,
-    ) -> Result<(), String> {
-        let path = target.resolve(&self.roots)?;
+    fn write(&mut self, owner: &str, change: FileChange) -> Result<(), String> {
+        let FileChange {
+            target,
+            source,
+            expected,
+            ..
+        } = &change;
         let id = format!("{:?}:{}", target.root, inventory::key(&target.relative));
-        let expected = Fingerprint::capture(&path)?;
         if matches!(expected, Fingerprint::Directory { .. }) {
             log::warn!(
                 "整链写入路径冲突：节点={owner}，路径={}，原因=目标是目录",
@@ -303,21 +307,25 @@ impl Builder<'_> {
                 }
             }
         }
-        if expected == Fingerprint::Missing && source.is_none() {
+        if *expected == Fingerprint::Missing && source.is_none() {
             return Ok(());
         }
-        self.writes.insert(
-            id,
-            (
-                owner.into(),
-                Mutation::File(FileChange {
-                    target,
-                    source,
-                    expected,
-                }),
-            ),
-        );
+        self.writes
+            .insert(id, (owner.into(), Mutation::File(change)));
         Ok(())
+    }
+
+    fn remove(&mut self, owner: &str, target: TransactionPath) -> Result<(), String> {
+        let expected = Fingerprint::capture(&target.resolve(&self.roots)?)?;
+        self.write(
+            owner,
+            FileChange {
+                target,
+                source: None,
+                expected,
+                require_single_link: false,
+            },
+        )
     }
 
     fn replace_mod(
@@ -364,24 +372,23 @@ impl Builder<'_> {
                 } else {
                     vec![relative]
                 } {
-                    self.write(&node.id, game(&candidate), None)?;
+                    self.remove(&node.id, game(&candidate))?;
                 }
             }
             for old in old.manifests {
-                self.write(
+                self.remove(
                     &node.id,
                     data(&format!("manifests/{}.toml", old.repository_id)),
-                    None,
                 )?;
             }
         }
         let mut final_files = Vec::new();
+        let release_directory = std::cell::OnceCell::new();
+        let source_roots = TransactionRoots {
+            game_root: payload.stage_root.clone(),
+            data_root: self.roots.data_root.clone(),
+        };
         for source_relative in &payload.files {
-            let source_roots = TransactionRoots {
-                game_root: payload.stage_root.clone(),
-                data_root: self.roots.data_root.clone(),
-            };
-            let source = game(source_relative).resolve(&source_roots)?;
             if bundled_levels
                 .as_ref()
                 .is_some_and(|levels| within(source_relative, levels))
@@ -392,7 +399,8 @@ impl Builder<'_> {
             }
             let canonical = mods::canonical_dll_name(source_relative);
             let member_key = inventory::key(&canonical);
-            let destination = if canonical.to_ascii_lowercase().ends_with(".dll") {
+            let is_dll = canonical.to_ascii_lowercase().ends_with(".dll");
+            let destination = if is_dll {
                 let member = current
                     .provides
                     .iter()
@@ -419,45 +427,76 @@ impl Builder<'_> {
                 return Err("modChanges.pathCollision".into());
             }
             let ownership_key = inventory::key(&mods::canonical_dll_name(&destination));
-            if let Some(owners) = self.ownership.get(&ownership_key) {
-                if owners.len() != 1 || !owners.contains(&node.id) {
-                    log::warn!(
-                        "整链安装归属冲突：节点={}，路径={}，已知归属={owners:?}",
-                        node.id,
-                        destination
-                    );
-                    return Err("modChanges.ambiguousOwnership".into());
-                }
+            let owners = self.ownership.get(&ownership_key);
+            if owners.is_some_and(|owners| owners.len() != 1 || !owners.contains(&node.id)) {
+                return Err(release_ownership::file_conflict(&node.id, &destination));
             }
-            if destination.to_ascii_lowercase().ends_with(".dll")
-                || destination.to_ascii_lowercase().ends_with(".dll.disabled")
-            {
+            if is_dll {
                 let canonical = mods::canonical_dll_name(&destination);
                 for variant in [&canonical, &mods::disabled_dll_file(&canonical)] {
                     if Fingerprint::capture(&game(variant).resolve(&self.roots)?)?
                         != Fingerprint::Missing
+                        && owners.is_none()
                     {
-                        self.ensure_owner(variant, &node.id)?;
+                        return Err(release_ownership::file_conflict(&node.id, variant));
                     }
                 }
             }
-            let target = game(&destination).resolve(&self.roots)?;
-            if Fingerprint::capture(&target)? != Fingerprint::Missing {
-                self.ensure_owner(&destination, &node.id)?;
+            let target = game(&destination);
+            let target_path = target.resolve(&self.roots)?;
+            let expected = Fingerprint::capture(&target_path)?;
+            let path = game(source_relative).resolve(&source_roots)?;
+            let source = if let Some(files) = &payload.release_files {
+                let fingerprint = files
+                    .get(&path_key(Path::new(source_relative)))
+                    .ok_or("modChanges.payloadChanged")?;
+                StagedFile {
+                    path,
+                    fingerprint: fingerprint.clone(),
+                }
+            } else {
+                StagedFile::capture(path)?
+            };
+            let adopting = expected != Fingerprint::Missing && owners.is_none();
+            if adopting {
+                let identical_resource = !is_dll
+                    && matches!(expected, Fingerprint::File { .. })
+                    && expected.same_content(&source.fingerprint)
+                    && release_directory
+                        .get_or_init(|| self.release_directory(&node.id, payload, &manifest))
+                        .as_ref()
+                        .is_some_and(|directory| {
+                            self.release_path_unclaimed(&destination, &target_path, directory)
+                        });
+                if !identical_resource {
+                    return Err(release_ownership::file_conflict(&node.id, &destination));
+                }
+                log::info!(
+                    "整链安装将一致的 Release 资源补入清单：节点={}，路径={destination}",
+                    node.id
+                );
             }
-            if !matches!(Fingerprint::capture(&source)?, Fingerprint::File { .. }) {
-                return Err("modChanges.targetChanged".into());
-            }
-            self.write(&node.id, game(&destination), Some(source))?;
+            // Do not re-sample either side after authorizing the untracked target.
+            self.write(
+                &node.id,
+                FileChange {
+                    target,
+                    source: Some(source),
+                    expected,
+                    require_single_link: adopting,
+                },
+            )?;
             self.ownership
                 .entry(ownership_key)
                 .or_default()
                 .insert(node.id.clone());
+            self.ownership_paths.insert(destination.clone());
             final_files.push(destination);
         }
         manifest.files = final_files;
         let manifest_target = data(&format!("manifests/{}.toml", manifest.repository_id));
-        if Fingerprint::capture(&manifest_target.resolve(&self.roots)?)? != Fingerprint::Missing
+        let expected = Fingerprint::capture(&manifest_target.resolve(&self.roots)?)?;
+        if expected != Fingerprint::Missing
             && !old_files.is_some_and(|old| {
                 old.manifests
                     .iter()
@@ -473,7 +512,15 @@ impl Builder<'_> {
                 .map_err(|error| error.to_string())?
                 .as_bytes(),
         )?;
-        self.write(&node.id, manifest_target, Some(staged))
+        self.write(
+            &node.id,
+            FileChange {
+                target: manifest_target,
+                source: Some(StagedFile::capture(staged)?),
+                expected,
+                require_single_link: false,
+            },
+        )
     }
 }
 

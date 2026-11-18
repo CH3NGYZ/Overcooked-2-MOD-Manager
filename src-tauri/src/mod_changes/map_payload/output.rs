@@ -259,15 +259,11 @@ fn push_file(
     if matches!(expected, Fingerprint::Directory { .. }) {
         return Err("modChanges.pathCollision".into());
     }
-    if let Some(source) = &source {
-        if !matches!(Fingerprint::capture(source)?, Fingerprint::File { .. }) {
-            return Err("modChanges.payloadChanged".into());
-        }
-    }
     result.push(Mutation::File(FileChange {
         target,
-        source,
+        source: source.map(StagedFile::capture).transpose()?,
         expected,
+        require_single_link: false,
     }));
     Ok(())
 }

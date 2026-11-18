@@ -1,7 +1,8 @@
 use super::*;
 use crate::config::ConfigService;
 use crate::mod_changes::transaction::{
-    self, FileChange, Fingerprint, Mutation, RootKind, TransactionPath, TransactionRoots,
+    self, FileChange, Fingerprint, Mutation, RootKind, StagedFile, TransactionPath,
+    TransactionRoots,
 };
 use crate::models::{Provider, RelationKind, RepositoryRelation};
 use std::fs;
@@ -64,8 +65,9 @@ fn dependency_snapshot_sync_keeps_manifests_when_an_applying_journal_cannot_reco
                     .to_string_lossy()
                     .replace('\\', "/"),
             },
-            source: Some(source.clone()),
+            source: Some(StagedFile::capture(source.clone()).unwrap()),
             expected: Fingerprint::capture(&target).unwrap(),
+            require_single_link: false,
         })],
     )
     .unwrap();

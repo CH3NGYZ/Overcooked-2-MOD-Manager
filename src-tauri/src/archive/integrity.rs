@@ -27,27 +27,34 @@ pub fn sha256_file(path: &Path) -> Result<String, String> {
 pub fn verify_digest(path: &Path, digest: Option<&str>) -> Result<(), String> {
     if let Some(expected) = digest {
         log::debug!("开始校验文件摘要：文件={}", path.display());
-        let expected = expected
-            .strip_prefix("sha256:")
-            .unwrap_or(expected)
-            .trim()
-            .to_ascii_lowercase();
         let actual = sha256_file(path)?;
-        if expected != actual {
-            log::error!("SHA-256 校验失败：文件={}", path.display());
-            return Err(crate::locale_tag::with_params(
-                "download.checksumMismatch",
-                &[
-                    ("expected", &expected.to_string()),
-                    ("actual", &actual.to_string()),
-                ],
-            ));
-        }
+        validate_download_digest(&actual, expected)?;
         log::info!("文件摘要校验通过：文件={}", path.display());
     } else {
         log::trace!("未提供文件摘要，跳过校验：文件={}", path.display());
     }
     Ok(())
+}
+
+fn normalized_digest(digest: &str) -> String {
+    digest
+        .strip_prefix("sha256:")
+        .unwrap_or(digest)
+        .trim()
+        .to_ascii_lowercase()
+}
+
+/// Compare a SHA-256 already computed while reading a file with Release metadata.
+pub(crate) fn validate_download_digest(actual: &str, expected: &str) -> Result<(), String> {
+    let expected = normalized_digest(expected);
+    if actual == expected {
+        return Ok(());
+    }
+    log::error!("下载文件 SHA-256 校验失败");
+    Err(crate::locale_tag::with_params(
+        "download.checksumMismatch",
+        &[("expected", &expected), ("actual", actual)],
+    ))
 }
 
 pub fn validate_download_file(
@@ -62,7 +69,7 @@ pub fn validate_download_file(
     verify_digest(path, digest)
 }
 
-pub(super) fn validate_download_size(actual: u64, expected: Option<u64>) -> Result<(), String> {
+pub(crate) fn validate_download_size(actual: u64, expected: Option<u64>) -> Result<(), String> {
     if actual == 0 {
         return Err("download.empty".into());
     }
@@ -83,13 +90,8 @@ pub fn validate_download_bytes(
 ) -> Result<(), String> {
     validate_download_size(bytes.len() as u64, expected_size)?;
     if let Some(expected) = digest {
-        let expected = expected
-            .strip_prefix("sha256:")
-            .unwrap_or(expected)
-            .trim()
-            .to_ascii_lowercase();
         let actual = format!("{:x}", Sha256::digest(bytes));
-        if actual != expected {
+        if actual != normalized_digest(expected) {
             return Err("download.checksumFailed".into());
         }
     }

@@ -1,6 +1,7 @@
 //! Real ZIP preview -> private install -> batch mutations, including DIYLevel's bundled maps.
 use super::*;
 use crate::{app_state::AppState, config::ConfigService, models::*};
+use sha2::{Digest, Sha256};
 use std::io::Write;
 
 pub(super) fn zip_payload(
@@ -9,6 +10,17 @@ pub(super) fn zip_payload(
     guid: &str,
     version: &str,
     entries: &[(&str, &[u8])],
+) {
+    stage_zip_payload(f, id, guid, version, entries, false);
+}
+
+pub(super) fn stage_zip_payload(
+    f: &mut Fixture,
+    id: &str,
+    guid: &str,
+    version: &str,
+    entries: &[(&str, &[u8])],
+    include_digest: bool,
 ) {
     let state = AppState::with_config(ConfigService::for_test(f.roots.data_root.clone()));
     let mut repo =
@@ -21,6 +33,20 @@ pub(super) fn zip_payload(
         rule_type: AssetRuleType::Exact,
         value: format!("{id}.zip"),
     }];
+    let preview_id = uuid::Uuid::new_v4().to_string();
+    let preview = crate::mod_preview::staging::preview_root(&state).join(&preview_id);
+    fs::create_dir_all(&preview).unwrap();
+    let asset_name = format!("{id}.zip");
+    let zip_path = preview.join(&asset_name);
+    let mut zip = zip::ZipWriter::new(fs::File::create(&zip_path).unwrap());
+    for (path, bytes) in entries {
+        zip.start_file(*path, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(bytes).unwrap();
+    }
+    let size = zip.finish().unwrap().metadata().unwrap().len();
+    let digest = include_digest
+        .then(|| format!("sha256:{:x}", Sha256::digest(fs::read(&zip_path).unwrap())));
     repo.cached_releases = vec![ReleaseInfo {
         release_id: None,
         tag_name: format!("v{version}"),
@@ -32,24 +58,14 @@ pub(super) fn zip_payload(
         prerelease: false,
         draft: false,
         assets: vec![ReleaseAsset {
-            name: format!("{id}.zip"),
-            size: 0,
+            name: asset_name,
+            size,
             download_count: None,
             download_url: format!("https://example.invalid/{id}.zip"),
-            digest: None,
+            digest,
         }],
     }];
     f.session.trusted.config.repositories.push(repo);
-    let preview_id = uuid::Uuid::new_v4().to_string();
-    let preview = crate::mod_preview::staging::preview_root(&state).join(&preview_id);
-    fs::create_dir_all(&preview).unwrap();
-    let mut zip = zip::ZipWriter::new(fs::File::create(preview.join(format!("{id}.zip"))).unwrap());
-    for (path, bytes) in entries {
-        zip.start_file(*path, zip::write::SimpleFileOptions::default())
-            .unwrap();
-        zip.write_all(bytes).unwrap();
-    }
-    zip.finish().unwrap();
     fs::write(
         preview.join(crate::mod_preview::staging::ORIGIN_FILE),
         serde_json::to_vec(&crate::mod_preview::staging::PreviewOriginRecord {

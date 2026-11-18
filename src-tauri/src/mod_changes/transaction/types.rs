@@ -45,11 +45,19 @@ pub(crate) enum Fingerprint {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct StagedFile {
+    pub path: PathBuf,
+    pub fingerprint: Fingerprint,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct FileChange {
     pub target: TransactionPath,
     /// A validated, fully downloaded/unpacked file. None removes the target.
-    pub source: Option<PathBuf>,
+    pub source: Option<StagedFile>,
     pub expected: Fingerprint,
+    /// Adopting an untracked file must not change permissions through another link.
+    pub require_single_link: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -127,6 +135,8 @@ pub(super) enum RecordedMutation {
         backup: Option<String>,
         payload: Option<String>,
         temporary: TransactionPath,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        require_single_link: bool,
     },
     Move {
         from: TransactionPath,

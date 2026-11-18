@@ -280,7 +280,7 @@ fn cancelling_frozen_disable_batch_restores_real_mod_map_registry_and_manifest_f
                 change
                     .source
                     .as_ref()
-                    .map(|source| fs::read(source).unwrap())
+                    .map(|source| fs::read(&source.path).unwrap())
             }
             _ => None,
         })

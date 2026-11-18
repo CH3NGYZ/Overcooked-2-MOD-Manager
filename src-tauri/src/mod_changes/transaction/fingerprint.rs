@@ -1,10 +1,18 @@
 use super::paths::{MODIFIED, UNSAFE, io_error, is_link, validate_absolute};
-use super::types::{Fingerprint, PermissionsSnapshot};
+use super::types::{Fingerprint, PermissionsSnapshot, StagedFile};
 use sha2::{Digest, Sha256};
 use std::{fs, fs::File, io::Read, path::Path};
 
 impl Fingerprint {
     pub(crate) fn capture(path: &Path) -> Result<Self, String> {
+        Self::capture_with_files(path, &mut |_, _| Ok(()))
+    }
+
+    /// Record regular-file fingerprints during the same walk that hashes their tree.
+    pub(crate) fn capture_with_files(
+        path: &Path,
+        visit: &mut impl FnMut(&Path, &Self) -> Result<(), String>,
+    ) -> Result<Self, String> {
         validate_absolute(path)?;
         let metadata = match fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
@@ -31,11 +39,13 @@ impl Fingerprint {
             if size != metadata.len() || PermissionsSnapshot::capture(path)? != permissions {
                 return Err(MODIFIED.into());
             }
-            Ok(Self::File {
+            let fingerprint = Self::File {
                 size,
                 sha256: format!("{:x}", digest.finalize()),
                 permissions,
-            })
+            };
+            visit(path, &fingerprint)?;
+            Ok(fingerprint)
         } else if metadata.is_dir() {
             let mut children = fs::read_dir(path)
                 .map_err(io_error)?
@@ -48,7 +58,7 @@ impl Fingerprint {
                     .file_name()
                     .into_string()
                     .map_err(|_| UNSAFE.to_string())?;
-                let child = Self::capture(&entry.path())?;
+                let child = Self::capture_with_files(&entry.path(), visit)?;
                 if child == Self::Missing {
                     return Err(MODIFIED.into());
                 }
@@ -74,7 +84,7 @@ impl Fingerprint {
         }
     }
 
-    pub(super) fn same_content(&self, other: &Self) -> bool {
+    pub(crate) fn same_content(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Missing, Self::Missing) => true,
             (
@@ -88,5 +98,15 @@ impl Fingerprint {
             (Self::Directory { sha256: x, .. }, Self::Directory { sha256: y, .. }) => x == y,
             _ => false,
         }
+    }
+}
+
+impl StagedFile {
+    pub(crate) fn capture(path: std::path::PathBuf) -> Result<Self, String> {
+        let fingerprint = Fingerprint::capture(&path)?;
+        if !matches!(fingerprint, Fingerprint::File { .. }) {
+            return Err("modChanges.payloadChanged".into());
+        }
+        Ok(Self { path, fingerprint })
     }
 }

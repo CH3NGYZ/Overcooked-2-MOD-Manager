@@ -245,16 +245,13 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
     if session.map_payload.is_some() {
         mutations.extend(super::map_payload::mutations(state, session)?);
     }
-    // Freeze both generated data files and all unpacked trees. Execute uses these
-    // exact mutations and their existing expected fingerprints, never fresh defaults.
+    // FileChange already keeps the exact file source stamps. Freeze composed map
+    // trees too, without replacing the proofs captured during Release verification.
     planning::remember_payloads(session)?;
     for mutation in &mutations {
-        let source = match mutation {
-            Mutation::File(c) => c.source.as_ref(),
-            Mutation::Tree(c) => c.source.as_ref(),
-            Mutation::Move(_) => None,
-        };
-        if let Some(source) = source {
+        if let Mutation::Tree(change) = mutation
+            && let Some(source) = &change.source
+        {
             session
                 .payload_fingerprints
                 .insert(source.clone(), Fingerprint::capture(source)?);

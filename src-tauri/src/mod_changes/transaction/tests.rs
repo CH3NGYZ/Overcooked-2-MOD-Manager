@@ -47,12 +47,13 @@ impl Workspace {
         let source = bytes.map(|bytes| {
             let path = self.stage.join(uuid::Uuid::new_v4().to_string());
             fs::write(&path, bytes).unwrap();
-            path
+            StagedFile::capture(path).unwrap()
         });
         Mutation::File(FileChange {
             target: game(relative),
             source,
             expected: Fingerprint::capture(&target).unwrap(),
+            require_single_link: false,
         })
     }
 
@@ -139,8 +140,9 @@ fn mixed_disabled_rename_directory_migration_and_manifest_rollback_after_restart
             root: RootKind::Data,
             relative: "manifest.toml".into(),
         },
-        source: Some(source),
+        source: Some(StagedFile::capture(source).unwrap()),
         expected: Fingerprint::capture(&w.roots.data_root.join("manifest.toml")).unwrap(),
+        require_single_link: false,
     });
     let mut pending = w.prepare(vec![
         w.movement("plugins/a.dll", "plugins/a.dll.disabled"),
@@ -389,8 +391,9 @@ fn framework_directory_migration_and_sibling_package_replacement_commit_together
                 root: RootKind::Data,
                 relative: relative.into(),
             },
-            source: Some(source),
+            source: Some(StagedFile::capture(source).unwrap()),
             expected: Fingerprint::capture(&w.roots.data_root.join(relative)).unwrap(),
+            require_single_link: false,
         }));
     }
     w.prepare(changes).apply().unwrap();

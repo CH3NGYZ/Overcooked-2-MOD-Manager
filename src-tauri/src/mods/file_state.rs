@@ -8,7 +8,7 @@ use std::{
 use walkdir::WalkDir;
 
 /// 插件目录的游戏相对路径：扫描与批量开关必须落在同一处。
-pub(super) const PLUGINS_DIR: &str = "BepInEx/plugins";
+pub(crate) const PLUGINS_DIR: &str = "BepInEx/plugins";
 
 pub(super) fn is_restore_staging_component(name: &std::ffi::OsStr) -> bool {
     name.to_str()

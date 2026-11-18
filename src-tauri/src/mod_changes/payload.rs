@@ -4,7 +4,7 @@ use super::{
     inventory::{self, TrustedInventory},
     model::*,
     session::Payload,
-    transaction::Fingerprint,
+    transaction::{Fingerprint, path_key},
 };
 use crate::{
     app_state::AppState,
@@ -15,9 +15,10 @@ use crate::{
     mods, releases,
 };
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fs,
     path::Path,
+    sync::Arc,
 };
 
 pub(crate) fn from_preview(
@@ -46,18 +47,16 @@ pub(crate) fn from_preview(
         if entry.file_name() == staging::ORIGIN_FILE {
             continue;
         }
-        if !matches!(
-            Fingerprint::capture(&entry.path())?,
-            Fingerprint::File { .. }
-        ) {
-            return Err("archive.pathEscape".into());
-        }
         sources.push(entry.path());
     }
     if sources.len() != 1 {
         return Err("modPreview.expired".into());
     }
     let source = sources.remove(0);
+    let source_fingerprint = Fingerprint::capture(&source)?;
+    let Fingerprint::File { size, sha256, .. } = &source_fingerprint else {
+        return Err("archive.pathEscape".into());
+    };
     let file_name = source
         .file_name()
         .and_then(|name| name.to_str())
@@ -100,6 +99,8 @@ pub(crate) fn from_preview(
         _ => return Err("modChanges.targetChanged".into()),
     }
     let prerelease = origin.as_ref().is_some_and(|value| value.prerelease);
+    let mut release_digest = None;
+    let mut expected_size = None;
     if let Some(repo) = repo {
         if let Some(tag) = &candidate.tag {
             let release = repo
@@ -119,30 +120,30 @@ pub(crate) fn from_preview(
             if asset.name != file_name {
                 return Err("modChanges.targetChanged".into());
             }
-            archive::validate_download_file(
-                &source,
-                (asset.size > 0).then_some(asset.size),
-                asset.digest.as_deref(),
-            )?;
+            expected_size = (asset.size > 0).then_some(asset.size);
+            release_digest = asset.digest.as_deref();
         } else if !candidate.raw {
             return Err("modChanges.targetChanged".into());
         }
     }
-    let source_fingerprint = Fingerprint::capture(&source)?;
     let extension = Path::new(file_name)
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or_default();
-    if !extension.eq_ignore_ascii_case("zip") && !extension.eq_ignore_ascii_case("dll") {
+    let is_zip = extension.eq_ignore_ascii_case("zip");
+    if !is_zip && !extension.eq_ignore_ascii_case("dll") {
         return Err("mods.unsupportedFileType".into());
     }
-    archive::validate_download_file(&source, None, None)?;
-    if extension.eq_ignore_ascii_case("zip") {
+    archive::validate_download_size(*size, expected_size)?;
+    if let Some(digest) = release_digest {
+        archive::validate_download_digest(sha256, digest)?;
+    }
+    if is_zip {
         archive::validate_zip(&source)?;
     }
     create_sandbox(state, trusted, stage_root)?;
     let result = (|| {
-        let pending = if extension.eq_ignore_ascii_case("zip") {
+        let pending = if is_zip {
             if let Some(repo) = repo {
                 let plan = archive::prepare_repository_mod_zip(
                     &source,
@@ -258,9 +259,28 @@ pub(crate) fn from_preview(
             relations,
             prerelease,
         );
+        let (stage_fingerprint, release_files) = if is_zip && release_digest.is_some() {
+            let mut files = HashMap::new();
+            // Disk enumeration may use a different spelling of a shared parent
+            // directory than the ZIP. Use the transaction's portable alias key.
+            let stamp = Fingerprint::capture_with_files(stage_root, &mut |path, stamp| {
+                let relative = path
+                    .strip_prefix(stage_root)
+                    .map_err(|_| "archive.pathEscape")?;
+                if files.insert(path_key(relative), stamp.clone()).is_some() {
+                    return Err("modChanges.pathCollision".into());
+                }
+                Ok(())
+            })?;
+            (stamp, Some(Arc::new(files)))
+        } else {
+            (Fingerprint::capture(stage_root)?, None)
+        };
         Ok(Payload {
             candidate: actual,
             stage_root: stage_root.to_path_buf(),
+            stage_fingerprint,
+            release_files,
             files,
             manifest: Some(manifest),
         })

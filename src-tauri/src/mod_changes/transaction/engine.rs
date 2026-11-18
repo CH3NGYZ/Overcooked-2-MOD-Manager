@@ -1,13 +1,28 @@
 use super::{PreparedTransaction, durable, paths, types::*};
 use std::{fs, path::Path};
 
+pub(super) fn verify_file_before(
+    path: &Path,
+    before: &Fingerprint,
+    require_single_link: bool,
+) -> Result<(), String> {
+    if Fingerprint::capture(path)? != *before {
+        return Err(paths::MODIFIED.into());
+    }
+    if require_single_link {
+        paths::guard_single_link(path)?;
+    }
+    Ok(())
+}
+
 pub(super) fn verify_before(record: &Record, roots: &TransactionRoots) -> Result<(), String> {
     match &record.operation {
-        RecordedMutation::File { target, before, .. } => {
-            if Fingerprint::capture(&target.resolve(roots)?)? != *before {
-                return Err(paths::MODIFIED.into());
-            }
-        }
+        RecordedMutation::File {
+            target,
+            before,
+            require_single_link,
+            ..
+        } => verify_file_before(&target.resolve(roots)?, before, *require_single_link)?,
         RecordedMutation::Tree {
             target,
             before,
@@ -155,6 +170,7 @@ impl PreparedTransaction {
                 after,
                 payload,
                 temporary,
+                require_single_link,
                 ..
             } => {
                 let target = target.resolve(&self.journal.roots)?;
@@ -173,9 +189,7 @@ impl PreparedTransaction {
                     if Fingerprint::capture(&temporary)? != *after {
                         return Err(paths::MODIFIED.into());
                     }
-                    if Fingerprint::capture(&target)? != *before {
-                        return Err(paths::MODIFIED.into());
-                    }
+                    verify_file_before(&target, before, *require_single_link)?;
                     make_writable(&target, before)?;
                     durable::rename(&temporary, &target, true)?;
                 } else {

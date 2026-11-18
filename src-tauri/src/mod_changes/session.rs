@@ -1,5 +1,5 @@
 //! Backend-owned plan IDs bind approval to one inventory and prepared payload set.
-use super::{install_notes::InstallNote, inventory::*, model::*};
+use super::{install_notes::InstallNote, inventory::*, model::*, transaction::Fingerprint};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
@@ -43,6 +43,10 @@ pub(crate) struct ChangePlan {
 pub(crate) struct Payload {
     pub candidate: Candidate,
     pub stage_root: PathBuf,
+    pub stage_fingerprint: Fingerprint,
+    /// Only a Release ZIP verified against its cached SHA-256 supplies proof
+    /// that a loose file is identical to the package's original staged bytes.
+    pub release_files: Option<Arc<HashMap<String, Fingerprint>>>,
     pub files: Vec<String>,
     pub manifest: Option<crate::archive::InstallManifest>,
 }

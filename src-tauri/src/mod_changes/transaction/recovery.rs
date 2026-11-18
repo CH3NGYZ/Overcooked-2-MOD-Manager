@@ -152,6 +152,7 @@ impl PreparedTransaction {
                 after,
                 backup,
                 temporary,
+                require_single_link,
                 ..
             } => {
                 let target = target.resolve(&self.journal.roots)?;
@@ -165,6 +166,13 @@ impl PreparedTransaction {
                 // A write-ahead record exclusively owns this UUID temporary. Partial copies
                 // are removable, while live targets always require an exact fingerprint.
                 remove_temporary(&temporary)?;
+                if *require_single_link {
+                    // A newly linked resource can be left alone if this record never changed it.
+                    if actual == *before {
+                        return Ok(());
+                    }
+                    paths::guard_single_link(&target)?;
+                }
                 if engine::matches_writable(&actual, before) {
                     if let Some(permissions) = before.permissions() {
                         permissions.restore(&target)?;
@@ -184,6 +192,9 @@ impl PreparedTransaction {
                         .restore(&temporary)?;
                     if Fingerprint::capture(&target)? != actual {
                         return Err(paths::MODIFIED.into());
+                    }
+                    if *require_single_link {
+                        paths::guard_single_link(&target)?;
                     }
                     if actual != Fingerprint::Missing {
                         let mut permissions = actual.permissions().ok_or(paths::INVALID)?.clone();

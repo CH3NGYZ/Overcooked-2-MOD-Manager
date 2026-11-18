@@ -31,9 +31,11 @@ pub(crate) fn prepare(
             let operation = match mutation {
                 Mutation::File(change) => {
                     let target = change.target.resolve(roots)?;
-                    if Fingerprint::capture(&target)? != change.expected {
-                        return Err(MODIFIED.into());
-                    }
+                    super::engine::verify_file_before(
+                        &target,
+                        &change.expected,
+                        change.require_single_link,
+                    )?;
                     if matches!(change.expected, Fingerprint::Directory { .. }) {
                         return Err(CONFLICT.into());
                     }
@@ -49,18 +51,17 @@ pub(crate) fn prepare(
                         Some(relative)
                     };
                     let (payload, after) = if let Some(source) = change.source {
-                        let source_before = Fingerprint::capture(&source)?;
-                        if !matches!(source_before, Fingerprint::File { .. }) {
+                        if !matches!(source.fingerprint, Fingerprint::File { .. }) {
                             return Err(UNSAFE.into());
                         }
                         let relative = format!("after/{index}");
                         let stored = private_path(&directory, &relative)?;
-                        let mut after = copy_verified(&source, &stored, &source_before)?;
+                        let mut after = copy_verified(&source.path, &stored, &source.fingerprint)?;
                         // Replacement retains the destination's permissions, including its DACL.
                         let permissions = change
                             .expected
                             .permissions()
-                            .or(source_before.permissions())
+                            .or(source.fingerprint.permissions())
                             .ok_or(UNSAFE)?
                             .clone();
                         if let Fingerprint::File {
@@ -97,6 +98,7 @@ pub(crate) fn prepare(
                         backup,
                         payload,
                         temporary,
+                        require_single_link: change.require_single_link,
                     }
                 }
                 Mutation::Move(change) => {

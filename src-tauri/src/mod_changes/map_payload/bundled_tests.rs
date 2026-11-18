@@ -73,7 +73,9 @@ fn same_root_framework_bundle_and_map_update_keep_disjoint_tree_endpoints() {
         "framework".into(),
         super::super::super::session::Payload {
             candidate: next,
+            stage_fingerprint: Fingerprint::capture(&stage).unwrap(),
             stage_root: stage,
+            release_files: None,
             files: vec![dll.clone(), sample, replaced_sample],
             manifest: Some(archive::new_manifest(
                 "framework",

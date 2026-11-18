@@ -461,8 +461,9 @@ fn evaluation_recovers_pending_journal_before_reading_cached_inventory() {
                 root: RootKind::Game,
                 relative: file.clone(),
             },
-            source: Some(source),
+            source: Some(StagedFile::capture(source).unwrap()),
             expected: Fingerprint::capture(&f.game.join(&file)).unwrap(),
+            require_single_link: false,
         })],
     )
     .unwrap();

@@ -57,7 +57,11 @@ impl PreparedHelper {
         }
     }
 
-    pub(super) fn commit(&mut self, paths: &ResetPaths) -> Result<(), String> {
+    pub(super) fn commit(
+        &mut self,
+        paths: &ResetPaths,
+        action: super::storage::DataAction,
+    ) -> Result<(), String> {
         if self.child.try_wait().map_err(failed)?.is_some() {
             return Err(failed("Reset helper stopped before handoff"));
         }
@@ -75,6 +79,9 @@ impl PreparedHelper {
             phase: ResetPhase::Pending,
             error: None,
             reported: false,
+            action,
+            fingerprint: None,
+            data_root: Some(paths.root.clone()),
         })?;
         self.committed = true;
         Ok(())
@@ -132,6 +139,7 @@ pub(super) fn run_helper(paths: &ResetPaths, token: uuid::Uuid) -> Result<(), St
                 if record.token != token || !record.pending() {
                     return Ok(());
                 }
+                let _legacy = super::legacy::exclusive_for_request(paths, &record)?;
                 wait_for_owner(&record)?;
                 return paths.finish(record);
             }
@@ -179,7 +187,7 @@ pub(super) fn wait_for_owner(record: &ResetRecord) -> Result<(), String> {
 
 pub(super) fn show_error(error: &str) {
     let message = format!(
-        "OC2 MOD Manager could not complete its data reset.\nRemaining data and recovery files are retained. A confirmed reset still pending may resume on the next start; a recorded failure is not retried automatically.\n{error}"
+        "OC2 MOD Manager could not complete its data operation.\nRemaining data and recovery files are retained. A pending request may resume on the next start; a recorded failure is not retried automatically.\n{error}"
     );
     eprintln!("{message}");
     #[cfg(windows)]

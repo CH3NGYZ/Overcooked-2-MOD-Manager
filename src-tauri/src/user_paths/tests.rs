@@ -11,7 +11,7 @@ fn temp_dir(label: &str) -> PathBuf {
 /// 这份断言守的就是那次 `Not a directory` 启动崩溃。
 #[test]
 fn data_root_is_a_directory_beside_the_user_data_parent() {
-    let root = root().unwrap();
+    let root = default_root().unwrap();
     assert!(root.is_absolute());
     assert_eq!(root.file_name().unwrap(), DATA_DIRECTORY);
     let executable = std::env::current_exe().unwrap();

@@ -245,6 +245,7 @@ pub fn run() {
             commands::settings::get_install_language,
             commands::manager_data::get_manager_data_directory,
             commands::manager_data::clear_all_config,
+            commands::manager_data::migrate_manager_data,
             commands::logs::read_rust_log,
             commands::logs::read_frontend_log,
             commands::logs::read_crash_log,

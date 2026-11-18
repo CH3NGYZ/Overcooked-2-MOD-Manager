@@ -10,6 +10,10 @@ use std::time::{Duration, Instant};
 pub(super) enum ResetPhase {
     Pending,
     Deleting,
+    Copying,
+    Verified,
+    Switched,
+    Cleaning,
     Completed,
     Failed,
 }
@@ -23,11 +27,28 @@ pub(super) struct ResetRecord {
     pub error: Option<String>,
     #[serde(default)]
     pub reported: bool,
+    #[serde(default)]
+    pub action: DataAction,
+    #[serde(default)]
+    pub fingerprint: Option<crate::mod_changes::transaction::Fingerprint>,
+    #[serde(default)]
+    pub data_root: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(super) enum DataAction {
+    #[default]
+    Clear,
+    Migrate {
+        source: PathBuf,
+        target: PathBuf,
+    },
 }
 
 impl ResetRecord {
     pub(super) fn pending(&self) -> bool {
-        matches!(self.phase, ResetPhase::Pending | ResetPhase::Deleting)
+        !matches!(self.phase, ResetPhase::Completed | ResetPhase::Failed)
     }
 }
 
@@ -37,15 +58,34 @@ pub(super) struct ResetPaths {
 }
 
 impl ResetPaths {
+    #[cfg(test)]
     pub(super) fn new(root: &Path) -> Result<Self, String> {
+        Self::with_control(root, root.parent().ok_or(UNSAFE)?)
+    }
+
+    pub(super) fn current() -> Result<Self, String> {
+        let pointer = crate::user_paths::location_file()?;
+        Self::with_control(&crate::user_paths::root()?, pointer.parent().ok_or(UNSAFE)?)
+    }
+
+    pub(super) fn with_control(root: &Path, control: &Path) -> Result<Self, String> {
         if !root.is_absolute() || root.file_name().is_none_or(|name| name != "OC2ModManager") {
             return Err(UNSAFE.into());
         }
-        let parent = root.parent().ok_or(UNSAFE)?;
-        fs::create_dir_all(parent).map_err(failed)?;
-        let parent = fs::canonicalize(parent).map_err(failed)?;
+        // Resolving first would hide a link at the destructive root boundary.
+        reject_link_if_present(root)?;
+        fs::create_dir_all(control).map_err(failed)?;
+        reject_link_if_present(control)?;
+        let parent = fs::canonicalize(control).map_err(failed)?;
+        let resolved = crate::game::resolve_existing_ancestor(root).map_err(failed)?;
+        if resolved
+            .file_name()
+            .is_none_or(|name| name != "OC2ModManager")
+        {
+            return Err(UNSAFE.into());
+        }
         Ok(Self {
-            root: parent.join("OC2ModManager"),
+            root: resolved,
             parent,
         })
     }
@@ -60,7 +100,10 @@ impl ResetPaths {
     }
 
     fn quarantine(&self, token: uuid::Uuid) -> PathBuf {
-        self.parent.join(format!(".OC2ModManager-clearing-{token}"))
+        self.root
+            .parent()
+            .expect("validated absolute data root")
+            .join(format!(".OC2ModManager-clearing-{token}"))
     }
 
     pub(super) fn open_lock(&self) -> Result<File, String> {
@@ -91,7 +134,9 @@ impl ResetPaths {
         temp.write_all(&serde_json::to_vec(record).map_err(failed)?)
             .map_err(failed)?;
         temp.as_file().sync_all().map_err(failed)?;
-        temp.persist(self.journal()).map_err(failed)?;
+        let temp = temp.into_temp_path();
+        crate::mod_changes::transaction::durable_rename(&temp, &self.journal(), true)
+            .map_err(failed)?;
         Ok(())
     }
 
@@ -128,6 +173,17 @@ impl ResetPaths {
     pub(super) fn finish(&self, mut record: ResetRecord) -> Result<(), String> {
         if !record.pending() {
             return Ok(());
+        }
+        if let DataAction::Migrate { source, target } = &record.action {
+            return super::migration::finish(self, record.clone(), source, target);
+        }
+        if record
+            .data_root
+            .as_ref()
+            .is_some_and(|root| normalized(root) != normalized(&self.root))
+        {
+            self.mark_failed(record, UNSAFE)?;
+            return Err(UNSAFE.into());
         }
         let quarantine = self.quarantine(record.token);
         let result = (|| {
@@ -183,10 +239,15 @@ impl ResetPaths {
     }
 }
 
-fn normalized(path: &Path) -> PathBuf {
+pub(super) fn normalized(path: &Path) -> PathBuf {
     #[cfg(windows)]
     {
-        PathBuf::from(path.to_string_lossy().to_lowercase())
+        let text = path.to_string_lossy().to_lowercase();
+        if let Some(unc) = text.strip_prefix("\\\\?\\unc\\") {
+            PathBuf::from(format!("\\\\{unc}"))
+        } else {
+            PathBuf::from(text.strip_prefix("\\\\?\\").unwrap_or(&text))
+        }
     }
     #[cfg(not(windows))]
     {
@@ -194,7 +255,7 @@ fn normalized(path: &Path) -> PathBuf {
     }
 }
 
-fn reject_link_if_present(path: &Path) -> Result<(), String> {
+pub(super) fn reject_link_if_present(path: &Path) -> Result<(), String> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
             #[cfg(windows)]

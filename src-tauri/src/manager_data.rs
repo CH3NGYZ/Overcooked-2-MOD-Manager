@@ -1,12 +1,13 @@
-//! Reset the fixed user-data root only after every manager process releases it.
-//! The lock and reset journal live beside the root so deleting logs/configuration
-//! cannot race a surviving writer or resurrect an installation-local migration.
+//! Mutate the selected data root only after every manager process releases it.
+//! A fixed bootstrap lock/journal coordinates reset and migration across roots.
 use std::fs::File;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 mod handoff;
+mod legacy;
+mod migration;
 mod storage;
 #[cfg(test)]
 mod tests;
@@ -30,6 +31,7 @@ fn failed(reason: impl std::fmt::Display) -> String {
 pub(crate) struct DataSession {
     // The OS closes this on process exit, after configuration/log writers stop.
     _lock: File,
+    _legacy_lock: Option<File>,
     pub(crate) skip_legacy_migration: bool,
     pub(crate) completed_reset_token: Option<uuid::Uuid>,
 }
@@ -37,36 +39,55 @@ pub(crate) struct DataSession {
 fn completed_reset_token(record: Option<&storage::ResetRecord>) -> Option<uuid::Uuid> {
     record
         .filter(|record| record.phase == storage::ResetPhase::Completed)
+        .filter(|record| matches!(record.action, storage::DataAction::Clear))
         .map(|record| record.token)
 }
 
 /// Shared startup ownership preserves the existing single-instance plugin:
 /// ordinary secondary launches still reach its callback instead of silently exiting.
 pub(crate) fn initialize() -> Result<DataSession, String> {
-    let paths = storage::ResetPaths::new(&crate::user_paths::root()?)?;
     loop {
+        // A pending migration may publish a different root before this retry.
+        let paths = storage::ResetPaths::current()?;
         let lock = paths.open_lock()?;
         storage::wait_for_lock(&lock, true, LOCK_TIMEOUT)?;
+        let legacy_lock = legacy::session(&paths)?;
+        if storage::normalized(&storage::ResetPaths::current()?.root)
+            != storage::normalized(&paths.root)
+        {
+            drop(lock);
+            continue;
+        }
         let record = match paths.record() {
             Ok(record) => record,
             Err(error) => {
                 // A damaged coordination record must not repeatedly delete data
                 // or strand the application before its diagnostic UI can start.
                 handoff::show_error(&error);
+                if paths.parent.join("data-location.json").is_file() && !paths.root.is_dir() {
+                    return Err("config.directoryUnavailable".into());
+                }
+                crate::user_paths::freeze_root(&crate::user_paths::root()?)?;
                 return Ok(DataSession {
                     _lock: lock,
+                    _legacy_lock: legacy_lock,
                     skip_legacy_migration: true,
                     completed_reset_token: None,
                 });
             }
         };
-        if record.as_ref().is_some_and(storage::ResetRecord::pending) {
+        if record.as_ref().is_some_and(storage::ResetRecord::pending)
+            || legacy::needs_import(&paths)?
+        {
             // A helper or this startup can win exclusive ownership; both re-read
             // the journal, so a second launch never deletes newly initialized data.
+            drop(legacy_lock);
             drop(lock);
             let exclusive = paths.open_lock()?;
             storage::wait_for_lock(&exclusive, false, LOCK_TIMEOUT)?;
+            legacy::import(&paths)?;
             if let Some(record) = paths.record()?.filter(storage::ResetRecord::pending) {
+                let _legacy = legacy::exclusive_for_request(&paths, &record)?;
                 if let Err(error) = handoff::wait_for_owner(&record) {
                     paths.mark_failed(record, &error)?;
                 } else if let Err(error) = paths.finish(record) {
@@ -86,13 +107,24 @@ pub(crate) fn initialize() -> Result<DataSession, String> {
         if let Some(record) = &record {
             if record.phase == storage::ResetPhase::Failed && !record.reported {
                 handoff::show_error(record.error.as_deref().unwrap_or("Data reset failed"));
-                let mut reported = record.clone();
-                reported.reported = true;
-                paths.write_record(&reported)?;
             }
         }
+        // Only a completed clear deliberately leaves the selected root absent.
+        if paths.parent.join("data-location.json").is_file()
+            && !paths.root.is_dir()
+            && !record.as_ref().is_some_and(|record| {
+                record.phase == storage::ResetPhase::Completed
+                    && matches!(record.action, storage::DataAction::Clear)
+            })
+        {
+            return Err("config.directoryUnavailable".into());
+        }
+        // Preserve the pre-bootstrap path spelling in existing transaction roots.
+        // Canonical Windows verbatim paths are only used for safety comparisons.
+        crate::user_paths::freeze_root(&crate::user_paths::root()?)?;
         return Ok(DataSession {
             _lock: lock,
+            _legacy_lock: legacy_lock,
             skip_legacy_migration: record.is_some(),
             completed_reset_token: completed_reset_token(record.as_ref()),
         });
@@ -115,7 +147,7 @@ pub(crate) fn run_if_requested() {
         if args.next().is_some() {
             return Err(failed("Invalid reset-helper arguments"));
         }
-        let paths = storage::ResetPaths::new(&crate::user_paths::root()?)?;
+        let paths = storage::ResetPaths::current()?;
         handoff::run_helper(&paths, token)
     })();
     if let Err(error) = &result {
@@ -161,15 +193,36 @@ fn validate_protected_paths(
 /// All locks, native-process preparation and shutdown stay on the blocking worker.
 /// No caller-provided path is accepted, and failures return without exiting.
 pub(crate) fn clear_and_exit(state: &crate::app_state::AppState) -> Result<(), String> {
+    change_and_exit(state, None)
+}
+
+pub(crate) fn migrate_and_exit(
+    state: &crate::app_state::AppState,
+    parent: &Path,
+) -> Result<(), String> {
+    change_and_exit(state, Some(parent))
+}
+
+fn change_and_exit(
+    state: &crate::app_state::AppState,
+    parent: Option<&Path>,
+) -> Result<(), String> {
     RESETTING
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .map_err(|_| BUSY.to_string())?;
     let _reset = ResetGuard;
     // Share the updater's atomic exclusion so an update cannot begin mid-reset.
     let _updater = crate::archive::begin_app_update()?;
-    let paths = storage::ResetPaths::new(&crate::user_paths::root()?)?;
+    let paths = storage::ResetPaths::current()?;
     let executable = std::env::current_exe().map_err(failed)?;
     validate_protected_paths(&paths, state, &executable)?;
+    let action = match parent {
+        Some(parent) => storage::DataAction::Migrate {
+            source: paths.root.clone(),
+            target: migration::prepare(&paths, parent, state, &executable)?,
+        },
+        None => storage::DataAction::Clear,
+    };
     // Keep the established repository_cache -> operation order. Do not wait for
     // an installation/download to finish while a destructive confirmation is open.
     let _repositories = state.repository_cache.try_lock().map_err(|_| BUSY)?;
@@ -184,11 +237,17 @@ pub(crate) fn clear_and_exit(state: &crate::app_state::AppState) -> Result<(), S
     })?;
     let _operation = state.operation.try_lock().map_err(|_| BUSY)?;
     crate::mod_changes::guard::ensure_recovered(state)?;
+    if crate::mod_changes::transaction::has_pending(&paths.root.join("mod-change-transactions"))? {
+        return Err("modChanges.recoveryRequired".into());
+    }
     // Helper preparation/shutdown may take time. Re-read both game-path sources
     // under operation so a settings change cannot bypass the final handoff gate.
     validate_protected_paths(&paths, state, &executable)?;
-    helper.commit(&paths)?;
-    log::info!("管理器数据清理已交接；退出后由原生辅助进程清理固定数据根");
+    if let Some(parent) = parent {
+        migration::prepare(&paths, parent, state, &executable)?;
+    }
+    helper.commit(&paths, action)?;
+    log::info!("管理器数据操作已交接；退出后由原生辅助进程完成");
     log::logger().flush();
     std::process::exit(0)
 }

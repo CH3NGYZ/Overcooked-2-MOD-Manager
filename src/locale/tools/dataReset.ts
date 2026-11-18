@@ -1,8 +1,46 @@
 import type { DomainMessages } from '../types.ts'
 
-/** 清除管理器数据的入口、危险确认与后端拒绝原因。 */
+/** 管理器数据路径、迁移与清除确认，以及后端拒绝原因。 */
 export const toolsUiDataReset: DomainMessages = {
   configuration: { 'zh-CN': '配置', 'zh-TW': '設定', en: 'Configuration', ko: '설정', ja: '設定' },
+  managerDataPath: { 'zh-CN': '配置路径', 'zh-TW': '設定路徑', en: 'Configuration path', ko: '설정 경로', ja: '設定の保存先' },
+  managerDataDirectoryLoading: { 'zh-CN': '正在读取管理器数据路径…', 'zh-TW': '正在讀取管理器資料路徑…', en: 'Reading the manager data path…', ko: '관리자 데이터 경로를 읽는 중…', ja: 'マネージャーデータの保存先を読み込み中…' },
+  migrateData: { 'zh-CN': '迁移配置路径', 'zh-TW': '遷移設定路徑', en: 'Move configuration', ko: '설정 경로 이동', ja: '設定の保存先を移動' },
+  migrateDataConfirm: {
+    'zh-CN': '将迁移整个管理器数据目录，包括全部设置、安装清单、缓存、备份和回收站内容。所选父目录下将使用固定的 OC2ModManager 子目录；若此子目录已存在，将取消迁移，避免覆盖。',
+    'zh-TW': '將遷移整個管理器資料目錄，包括全部設定、安裝清單、快取、備份和資源回收筒內容。所選父目錄下將使用固定的 OC2ModManager 子目錄；若此子目錄已存在，將取消遷移，避免覆寫。',
+    en: 'Move the entire manager data directory, including all settings, installation records, caches, backups and recycle bin contents. The selected parent folder will contain an OC2ModManager subfolder. Migration is cancelled if that subfolder already exists, to prevent overwriting.',
+    ko: '모든 설정, 설치 기록, 캐시, 백업 및 휴지통을 포함한 관리자 데이터 폴더 전체를 이동합니다. 선택한 상위 폴더 아래의 OC2ModManager 폴더를 사용하며, 해당 하위 폴더가 이미 있으면 덮어쓰지 않도록 이동을 취소합니다.',
+    ja: '設定、インストール記録、キャッシュ、バックアップ、ごみ箱を含むマネージャーデータフォルダー全体を移動します。選択した親フォルダー内の OC2ModManager フォルダーを使用します。このサブフォルダーが既に存在する場合は、上書きを防ぐため移動を中止します。',
+  },
+  migrateDataSource: { 'zh-CN': '当前数据目录：', 'zh-TW': '目前資料目錄：', en: 'Current data directory:', ko: '현재 데이터 폴더:', ja: '現在のデータフォルダー：' },
+  migrateDataTarget: { 'zh-CN': '迁移后的数据目录：', 'zh-TW': '遷移後的資料目錄：', en: 'Destination data directory:', ko: '이동할 데이터 폴더:', ja: '移動先のデータフォルダー：' },
+  migrateDataPreservesGame: {
+    'zh-CN': '游戏目录和其中已安装的 MOD、地图及其他文件不会被移动。',
+    'zh-TW': '遊戲目錄和其中已安裝的 MOD、地圖及其他檔案不會被移動。',
+    en: 'The game directory and its installed MODs, maps and other files will stay where they are.',
+    ko: '게임 폴더와 그 안에 설치된 MOD, 지도 및 기타 파일은 이동하지 않습니다.',
+    ja: 'ゲームフォルダーと、その中にインストール済みのMOD、マップ、その他のファイルは移動しません。',
+  },
+  migrateDataExit: {
+    'zh-CN': '确认后管理器将退出，退出后迁移数据。迁移完成后请手动启动管理器，下次启动将使用新路径。',
+    'zh-TW': '確認後管理器將結束，結束後遷移資料。遷移完成後請手動啟動管理器，下次啟動將使用新路徑。',
+    en: 'The manager will exit, then move its data. Start the manager manually after migration completes; the next launch will use the new path.',
+    ko: '확인하면 관리자가 종료된 후 데이터를 이동합니다. 이동이 끝나면 관리자를 직접 실행해 주세요. 다음 실행부터 새 경로를 사용합니다.',
+    ja: '確認後にマネージャーを終了し、データを移動します。移動完了後は手動で起動してください。次回から新しい保存先を使用します。',
+  },
+  migrateDataAndExit: { 'zh-CN': '退出并迁移', 'zh-TW': '結束並遷移', en: 'Exit and move data', ko: '종료하고 데이터 이동', ja: '終了してデータを移動' },
+  migrateDataFailed: {
+    'zh-CN': '无法迁移管理器数据：{reason}', 'zh-TW': '無法遷移管理器資料：{reason}',
+    en: 'Could not move manager data: {reason}', ko: '관리자 데이터를 이동할 수 없습니다: {reason}', ja: 'マネージャーデータを移動できませんでした：{reason}',
+  },
+  migrateDataUnsafe: {
+    'zh-CN': '迁移路径未通过安全校验。请选择当前数据目录之外的空目录，且不能是游戏目录或程序目录。',
+    'zh-TW': '遷移路徑未通過安全檢查。請選擇目前資料目錄之外的空目錄，且不能是遊戲目錄或程式目錄。',
+    en: 'The migration path failed the safety check. Choose an empty destination outside the current data, game and application directories.',
+    ko: '이동 경로가 안전성 검사를 통과하지 못했습니다. 현재 데이터, 게임 및 프로그램 폴더 외부의 빈 대상을 선택해 주세요.',
+    ja: '移動先の安全性を確認できませんでした。現在のデータ、ゲーム、プログラムの各フォルダーの外にある空の移動先を選んでください。',
+  },
   clearAllConfig: { 'zh-CN': '清除所有配置', 'zh-TW': '清除所有設定', en: 'Clear all configuration', ko: '모든 설정 삭제', ja: 'すべての設定を削除' },
   clearAllConfigDescription: {
     'zh-CN': '删除管理器的全部本地数据并退出，下次启动恢复默认设置。',
@@ -35,11 +73,11 @@ export const toolsUiDataReset: DomainMessages = {
   },
   clearAllConfigAndExit: { 'zh-CN': '清除全部并退出', 'zh-TW': '全部清除並結束', en: 'Clear everything and exit', ko: '모두 삭제하고 종료', ja: 'すべて削除して終了' },
   clearAllConfigBusy: {
-    'zh-CN': '仍有任务正在执行，请等待完成后再清除配置。',
-    'zh-TW': '仍有工作正在執行，請等待完成後再清除設定。',
-    en: 'An operation is still running. Wait for it to finish before clearing configuration.',
-    ko: '실행 중인 작업이 있습니다. 완료된 후 설정을 삭제해 주세요.',
-    ja: '処理が実行中です。完了してから設定を削除してください。',
+    'zh-CN': '仍有任务正在执行，请等待完成后再清除或迁移配置。',
+    'zh-TW': '仍有工作正在執行，請等待完成後再清除或遷移設定。',
+    en: 'An operation is still running. Wait for it to finish before clearing or moving configuration.',
+    ko: '실행 중인 작업이 있습니다. 완료된 후 설정을 삭제하거나 이동해 주세요.',
+    ja: '処理が実行中です。完了してから設定を削除または移動してください。',
   },
   clearAllConfigFailed: {
     'zh-CN': '无法准备清除管理器数据：{reason}',

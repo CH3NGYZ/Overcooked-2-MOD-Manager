@@ -21,8 +21,18 @@ pub fn get_config(state: State<'_, AppState>) -> Result<PublicConfig, String> {
 #[tauri::command]
 pub fn get_install_language() -> Option<String> {
     log::trace!("读取安装语言标记");
-    let path = crate::user_paths::root().ok()?.join("install-language.txt");
-    let value = fs::read_to_string(path).ok()?.trim().to_string();
+    // NSIS runs before the application and always writes the system default root.
+    // After data relocation, prefer that fresh installation marker when present.
+    let value = crate::user_paths::default_root()
+        .ok()
+        .and_then(|root| fs::read_to_string(root.join("install-language.txt")).ok())
+        .or_else(|| {
+            crate::user_paths::root()
+                .ok()
+                .and_then(|root| fs::read_to_string(root.join("install-language.txt")).ok())
+        })?
+        .trim()
+        .to_string();
     match value.as_str() {
         "zh-CN" | "zh-TW" | "en" | "ko" | "ja" => Some(value),
         _ => None,

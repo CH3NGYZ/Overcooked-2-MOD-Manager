@@ -18,3 +18,18 @@ pub async fn clear_all_config(state: State<'_, AppState>) -> Result<(), String> 
             )
         })?
 }
+
+#[tauri::command]
+pub async fn migrate_manager_data(
+    state: State<'_, AppState>,
+    parent_directory: String,
+) -> Result<(), String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::manager_data::migrate_and_exit(&state, std::path::Path::new(&parent_directory))
+    })
+    .await
+    .map_err(|error| {
+        crate::locale_tag::with_params("tools.migrateDataFailed", &[("reason", &error.to_string())])
+    })?
+}

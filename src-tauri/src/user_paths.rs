@@ -1,11 +1,17 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+mod location;
+pub(crate) use location::{location_file, read_location_at, write_location_at};
 
 /// 数据目录名。
 const DATA_DIRECTORY: &str = "OC2ModManager";
 
 /// 数据根定位失败时返回的 tag（`config` 域：配置目录不可用）。
 const ROOT_UNAVAILABLE: &str = "config.directoryUnavailable";
+
+static SESSION_ROOT: OnceLock<PathBuf> = OnceLock::new();
 
 /// 管理器自身可执行文件所在目录。
 ///
@@ -43,7 +49,7 @@ fn data_parent() -> Result<PathBuf, String> {
 ///   · 管理器更新（macOS 是整包替换 `.app`）不会带走配置、清单、备份；
 ///   · 卸载程序不会顺手删掉用户的回收站与备份；
 ///   · 便携版、安装版、调试版共用同一份数据，不再各存一套。
-pub(crate) fn root() -> Result<PathBuf, String> {
+pub(crate) fn default_root() -> Result<PathBuf, String> {
     let root = data_parent()?.join(DATA_DIRECTORY);
     // 数据根必须是一个目录路径，不能恰好等于可执行文件：一旦重合，
     // 之后每次文件操作都只会返回 `Not a directory` / `File exists`，
@@ -54,6 +60,24 @@ pub(crate) fn root() -> Result<PathBuf, String> {
         }
     }
     Ok(root)
+}
+
+/// 启动恢复结束前读取固定定位文件；正常会话固定使用初始化时的同一数据根。
+pub(crate) fn root() -> Result<PathBuf, String> {
+    if let Some(root) = SESSION_ROOT.get() {
+        return Ok(root.clone());
+    }
+    location::read_location(&location_file()?)?.map_or_else(default_root, Ok)
+}
+
+/// 必须由启动恢复完成后的 initialize 调用，避免配置与日志在同一会话切根。
+pub(crate) fn freeze_root(root: &Path) -> Result<(), String> {
+    location::validate_root_shape(root)?;
+    match SESSION_ROOT.set(root.to_path_buf()) {
+        Ok(()) => Ok(()),
+        Err(_) if SESSION_ROOT.get().is_some_and(|current| current == root) => Ok(()),
+        Err(_) => Err(ROOT_UNAVAILABLE.into()),
+    }
 }
 
 pub(crate) fn logs_dir() -> Result<PathBuf, String> {

@@ -81,6 +81,9 @@ mod tests {
                 phase,
                 error: None,
                 reported: false,
+                action: super::super::storage::DataAction::Clear,
+                fingerprint: None,
+                data_root: None,
             };
             assert_eq!(
                 crate::manager_data::completed_reset_token(Some(&record)),

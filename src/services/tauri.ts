@@ -345,6 +345,9 @@ export const api = {
   getManagerDataDirectory: () => invoke<string>('get_manager_data_directory'),
   /** 确认后安排清除所有管理器数据并退出；成功不继续使用本次会话。 */
   clearAllConfig: () => invoke<void>('clear_all_config'),
+  /** 确认后退出并迁移整个数据根；目标子目录由后端固定为 OC2ModManager。 */
+  migrateManagerData: (parentDirectory: string) => invoke<void>('migrate_manager_data', { parentDirectory }),
+  chooseManagerDataParentDirectory: () => open({ multiple: false, directory: true }),
   /** 当前进程权限与游戏/数据目录可写性自检。 */
   permissionStatus: () => invoke<PermissionStatus>('permission_status'),
   /** 以管理员身份重启（仅文件访问被拒时由用户主动触发）。 */

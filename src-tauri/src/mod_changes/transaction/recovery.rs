@@ -275,7 +275,7 @@ fn remove_temporary(path: &Path) -> Result<(), String> {
     }
 }
 
-pub(super) fn remove_private_tree(path: &Path) -> Result<(), String> {
+pub(crate) fn remove_private_tree(path: &Path) -> Result<(), String> {
     paths::validate_absolute(path)?;
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,

@@ -19,6 +19,9 @@ fn request() -> ResetRecord {
         phase: ResetPhase::Pending,
         error: None,
         reported: false,
+        action: storage::DataAction::Clear,
+        fingerprint: None,
+        data_root: None,
     }
 }
 
@@ -207,7 +210,7 @@ fn final_protected_path_validation_is_under_operation_before_helper_commit() {
     let validation = clear
         .rfind("validate_protected_paths(&paths, state, &executable)?;")
         .unwrap();
-    let commit = clear.find("helper.commit(&paths)?;").unwrap();
+    let commit = clear.find("helper.commit(&paths, action)?;").unwrap();
     assert!(final_lock < validation && validation < commit);
     assert!(!clear[final_lock..commit].contains("drop(_operation)"));
 }

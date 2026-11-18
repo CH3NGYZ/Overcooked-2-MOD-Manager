@@ -10,7 +10,9 @@ mod recovery;
 mod tree;
 mod types;
 
+pub(crate) use durable::rename as durable_rename;
 pub(crate) use prepare::prepare;
+pub(crate) use recovery::remove_private_tree;
 pub(crate) use recovery::{has_pending, recover_all};
 pub(crate) use tree::copy_tree as stage_tree;
 pub(crate) use tree::preserve_replaced_permissions as preserve_replaced_tree_permissions;

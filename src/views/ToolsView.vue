@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { t } from '../i18n'
-import { computed, h, ref, shallowRef } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, NLog, NSelect, NTag, useDialog } from 'naive-ui'
 import { BookOutline, BuildOutline, ChatbubblesOutline, CloudOfflineOutline, CloudUploadOutline, DocumentTextOutline, MapOutline, PersonOutline, RefreshOutline, ServerOutline, TerminalOutline, TrashOutline } from '@vicons/ionicons5'
@@ -9,6 +9,7 @@ import AppModal from '../components/AppModal.vue'
 import { useNotify } from '../useNotify'
 import { clearAvatarCache } from '../avatars'
 import { clearChefThumbnailCache } from '../composables/useDiyChefThumbnails'
+import { useManagerDataOperations } from '../composables/useManagerDataOperations'
 import SettingsGroup from '../components/settings/SettingsGroup.vue'
 import SettingsRow from '../components/settings/SettingsRow.vue'
 import RecycleBinDialog from '../components/RecycleBinDialog.vue'
@@ -229,54 +230,8 @@ async function clearChefs() {
   }
 }
 
-const configConfirmOpen = shallowRef(false)
-const clearingConfig = shallowRef(false)
-
-async function confirmClearAllConfig() {
-  if (configConfirmOpen.value || clearingConfig.value) return
-  configConfirmOpen.value = true
-  try {
-    const directory = await api.getManagerDataDirectory()
-    const confirmation = dialog.error({
-      title: t('tools.clearAllConfig'),
-      content: () => h('div', { class: 'clear-config-confirm' }, [
-        h('p', t('tools.clearAllConfigConfirm')),
-        h('p', t('tools.managerDataDirectory')),
-        h('code', { style: { display: 'block', overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' } }, directory),
-        h('p', t('tools.clearAllConfigPreservesGame')),
-        h('p', { style: { fontWeight: '600' } }, t('tools.clearAllConfigExit')),
-      ]),
-      positiveText: t('tools.clearAllConfigAndExit'),
-      negativeText: t('recycle.cancel'),
-      positiveButtonProps: { type: 'error' },
-      maskClosable: false,
-      onAfterLeave: () => { configConfirmOpen.value = false },
-      onPositiveClick: async () => {
-        if (clearingConfig.value) return false
-        clearingConfig.value = true
-        confirmation.loading = true
-        confirmation.closable = false
-        confirmation.closeOnEsc = false
-        confirmation.negativeButtonProps = { disabled: true }
-        try {
-          // Success exits the process; keep the old session locked until then.
-          await api.clearAllConfig()
-        } catch (reason) {
-          fail(reason)
-          clearingConfig.value = false
-          confirmation.loading = false
-          confirmation.closable = true
-          confirmation.closeOnEsc = true
-          confirmation.negativeButtonProps = { disabled: false }
-        }
-        return false
-      },
-    })
-  } catch (reason) {
-    configConfirmOpen.value = false
-    fail(reason)
-  }
-}
+const { managerDataDescription, managerDataBusy, clearingConfig, migratingData, selectingDataDirectory,
+  confirmClearAllConfig, confirmMigrateManagerData } = useManagerDataOperations()
 </script>
 
 <template>
@@ -340,10 +295,18 @@ async function confirmClearAllConfig() {
   </SettingsGroup>
 
   <SettingsGroup :title="t('tools.configuration')" data-testid="tools-configuration-group">
+    <SettingsRow :icon="ServerOutline" :title="t('tools.managerDataPath')"
+      :description="managerDataDescription" :description-title="managerDataDescription" data-manager-data-path>
+      <template #right>
+        <n-button size="small" :disabled="managerDataBusy" :loading="selectingDataDirectory || migratingData"
+          aria-haspopup="dialog" @click="confirmMigrateManagerData">{{ t('tools.migrateData') }}
+        </n-button>
+      </template>
+    </SettingsRow>
     <SettingsRow :icon="TrashOutline" :title="t('tools.clearAllConfig')"
       :description="t('tools.clearAllConfigDescription')" :description-title="t('tools.clearAllConfigDescription')"
       class="clear-config-entry" role="button" tabindex="0" aria-haspopup="dialog"
-      :aria-label="t('tools.clearAllConfig')" :aria-busy="clearingConfig" :aria-disabled="configConfirmOpen || clearingConfig"
+      :aria-label="t('tools.clearAllConfig')" :aria-busy="clearingConfig" :aria-disabled="managerDataBusy"
       clickable @click="confirmClearAllConfig" @keydown.enter.prevent="confirmClearAllConfig"
       @keydown.space.prevent="confirmClearAllConfig" />
   </SettingsGroup>

@@ -20,7 +20,7 @@ pub(super) fn sync_parent(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn rename(source: &Path, target: &Path, replace: bool) -> Result<(), String> {
+pub(crate) fn rename(source: &Path, target: &Path, replace: bool) -> Result<(), String> {
     validate_absolute(source)?;
     validate_absolute(target)?;
     #[cfg(windows)]

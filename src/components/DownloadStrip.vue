@@ -5,7 +5,7 @@ import { NButton, NProgress } from 'naive-ui'
 import { CloseOutline } from '@vicons/ionicons5'
 import { api, watchDownloadProgress } from '../services/tauri'
 import { translateBackendMessage } from '../locale/backend'
-import { downloadTaskState, downloadInlineTarget, dismissDownloadFailure, retryDownloadTask, updateDownloadProgress, cancelDownloadTask } from '../downloadTask'
+import { downloadTaskState, dismissDownloadFailure, retryDownloadTask, updateDownloadProgress, cancelDownloadTask } from '../downloadTask'
 import { appUpdateState } from '../appUpdateState'
 import DownloadVolumes from './DownloadVolumes.vue'
 import { formatFileSize } from '../repositoryAssets'
@@ -18,7 +18,6 @@ let disposed = false
 const running = computed(() => downloadTaskState.running)
 const failure = computed(() => downloadTaskState.failure)
 const canCancel = computed(() => appUpdateState.stage === 'idle')
-const inline = computed(() => running.value?.presentation === 'mod-changes')
 
 function percentValue(value: { downloaded: number; total?: number }): number {
   if (!value.total) return 0
@@ -45,7 +44,6 @@ const visible = computed(() => {
   if (appUpdateState.stage !== 'idle' && appUpdateState.stage !== 'installing') return false
   if (failure.value) return canCancel.value
   if (!running.value) return false
-  if (inline.value && !downloadInlineTarget.value) return false
   const value = progress.value
   if (!value || value.finished) return false
   return true
@@ -97,7 +95,7 @@ const routeText = computed(() => {
   return route === 'proxy' ? t('common.proxy') : route === 'direct' ? t('common.direct') : ''
 })
 
-// App owns this sole subscription; only the Teleport destination changes.
+// App owns the sole listener for ordinary download progress.
 void watchDownloadProgress(value => { if (!disposed) updateDownloadProgress(value) })
   .then(un => { if (disposed) un(); else unlisten = un })
   .catch(() => undefined)
@@ -115,9 +113,9 @@ async function cancel() {
 
 <template>
   <!-- 下载进度 / 下载失败卡片：居中浮层，不占用页面布局 -->
-  <Teleport :to="inline && downloadInlineTarget ? downloadInlineTarget : 'body'" defer>
+  <Teleport to="body">
     <Transition name="dl-card">
-      <div v-if="visible" class="dl-mask" :class="{ 'dl-mask-update': !canCancel, 'dl-inline': inline }">
+      <div v-if="visible" class="dl-mask" :class="{ 'dl-mask-update': !canCancel }">
         <!--
           失败态：后端失败路径不发事件，所以这张卡片由调用方通过
           `failDownloadTask` 点亮（见 downloadTask.ts）。卡片不消失，让用户在
@@ -200,8 +198,6 @@ async function cancel() {
   backdrop-filter: blur(1px);
 }
 .dl-mask-update { z-index: var(--oc2-layer-update-progress); }
-.dl-inline { position: static; display: block; background: none; backdrop-filter: none; }
-.dl-inline .dl-card { width: 100%; box-sizing: border-box; box-shadow: none; }
 .dl-card {
   width: min(420px, calc(100vw - 80px));
   padding: 20px 22px 16px;

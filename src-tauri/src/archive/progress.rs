@@ -1,7 +1,22 @@
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
+
+tokio::task_local! {
+    /// A download's caller may need its real progress without guessing a global
+    /// event's label. The scope follows this future, including the race/volume
+    /// coordinators, and is released even when the future fails or is dropped.
+    static PROGRESS_OBSERVER: Arc<dyn Fn(DownloadProgress) + Send + Sync>;
+}
+
+pub(crate) fn observe_download_progress<T>(
+    observer: impl Fn(DownloadProgress) + Send + Sync + 'static,
+    operation: impl Future<Output = T>,
+) -> impl Future<Output = T> {
+    PROGRESS_OBSERVER.scope(Arc::new(observer), Box::pin(operation))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadProgress {
@@ -149,6 +164,14 @@ pub fn emit_progress(
 }
 
 pub fn emit_progress_event(app: Option<&AppHandle>, progress: DownloadProgress) {
+    // An owned progress scope is the presentation for this request. Broadcasting
+    // it too could overwrite another download's unscoped floating progress card.
+    if PROGRESS_OBSERVER
+        .try_with(|observer| observer(progress.clone()))
+        .is_ok()
+    {
+        return;
+    }
     if let Some(app) = app {
         let _ = app.emit("download-progress", progress);
     }

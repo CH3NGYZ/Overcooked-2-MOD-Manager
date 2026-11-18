@@ -194,10 +194,9 @@ const progress = (label, extra = {}) => ({ label, downloaded: 4, total: 10, spee
 
 test('真实进度属于同一下载状态，终止后的事件不能重开卡片', () => {
   reset()
-  const id = beginDownloadTask({ label: 'chain', retry: noop, presentation: 'mod-changes' })
+  const id = beginDownloadTask({ label: 'normal download', retry: noop })
   updateDownloadProgress(progress('asset'))
   assert.equal(downloadTaskState.progress.downloaded, 4)
-  assert.equal(downloadTaskState.running.presentation, 'mod-changes')
   endDownloadTask(id)
   updateDownloadProgress(progress('late'))
   assert.equal(downloadTaskState.progress, null)

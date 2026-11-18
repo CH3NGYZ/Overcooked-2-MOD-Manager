@@ -1,5 +1,5 @@
 import type { LevelPreview, LevelPreviewDetail } from '../types'
-import type { ChangeRequest, ChangePlan, EvaluationSnapshot, EvaluationSubject, ChangeExecutionResult } from '../modChanges/types'
+import type { ChangeRequest, ChangePlan, ChangePreparationOutcome, ChangePreparationProgress, EvaluationSnapshot, EvaluationSubject, ChangeExecutionResult } from '../modChanges/types'
 import type { LocalModSnapshot, ChefEditorOpen, ChefEditorSnapshot, ChefDraft, ChefValidation, ChefFilesChanged } from '../diychef/types'
 import type { ChefPreviewScene } from '../diychef/preview/types'
 import type { PublishProvider } from '../types'
@@ -79,7 +79,21 @@ async function readDashboard(): Promise<DashboardSummary> {
 export const api = {
   evaluateModChanges: (subjects?: EvaluationSubject[]) => invoke<EvaluationSnapshot>('evaluate_mod_changes', { subjects }),
   planModChanges: (request: ChangeRequest) => invoke<ChangePlan>('plan_mod_changes', { request }),
-  prepareModChanges: (planId: string) => invoke<ChangePlan>('prepare_mod_changes', { planId }),
+  prepareModChanges: async (planId: string, onProgress?: (value: ChangePreparationProgress) => void) => {
+    const onUpdate = new Channel<ChangePreparationProgress>()
+    let active = true
+    onUpdate.onmessage = value => { if (active) onProgress?.(value) }
+    try {
+      const outcome = await invoke<ChangePreparationOutcome>('prepare_mod_changes', { planId, onUpdate })
+      // Channel JSON may use an asynchronous fetch. Publish the authoritative
+      // final snapshot before the workflow leaves preparation or shows an error.
+      onProgress?.(outcome.progress)
+      if (outcome.error) throw new Error(outcome.error)
+      if (!outcome.plan) throw new Error('modChanges.notPrepared')
+      return outcome.plan
+    }
+    finally { active = false }
+  },
   executeModChanges: (planId: string) => invoke<ChangeExecutionResult>('execute_mod_changes', { planId }),
   cancelModChanges: (planId: string) => invoke<void>('cancel_mod_changes', { planId }),
   dashboard: readDashboard,

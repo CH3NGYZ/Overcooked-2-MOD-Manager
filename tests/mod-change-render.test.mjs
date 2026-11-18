@@ -1,0 +1,108 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { registerHooks } from 'node:module'
+import test from 'node:test'
+import { compileScript, parse } from '@vue/compiler-sfc'
+import { createRenderer, h, nextTick, shallowRef } from 'vue'
+import { modChanges } from '../src/locale/modChanges.ts'
+
+const fixture = globalThis.__changeRender = {
+  state: shallowRef(null), preparation: shallowRef(null), cancelDownload: shallowRef(false), cancelling: shallowRef(false),
+  messages: modChanges, calls: [],
+}
+registerHooks({
+  resolve(specifier, context, next) {
+    if (specifier === 'naive-ui') return { url: 'change-render:naive', shortCircuit: true }
+    if (context.parentURL === 'change-render:naive') return next(specifier, { ...context, parentURL: import.meta.url })
+    if (specifier.startsWith('.') && !/\.(?:[cm]?[jt]s|vue)$/.test(specifier)) {
+      try { return next(`${specifier}.ts`, context) } catch { /* normal resolution */ }
+    }
+    return next(specifier, context)
+  },
+  load(url, context, next) {
+    const fake = source => ({ format: 'module', shortCircuit: true, source })
+    if (url === 'change-render:naive') return fake(`import{h}from'vue';
+      const leaf=tag=>({props:['percentage','showIndicator','processing','disabled','type'],setup:(p,{slots})=>()=>h(tag,{...p},slots.default?.())});
+      export const NButton=leaf('button'),NProgress=leaf('progress'),NTag=leaf('tag'),NAlert=leaf('alert'),NSpin=leaf('spin')`)
+    if (/\/modChanges\/ChangePlan(?:Dialog|Details|Item)\.vue$/.test(url)) {
+      const { descriptor } = parse(readFileSync(new URL(url), 'utf8'))
+      return { format: 'module-typescript', shortCircuit: true,
+        source: compileScript(descriptor, { id: 'change-render', inlineTemplate: true }).content }
+    }
+    if (url.endsWith('/src/modChanges/store.ts')) return fake(`export const useModChanges=()=>{const f=globalThis.__changeRender;
+      return{state:f.state,preparation:f.preparation,canCancelDownload:f.cancelDownload,cancellingDownload:f.cancelling,
+      confirm:()=>f.calls.push('confirm'),retry:()=>f.calls.push('retry'),cancel:()=>f.calls.push('cancel'),cancelPreparationDownload:()=>f.calls.push('cancel-download')}}`)
+    if (url.endsWith('/src/modChanges/useModChangesLifecycle.ts')) return fake('export const useModChangesLifecycle=()=>{}')
+    if (url.endsWith('/src/modChanges/planNotes.ts')) return fake('export const changePlanInstallNotes=()=>[]')
+    if (url.endsWith('/src/composables/useDashboardStore.ts')) return fake(`export const useDashboard=()=>({config:{value:{repositories:[]}},mods:{value:[]}})`)
+    if (url.endsWith('/src/components/AppModal.vue')) return fake(`import{h}from'vue';export default{props:['show'],setup:(p,{slots})=>()=>p.show?h('modal',{},[slots.default?.(),h('footer',{},slots.footer?.())]):null}`)
+    if (url.endsWith('/src/components/DownloadVolumes.vue')) return fake('export default {}')
+    if (url.endsWith('/src/markdown.ts')) return fake('export const renderReadme=String')
+    if (url.endsWith('/src/locale/backend.ts')) return fake('export const backendMessageOf=String;export const translateBackendMessage=String')
+    if (url.endsWith('/src/i18n.ts')) return fake(`export const t=(key,args={})=>{let text=globalThis.__changeRender.messages[key.replace(/^modChanges\\./,'')]?.['zh-CN']??key;for(const[k,v]of Object.entries(args))text=text.replaceAll('{'+k+'}',String(v));return text}`)
+    return next(url, context)
+  },
+})
+const { default: Dialog } = await import('../src/modChanges/ChangePlanDialog.vue')
+const host = createRenderer({
+  createElement: tag => ({ tag, props: {}, children: [] }), createText: text => ({ text }), createComment: () => ({}),
+  patchProp: (node, key, _, value) => { node.props[key] = value },
+  insert(node, parent, anchor) {
+    if (node.parent) node.parent.children.splice(node.parent.children.indexOf(node), 1)
+    node.parent = parent; const before = parent.children.indexOf(anchor)
+    parent.children.splice(before < 0 ? parent.children.length : before, 0, node)
+  },
+  remove(node) { if (node.parent) node.parent.children.splice(node.parent.children.indexOf(node), 1) },
+  setText: (node, text) => { node.text = text }, setElementText: (node, text) => { node.text = text; node.children = [] },
+  parentNode: node => node.parent, nextSibling: node => node.parent?.children[node.parent.children.indexOf(node) + 1] ?? null,
+})
+const find = (node, match) => [...(match(node) ? [node] : []), ...(node.children?.flatMap(child => find(child, match)) ?? [])]
+const text = node => (node.text ?? '') + (node.children?.map(text).join('') ?? '')
+const action = (id, kind, extra = {}) => ({ node_id: id, kind, reason: '', caused_by: [], ...extra })
+const plan = { plan_id: 'one', status: 'ready', prepared: false, blockers: [], impacts: [], roots: [], evaluations: [],
+  nodes: [{ node_id: 'web', label: 'Web 前置', dll_files: [], candidates: [] }, { node_id: 'level', label: 'DIYLevel 框架', dll_files: [], candidates: [] }],
+  actions: [action('web', 'downgrade', { from_tag: 'v4.0.0', to_tag: 'v3.10.2' }), action('level', 'replace', { from_tag: 'v0.10', to_tag: 'v0.10' })] }
+function mounted(t) {
+  fixture.state.value = { phase: 'confirming', plan, error: null }; fixture.preparation.value = null
+  fixture.calls = []; fixture.cancelDownload.value = false
+  const root = { children: [] }, app = host.createApp(Dialog)
+  app.mount(root); t.after(() => app.unmount())
+  return root
+}
+
+test('production dialog renders current actions, real byte progress and every disable without exposing technical ids', async t => {
+  const root = mounted(t)
+  fixture.state.value = { phase: 'preparing', plan, error: null }
+  fixture.preparation.value = { plan_id: 'one', stage: 'downloading', actions: [
+    action('web', 'upgrade', { from_tag: 'v4.0.0', to_tag: 'v5.0.0' }), action('web', 'disable', { member_key: 'opaque-uuid' })],
+    items: [{ node_id: 'web', label: 'Web 前置', tag: 'v5.0.0', candidate_id: 'candidate', stage: 'downloading',
+      download: { downloaded: 50, total: 100, speed_bytes: 1024, finished: false } }] }
+  await nextTick()
+  assert.equal(find(root, n => n.tag === 'article' && n.props['data-change-node']).length, 1)
+  const row = find(root, n => n.tag === 'article' && n.props['data-change-node'])[0]
+  assert.match(text(row), /升级.*禁用.*Web 前置.*v4\.0\.0.*v5\.0\.0/)
+  assert.doesNotMatch(text(row), /opaque-uuid|DIYLevel 框架|降级/)
+  assert.match(text(row), /50%.*50 B \/ 100 B.*1\.0 KB\/s/)
+  assert.equal(find(row, n => n.tag === 'progress')[0].props.percentage, 50)
+  assert.equal(find(root, n => n.tag === 'footer').flatMap(n => find(n, x => x.tag === 'progress'))[0].props.percentage, 0)
+  fixture.preparation.value = { ...fixture.preparation.value, items: [{ ...fixture.preparation.value.items[0],
+    download: { downloaded: 75, speed_bytes: 1024, finished: false } }] }
+  await nextTick()
+  assert.match(text(row), /75 B \/ —/)
+  assert.equal(find(row, n => n.tag === 'progress')[0].props.processing, true)
+  assert.doesNotMatch(text(row), /75%/)
+})
+
+test('final confirmation uses the returned plan actions, keeps details collapsed and never self-executes', async t => {
+  const root = mounted(t)
+  fixture.preparation.value = { plan_id: 'one', stage: 'ready', actions: [action('web', 'upgrade', { to_tag: 'v5' })], items: [] }
+  fixture.state.value = { phase: 'reconfirming', plan: { ...plan, plan_id: 'verified', prepared: true,
+    actions: [action('level', 'downgrade', { from_tag: 'v0.11', to_tag: 'v0.10' })] }, error: null }
+  await nextTick()
+  const rows = find(root, n => n.tag === 'article' && n.props['data-change-node'])
+  assert.equal(rows.length, 1); assert.match(text(rows[0]), /降级.*DIYLevel 框架.*v0\.11.*v0\.10/)
+  assert.doesNotMatch(text(rows[0]), /升级|v5|Web 前置/)
+  assert.equal(find(root, n => n.tag === 'details')[0].props.open, undefined)
+  assert.deepEqual(fixture.calls, [])
+  assert.match(text(find(root, n => n.tag === 'footer')[0]), /确认更新后的方案/)
+})

@@ -109,3 +109,35 @@ test('an old rejected plan cannot replace a newer request after cancellation', a
   assert.equal(f.state.phase, 'confirming')
   await f.cancel(); await pendingNew
 })
+
+test('retry freezes the initial request, cleans failed preparation and requires a new confirmation', async () => {
+  const submitted = { roots: [{ node_id: 'mod:owner', candidate_id: 'v1', enabled: true }] }
+  let attempts = 0
+  const f = fixture({ prepare: async id => {
+    if (!attempts++) throw new Error('download.failed')
+    return plan(id, { prepared: true })
+  } })
+  const pending = f.run(submitted)
+  submitted.roots[0].candidate_id = 'different'
+  await tick(); await f.confirm()
+  assert.equal(f.state.phase, 'failed')
+  await f.retry()
+  assert.equal(f.state.phase, 'confirming')
+  assert.deepEqual(f.calls.filter(call => call[0] === 'plan').at(-1)[1], { roots: [{ node_id: 'mod:owner', candidate_id: 'v1', enabled: true }] })
+  assert.equal(f.calls.some(call => call[0] === 'execute'), false)
+  assert.equal(f.calls.filter(call => call[0] === 'cancel').length, 1)
+  await f.confirm(); assert.equal((await pending).ok, true)
+})
+
+test('cancelling a replan rejects its late progress and plan, without reviving the dialog', async () => {
+  const delayed = deferred(); let plans = 0
+  const f = fixture({ plan: async () => ++plans === 1 ? plan() : delayed.promise,
+    prepare: async () => { throw new Error('network') } })
+  const pending = f.run(request)
+  await tick(); await f.confirm()
+  const retrying = f.retry()
+  await tick(); await f.cancel()
+  delayed.resolve(plan('late-retry')); await retrying
+  assert.equal(f.state, null); assert.equal(await pending, null)
+  assert.deepEqual(f.calls.filter(call => call[0] === 'cancel').at(-1), ['cancel', 'late-retry'])
+})

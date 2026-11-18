@@ -13,6 +13,7 @@ pub(crate) mod mutations;
 pub(crate) mod payload;
 pub(crate) mod planning;
 pub(crate) mod preparation;
+pub(crate) mod progress;
 pub(crate) mod session;
 pub(crate) mod solve;
 pub(crate) mod transaction;

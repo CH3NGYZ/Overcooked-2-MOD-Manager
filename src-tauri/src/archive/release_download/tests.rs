@@ -278,6 +278,60 @@ async fn real_http_downloads_two_volumes_and_cleans_all_parts_after_reassembly()
 }
 
 #[tokio::test]
+async fn real_http_download_observer_retains_exact_bytes_and_scope_ends_with_the_request() {
+    let bytes = vec![42; 50000];
+    let dir = TempDir::new();
+    let server = Server::new(vec![bytes.clone()], false);
+    let progress = Arc::new(Mutex::new(Vec::new()));
+    let captured = progress.clone();
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let path = crate::archive::observe_download_progress(
+        move |value| captured.lock().unwrap().push(value),
+        download(
+            &client,
+            vec![ReleaseAsset {
+                name: "fixture.dll".into(),
+                size: bytes.len() as u64,
+                download_url: format!("{}/0", server.url),
+                digest: Some(format!("sha256:{:x}", Sha256::digest(&bytes))),
+                download_count: None,
+            }],
+            &dir.0,
+            "actual MOD",
+            None,
+            &crate::models::NetworkConfig::default(),
+            |url| {
+                Ok(RepositoryDownloadPlan {
+                    candidates: vec![DownloadCandidate {
+                        route: DownloadRoute::Direct,
+                        url: url.into(),
+                    }],
+                    download_threads: 1,
+                    execution: DownloadExecution {
+                        max_parallelism: 1,
+                        race: false,
+                    },
+                })
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
+    let seen = progress.lock().unwrap();
+    assert!(!seen.first().unwrap().finished);
+    let last = seen.last().unwrap();
+    assert!(last.finished);
+    assert_eq!(last.downloaded, 50000);
+    assert_eq!(last.total, Some(50000));
+    assert_eq!(last.label, "actual MOD");
+    let count = seen.len();
+    drop(seen);
+    crate::archive::emit_progress_event(None, DownloadProgress::connecting("late"));
+    assert_eq!(progress.lock().unwrap().len(), count);
+}
+
+#[tokio::test]
 async fn exhausted_candidates_allow_only_three_outer_retries_and_leave_no_files() {
     let dir = TempDir::new();
     let server = Server::new(vec![vec![1]], true);

@@ -2,11 +2,12 @@ import { computed, readonly, shallowRef } from 'vue'
 import { api } from '../services/tauri'
 import { createChangeWorkflow } from './workflow'
 import { setEvaluationSnapshotReader } from './evaluationProjection'
-import { beginDownloadTask, endDownloadTask } from '../downloadTask'
 import type { ChangeWorkflowState } from './workflow'
-import type { ChangeRequest, EvaluationSnapshot, EvaluationSubject } from './types'
+import type { ChangePreparationProgress, ChangeRequest, EvaluationSnapshot, EvaluationSubject } from './types'
 
 const state = shallowRef<ChangeWorkflowState | null>(null)
+const preparation = shallowRef<ChangePreparationProgress | null>(null)
+const cancellingDownload = shallowRef(false)
 const evaluation = shallowRef<EvaluationSnapshot | null>(null)
 const evaluating = shallowRef(false)
 setEvaluationSnapshotReader(() => evaluation.value)
@@ -15,6 +16,7 @@ let pending: Promise<void> | undefined
 let invalidated = false
 const registeredSubjects = new Map<string, EvaluationSubject>()
 let subjectSequence = 0
+let preparationSequence = 0
 
 export function registerEvaluationSubject(subject: EvaluationSubject) {
   const token = String(++subjectSequence)
@@ -26,13 +28,33 @@ export function registerEvaluationSubject(subject: EvaluationSubject) {
 const workflow = createChangeWorkflow({
   plan: request => api.planModChanges(request),
   prepare: async planId => {
-    const token = beginDownloadTask({ label: 'modChanges.phase.preparing', presentation: 'mod-changes', retry: () => undefined })
-    try { return await api.prepareModChanges(planId) }
-    finally { endDownloadTask(token) }
+    const sequence = ++preparationSequence
+    preparation.value = null
+    let active = true
+    try { return await api.prepareModChanges(planId, progress => {
+      if (active && sequence === preparationSequence && progress.plan_id === planId) preparation.value = progress
+    }) }
+    finally { active = false }
   },
   execute: planId => api.executeModChanges(planId),
   cancel: planId => api.cancelModChanges(planId),
-}, value => { state.value = value })
+}, value => {
+  state.value = value
+  if (!value || value.phase === 'planning') { preparationSequence += 1; preparation.value = null }
+  if (value?.phase !== 'preparing') cancellingDownload.value = false
+})
+
+function canCancelPreparation() {
+  return state.value?.phase === 'preparing' && preparation.value?.stage === 'downloading' && !cancellingDownload.value
+}
+
+/** Cancels only the active download; the plan waits for its failure and cleanup. */
+async function cancelPreparationDownload() {
+  if (!canCancelPreparation()) return
+  cancellingDownload.value = true
+  try { await api.cancelDownload() }
+  catch { cancellingDownload.value = false }
+}
 
 /** Batch all visible subjects through one backend snapshot; newer refreshes win. */
 async function refresh(subjects?: EvaluationSubject[]) {
@@ -75,8 +97,10 @@ async function run(request: ChangeRequest) {
 
 export function useModChanges() {
   return {
-    state: readonly(state), evaluation: readonly(evaluation), evaluating: readonly(evaluating),
+    state: readonly(state), preparation: readonly(preparation), cancellingDownload: readonly(cancellingDownload),
+    canCancelDownload: computed(canCancelPreparation), cancelPreparationDownload,
+    evaluation: readonly(evaluation), evaluating: readonly(evaluating),
     busy: computed(() => state.value !== null),
-    run, refresh, invalidate, clearEvaluation, confirm: workflow.confirm, cancel: workflow.cancel,
+    run, refresh, invalidate, clearEvaluation, confirm: workflow.confirm, cancel: workflow.cancel, retry: workflow.retry,
   }
 }

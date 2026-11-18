@@ -12,22 +12,26 @@ export function createChangeWorkflow(backend: ChangeBackend, publish: (state: Ch
   let generation = 0
   let current: ChangeWorkflowState | null = null
   let settle: ((value: ChangeExecutionResult | null) => void) | undefined
+  let originalRequest: ChangeRequest | undefined
 
   function update(state: ChangeWorkflowState | null) { current = state; publish(state) }
   function finish(value: ChangeExecutionResult | null) {
     const resolve = settle
     settle = undefined
+    originalRequest = undefined
     update(null)
     resolve?.(value)
   }
 
   async function run(request: ChangeRequest): Promise<ChangeExecutionResult | null> {
     if (current) throw new Error('modChanges.busy')
+    // IPC input is JSON data and may contain Vue proxies; detach it before retry.
+    originalRequest = JSON.parse(JSON.stringify(request)) as ChangeRequest
     const mine = ++generation
     update({ phase: 'planning', plan: null, error: null })
     const result = new Promise<ChangeExecutionResult | null>((resolve) => { settle = resolve })
     try {
-      const plan = await backend.plan(request)
+      const plan = await backend.plan(originalRequest)
       if (mine !== generation) { await backend.cancel(plan.plan_id).catch(() => undefined); return result }
       update({ phase: 'confirming', plan, error: null })
     } catch (error) {
@@ -72,5 +76,23 @@ export function createChangeWorkflow(backend: ChangeBackend, publish: (state: Ch
     if (plan) await backend.cancel(plan.plan_id).catch(() => undefined)
   }
 
-  return { run, confirm, cancel }
+  /** A failure is replanned and reviewed; it never blindly retries a commit. */
+  async function retry() {
+    if (current?.phase !== 'failed' || !originalRequest) return
+    const previous = current.plan
+    const request = originalRequest
+    const mine = ++generation
+    update({ phase: 'planning', plan: null, error: null })
+    if (previous) await backend.cancel(previous.plan_id).catch(() => undefined)
+    if (mine !== generation) return
+    try {
+      const plan = await backend.plan(request)
+      if (mine !== generation) { await backend.cancel(plan.plan_id).catch(() => undefined); return }
+      update({ phase: 'confirming', plan, error: null })
+    } catch (error) {
+      if (mine === generation) update({ phase: 'failed', plan: null, error })
+    }
+  }
+
+  return { run, confirm, cancel, retry }
 }

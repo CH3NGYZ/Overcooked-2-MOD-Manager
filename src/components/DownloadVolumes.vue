@@ -2,8 +2,9 @@
 import { t } from '../i18n'
 import type { DownloadProgress } from '../types'
 import { formatFileSize } from '../repositoryAssets'
+import type { DeepReadonly } from 'vue'
 
-defineProps<{ volumes: NonNullable<DownloadProgress['volumes']> }>()
+defineProps<{ volumes: DeepReadonly<NonNullable<DownloadProgress['volumes']>> }>()
 </script>
 
 <template>

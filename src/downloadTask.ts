@@ -22,7 +22,7 @@
  * `beginDownloadTask` 领一个递增号，`end` / `fail` 带上自己的号，号对不上
  * 就整条丢弃。
  */
-import { reactive, shallowRef } from 'vue'
+import { reactive } from 'vue'
 // 带扩展名：本模块由 `tests/download-task.test.mjs` 直接 import 真实源码
 // （与 `modRelations.ts` / `refreshState.ts` 那一批纯逻辑模块同一约定）。
 import { backendMessageOf } from './locale/backend.ts'
@@ -33,8 +33,6 @@ export interface DownloadTaskOptions {
   label: string
   /** 原地重试：只重跑「这次下载」这一段，已经成功的后续步骤不重跑。 */
   retry: () => void | Promise<void>
-  /** The App's single progress card can render inside the active change dialog. */
-  presentation?: 'overlay' | 'mod-changes'
 }
 
 interface RunningTask extends DownloadTaskOptions {
@@ -67,9 +65,6 @@ export const downloadTaskState = reactive<DownloadTaskState>({
   failure: null,
   progress: null,
 })
-
-/** Set by the actual modal slot, which Naive UI may mount after its first tick. */
-export const downloadInlineTarget = shallowRef<HTMLElement | null>(null)
 
 /** 递增任务号：只允许最近开始的任务改写状态。 */
 let sequence = 0

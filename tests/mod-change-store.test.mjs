@@ -31,22 +31,43 @@ test('an invalidation during evaluation schedules a second snapshot before the s
 })
 
 const plan=(id='initial',prepared=false)=>({plan_id:id,prepared,status:'ready',nodes:[],roots:[],actions:[],evaluations:[],blockers:[],impacts:[]})
-test('chain preparation owns inline download only until validation; revised plan still needs confirmation',async()=>{
- const prepared=deferred(),calls=[]
- globalThis.__changeStoreApi=async(name,args)=>{calls.push([name,...args]);if(name==='planModChanges')return plan();if(name==='prepareModChanges')return prepared.promise;if(name==='executeModChanges')return{ok:true,message:''};return snapshot('done')}
+test('chain preparation owns isolated IPC progress and a revised plan still needs confirmation',async()=>{
+ const prepared=deferred(),calls=[];let emit
+ globalThis.__changeStoreApi=async(name,args)=>{calls.push([name,...args]);if(name==='planModChanges')return plan();if(name==='prepareModChanges'){emit=args[1];return prepared.promise}if(name==='executeModChanges')return{ok:true,message:''};return snapshot('done')}
  const store=useModChanges(),pending=store.run({roots:[{node_id:'mod:root',enabled:true}]});await tick()
  assert.equal(store.state.value.phase,'confirming');assert.equal(downloadTaskState.running,null)
- const confirm=store.confirm();assert.equal(store.state.value.phase,'preparing');assert.equal(downloadTaskState.running.presentation,'mod-changes')
- updateDownloadProgress({label:'actual asset',downloaded:6,total:10,speed_bytes:50,finished:false});assert.equal(downloadTaskState.progress.downloaded,6)
+ const confirm=store.confirm();assert.equal(store.state.value.phase,'preparing');assert.equal(downloadTaskState.running,null)
+ const progress={plan_id:'initial',stage:'downloading',actions:[],active_node_id:'mod:root',items:[{node_id:'mod:root',candidate_id:'v1',label:'Root',stage:'downloading',download:{label:'asset',downloaded:6,total:10,speed_bytes:50,finished:false}}]}
+ emit({...progress,plan_id:'unrelated'});assert.equal(store.preparation.value,null)
+ emit(progress);assert.equal(store.preparation.value.items[0].download.downloaded,6)
+ updateDownloadProgress({label:'global unrelated',downloaded:2,total:10,speed_bytes:50,finished:false});assert.equal(store.preparation.value.items[0].download.downloaded,6)
  prepared.resolve(plan('revised',true));await confirm
  assert.equal(store.state.value.phase,'reconfirming');assert.equal(downloadTaskState.running,null);assert.equal(downloadTaskState.progress,null)
- updateDownloadProgress({label:'late asset',downloaded:9,finished:false});assert.equal(downloadTaskState.progress,null)
+ emit({...progress,items:[]});assert.equal(store.preparation.value.items.length,1,'closed IPC cannot replace retained progress')
  assert.equal(calls.some(call=>call[0]==='executeModChanges'),false)
- await store.confirm();await pending;assert.equal(store.state.value,null);assert.equal(downloadTaskState.failure,null)
+ await store.confirm();await pending;assert.equal(store.state.value,null);assert.equal(store.preparation.value,null);assert.equal(downloadTaskState.failure,null)
 })
-test('preparation failure remains workflow-owned with no second download failure card',async()=>{
- globalThis.__changeStoreApi=async(name)=>{if(name==='planModChanges')return plan();if(name==='prepareModChanges')throw new Error('download.cancelled')}
+test('preparation failure retains item context and never shows a second download failure card',async()=>{
+ let emit;globalThis.__changeStoreApi=async(name,args)=>{if(name==='planModChanges')return plan();if(name==='prepareModChanges'){emit=args[1];emit({plan_id:'initial',stage:'failed',actions:[],items:[{node_id:'mod:root',candidate_id:'v1',label:'Root',stage:'failed'}]});throw new Error('download.cancelled')}}
  const store=useModChanges(),pending=store.run({roots:[{node_id:'mod:root',enabled:true}]});await tick();await store.confirm()
  assert.equal(store.state.value.phase,'failed');assert.equal(downloadTaskState.running,null);assert.equal(downloadTaskState.progress,null);assert.equal(downloadTaskState.failure,null)
- await store.cancel();assert.equal(await pending,null)
+ assert.equal(store.preparation.value.items[0].stage,'failed')
+ await store.cancel();assert.equal(await pending,null);assert.equal(store.preparation.value,null)
+ emit({plan_id:'initial',stage:'ready',actions:[],items:[]});assert.equal(store.preparation.value,null)
+})
+
+test('preparation cancellation targets the downloader only and is unavailable during final validation',async()=>{
+ const prepared=deferred(),calls=[];let emit
+ globalThis.__changeStoreApi=async(name,args)=>{calls.push(name);if(name==='planModChanges')return plan();if(name==='prepareModChanges'){emit=args[1];return prepared.promise}return undefined}
+ const store=useModChanges(),pending=store.run({roots:[{node_id:'mod:root',enabled:true}]});await tick()
+ const confirm=store.confirm();assert.equal(store.canCancelDownload.value,false)
+ emit({plan_id:'initial',stage:'downloading',actions:[],items:[]});assert.equal(store.canCancelDownload.value,true)
+ await store.cancelPreparationDownload();await store.cancelPreparationDownload();await store.cancel()
+ assert.equal(calls.filter(call=>call==='cancelDownload').length,1)
+ assert.equal(calls.includes('cancelModChanges'),false);assert.equal(store.state.value.phase,'preparing')
+ emit({plan_id:'initial',stage:'finalizing',actions:[],items:[]});assert.equal(store.canCancelDownload.value,false)
+ prepared.resolve(plan('revised',true));await confirm
+ assert.equal(store.cancellingDownload.value,false)
+ await store.cancelPreparationDownload();assert.equal(calls.filter(call=>call==='cancelDownload').length,1)
+ await store.cancel();await pending
 })

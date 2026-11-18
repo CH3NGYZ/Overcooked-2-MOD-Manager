@@ -1,4 +1,4 @@
-import type { MapInstallOrigin, RepositoryRelation } from '../types'
+import type { DownloadProgress, MapInstallOrigin, RepositoryRelation } from '../types'
 
 /** Rust mod_changes/model.rs is the authority for relation and action semantics. */
 export interface RootIntent { node_id: string; candidate_id?: string; enabled: boolean; member_key?: string; asset_name?: string }
@@ -69,6 +69,28 @@ export interface ChangeNode {
 }
 export interface EvaluationSubject { repository_id?: string; tag?: string; map_id?: string; dll_file?: string; map_dir_name?: string }
 export interface ChangeExecutionResult { ok: boolean; message: string }
+export interface ChangePreparationItem {
+  node_id: string
+  candidate_id: string
+  label: string
+  tag?: string | null
+  stage: 'queued' | 'downloading' | 'verifying' | 'ready' | 'failed'
+  download?: DownloadProgress | null
+}
+/** Full task-local snapshot, delivered only by the active preparation IPC. */
+export interface ChangePreparationProgress {
+  plan_id: string
+  stage: 'resolving' | 'downloading' | 'verifying' | 'finalizing' | 'ready' | 'failed'
+  active_node_id?: string | null
+  actions: ChangeAction[]
+  items: ChangePreparationItem[]
+  error?: string | null
+}
+export interface ChangePreparationOutcome {
+  plan: ChangePlan | null
+  error: string | null
+  progress: ChangePreparationProgress
+}
 export interface ChangeBackend {
   plan(request: ChangeRequest): Promise<ChangePlan>
   prepare(planId: string): Promise<ChangePlan>

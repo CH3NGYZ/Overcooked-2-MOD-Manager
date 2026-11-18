@@ -1,4 +1,7 @@
 //! Download the complete chosen chain, verify its real DLLs, then solve again.
+use super::progress::{
+    ChangePreparationProgress, PreparationOutcome, PreparationReporter, PreparationStage,
+};
 use super::{inventory, model::*, planning, session::*, transaction::*};
 use crate::{app_state::AppState, archive, game};
 use std::collections::HashMap;
@@ -8,6 +11,18 @@ pub(crate) async fn prepare(
     app: AppHandle,
     state: AppState,
     id: String,
+    report: impl Fn(ChangePreparationProgress) + Send + Sync + 'static,
+) -> PreparationOutcome {
+    let progress = PreparationReporter::new(id.clone(), report);
+    let outcome = prepare_inner(app, state, id, &progress).await;
+    progress.finish(outcome)
+}
+
+async fn prepare_inner(
+    app: AppHandle,
+    state: AppState,
+    id: String,
+    progress: &PreparationReporter,
 ) -> Result<ChangePlan, String> {
     let mut lease = SessionLease::take(&state, &id)?;
     let session = lease.session.as_mut().ok_or("modChanges.planExpired")?;
@@ -17,6 +32,7 @@ pub(crate) async fn prepare(
     if session.plan.result.status != SolveStatus::Ready {
         return Err("modChanges.notPrepared".into());
     }
+    progress.synchronize(session);
     let before = approval_signature(session)?;
     // Freeze and recheck existing payloads before extending the plan.
     let fresh_state = state.clone();
@@ -42,6 +58,7 @@ pub(crate) async fn prepare(
             return Err("download.cancelled".into());
         }
         planning::resolve(session)?;
+        progress.synchronize(session);
         if session.plan.result.status != SolveStatus::Ready {
             break;
         }
@@ -60,6 +77,7 @@ pub(crate) async fn prepare(
             .next();
         let Some((node_id, candidate)) = pending else {
             select_payloads(session)?;
+            progress.stage(PreparationStage::Finalizing, None);
             let prepare_state = state.clone();
             // Moving the session into the blocking task keeps all disk-heavy work off IPC.
             let mut owned = lease.session.take().ok_or("modChanges.planExpired")?;
@@ -84,6 +102,7 @@ pub(crate) async fn prepare(
         {
             let actual = payload.candidate.clone();
             replace_candidate(session, &node_id, &actual)?;
+            progress.verified(&node_id, &actual.id);
             continue;
         }
         let repository_id = candidate
@@ -96,19 +115,27 @@ pub(crate) async fn prepare(
             .iter()
             .find(|root| root.intent.node_id == node_id)
             .and_then(|r| r.asset_name.clone());
-        let outcome = crate::mods::repository_download::run_repository_install(
-            app.clone(),
-            state.clone(),
-            repository_id,
-            candidate.tag.clone(),
-            asset_name.clone(),
-            None,
-            None,
-            Some(true),
-            None,
-            false,
+        progress.stage(PreparationStage::Downloading, Some(&node_id));
+        let reporter = progress.clone();
+        let download_node = node_id.clone();
+        let download_candidate = candidate.id.clone();
+        let outcome = archive::observe_download_progress(
+            move |download| reporter.download(&download_node, &download_candidate, download),
+            crate::mods::repository_download::run_repository_install(
+                app.clone(),
+                state.clone(),
+                repository_id,
+                candidate.tag.clone(),
+                asset_name.clone(),
+                None,
+                None,
+                Some(true),
+                None,
+                false,
+            ),
         )
         .await?;
+        progress.stage(PreparationStage::Verifying, Some(&node_id));
         let preview = outcome.preview.ok_or("archive.noInstallableContent")?;
         let extract_state = state.clone();
         let trusted = session.trusted.clone();
@@ -130,12 +157,14 @@ pub(crate) async fn prepare(
         .await
         .map_err(|e| e.to_string())??;
         replace_candidate(session, &node_id, &payload.candidate)?;
+        let verified_candidate = payload.candidate.id.clone();
         session
             .verified_payloads
-            .insert((node_id, payload.candidate.id.clone()), payload);
+            .insert((node_id.clone(), payload.candidate.id.clone()), payload);
         // A later network/validation error keeps both the verified candidate and
         // its payload available, with immutable bytes checked on the next call.
         planning::remember_payloads(session)?;
+        progress.verified(&node_id, &verified_candidate);
     }
     if session.plan.result.status == SolveStatus::Ready {
         session.plan.result.status = SolveStatus::Incomplete;

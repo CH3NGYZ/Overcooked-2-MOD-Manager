@@ -34,7 +34,7 @@ pub(crate) use map_snapshots::{read_map_relation_snapshots, write_map_relation_s
 pub(crate) use paths::{clear_readonly, prune_empty_parent_dirs};
 pub(crate) use progress::{
     DownloadPhase, DownloadProgress, DownloadReporter, DownloadRoute, emit_progress,
-    emit_progress_event,
+    emit_progress_event, observe_download_progress,
 };
 pub(crate) use transfer::{
     download_to_temp_with_threads_and_first_byte_timeout, first_nonempty_chunk,

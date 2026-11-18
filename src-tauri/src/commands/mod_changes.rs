@@ -40,8 +40,18 @@ pub(crate) async fn prepare_mod_changes(
     app: AppHandle,
     state: State<'_, AppState>,
     plan_id: String,
-) -> Result<ChangePlan, String> {
-    crate::mod_changes::preparation::prepare(app, state.inner().clone(), plan_id).await
+    on_update: tauri::ipc::Channel<crate::mod_changes::progress::ChangePreparationProgress>,
+) -> Result<crate::mod_changes::progress::PreparationOutcome, String> {
+    Ok(crate::mod_changes::preparation::prepare(
+        app,
+        state.inner().clone(),
+        plan_id,
+        move |progress| {
+            // A detached window must not turn successful staging into an install error.
+            let _ = on_update.send(progress);
+        },
+    )
+    .await)
 }
 
 #[tauri::command]

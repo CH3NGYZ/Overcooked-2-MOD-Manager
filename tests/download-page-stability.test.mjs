@@ -44,7 +44,7 @@ registerHooks({
 
 const { default: DownloadStrip } = await import('../src/components/DownloadStrip.vue')
 const { default: SourceDirectory } = await import('../src/components/SourceDirectory.vue')
-const { beginDownloadTask, endDownloadTask, downloadTaskState, downloadInlineTarget } = await import('../src/downloadTask.ts')
+const { beginDownloadTask, endDownloadTask, downloadTaskState } = await import('../src/downloadTask.ts')
 const { appUpdateState } = await import('../src/appUpdateState.ts')
 DownloadStrip.render = () => null
 const renderer = createRenderer({
@@ -90,35 +90,29 @@ test('download progress completion and cancellation never reload local lists bef
   assert.equal(boundary.unlistens, 1)
 })
 
-test('one progress subscription changes between inline chain and normal download without retaining bytes', async () => {
+test('one ordinary progress subscription handles cancellation and does not retain previous bytes', async () => {
   boundary.calls = []
   const root = { children: [] }, app = renderer.createApp(DownloadStrip)
   app.mount(root)
   await tick()
   const state = app._instance.setupState
   try {
-    const chain = beginDownloadTask({ label: 'chain', retry() {}, presentation: 'mod-changes' })
-    assert.equal(state.inline, true)
+    const chain = beginDownloadTask({ label: 'first download', retry() {} })
     assert.equal(state.progress, null, 'preparing begins with indeterminate stage, not previous percentages')
     boundary.listener({ label: 'package A', downloaded: 25, total: 100, speed_bytes: 2048, finished: false })
     assert.equal(state.percent, 25)
     assert.equal(state.speedText, '2 KB/s')
-    assert.equal(state.visible, false, 'the modal may mount its Teleport slot in a later tick')
-    await tick()
-    downloadInlineTarget.value = { nodeType: 1 }
-    assert.equal(state.visible, true, 'already received bytes become visible when the actual slot mounts')
+    assert.equal(state.visible, true)
     await state.cancel()
-    assert.deepEqual(boundary.calls, ['cancelDownload'], 'inline cancel must reach the real IPC boundary')
+    assert.deepEqual(boundary.calls, ['cancelDownload'], 'cancel must reach the real IPC boundary')
     boundary.listener({ label: 'package A', downloaded: 50, total: 100, finished: false })
     assert.equal(state.progress, null, 'queued bytes do not reopen a cancelled download')
     endDownloadTask(chain)
-    assert.equal(state.inline, false)
     assert.equal(state.visible, false)
 
     const ordinary = beginDownloadTask({ label: 'normal', retry() {} })
     boundary.listener({ label: 'package B', downloaded: 40, total: 100, speed_bytes: 1024, finished: false })
     boundary.listener({ label: 'package A', downloaded: 100, total: 100, finished: true })
-    assert.equal(state.inline, false)
     assert.equal(state.percent, 40, 'differently labelled old finished event does not erase current bytes')
     assert.equal(downloadTaskState.running.id, ordinary)
     // The public transition owns this readonly state; raw reset is fixture cleanup only.
@@ -130,7 +124,7 @@ test('one progress subscription changes between inline chain and normal download
     assert.deepEqual(boundary.calls, ['cancelDownload'], 'update installation remains non-cancellable')
     toRaw(appUpdateState).stage = 'idle'
     endDownloadTask(ordinary)
-  } finally { toRaw(appUpdateState).stage = 'idle'; downloadInlineTarget.value = null; app.unmount() }
+  } finally { toRaw(appUpdateState).stage = 'idle'; app.unmount() }
 })
 
 test('unmount releases a late subscription and ignores events after disposal', async () => {

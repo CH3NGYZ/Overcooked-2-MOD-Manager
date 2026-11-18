@@ -5,6 +5,10 @@ use crate::mod_changes::{
 };
 use std::{collections::HashMap, time::Instant};
 
+#[path = "bundled_maps_tests.rs"]
+mod bundled_maps_tests;
+#[path = "bundled_members_tests.rs"]
+mod bundled_members_tests;
 #[path = "physical_tests.rs"]
 mod physical_tests;
 

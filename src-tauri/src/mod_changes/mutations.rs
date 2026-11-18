@@ -114,6 +114,16 @@ pub(crate) fn assemble(
 
 impl Builder<'_> {
     fn index_ownership(&mut self) -> Result<(), String> {
+        if let Some(package) = self
+            .session
+            .solved
+            .as_ref()
+            .map(final_package)
+            .transpose()?
+            .flatten()
+        {
+            self.protected_maps.push(format!("{package}/levels"));
+        }
         if let Some(package) = self.session.trusted.level_roots.package_root() {
             self.protected_maps.push(inventory::relative(
                 &self.roots.game_root,
@@ -185,17 +195,24 @@ impl Builder<'_> {
         {
             Ok(())
         } else {
+            log::warn!(
+                "整链安装归属不明确：节点={owner}，路径={relative}，已知归属={:?}",
+                self.ownership.get(&key)
+            );
             Err("modChanges.ambiguousOwnership".into())
         }
     }
 
-    pub fn add_move(&mut self, _owner: &str, from: &str, to: &str) -> Result<(), String> {
+    pub fn add_move(&mut self, owner: &str, from: &str, to: &str) -> Result<(), String> {
         let source = game(from).resolve(&self.roots)?;
         let target = game(to).resolve(&self.roots)?;
         let expected = Fingerprint::capture(&source)?;
         if expected == Fingerprint::Missing
             || Fingerprint::capture(&target)? != Fingerprint::Missing
         {
+            log::warn!(
+                "整链移动路径冲突：节点={owner}，原路径={from}，目标路径={to}，原因=原文件缺失或目标已存在"
+            );
             return Err("modChanges.pathCollision".into());
         }
         for mutation in &self.moves {
@@ -204,6 +221,10 @@ impl Builder<'_> {
                     if paths_overlap(&existing.relative, from)
                         || paths_overlap(&existing.relative, to)
                     {
+                        log::warn!(
+                            "整链移动路径冲突：节点={owner}，原路径={from}，目标路径={to}，冲突路径={}，原因=移动端点重叠",
+                            existing.relative
+                        );
                         return Err("modChanges.pathCollision".into());
                     }
                 }
@@ -215,6 +236,10 @@ impl Builder<'_> {
                     && (paths_overlap(&change.target.relative, from)
                         || paths_overlap(&change.target.relative, to))
                 {
+                    log::warn!(
+                        "整链移动路径冲突：节点={owner}，原路径={from}，目标路径={to}，冲突路径={}，原因=写入与移动重叠",
+                        change.target.relative
+                    );
                     return Err("modChanges.pathCollision".into());
                 }
             }
@@ -237,6 +262,10 @@ impl Builder<'_> {
         let id = format!("{:?}:{}", target.root, inventory::key(&target.relative));
         let expected = Fingerprint::capture(&path)?;
         if matches!(expected, Fingerprint::Directory { .. }) {
+            log::warn!(
+                "整链写入路径冲突：节点={owner}，路径={}，原因=目标是目录",
+                target.relative
+            );
             return Err("modChanges.pathCollision".into());
         }
         for mutation in &self.moves {
@@ -245,16 +274,28 @@ impl Builder<'_> {
                     && (paths_overlap(&change.from.relative, &target.relative)
                         || paths_overlap(&change.to.relative, &target.relative))
                 {
+                    log::warn!(
+                        "整链写入路径冲突：节点={owner}，路径={}，原因=写入与移动重叠",
+                        target.relative
+                    );
                     return Err("modChanges.pathCollision".into());
                 }
             }
         }
         if let Some((previous_owner, previous)) = self.writes.get(&id) {
             if previous_owner != owner {
+                log::warn!(
+                    "整链写入归属冲突：节点={owner}，路径={}，前一归属={previous_owner}",
+                    target.relative
+                );
                 return Err("modChanges.ambiguousOwnership".into());
             }
             if let Mutation::File(previous) = previous {
                 if previous.source.is_some() && source.is_some() {
+                    log::warn!(
+                        "整链写入路径冲突：节点={owner}，路径={}，原因=同一目标重复写入",
+                        target.relative
+                    );
                     return Err("modChanges.pathCollision".into());
                 }
                 if previous.source.is_some() {
@@ -294,6 +335,7 @@ impl Builder<'_> {
             return Err("modChanges.targetChanged".into());
         }
         let mut manifest = payload.manifest.clone().ok_or("modChanges.notPrepared")?;
+        let bundled_levels = super::level_trees::bundled_level_root(self.session, &node.id)?;
         let old_files = self.session.trusted.files.get(&node.id);
         if let Some(old) = old_files {
             let old = old.clone();
@@ -340,6 +382,14 @@ impl Builder<'_> {
                 data_root: self.roots.data_root.clone(),
             };
             let source = game(source_relative).resolve(&source_roots)?;
+            if bundled_levels
+                .as_ref()
+                .is_some_and(|levels| within(source_relative, levels))
+            {
+                // The shared map-tree composer preserves installed maps and seeds
+                // absent bundled maps once; MOD manifests must not claim map files.
+                continue;
+            }
             let canonical = mods::canonical_dll_name(source_relative);
             let member_key = inventory::key(&canonical);
             let destination = if canonical.to_ascii_lowercase().ends_with(".dll") {
@@ -361,11 +411,21 @@ impl Builder<'_> {
                 .iter()
                 .any(|map| within(&destination, map))
             {
+                log::warn!(
+                    "整链安装路径冲突：节点={}，路径={}，原因=MOD资产试图覆盖地图目录",
+                    node.id,
+                    destination
+                );
                 return Err("modChanges.pathCollision".into());
             }
             let ownership_key = inventory::key(&mods::canonical_dll_name(&destination));
             if let Some(owners) = self.ownership.get(&ownership_key) {
                 if owners.len() != 1 || !owners.contains(&node.id) {
+                    log::warn!(
+                        "整链安装归属冲突：节点={}，路径={}，已知归属={owners:?}",
+                        node.id,
+                        destination
+                    );
                     return Err("modChanges.ambiguousOwnership".into());
                 }
             }

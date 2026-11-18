@@ -13,6 +13,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod bundled;
+pub(crate) use bundled::{bundled_level_root, payload_level_root};
+
 pub(crate) struct Replacement {
     pub node_id: String,
     pub source: PathBuf,
@@ -34,22 +37,24 @@ pub(crate) fn compose(
     roots: &TransactionRoots,
     replacements: &[Replacement],
 ) -> Result<Option<Composition>, String> {
-    let Some(old_package) = session.trusted.level_roots.package_root() else {
-        return Ok(None);
-    };
     let solved = session.solved.as_ref().ok_or("modChanges.notPrepared")?;
     let Some(package) = mutations::final_package(solved)? else {
         return Ok(None);
     };
-    let from = format!(
-        "{}/levels",
-        inventory::relative(&roots.game_root, old_package)?
-    );
     let to = format!("{package}/levels");
-    if key(&from) == key(&to) {
-        return Ok(None);
+    let from = session
+        .trusted
+        .level_roots
+        .package_root()
+        .map(|old| inventory::relative(&roots.game_root, old).map(|old| format!("{old}/levels")))
+        .transpose()?
+        .unwrap_or_else(|| to.clone());
+    let same_root = key(&from) == key(&to);
+    if same_root {
+        return bundled::compose_missing_maps(session, roots, replacements, &to);
     }
     if mutations::paths_overlap(&from, &to) {
+        log::warn!("整链地图树冲突：原因=迁移路径互相嵌套，原路径={from}，目标路径={to}");
         return Err("modChanges.pathCollision".into());
     }
     let old = mutations::game(&from).resolve(roots)?;
@@ -58,6 +63,7 @@ pub(crate) fn compose(
         return Err("modChanges.pathCollision".into());
     }
     if Fingerprint::capture(&mutations::game(&to).resolve(roots)?)? != Fingerprint::Missing {
+        log::warn!("整链地图树冲突：原因=迁移目标已存在，原路径={from}，目标路径={to}");
         return Err("modChanges.pathCollision".into());
     }
     let stage = session
@@ -202,6 +208,7 @@ pub(crate) fn compose(
             )?;
         }
     }
+    bundled::merge_missing_maps(session, roots, &stage, &result.to)?;
     fs::set_permissions(&stage, permissions).map_err(|error| error.to_string())?;
     if before != Fingerprint::Missing {
         push_tree(

@@ -72,7 +72,10 @@ pub(super) fn build_at(data_root: &Path, session: &PlanSession) -> Result<Vec<Mu
                 &level_sets::disabled_root(&roots.game_root).join(&map.target_dir),
             )?
         };
-        if migration.is_some() {
+        if migration
+            .as_ref()
+            .is_some_and(|composition| composition.handled_maps.contains(&map.node_id))
+        {
             continue;
         }
         if let Some(old) = &map.old_path {

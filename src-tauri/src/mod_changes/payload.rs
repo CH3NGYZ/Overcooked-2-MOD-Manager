@@ -167,7 +167,7 @@ pub(crate) fn from_preview(
         if Fingerprint::capture(&source)? != source_fingerprint {
             return Err("modChanges.targetChanged".into());
         }
-        let provides = read_members(trusted, node_id, stage_root, &mut files, prerelease)?;
+        let mut provides = read_members(trusted, node_id, stage_root, &mut files, prerelease)?;
         if provides.is_empty() {
             return Err("archive.noInstallableContent".into());
         }
@@ -184,6 +184,23 @@ pub(crate) fn from_preview(
                 1 => (),
                 _ => return Err("modChanges.ambiguousOwnership".into()),
             }
+        }
+        if let Some(levels) = super::level_trees::payload_level_root(&provides)? {
+            // The map inventory owns existing map DLLs. Bundled defaults are
+            // composed separately and must not advertise versions we skip writing.
+            provides.retain(|member| {
+                let bundled = member
+                    .member_key
+                    .as_deref()
+                    .is_some_and(|path| super::mutations::within(path, &levels));
+                if bundled {
+                    log::debug!(
+                        "地图DLL不计入框架提供项：节点={node_id}，路径={:?}",
+                        member.member_key
+                    );
+                }
+                !bundled
+            });
         }
         let mut actual = candidate.clone();
         actual.provides = provides;

@@ -2,6 +2,9 @@ use super::super::session::{ChangePlan, PlanRequest};
 use super::*;
 use std::{collections::HashMap, io::Write, time::Instant};
 
+#[path = "bundled_tests.rs"]
+mod bundled_tests;
+
 #[test]
 fn metadata_copy_preserves_unrelated_snapshots_and_rejects_future_registry() {
     let temp = tempfile::tempdir().unwrap();

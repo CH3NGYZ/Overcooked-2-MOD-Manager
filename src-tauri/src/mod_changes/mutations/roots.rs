@@ -49,21 +49,37 @@ pub(super) fn prepare(
     builder: &mut Builder<'_>,
     solved: &Inventory,
 ) -> Result<Option<RootMigration>, String> {
-    let Some(old) = builder.session.trusted.level_roots.package_root() else {
-        return Ok(None);
-    };
     let Some(new) = final_package(solved)? else {
         return Ok(None);
     };
-    let from = format!(
-        "{}/levels",
-        inventory::relative(&builder.roots.game_root, old)?
-    );
     let to = format!("{new}/levels");
-    if inventory::key(&from) == inventory::key(&to) {
+    let from = builder
+        .session
+        .trusted
+        .level_roots
+        .package_root()
+        .map(|old| {
+            inventory::relative(&builder.roots.game_root, old).map(|old| format!("{old}/levels"))
+        })
+        .transpose()?
+        .unwrap_or_else(|| to.clone());
+    let bundled = builder
+        .session
+        .payloads
+        .keys()
+        .try_fold(false, |found, node| {
+            super::super::level_trees::bundled_level_root(builder.session, node)
+                .map(|root| found || root.is_some())
+        })?;
+    if inventory::key(&from) == inventory::key(&to) && !bundled {
         return Ok(None);
     }
     if builder.session.map_payload.is_some() {
+        if inventory::key(&from) == inventory::key(&to) {
+            // Same-root map imports keep their independent tree edits; their
+            // composer adds only absent bundled directories without overlaps.
+            return Ok(None);
+        }
         // The import composer also applies every installed map's final switches.
         return Ok(Some(RootMigration {
             from,

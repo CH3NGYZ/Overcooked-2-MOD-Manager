@@ -1,5 +1,5 @@
 //! Backend-owned plan IDs bind approval to one inventory and prepared payload set.
-use super::{inventory::*, model::*};
+use super::{install_notes::InstallNote, inventory::*, model::*};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
@@ -35,6 +35,7 @@ pub(crate) struct ChangePlan {
     pub result: SolveResult,
     pub roots: Vec<RootSummary>,
     pub nodes: Vec<NodeSummary>,
+    pub install_notes: Vec<InstallNote>,
     pub prepared: bool,
 }
 
@@ -187,5 +188,6 @@ pub(crate) fn presentation(
             })
             .collect(),
         nodes: trusted.files.values().map(|f| f.summary.clone()).collect(),
+        install_notes: Vec::new(),
     }
 }

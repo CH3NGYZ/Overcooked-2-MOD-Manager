@@ -4,6 +4,7 @@ pub(crate) mod candidates;
 pub(crate) mod evaluate;
 pub(crate) mod execution;
 pub(crate) mod guard;
+mod install_notes;
 pub(crate) mod inventory;
 pub(crate) mod inventory_maps;
 pub(crate) mod level_trees;

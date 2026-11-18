@@ -8,7 +8,7 @@ import { modChanges } from '../src/locale/modChanges.ts'
 
 const fixture = globalThis.__changeRender = {
   state: shallowRef(null), preparation: shallowRef(null), cancelDownload: shallowRef(false), cancelling: shallowRef(false),
-  messages: modChanges, calls: [],
+  installNotes: shallowRef([]), messages: modChanges, calls: [],
 }
 registerHooks({
   resolve(specifier, context, next) {
@@ -24,21 +24,21 @@ registerHooks({
     if (url === 'change-render:naive') return fake(`import{h}from'vue';
       const leaf=tag=>({props:['percentage','showIndicator','processing','disabled','type'],setup:(p,{slots})=>()=>h(tag,{...p},slots.default?.())});
       export const NButton=leaf('button'),NProgress=leaf('progress'),NTag=leaf('tag'),NAlert=leaf('alert'),NSpin=leaf('spin')`)
-    if (/\/modChanges\/ChangePlan(?:Dialog|Details|Item)\.vue$/.test(url)) {
+    if (/\/modChanges\/(?:ChangePlan(?:Dialog|Details|Item)|ModInstallNoteDialog)\.vue$/.test(url)) {
       const { descriptor } = parse(readFileSync(new URL(url), 'utf8'))
       return { format: 'module-typescript', shortCircuit: true,
         source: compileScript(descriptor, { id: 'change-render', inlineTemplate: true }).content }
     }
     if (url.endsWith('/src/modChanges/store.ts')) return fake(`export const useModChanges=()=>{const f=globalThis.__changeRender;
       return{state:f.state,preparation:f.preparation,canCancelDownload:f.cancelDownload,cancellingDownload:f.cancelling,
+      installNotes:f.installNotes,acceptInstallNotes:()=>f.calls.push('note-read'),
       confirm:()=>f.calls.push('confirm'),retry:()=>f.calls.push('retry'),cancel:()=>f.calls.push('cancel'),cancelPreparationDownload:()=>f.calls.push('cancel-download')}}`)
     if (url.endsWith('/src/modChanges/useModChangesLifecycle.ts')) return fake('export const useModChangesLifecycle=()=>{}')
-    if (url.endsWith('/src/modChanges/planNotes.ts')) return fake('export const changePlanInstallNotes=()=>[]')
-    if (url.endsWith('/src/composables/useDashboardStore.ts')) return fake(`export const useDashboard=()=>({config:{value:{repositories:[]}},mods:{value:[]}})`)
-    if (url.endsWith('/src/components/AppModal.vue')) return fake(`import{h}from'vue';export default{props:['show'],setup:(p,{slots})=>()=>p.show?h('modal',{},[slots.default?.(),h('footer',{},slots.footer?.())]):null}`)
+    if (url.endsWith('/src/components/AppModal.vue')) return fake(`import{h}from'vue';export default{props:['show','cardClass'],setup:(p,{slots})=>()=>p.show?h('modal',{class:p.cardClass},[slots.default?.(),h('footer',{},slots.footer?.())]):null}`)
     if (url.endsWith('/src/markdown.ts')) return fake('export const renderReadme=String')
     if (url.endsWith('/src/locale/backend.ts')) return fake('export const backendMessageOf=String;export const translateBackendMessage=String')
-    if (url.endsWith('/src/i18n.ts')) return fake(`export const t=(key,args={})=>{let text=globalThis.__changeRender.messages[key.replace(/^modChanges\\./,'')]?.['zh-CN']??key;for(const[k,v]of Object.entries(args))text=text.replaceAll('{'+k+'}',String(v));return text}`)
+    if (url.endsWith('/src/i18n.ts')) return fake(`export const pickI18n=(_,fallback)=>fallback;
+      export const t=(key,args={})=>{let text=globalThis.__changeRender.messages[key.replace(/^modChanges\\./,'')]?.['zh-CN']??key;for(const[k,v]of Object.entries(args))text=text.replaceAll('{'+k+'}',String(v));return text}`)
     return next(url, context)
   },
 })
@@ -58,16 +58,37 @@ const host = createRenderer({
 const find = (node, match) => [...(match(node) ? [node] : []), ...(node.children?.flatMap(child => find(child, match)) ?? [])]
 const text = node => (node.text ?? '') + (node.children?.map(text).join('') ?? '')
 const action = (id, kind, extra = {}) => ({ node_id: id, kind, reason: '', caused_by: [], ...extra })
-const plan = { plan_id: 'one', status: 'ready', prepared: false, blockers: [], impacts: [], roots: [], evaluations: [],
+const plan = { plan_id: 'one', status: 'ready', prepared: false, blockers: [], impacts: [], roots: [], evaluations: [], install_notes: [],
   nodes: [{ node_id: 'web', label: 'Web 前置', dll_files: [], candidates: [] }, { node_id: 'level', label: 'DIYLevel 框架', dll_files: [], candidates: [] }],
   actions: [action('web', 'downgrade', { from_tag: 'v4.0.0', to_tag: 'v3.10.2' }), action('level', 'replace', { from_tag: 'v0.10', to_tag: 'v0.10' })] }
 function mounted(t) {
   fixture.state.value = { phase: 'confirming', plan, error: null }; fixture.preparation.value = null
-  fixture.calls = []; fixture.cancelDownload.value = false
+  fixture.calls = []; fixture.cancelDownload.value = false; fixture.installNotes.value = []
   const root = { children: [] }, app = host.createApp(Dialog)
   app.mount(root); t.after(() => app.unmount())
   return root
 }
+
+test('first install hides the entire plan while one five-second note window can be cancelled', async t => {
+  const root = mounted(t)
+  fixture.installNotes.value = [
+    { id: 'street', name: '街机 MOD 稳定版', text: 'Read before installing.' },
+    { id: 'dependency', name: '前置', text: 'Required component.' },
+  ]
+  await nextTick()
+  const modals = find(root, node => node.tag === 'modal')
+  assert.equal(modals.length, 1)
+  assert.equal(modals[0].props.class, 'mod-install-note')
+  assert.match(text(modals[0]), /街机 MOD 稳定版.*前置/)
+  assert.doesNotMatch(text(root), /确认并应用|Web 前置/)
+  const [cancel, next] = find(root, node => node.tag === 'button')
+  assert.match(text(next), /\(5\)$/)
+  assert.equal(next.props.disabled, true)
+  next.props.onClick()
+  assert.deepEqual(fixture.calls, [])
+  cancel.props.onClick()
+  assert.deepEqual(fixture.calls, ['cancel'])
+})
 
 test('production dialog renders current actions and stages without inline transfer UI or technical ids', async t => {
   const root = mounted(t)

@@ -92,6 +92,7 @@ fn session(candidate_id: &str) -> PlanSession {
             game_root: PathBuf::new(),
             level_roots: crate::level_sets::LevelSetRoots::new(PathBuf::new(), None),
             config: crate::config::default_config(),
+            managed_mods: Default::default(),
         },
         request: ChangeRequest::default(),
         wire_request: PlanRequest::default(),
@@ -99,6 +100,7 @@ fn session(candidate_id: &str) -> PlanSession {
             plan_id: "revised-plan".into(),
             roots: vec![],
             nodes: vec![],
+            install_notes: vec![],
             prepared: false,
             result: SolveResult {
                 status: SolveStatus::Ready,

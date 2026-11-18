@@ -53,7 +53,6 @@ export const modChanges: DomainMessages = {
   'relation.disabled': { 'zh-CN': '依赖已禁用', 'zh-TW': '相依已停用', en: 'Dependency disabled', ko: '의존성 비활성화됨', ja: '依存先が無効' },
   'relation.versionMismatch': { 'zh-CN': '版本不符', 'zh-TW': '版本不符', en: 'Version mismatch', ko: '버전 불일치', ja: 'バージョン不一致' },
   reviewSelection: { 'zh-CN': '继续查看整链方案', 'zh-TW': '繼續查看整鏈方案', en: 'Review Complete Plan', ko: '전체 계획 확인', ja: '変更計画を確認' },
-  readingNotes: { 'zh-CN': '请阅读安装说明（{seconds} 秒）', 'zh-TW': '請閱讀安裝說明（{seconds} 秒）', en: 'Read installation notes ({seconds}s)', ko: '설치 안내를 읽어 주세요 ({seconds}초)', ja: 'インストール説明をお読みください（{seconds}秒）' },
   'reason.version': { 'zh-CN': '为满足整链版本要求', 'zh-TW': '為滿足整鏈版本要求', en: 'Required to satisfy the complete version plan', ko: '전체 버전 요구 사항 충족에 필요', ja: '変更全体のバージョン条件を満たすため' },
   'reason.enable': { 'zh-CN': '启用必需依赖', 'zh-TW': '啟用必要相依', en: 'Enable a required dependency', ko: '필수 의존성 활성화', ja: '必須の依存先を有効化' },
   'reason.disable': { 'zh-CN': '停用无法兼容的项目或其依赖方', 'zh-TW': '停用無法相容的項目或其相依方', en: 'Disable incompatible items or their dependents', ko: '호환되지 않는 항목 또는 종속 항목 비활성화', ja: '互換性のない項目またはその依存元を無効化' },

@@ -3,6 +3,7 @@ import { api } from '../services/tauri'
 import { beginDownloadTask, cancelDownloadTask, endDownloadTask, updateDownloadProgress } from '../downloadTask'
 import { createChangeWorkflow } from './workflow'
 import { setEvaluationSnapshotReader } from './evaluationProjection'
+import { installNoteKey, localizedInstallNotes, type InstallNote } from './planNotes'
 import type { ChangeWorkflowState } from './workflow'
 import type { ChangePreparationProgress, ChangeRequest, EvaluationSnapshot, EvaluationSubject } from './types'
 
@@ -11,6 +12,13 @@ const preparation = shallowRef<ChangePreparationProgress | null>(null)
 const cancellingDownload = shallowRef(false)
 const evaluation = shallowRef<EvaluationSnapshot | null>(null)
 const evaluating = shallowRef(false)
+const readNotes = shallowRef<ReadonlySet<string>>(new Set())
+const installNotes = computed<readonly InstallNote[]>(() => {
+  const current = state.value
+  if (current?.plan?.status !== 'ready' || (current.phase !== 'confirming' && current.phase !== 'reconfirming')) return []
+  return localizedInstallNotes(current.plan.install_notes)
+    .filter(note => !readNotes.value.has(installNoteKey(note)))
+})
 setEvaluationSnapshotReader(() => evaluation.value)
 let revision = 0
 let pending: Promise<void> | undefined
@@ -53,9 +61,22 @@ const workflow = createChangeWorkflow({
   cancel: planId => api.cancelModChanges(planId),
 }, value => {
   state.value = value
+  if (!value && readNotes.value.size) readNotes.value = new Set()
   if (!value || value.phase === 'planning') { preparationSequence += 1; preparation.value = null }
   if (value?.phase !== 'preparing') cancellingDownload.value = false
 })
+
+function acceptInstallNotes(notes: readonly InstallNote[]) {
+  const pending = installNotes.value
+  const read = notes.map(installNoteKey)
+  if (!read.length || pending.length !== read.length || pending.some((note, i) => installNoteKey(note) !== read[i])) return
+  // Use source and text, since package verification can change the plan ID or release.
+  readNotes.value = new Set([...readNotes.value, ...read])
+}
+
+async function confirm() {
+  if (!installNotes.value.length) await workflow.confirm()
+}
 
 function canCancelPreparation() {
   return state.value?.phase === 'preparing' && preparation.value?.stage === 'downloading' && !cancellingDownload.value
@@ -117,8 +138,9 @@ export function useModChanges() {
   return {
     state: readonly(state), preparation: readonly(preparation), cancellingDownload: readonly(cancellingDownload),
     canCancelDownload: computed(canCancelPreparation), cancelPreparationDownload,
+    installNotes, acceptInstallNotes,
     evaluation: readonly(evaluation), evaluating: readonly(evaluating),
     busy: computed(() => state.value !== null),
-    run, refresh, invalidate, clearEvaluation, confirm: workflow.confirm, cancel: workflow.cancel, retry: workflow.retry,
+    run, refresh, invalidate, clearEvaluation, confirm, cancel: workflow.cancel, retry: workflow.retry,
   }
 }

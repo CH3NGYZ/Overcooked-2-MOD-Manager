@@ -6,6 +6,8 @@ use std::{collections::BTreeMap, fs, path::Path};
 
 #[path = "orchestration_tests/disable_fallback.rs"]
 mod disable_fallback;
+#[path = "orchestration_tests/install_notes.rs"]
+mod install_notes;
 #[path = "orchestration_tests/installed_relations.rs"]
 mod installed_relations;
 #[path = "orchestration_tests/retired_members.rs"]

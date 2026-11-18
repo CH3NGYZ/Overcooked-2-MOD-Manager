@@ -156,6 +156,7 @@ fn fixture() -> Fixture {
         game_root: game.clone(),
         level_roots: live_roots,
         config,
+        managed_mods: Default::default(),
     };
     let zip_path = staging.join("map.zip");
     let mut writer = zip::ZipWriter::new(fs::File::create(&zip_path).unwrap());
@@ -225,6 +226,7 @@ fn fixture() -> Fixture {
         result: super::super::solve(&trusted.inventory, &ChangeRequest::default()),
         roots: vec![],
         nodes: vec![],
+        install_notes: vec![],
         prepared: false,
     };
     let mut session = PlanSession {

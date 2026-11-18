@@ -9,11 +9,11 @@ import { common } from './common.ts'
  */
 export const dialogs: DomainMessages = {
   readModNoteFirst: {
-    'zh-CN': '请先仔细阅读说明',
-    'zh-TW': '請先仔細閱讀說明',
-    en: 'Please read the instructions carefully',
-    ko: '안내를 먼저 주의 깊게 읽어 주세요',
-    ja: '最初に説明をよくお読みください',
+    'zh-CN': '安装说明',
+    'zh-TW': '安裝說明',
+    en: 'Installation notes',
+    ko: '설치 안내',
+    ja: 'インストール説明',
   },
   continueAfterReading: {
     'zh-CN': '继续',

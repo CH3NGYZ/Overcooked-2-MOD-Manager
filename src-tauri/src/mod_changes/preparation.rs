@@ -168,6 +168,7 @@ async fn prepare_inner(
     }
     if session.plan.result.status == SolveStatus::Ready {
         session.plan.result.status = SolveStatus::Incomplete;
+        session.plan.install_notes.clear();
         session.plan.result.blockers.push(Diagnostic {
             code: "search_limit".into(),
             owner_id: None,
@@ -290,7 +291,7 @@ pub(crate) fn verify_fingerprints(
 
 /// Approval is bound to effective actions, roots, relations and actual provisions.
 /// Provisional member keys alone need not force a second confirmation.
-fn approval_signature(session: &PlanSession) -> Result<Vec<u8>, String> {
+pub(super) fn approval_signature(session: &PlanSession) -> Result<Vec<u8>, String> {
     let members = session.solved.as_ref().map(|inventory| {
         inventory
             .nodes
@@ -320,6 +321,11 @@ fn approval_signature(session: &PlanSession) -> Result<Vec<u8>, String> {
             })
             .collect::<Vec<_>>()
     });
-    serde_json::to_vec(&(&session.request, &session.plan.result, members))
-        .map_err(|e| e.to_string())
+    serde_json::to_vec(&(
+        &session.request,
+        &session.plan.result,
+        members,
+        &session.plan.install_notes,
+    ))
+    .map_err(|e| e.to_string())
 }

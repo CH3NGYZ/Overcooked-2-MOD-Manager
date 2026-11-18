@@ -21,10 +21,9 @@ test('blocked and busy plans cannot confirm; failure can only replan; preparatio
  assert.match(dialog,/@click="changes\.confirm"/)
  assert.match(dialog,/@click="changes\.retry"/)
 })
-test('first install notes share the complete plan and reset reading time with note identity',()=>{
- assert.match(dialog,/changePlanInstallNotes/);assert.match(dialog,/notes\.value\.map\(note => `\$\{note\.id\}:\$\{note\.text\}`\)/)
- assert.match(dialog,/notes\.value\.length \* 5000/);assert.match(dialog,/readingSeconds > 0/);assert.match(dialog,/onUnmounted\(stopReadingTimer\)/)
- assert.doesNotMatch(read('src/modInstallNotes.ts'),/confirmModInstallNotes|modInstallNote =|setInterval/)
+test('the shared plan dialog alternates between the first-install note and plan confirmation',()=>{
+ assert.match(dialog,/<ModInstallNoteDialog v-if="installNotes\.length" :notes="installNotes"\s+@continue="changes\.acceptInstallNotes" @cancel="changes\.cancel"\s*\/>\s*<AppModal v-else/)
+ assert.doesNotMatch(dialog,/v-html|setInterval|readingSeconds/)
 })
 test('map selection and manual preview never pre-uninstall or execute individual rows',()=>{
  const map=read('src/composables/useLevelSetImport.ts'),manual=read('src/composables/useModInstallFlow.ts')

@@ -60,6 +60,7 @@ fn fixture() -> Fixture {
         game_root: game_root.clone(),
         level_roots: crate::level_sets::LevelSetRoots::new(game_root.clone(), None),
         config: crate::config::default_config(),
+        managed_mods: Default::default(),
     };
     let session = PlanSession {
         trusted,
@@ -76,6 +77,7 @@ fn fixture() -> Fixture {
             },
             roots: vec![],
             nodes: vec![],
+            install_notes: vec![],
             prepared: true,
         },
         solved: Some(inventory),

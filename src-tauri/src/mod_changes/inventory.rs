@@ -1,5 +1,5 @@
 //! Trusted disk inventory. UI arrays never authorize a file or select its owner.
-use super::model::*;
+use super::{install_notes::ManagedMods, model::*};
 use crate::{app_state::AppState, archive, game, level_sets, models::*, mods};
 use serde::Serialize;
 use std::{
@@ -55,6 +55,7 @@ pub(crate) struct TrustedInventory {
     pub game_root: PathBuf,
     pub level_roots: level_sets::LevelSetRoots,
     pub config: AppConfig,
+    pub managed_mods: ManagedMods,
 }
 
 pub(crate) fn relative(root: &Path, path: &Path) -> Result<String, String> {
@@ -213,6 +214,7 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
     let stamp = revision(state, &game_root, &config)?;
     let installed =
         mods::scan_mods_with_manifests(&game_root, &config, Some(&state.config.manifests_dir()));
+    let managed_mods = ManagedMods::from_scan(&installed);
     let manifests = archive::read_manifests(&state.config.manifests_dir());
     let frameworks = mods::plugin_target::eligible(&installed, mods::plugin_target::DIYLEVEL_GUID);
     if frameworks.len() > 1 {
@@ -420,6 +422,7 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
         game_root,
         level_roots,
         config,
+        managed_mods,
     })
 }
 

@@ -443,6 +443,13 @@ pub(crate) fn resolve(session: &mut PlanSession) -> Result<(), String> {
         false,
     );
     if let Some(inventory) = &solved {
+        session.plan.install_notes = super::install_notes::for_plan(
+            &session.trusted.config,
+            &session.trusted.managed_mods,
+            &session.plan.result,
+            inventory,
+            &session.payloads,
+        );
         for summary in &mut session.plan.nodes {
             if let Some(node) = inventory
                 .nodes

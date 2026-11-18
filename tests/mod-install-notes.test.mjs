@@ -12,38 +12,32 @@ registerHooks({
   },
 })
 
-const notes = await import('../src/modInstallNotes.ts')
+const { localizedInstallNotes, installNoteKey } = await import('../src/modChanges/planNotes.ts')
 const { locale } = await import('../src/i18n.ts')
-const repo = (id, overrides = {}) => ({
-  id, name: id, provider: 'github', username: 'owner', repository: id,
-  note: `# ${id}`, plugin_guid: `guid.${id}`, cached_releases: [], ...overrides,
+const note = (id, overrides = {}) => ({
+  id, name: id, name_i18n: {}, note: `# ${id}`, note_i18n: {}, ...overrides,
 })
 
-test('首次安装说明按当前语言选取，去重并跳过空说明、有清单的仓库或 GUID 已安装项', () => {
+test('首次安装说明按当前语言显示标题和正文，按共享规则回退并跳过空白正文', () => {
+  const previous = locale.value
   locale.value = 'ja'
-  const a = repo('a', { note_i18n: { ja: '**日本語**', en: 'English' } })
-  const result = notes.firstInstallNotes([
-    a, a, repo('empty', { note: '  ' }), repo('bound'), repo('guid'),
-  ], [{ repository_id: 'bound', package_id: 'bound' },
-    { guid: ' GUID.GUID ', enabled: false, package_id: 'manual-local' }])
-  assert.deepEqual(result, [{ id: 'a', name: 'a', text: '**日本語**' }])
-  locale.value = 'zh-CN'
+  try {
+    assert.deepEqual(localizedInstallNotes([
+      note('selected', { name_i18n: { ja: '日本語名' }, note_i18n: { ja: ' **日本語** ', en: 'English' } }),
+      note('dependency', { note_i18n: { ja: ' ', en: 'English' } }),
+      note('blank', { note: '  ', note_i18n: { ja: ' ' } }),
+      note('plain'),
+    ]), [
+      { id: 'selected', name: '日本語名', text: '**日本語**' },
+      { id: 'dependency', name: 'dependency', text: 'English' },
+      { id: 'plain', name: 'plain', text: '# plain' },
+    ])
+  } finally { locale.value = previous }
 })
 
-test('手动放入 plugins 后绑定仓库或 GUID 仍需说明；安装清单才可跳过', () => {
-  const target = repo('manual')
-  for (const binding of [
-    { repository_id: target.id },
-    { repository_ids: [target.id] },
-    { repository_binding: { provider: 'github', owner: 'OWNER', repository: target.repository } },
-    { guid: ' GUID.MANUAL ', enabled: false },
-  ]) {
-    for (const package_id of [undefined, '', '  ']) {
-      assert.equal(notes.firstInstallNotes([target], [{ ...binding, package_id }]).length, 1)
-    }
-    for (const package_id of ['online-install', 'manual-local-file']) {
-      assert.deepEqual(notes.firstInstallNotes([target], [{ ...binding, package_id }]), [])
-    }
-  }
-  assert.equal(notes.firstInstallNotes([target], [{ package_id: 'other', guid: 'other' }]).length, 1)
+test('已读凭据只看渠道和实际正文，改名不会重弹，同文的另一渠道仍需确认', () => {
+  const [selected] = localizedInstallNotes([note('selected')])
+  assert.equal(installNoteKey({ ...selected, name: 'Renamed' }), installNoteKey(selected))
+  assert.notEqual(installNoteKey({ ...selected, id: 'other' }), installNoteKey(selected))
+  assert.notEqual(installNoteKey({ ...selected, text: 'Changed' }), installNoteKey(selected))
 })

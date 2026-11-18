@@ -1,15 +1,16 @@
-import { firstInstallNotes } from '../modInstallNotes'
-import { sameGuid } from '../modRelations'
-import type { InstalledMod, ModRepository } from '../types'
-import type { ChangePlan } from './types'
-import type { DeepReadonly } from 'vue'
+import { pickI18n } from '../i18n'
+import type { ChangeInstallNote } from './types'
 
-/** Display-only source matching; installed ownership and solving remain backend-owned. */
-export function changePlanInstallNotes(plan: DeepReadonly<ChangePlan> | null | undefined, repositories: readonly ModRepository[], mods: readonly InstalledMod[]) {
-  if (plan?.status !== 'ready') return []
-  const installs = plan.actions.filter(action => ['install', 'upgrade', 'downgrade', 'replace'].includes(action.kind))
-  const nodes = plan.nodes.filter(node => installs.some(action => action.node_id === node.node_id))
-  return firstInstallNotes(repositories.filter(repo => installs.some(action => action.node_id === `mod:${repo.id}`)
-    || nodes.some(node => node.repository_id === repo.id || (repo.plugin_guid && node.members?.some(member =>
-      member.guid && sameGuid(member.guid, repo.plugin_guid!))))), mods)
+export interface InstallNote { id: string; name: string; text: string }
+
+export function installNoteKey({ id, text }: InstallNote): string {
+  return JSON.stringify([id, text])
+}
+
+/** Localize the plan's selected notes without consulting the live repository list. */
+export function localizedInstallNotes(notes: readonly ChangeInstallNote[]): InstallNote[] {
+  return notes.flatMap(({ id, name, name_i18n, note, note_i18n }) => {
+    const text = pickI18n(note_i18n, note).trim()
+    return text ? [{ id, name: pickI18n(name_i18n, name), text }] : []
+  })
 }

@@ -30,7 +30,46 @@ test('an invalidation during evaluation schedules a second snapshot before the s
  first.resolve(snapshot('older'));await pending;assert.equal(calls,2);assert.equal(store.evaluation.value.revision,'latest')
 })
 
-const plan=(id='initial',prepared=false)=>({plan_id:id,prepared,status:'ready',nodes:[],roots:[],actions:[],evaluations:[],blockers:[],impacts:[]})
+const plan=(id='initial',prepared=false,install_notes=[])=>({plan_id:id,prepared,status:'ready',nodes:[],roots:[],actions:[],evaluations:[],blockers:[],impacts:[],install_notes})
+const note={id:'github-beta',name:'Arcade Beta',name_i18n:{},note:'Read the beta instructions.',note_i18n:{}}
+
+test('pending plan and its first-install note both block preparation until explicit approval',async()=>{
+ const planned=deferred(),calls=[]
+ globalThis.__changeStoreApi=async(name,args)=>{calls.push([name,...args]);if(name==='planModChanges')return planned.promise}
+ const store=useModChanges(),request={roots:[{node_id:'mod:root',enabled:true}]},pending=store.run(request)
+ await store.confirm();assert.deepEqual(calls,[['planModChanges',request]])
+ planned.resolve(plan('initial',false,[note]));await tick()
+ assert.deepEqual(store.installNotes.value,[{id:note.id,name:note.name,text:note.note}])
+ store.acceptInstallNotes([{id:note.id,name:note.name,text:'Stale text'}]);await store.confirm()
+ assert.deepEqual(calls,[['planModChanges',request]])
+ store.acceptInstallNotes(store.installNotes.value);assert.deepEqual(store.installNotes.value,[])
+ assert.deepEqual(calls,[['planModChanges',request]],'continuing opens review; it never prepares or applies')
+ await store.cancel();assert.equal(await pending,null);assert.deepEqual(calls.at(-1),['cancelModChanges','initial'])
+ const again=store.run(request);await tick();assert.equal(store.installNotes.value.length,1,'cancelled plan does not mark future installs as read')
+ await store.cancel();assert.equal(await again,null)
+})
+
+for(const revised of [note,{...note,note:'Instructions changed.'}])test(`reconfirmation ${revised===note?'skips read':'gates revised'} notes`,async()=>{
+ const calls=[]
+ globalThis.__changeStoreApi=async(name)=>{
+   calls.push(name)
+   if(name==='planModChanges')return plan('initial',false,[note])
+   if(name==='prepareModChanges')return plan('verified',true,[revised])
+   if(name==='executeModChanges')return {ok:true,message:''}
+   return snapshot('done')
+ }
+ const store=useModChanges(),pending=store.run({roots:[{node_id:'mod:root',enabled:true}]});await tick()
+ store.acceptInstallNotes(store.installNotes.value);await store.confirm()
+ assert.equal(store.state.value.phase,'reconfirming');assert.deepEqual(calls,['planModChanges','prepareModChanges'])
+ if(revised!==note){
+   assert.equal(store.installNotes.value[0].text,revised.note)
+   await store.confirm();assert.deepEqual(calls,['planModChanges','prepareModChanges'])
+   store.acceptInstallNotes(store.installNotes.value)
+ }else assert.deepEqual(store.installNotes.value,[])
+ await store.confirm();assert.equal((await pending).ok,true)
+ assert.equal(calls.filter(name=>name==='executeModChanges').length,1)
+})
+
 test('chain preparation feeds the shared race overlay from isolated IPC and a revised plan still needs confirmation',async()=>{
  const prepared=deferred(),calls=[];let emit
  globalThis.__changeStoreApi=async(name,args)=>{calls.push([name,...args]);if(name==='planModChanges')return plan();if(name==='prepareModChanges'){emit=args[1];return prepared.promise}if(name==='executeModChanges')return{ok:true,message:''};return snapshot('done')}

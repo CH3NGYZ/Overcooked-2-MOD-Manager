@@ -37,6 +37,14 @@ export interface ChangeDiagnostic {
   message: string
   incomplete: boolean
 }
+/** Source text selected against the same trusted inventory as the plan. */
+export interface ChangeInstallNote {
+  id: string
+  name: string
+  name_i18n: Record<string, string>
+  note: string
+  note_i18n: Record<string, string>
+}
 export interface ChangePlan {
   plan_id: string
   status: 'ready' | 'unsatisfiable' | 'incomplete'
@@ -46,6 +54,7 @@ export interface ChangePlan {
   impacts: string[]
   roots: { node_id: string; label: string; tag?: string | null }[]
   nodes: ChangeNode[]
+  install_notes: ChangeInstallNote[]
   prepared: boolean
 }
 export interface EvaluationSnapshot {

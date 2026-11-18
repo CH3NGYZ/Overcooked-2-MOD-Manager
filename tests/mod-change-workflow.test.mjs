@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createChangeWorkflow } from '../src/modChanges/workflow.ts'
 
 const plan = (id = 'plan-1', extra = {}) => ({ plan_id: id, status: 'ready', actions: [], evaluations: [],
-  blockers: [], impacts: [], roots: [{ node_id: 'mod:owner', label: 'Owner', tag: 'v1' }], nodes: [], prepared: false, ...extra })
+  blockers: [], impacts: [], roots: [{ node_id: 'mod:owner', label: 'Owner', tag: 'v1' }], nodes: [], install_notes: [], prepared: false, ...extra })
 const request = { roots: [{ node_id: 'mod:owner', candidate_id: 'release:owner:v1', enabled: true }] }
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no }); return { promise, resolve, reject } }
 const tick = () => new Promise(resolve => setImmediate(resolve))

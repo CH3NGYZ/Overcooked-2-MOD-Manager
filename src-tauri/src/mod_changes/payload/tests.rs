@@ -58,6 +58,7 @@ fn trusted(game: &Path, provides: Vec<ProvidedPlugin>) -> TrustedInventory {
         game_root: game.into(),
         level_roots: crate::level_sets::LevelSetRoots::new(game.into(), None),
         config,
+        managed_mods: Default::default(),
     }
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, useTemplateRef, watch } from 'vue'
 import { NAlert, NButton, NProgress, NSpin } from 'naive-ui'
 import AppModal from '../components/AppModal.vue'
 import { t } from '../i18n'
@@ -11,6 +11,8 @@ import ChangePlanDetails from './ChangePlanDetails.vue'
 import ChangePlanItem from './ChangePlanItem.vue'
 import ModInstallNoteDialog from './ModInstallNoteDialog.vue'
 import { changePlanRows, preparationCompletion } from './presentation'
+import { activeDownloadProgress } from '../downloadTask'
+import { appUpdateState } from '../appUpdateState'
 function reasonText(reason: string) { return changeReasonKeys[reason] ? t(changeReasonKeys[reason]!) : translateBackendMessage(reason) }
 
 const changes = useModChanges()
@@ -31,16 +33,43 @@ const error = computed(() => state.value?.error ? backendMessageOf(state.value.e
 const phase = computed(() => state.value?.phase === 'preparing' && preparation.value
   ? t(`modChanges.preparation.${preparation.value.stage}`)
   : t(`modChanges.phase.${state.value?.phase ?? 'planning'}`))
+const downloadAbove = computed(() => state.value?.phase === 'preparing' && appUpdateState.stage === 'idle'
+  && !!activeDownloadProgress.value)
+const showDownloadFallback = computed(() => appUpdateState.stage === 'idle' && !downloadAbove.value
+  && (changes.canCancelDownload.value || changes.cancellingDownload.value))
+const statusElement = useTemplateRef<HTMLElement>('statusElement')
+const buttons = useTemplateRef<HTMLElement>('buttons')
+let restoreAfterDownload = false
+watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length], async ([above, workflowPhase, notes], _, onCleanup) => {
+  if (above) { restoreAfterDownload = true; return }
+  if (!workflowPhase || notes || appUpdateState.stage !== 'idle') { restoreAfterDownload = false; return }
+  if (!restoreAfterDownload) return
+  let stale = false
+  onCleanup(() => { stale = true })
+  await nextTick()
+  if (stale || typeof document === 'undefined') return
+  const focused = document.activeElement
+  const ownDialog = statusElement.value?.closest('.mod-changes-modal')
+  // Do not take focus away from a new dialog or an intentional move to the title bar.
+  if (focused !== document.body && !ownDialog?.contains(focused) && !focused?.closest('.dl-card')) {
+    restoreAfterDownload = false
+    return
+  }
+  const button = buttons.value?.querySelector<HTMLElement>('[data-plan-action="retry"], [data-plan-action="confirm"]:not(:disabled)')
+  const target = button ?? statusElement.value
+  target?.focus({ preventScroll: true })
+  if (button) restoreAfterDownload = false
+}, { flush: 'post' })
 </script>
 
 <template>
   <ModInstallNoteDialog v-if="installNotes.length" :notes="installNotes"
     @continue="changes.acceptInstallNotes" @cancel="changes.cancel" />
-  <AppModal v-else :show="!!state" :title="t('modChanges.title')" max-width="min(760px, 94%)"
+  <AppModal v-else :show="!!state" :title="t('modChanges.title')" :z-index="2599" max-width="min(760px, 94%)"
     :closable="canCancel" :mask-closable="false" card-class="mod-changes-modal"
     @update:show="(show: boolean) => { if (!show) void changes.cancel() }">
     <div class="change-plan" data-mod-changes-plan>
-      <p class="plan-phase" role="status"><NSpin v-if="waiting" size="small" />{{ phase }}</p>
+      <p ref="statusElement" class="plan-phase" role="status" tabindex="-1" data-plan-status><NSpin v-if="waiting" size="small" />{{ phase }}</p>
       <NAlert v-if="state?.phase === 'reconfirming'" type="warning" :bordered="false">
         {{ t('modChanges.changed') }}
       </NAlert>
@@ -74,12 +103,12 @@ const phase = computed(() => state.value?.phase === 'preparing' && preparation.v
             <p>{{ t(state.phase === 'planning' ? 'modChanges.progress.planning' : 'modChanges.progress.preparing') }}</p>
           </template>
         </section>
-        <div class="plan-buttons">
-          <NButton v-if="changes.canCancelDownload.value || changes.cancellingDownload.value" :loading="changes.cancellingDownload.value"
+        <div ref="buttons" class="plan-buttons">
+          <NButton v-if="showDownloadFallback" :loading="changes.cancellingDownload.value"
             :disabled="!changes.canCancelDownload.value" @click="changes.cancelPreparationDownload">{{ t('common.cancelDownload') }}</NButton>
-          <NButton :disabled="!canCancel" @click="changes.cancel">{{ t('common.action.cancel') }}</NButton>
-          <NButton v-if="state?.phase === 'failed'" type="primary" @click="changes.retry">{{ t('modChanges.retry') }}</NButton>
-          <NButton v-else type="primary" :loading="waiting" :disabled="waiting || plan?.status !== 'ready'"
+          <NButton data-plan-action="cancel" :disabled="!canCancel" @click="changes.cancel">{{ t('common.action.cancel') }}</NButton>
+          <NButton v-if="state?.phase === 'failed'" data-plan-action="retry" type="primary" @click="changes.retry">{{ t('modChanges.retry') }}</NButton>
+          <NButton v-else data-plan-action="confirm" type="primary" :loading="waiting" :disabled="waiting || plan?.status !== 'ready'"
             @click="changes.confirm">{{ t(state?.phase === 'reconfirming' ? 'modChanges.reconfirm' : 'modChanges.confirm') }}</NButton>
         </div>
       </div>

@@ -2,6 +2,8 @@ import type { DomainMessages } from '../types.ts'
 
 /** 仓库详情、版本选择、刷新状态与下载进度。同一 key 的五语保持集中。 */
 export const toolsUiRepository: DomainMessages = {
+  downloadTotalUnknown: { 'zh-CN': '大小未知', 'zh-TW': '大小未知', en: 'Unknown size', ko: '크기 알 수 없음', ja: 'サイズ不明' },
+  downloadProgress: { 'zh-CN': '下载进度', 'zh-TW': '下載進度', en: 'Download progress', ko: '다운로드 진행률', ja: 'ダウンロードの進行状況' },
   mergingVolumes: { 'zh-CN': '正在重组并校验分卷', 'zh-TW': '正在重組並校驗分卷', en: 'Reassembling and verifying volumes', ko: '분할 파일 병합 및 검증 중', ja: '分割ファイルの再構築と検証中' },
   volumeSummary: { 'zh-CN': '分卷：已完成 {done}/{total}', 'zh-TW': '分卷：已完成 {done}/{total}', en: 'Volumes: {done}/{total} completed', ko: '분할 파일: {done}/{total} 완료', ja: '分割ファイル：{done}/{total} 完了' },
   volumeRetry: { 'zh-CN': '整卷重试 {count}/3', 'zh-TW': '整卷重試 {count}/3', en: 'Volume retries {count}/3', ko: '분할 파일 재시도 {count}/3', ja: '分割ファイル再試行 {count}/3' },

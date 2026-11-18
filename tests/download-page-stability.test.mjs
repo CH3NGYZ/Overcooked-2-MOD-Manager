@@ -36,7 +36,7 @@ registerHooks({
       export const useDashboard=() => ({refresh:async () => globalThis.__downloadPageBoundary.calls.push('refresh')})`)
     if (url.endsWith('/src/i18n.ts')) return module('export const t=key=>key')
     if (url.endsWith('/src/locale/backend.ts')) return module('export const translateBackendMessage=String;export const backendMessageOf=String')
-    if (url.endsWith('/src/components/DownloadVolumes.vue')) return module('export default {}')
+    if (/\/src\/components\/(DownloadVolumes|AppModal)\.vue$/.test(url)) return module('export default {}')
     if (url.endsWith('/src/components/SourceTitle.vue')) return module(`export default {props:['label'],template:'<span>{{label}}</span>'}`)
     return next(url, context)
   },
@@ -85,7 +85,7 @@ test('download progress completion and cancellation never reload local lists bef
       endDownloadTask(token)
     }
     await state.cancel()
-    assert.deepEqual(boundary.calls, ['cancelDownload'])
+    assert.deepEqual(boundary.calls, [], 'a closed task cannot cancel a later request')
   } finally { app.unmount() }
   assert.equal(boundary.unlistens, 1)
 })
@@ -101,7 +101,7 @@ test('one ordinary progress subscription handles cancellation and does not retai
     assert.equal(state.progress, null, 'preparing begins with indeterminate stage, not previous percentages')
     boundary.listener({ label: 'package A', downloaded: 25, total: 100, speed_bytes: 2048, finished: false })
     assert.equal(state.percent, 25)
-    assert.equal(state.speedText, '2 KB/s')
+    assert.equal(state.rate, '2 KB/s')
     assert.equal(state.visible, true)
     await state.cancel()
     assert.deepEqual(boundary.calls, ['cancelDownload'], 'cancel must reach the real IPC boundary')

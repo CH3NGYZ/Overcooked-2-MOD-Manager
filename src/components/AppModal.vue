@@ -208,6 +208,7 @@ const contentStyle = {
     @update:show="(value: boolean) => emit('update:show', value)"
     @after-leave="emit('after-leave')">
     <!-- 头部右侧附加内容（筛选器、计数等），透传 Naive 原生槽位 -->
+    <template v-if="$slots.header" #header><slot name="header" /></template>
     <template v-if="$slots['header-extra']" #header-extra>
       <slot name="header-extra" />
     </template>

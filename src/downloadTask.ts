@@ -22,7 +22,7 @@
  * `beginDownloadTask` 领一个递增号，`end` / `fail` 带上自己的号，号对不上
  * 就整条丢弃。
  */
-import { reactive } from 'vue'
+import { computed, reactive } from 'vue'
 // 带扩展名：本模块由 `tests/download-task.test.mjs` 直接 import 真实源码
 // （与 `modRelations.ts` / `refreshState.ts` 那一批纯逻辑模块同一约定）。
 import { backendMessageOf } from './locale/backend.ts'
@@ -68,6 +68,12 @@ export const downloadTaskState = reactive<DownloadTaskState>({
   running: null,
   failure: null,
   progress: null,
+})
+
+/** Only a current, unfinished download can own the shared progress modal. */
+export const activeDownloadProgress = computed(() => {
+  const { running, progress } = downloadTaskState
+  return running && !running.cancelled && progress && !progress.finished ? progress : null
 })
 
 /** 递增任务号：只允许最近开始的任务改写状态。 */

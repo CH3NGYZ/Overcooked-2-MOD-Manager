@@ -23,8 +23,8 @@ pub use mod_repositories::{
 };
 
 pub use app::{
-    AppUpdateChannelEvent, AppUpdateChannelStatus, AppUpdateCheckResult, AppUpdateInfo,
-    AppUpdatePhaseEvent, DashboardData, RustLog,
+    AppDistribution, AppUpdateChannelEvent, AppUpdateChannelStatus, AppUpdateCheckResult,
+    AppUpdateInfo, AppUpdatePhaseEvent, DashboardData, RustLog,
 };
 pub use chef_preview::{ChefPreviewBounds, ChefPreviewMesh, ChefPreviewScene};
 pub use config::{AppConfig, AuthConfig, LaunchConfig, PublicConfig, SettingsPatch, TokenPatch};

@@ -10,11 +10,12 @@ use crate::app_update::channels::installer_region;
 use crate::app_update::channels::{
     INSTALLER_GITEE_OWNER, INSTALLER_GITEE_REPO, INSTALLER_GITHUB_OWNER, INSTALLER_GITHUB_REPO,
 };
+use crate::app_update::distribution;
 use crate::app_update::download::InstallerDownloadAttempt;
 use crate::app_update::download::discover_and_download_installer_update;
 use crate::app_update::manifest::discover_installer_update;
 use crate::archive;
-use crate::models::{AppUpdateCheckResult, GitHubProxyConfig, OperationResult};
+use crate::models::{AppDistribution, AppUpdateCheckResult, GitHubProxyConfig, OperationResult};
 use crate::shell_open;
 use tauri::AppHandle;
 use tauri::State;
@@ -22,6 +23,13 @@ use url::Url;
 
 #[tauri::command]
 pub fn open_update_repository(state: State<'_, AppState>) -> Result<OperationResult, String> {
+    if distribution::current()? == AppDistribution::MicrosoftStore {
+        shell_open::open_url(distribution::STORE_UPDATES_URI)?;
+        return Ok(OperationResult {
+            ok: true,
+            message: "update.microsoftStoreOpened".into(),
+        });
+    }
     log::info!("打开安装器更新仓库页面");
     let config = state.config.load_or_default();
     let url = match installer_region(&config.region) {
@@ -46,6 +54,10 @@ pub async fn check_app_update(
     let force = force.unwrap_or(false);
     let config = state.config.load_or_default();
     let region = installer_region(&config.region);
+    if distribution::current()? == AppDistribution::MicrosoftStore {
+        log::info!("当前为 MSIX 包运行态，程序更新由 Microsoft Store 管理");
+        return Ok(distribution::store_check(region.as_str()));
+    }
     log::info!("开始检查安装器更新：跳过缓存={force}");
     /*
      * 启动时恒检测，所以这个命令每次启动都会跑；5 分钟内重复调用直接返回
@@ -115,6 +127,7 @@ fn failed_app_update_check(
         channels,
         all_failed: true,
         region: region.as_str().into(),
+        distribution: AppDistribution::Standalone,
     }
 }
 
@@ -123,6 +136,7 @@ pub async fn install_app_update(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<OperationResult, String> {
+    distribution::require_standalone()?;
     let _update_guard = archive::begin_app_update()?;
     log::info!("开始安装器自更新");
     let attempt = discover_and_download_installer_update(&state, &app).await?;

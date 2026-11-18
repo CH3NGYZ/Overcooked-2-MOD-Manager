@@ -7,6 +7,26 @@ const info = { version: '9.9.9', current_version: '2.0.2', manifest_url: 'https:
 let instance = 0
 const fresh = () => import(`../src/appUpdateState.ts?test=${++instance}`)
 
+test('Store distribution never activates independent updater, even with an unexpected update payload', async () => {
+  const s = await fresh()
+  s.applyAppUpdateCheck({ distribution: 'microsoft_store', update: info, channels: [], all_failed: false, region: 'cn' })
+  s.requireAppUpdate(info)
+  assert.equal(s.appUpdateState.distribution, 'microsoft_store')
+  assert.equal(s.appUpdateState.stage, 'idle')
+  assert.equal(s.appUpdateState.update, null)
+  assert.equal(s.beginAppUpdate(), false)
+})
+
+test('legacy checks remain standalone; failed checks do not lock the app', async () => {
+  const s = await fresh()
+  s.applyAppUpdateCheck({ update: info, channels: [], all_failed: true, region: 'global' })
+  assert.equal(s.appUpdateState.distribution, 'standalone')
+  assert.equal(s.appUpdateState.stage, 'idle')
+  s.applyAppUpdateCheck({ update: info, channels: [], all_failed: false, region: 'global' })
+  assert.equal(s.appUpdateState.stage, 'required')
+  assert.equal(s.appUpdateState.update.version, info.version)
+})
+
 test('known update is sticky; only required can start; failures require manual release download', async () => {
   const s = await fresh()
   assert.equal(s.appUpdateState.stage, 'idle')
@@ -41,8 +61,8 @@ test('successful handoff remains locked pending updater exit, not idle', async (
 test('startup and settings use one App-level prompt; route and drop cannot dismiss it', () => {
   const app = source('src/App.vue')
   const settings = source('src/views/SettingsView.vue')
-  assert.match(app, /requireAppUpdate\(result.update\)/)
-  assert.match(settings, /requireAppUpdate\(updateResult.value.update\)/)
+  assert.match(app, /applyAppUpdateCheck\(result\)/)
+  assert.match(settings, /applyAppUpdateCheck\(updateResult.value\)/)
   assert.equal((app.match(/<UpdatePrompt\b/g) ?? []).length, 1)
   assert.doesNotMatch(settings, /<UpdatePrompt|showUpdate|updateInfo/)
   assert.match(app, /:inert="appUpdateState.stage !== 'idle'"/)

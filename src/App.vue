@@ -25,7 +25,7 @@ import { pageTitleOverride, resetPageHeader } from './pageHeader'
 import { api, watchDataProvider } from './services/tauri'
 import { isTauri } from './runtime'
 import type { PublicConfig } from './types'
-import { appUpdateState, requireAppUpdate } from './appUpdateState'
+import { appUpdateState, applyAppUpdateCheck } from './appUpdateState'
 import { naiveTheme, themeOverrides } from './theme'
 import { naiveDateLocale, naiveLocale, t } from './i18n'
 import { setTutorialProgressSink, onTutorialSettled, startTutorialIfFirstRun } from './tutorial/engine'
@@ -171,9 +171,7 @@ onMounted(() => {
     settleRefresh()
     try {
       const result = await api.checkAppUpdate('zh-CN')
-      if (result.update && !result.all_failed) {
-        requireAppUpdate(result.update)
-      }
+      applyAppUpdateCheck(result)
     } catch {
       // 启动更新检查失败静默：手动检查在设置页
     }

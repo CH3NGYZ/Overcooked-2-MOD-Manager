@@ -61,6 +61,16 @@ pub struct AppUpdateCheckResult {
     pub channels: Vec<AppUpdateChannelStatus>,
     pub all_failed: bool,
     pub region: String,
+    #[serde(default)]
+    pub distribution: AppDistribution,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppDistribution {
+    #[default]
+    Standalone,
+    MicrosoftStore,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -6,7 +6,7 @@ import { NButton, NDrawer, NDrawerContent, NInput, NRadioButton, NRadioGroup, NS
 import { ArrowUndoOutline, DownloadOutline, FolderOpenOutline, InformationCircleOutline } from '@vicons/ionicons5'
 import { getVersion } from '@tauri-apps/api/app'
 import PathEditor from '../components/PathEditor.vue'
-import { requireAppUpdate } from '../appUpdateState'
+import { appUpdateState, applyAppUpdateCheck } from '../appUpdateState'
 import AppModal from '../components/AppModal.vue'
 import BepInExPanel from '../components/BepInExPanel.vue'
 import SettingsGroup from '../components/settings/SettingsGroup.vue'
@@ -52,6 +52,7 @@ const giteeToken = ref('')
 const gitcodeToken = ref('')
 const savingTokens = ref(false)
 const updateResult = ref<AppUpdateCheckResult | null>(null)
+const storeManaged = computed(() => appUpdateState.distribution === 'microsoft_store')
 
 /* ===== 游戏版本（macOS：CrossOver / 原生） ===== */
 
@@ -251,21 +252,27 @@ async function saveGamePath(path: string) {
 /* ===== 程序更新 ===== */
 
 /**
- * 手动检测一次更新。
+ * 商店版打开商店更新页；独立版手动检测一次更新。
  *
  * 全部渠道失败时不再只弹一句「稍后重试」—— 原来的「更新设置」抽屉里有
  * 「打开发布页」补救入口，抽屉去掉后这个入口必须跟着搬到这里，
  * 否则用户在网络完全不通时无路可走。
  */
 async function checkUpdate() {
+  if (checking.value) return
   checking.value = true
   try {
+    if (storeManaged.value) {
+      await api.openUpdateRepository()
+      return
+    }
     updateResult.value = await api.checkAppUpdate('zh-CN', true)
-    if (updateResult.value.update) {
-      requireAppUpdate(updateResult.value.update)
+    applyAppUpdateCheck(updateResult.value)
+    if (storeManaged.value) {
+      await api.openUpdateRepository()
     } else if (updateResult.value.all_failed) {
       openReleaseFallback()
-    } else {
+    } else if (!updateResult.value.update) {
       message.success(t('dialogs.youAreUpToDate'))
     }
   } catch (reason) { fail(reason) } finally { checking.value = false }
@@ -509,13 +516,21 @@ async function clearTokens() {
   </n-drawer>
 
   <!--
-    程序更新：启动检查恒开，没有开关。
+    程序更新：商店版展示商店管理说明；独立版启动检查恒开，没有开关。
     保留成一条只读说明，既解释启动时会做什么，也是教程 `settings-update`
     步骤的高亮锚点。手动检测不在这里 —— 它和版本号是同一件事，放在最下方
     「关于」的版本号旁边，那里用户才看得到「我现在是什么版本」。
   -->
   <SettingsGroup :title="t('settings.appUpdate')" data-tutorial="settings-update">
-    <SettingsRow :title="t('overview.checkForUpdatesOnStartup')"
+    <SettingsRow v-if="storeManaged" title="Microsoft Store" :description="t('update.storeManaged')"
+      class="store-update-row" data-testid="store-update">
+      <template #right>
+        <n-button size="small" secondary :loading="checking" @click.stop="checkUpdate">
+          {{ t('update.openStore') }}
+        </n-button>
+      </template>
+    </SettingsRow>
+    <SettingsRow v-else :title="t('overview.checkForUpdatesOnStartup')"
       :description="t('overview.checkForUpdatesOnStartupHint')">
       <template #right>
         <n-tag size="small" :bordered="false" type="success">{{ t('settings.alwaysOn') }}</n-tag>
@@ -669,7 +684,7 @@ async function clearTokens() {
           手动检测更新放在版本号右边：用户想知道「我是不是最新」时才看版本，
           这两个动作是同一个意图。按钮只负责检测，安装走检测出的更新弹窗。
         -->
-        <n-button size="small" :secondary="!checking" :loading="checking" @click.stop="checkUpdate">
+        <n-button v-if="!storeManaged" size="small" :secondary="!checking" :loading="checking" @click.stop="checkUpdate">
           <template #icon><DownloadOutline width="14" height="14" /></template>
           {{ t('overview.check') }}
         </n-button>
@@ -768,6 +783,7 @@ async function clearTokens() {
 .drawer-hint.danger { color: #ee8585; }
 /* 更新检查失败弹窗的说明段：只有一句话，不要撑出多余留白 */
 .update-failed-note { margin: 0; font-size: 13px; line-height: 1.65; }
+.store-update-row :deep(.txt small) { white-space: normal; overflow: visible; }
 .drawer-pref {
   display: flex; align-items: center; justify-content: space-between; gap: 14px;
   padding: 10px 0 14px; border-bottom: 1px dashed var(--oc2-rail-line); margin-bottom: 6px;

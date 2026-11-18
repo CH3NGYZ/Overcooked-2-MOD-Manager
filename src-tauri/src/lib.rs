@@ -110,7 +110,7 @@ pub fn run() {
     let context = tauri::generate_context!();
     let preference_reset =
         manager_data::webview_reset_script(_data_session.completed_reset_token, context.config());
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .append_invoke_initialization_script(preference_reset)
         .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
         .plugin(tauri_plugin_dialog::init())
@@ -125,13 +125,22 @@ pub fn run() {
             // command restores pending map files before allowing process exit.
             gitee_webview::close_with_main(window, event);
             webview_download::close_with_main(window, event);
-        })
-        .plugin(
-            tauri_plugin_updater::Builder::new()
-                .header("User-Agent", releases::APP_USER_AGENT)
-                .expect("valid updater User-Agent")
-                .build(),
-        )
+        });
+    // An MSIX package must never expose updater plugin IPCs that can launch an
+    // independent installer. Keep the same policy as check/install commands.
+    match app_update::distribution::current() {
+        Ok(models::AppDistribution::Standalone) => {
+            builder = builder.plugin(
+                tauri_plugin_updater::Builder::new()
+                    .header("User-Agent", releases::APP_USER_AGENT)
+                    .expect("valid updater User-Agent")
+                    .build(),
+            );
+        }
+        Ok(models::AppDistribution::MicrosoftStore) => {}
+        Err(error) => eprintln!("Independent updater disabled: {error}"),
+    }
+    builder
         .setup(move |app| {
             // 旧版本把数据放在安装目录里；先搬走再建日志目录，
             // 这样同一卷上一次 rename 就能完成迁移。

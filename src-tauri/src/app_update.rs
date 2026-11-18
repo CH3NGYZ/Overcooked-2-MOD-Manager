@@ -1,5 +1,6 @@
 pub(crate) mod cache;
 pub(crate) mod channels;
+pub(crate) mod distribution;
 pub(crate) mod download;
 pub(crate) mod manifest;
 
@@ -18,6 +19,7 @@ pub(crate) struct UpdateTarget {
 
 impl UpdateTarget {
     pub(crate) fn current() -> Result<Self, String> {
+        distribution::require_standalone()?;
         // 只有两种安装包形态参与自动更新：Windows 的 NSIS / MSI 与 macOS 的 .app。
         // DEB / RPM / AppImage 随 Linux 支持一起移除，落到 `_ => None` 后由
         // `from_parts` 拒绝，不会尝试下载一个本项目不再产出的包。

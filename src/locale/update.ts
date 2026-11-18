@@ -8,6 +8,41 @@ import type { DomainMessages } from './types'
  * `update.installFailed` 之后接 `migrate.versionMismatch`。
  */
 export const update: DomainMessages = {
+  storeManaged: {
+    'zh-CN': '更新由 Microsoft Store 管理，可在商店开启自动更新。',
+    'zh-TW': '更新由 Microsoft Store 管理，可在商店開啟自動更新。',
+    en: 'Updates are managed by Microsoft Store. You can enable automatic updates in the Store.',
+    ko: '업데이트는 Microsoft Store에서 관리합니다. 스토어에서 자동 업데이트를 켤 수 있습니다.',
+    ja: '更新は Microsoft Store で管理されます。ストアで自動更新を有効にできます。',
+  },
+  openStore: {
+    'zh-CN': '打开 Microsoft Store',
+    'zh-TW': '開啟 Microsoft Store',
+    en: 'Open Microsoft Store',
+    ko: 'Microsoft Store 열기',
+    ja: 'Microsoft Store を開く',
+  },
+  microsoftStoreOnly: {
+    'zh-CN': '此版本由 Microsoft Store 管理，请在商店更新管理器。',
+    'zh-TW': '此版本由 Microsoft Store 管理，請在商店更新管理器。',
+    en: 'This edition is managed by Microsoft Store. Update the manager in the Store.',
+    ko: '이 버전은 Microsoft Store에서 관리합니다. 스토어에서 관리자를 업데이트하세요.',
+    ja: 'このバージョンは Microsoft Store で管理されています。ストアで管理ツールを更新してください。',
+  },
+  microsoftStoreOpened: {
+    'zh-CN': '已打开 Microsoft Store，请在商店查看更新。',
+    'zh-TW': '已開啟 Microsoft Store，請在商店查看更新。',
+    en: 'Microsoft Store opened. Check for updates in the Store.',
+    ko: 'Microsoft Store를 열었습니다. 스토어에서 업데이트를 확인하세요.',
+    ja: 'Microsoft Store を開きました。ストアで更新をご確認ください。',
+  },
+  distributionUnavailable: {
+    'zh-CN': '无法确认当前程序的发行渠道，已停止检查或安装更新：{reason}',
+    'zh-TW': '無法確認目前程式的發行管道，已停止檢查或安裝更新：{reason}',
+    en: 'Could not determine the app distribution. Update checking or installation was stopped: {reason}',
+    ko: '앱 배포 경로를 확인할 수 없어 업데이트 확인 또는 설치를 중단했습니다: {reason}',
+    ja: 'アプリの配布元を確認できないため、更新の確認またはインストールを停止しました：{reason}',
+  },
   alreadyElevated: {
     'zh-CN': '当前已是管理员权限',
     'zh-TW': '目前已是系統管理員權限',

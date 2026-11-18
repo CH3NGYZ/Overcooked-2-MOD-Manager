@@ -396,6 +396,7 @@ pub(crate) async fn discover_installer_update(
         _ => None,
     };
     Ok(AppUpdateCheckResult {
+        distribution: crate::models::AppDistribution::Standalone,
         update,
         channels: statuses,
         all_failed,

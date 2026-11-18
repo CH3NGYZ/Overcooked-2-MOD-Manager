@@ -53,11 +53,11 @@ fn failed_item_retains_the_last_real_snapshot_and_candidate_identity_ignores_old
     reporter.download("framework", "v0.10", download.clone());
     download.downloaded = 499;
     reporter.download("framework", "old-candidate", download);
-    reporter.failed("download.failed");
+    reporter.failed("download.cancelled");
     let last = seen.lock().unwrap().last().unwrap().clone();
     assert_eq!(last.items[0].download.as_ref().unwrap().downloaded, 250);
     assert_eq!(last.items[0].stage, ItemStage::Failed);
-    assert_eq!(last.error.as_deref(), Some("download.failed"));
+    assert_eq!(last.error.as_deref(), Some("download.cancelled"));
 }
 
 fn session(candidate_id: &str) -> PlanSession {

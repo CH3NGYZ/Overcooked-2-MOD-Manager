@@ -21,10 +21,10 @@ async fn observers_are_scoped_to_one_future_and_release_after_errors() {
     let result =
         observe_download_progress(move |value| captured.lock().unwrap().push(value), async {
             emit_progress_event(None, DownloadProgress::connecting("first"));
-            Err::<(), _>("download.failed")
+            Err::<(), _>("download.cancelled")
         })
         .await;
-    assert_eq!(result, Err("download.failed"));
+    assert_eq!(result, Err("download.cancelled"));
     emit_progress_event(None, DownloadProgress::connecting("late"));
     assert_eq!(seen.lock().unwrap().len(), 1);
     assert_eq!(seen.lock().unwrap()[0].label, "first");

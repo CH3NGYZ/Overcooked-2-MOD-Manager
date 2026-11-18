@@ -59,8 +59,17 @@ fn provides(candidate: &Candidate, guid: &str) -> bool {
         .any(|plugin| same_guid(&plugin.guid, guid))
 }
 
-fn preserves_members(current: &Candidate, candidate: &Candidate) -> bool {
+fn preserves_package_identity(current: &Candidate, candidate: &Candidate) -> bool {
     candidate.verification_pending
+        // Historical versions can predate optional bundled plugins. The trusted
+        // repository plus a surviving GUID identifies the same replacement unit;
+        // required retired members are still checked by the whole-graph solver.
+        || (current.source_id.as_ref().is_some_and(|source| {
+            !source.trim().is_empty() && candidate.source_id.as_ref() == Some(source)
+        }) && current
+            .provides
+            .iter()
+            .any(|plugin| !plugin.guid.trim().is_empty() && provides(candidate, &plugin.guid)))
         || current
             .provides
             .iter()
@@ -334,7 +343,7 @@ impl Search<'_> {
             .into_iter()
             .filter(|candidate| {
                 node.current.as_ref().is_none_or(|current| {
-                    candidate.id != current.id && preserves_members(current, candidate)
+                    candidate.id != current.id && preserves_package_identity(current, candidate)
                 })
             })
             .map(|candidate| self.with_candidate(state, index, candidate, None, cause))
@@ -543,7 +552,7 @@ impl Search<'_> {
                 if node
                     .current
                     .as_ref()
-                    .is_some_and(|current| !preserves_members(current, &candidate))
+                    .is_some_and(|current| !preserves_package_identity(current, &candidate))
                 {
                     continue;
                 }

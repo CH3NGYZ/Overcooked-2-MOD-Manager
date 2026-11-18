@@ -43,6 +43,8 @@ const NON_TAG = new Set([
   'common.other',
   // DIYLevel 框架的稳定 GUID（与仓库源、安装清单共用同一标识）
   'dev.gua.overcooked.diylevel',
+  // 历史随包成员退休回归中的真实 IngredientSplitter GUID，不是用户错误 tag。
+  'dev.gua.overcooked.diylevel.ingredientsplittermod',
   // DIYChef uses the same GUID across original and FastInit implementations.
   'dev.gua.overcooked.diychef',
   // 地图发布关系往返测试里的 FastInit 插件 GUID，不是用户错误 tag

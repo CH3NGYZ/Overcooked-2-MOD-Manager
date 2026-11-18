@@ -8,6 +8,8 @@ use std::{collections::BTreeMap, fs, path::Path};
 mod disable_fallback;
 #[path = "orchestration_tests/installed_relations.rs"]
 mod installed_relations;
+#[path = "orchestration_tests/retired_members.rs"]
+mod retired_members;
 
 struct Fixture {
     _temp: tempfile::TempDir,

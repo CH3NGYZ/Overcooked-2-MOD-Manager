@@ -134,7 +134,7 @@ impl Search<'_> {
                 if node
                     .current
                     .as_ref()
-                    .is_some_and(|current| !preserves_members(current, &candidate))
+                    .is_some_and(|current| !preserves_package_identity(current, &candidate))
                 {
                     continue;
                 }

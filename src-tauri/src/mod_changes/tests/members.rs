@@ -249,7 +249,7 @@ fn existing_member_cannot_vanish_by_selecting_unrelated_package_version() {
 }
 
 #[test]
-fn required_package_newest_optimization_preserves_installed_members() {
+fn required_package_newest_optimization_can_retire_unrequired_bundled_members() {
     let root = candidate(
         "root",
         "1.0",
@@ -263,20 +263,140 @@ fn required_package_newest_optimization_preserves_installed_members() {
         prerelease: None,
         enabled: false,
     });
-    let incomplete_asset = candidate("dep", "2.0", vec![]);
+    let newer = candidate("dep", "2.0", vec![]);
     let inventory = Inventory {
         nodes: vec![
             node("root", None, vec![root.clone()]),
-            node("dep", Some(installed), vec![incomplete_asset]),
+            node("dep", Some(installed), vec![newer]),
         ],
     };
     let (result, solved) =
         super::solve_with_inventory(&inventory, &intent("root", Some(root.id), true));
     assert_eq!(result.status, SolveStatus::Ready, "{result:?}");
     let dep = solved.unwrap().nodes[1].current.clone().unwrap();
-    assert_eq!(dep.version.as_deref(), Some("1.0"));
-    assert_eq!(dep.provides.len(), 2);
-    assert!(!dep.provides[1].enabled);
+    assert_eq!(dep.version.as_deref(), Some("2.0"));
+    assert_eq!(dep.provides.len(), 1);
+}
+
+#[test]
+fn retiring_a_bundled_member_still_checks_all_enabled_reverse_dependents() {
+    for explicit_dependent in [false, true] {
+        let mut newer = candidate("framework", "0.11.0", vec![]);
+        newer.provides.push(ProvidedPlugin {
+            member_key: Some("splitter.dll".into()),
+            guid: "splitter".into(),
+            version: Some("0.1.0".into()),
+            prerelease: None,
+            enabled: true,
+        });
+        let older = candidate("framework", "0.10.0", vec![]);
+        let web = candidate(
+            "web",
+            "3.10.2",
+            vec![relation(
+                RelationKind::Requires,
+                "framework",
+                ">=0.10.0,<0.11.0",
+            )],
+        );
+        let dependent = candidate(
+            "dependent",
+            "1.0.0",
+            vec![relation(RelationKind::Requires, "splitter", ">=0.1.0")],
+        );
+        let inventory = Inventory {
+            nodes: vec![
+                node("framework", Some(newer), vec![older]),
+                node("web", Some(web), vec![]),
+                node("dependent", Some(dependent), vec![]),
+            ],
+        };
+        let mut request = intent("web", None, true);
+        if explicit_dependent {
+            request.roots.extend(intent("dependent", None, true).roots);
+        }
+        let (result, solved) = solve_with_inventory(&inventory, &request);
+        if explicit_dependent {
+            assert_eq!(result.status, SolveStatus::Unsatisfiable, "{result:?}");
+            assert!(solved.is_none());
+            assert!(result.actions.is_empty());
+        } else {
+            assert_eq!(result.status, SolveStatus::Ready, "{result:?}");
+            action_for(&result, "framework", ActionKind::Downgrade);
+            action_for(&result, "dependent", ActionKind::Disable);
+            let solved = solved.unwrap();
+            assert!(solved.nodes[1].enabled);
+            assert!(!solved.nodes[2].enabled);
+        }
+    }
+}
+
+#[test]
+fn a_repository_candidate_cannot_drop_every_installed_guid() {
+    let fw1 = candidate("framework", "1.0", vec![]);
+    let fw2 = candidate("framework", "2.0", vec![]);
+    let web = candidate(
+        "web",
+        "1.0",
+        vec![relation(RelationKind::Requires, "framework", "==1")],
+    );
+    let mut impostor = candidate("unrelated", "9.0", vec![]);
+    impostor.source_id = web.source_id.clone();
+    let inventory = Inventory {
+        nodes: vec![
+            node("framework", Some(fw1), vec![fw2.clone()]),
+            node("web", Some(web), vec![impostor]),
+        ],
+    };
+    let (result, solved) =
+        solve_with_inventory(&inventory, &intent("framework", Some(fw2.id), true));
+    assert_eq!(result.status, SolveStatus::Ready, "{result:?}");
+    action_for(&result, "web", ActionKind::Disable);
+    assert_eq!(
+        solved.unwrap().nodes[1].current.as_ref().unwrap().provides[0].guid,
+        "web"
+    );
+}
+
+#[test]
+fn retiring_members_requires_a_nonempty_shared_trusted_repository() {
+    for (old_source, new_source) in [
+        (None, None),
+        (Some(""), Some("")),
+        (Some(" "), Some(" ")),
+        (Some("framework"), Some("other-source")),
+        (None, Some("framework")),
+    ] {
+        let root = candidate(
+            "root",
+            "1.0",
+            vec![relation(RelationKind::Requires, "dep", "==1")],
+        );
+        let mut installed = candidate("dep", "2.0", vec![]);
+        installed.source_id = old_source.map(str::to_string);
+        installed.provides.push(ProvidedPlugin {
+            member_key: Some("helper.dll".into()),
+            guid: "helper".into(),
+            version: Some("1.0".into()),
+            prerelease: None,
+            enabled: false,
+        });
+        let mut older = candidate("dep", "1.0", vec![]);
+        older.source_id = new_source.map(str::to_string);
+        let inventory = Inventory {
+            nodes: vec![
+                node("root", Some(root), vec![]),
+                node("dep", Some(installed), vec![older]),
+            ],
+        };
+        let (result, solved) = solve_with_inventory(&inventory, &intent("root", None, true));
+        assert_eq!(
+            result.status,
+            SolveStatus::Unsatisfiable,
+            "{old_source:?}, {new_source:?}: {result:?}"
+        );
+        assert!(solved.is_none());
+    }
 }
 
 #[test]

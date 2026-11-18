@@ -95,7 +95,7 @@ const routeText = computed(() => {
   return route === 'proxy' ? t('common.proxy') : route === 'direct' ? t('common.direct') : ''
 })
 
-// App owns the sole listener for ordinary download progress.
+// App owns the sole global listener; private callers update this same card with task tokens.
 void watchDownloadProgress(value => { if (!disposed) updateDownloadProgress(value) })
   .then(un => { if (disposed) un(); else unlisten = un })
   .catch(() => undefined)
@@ -104,10 +104,13 @@ onUnmounted(() => { disposed = true; unlisten?.() })
 
 async function cancel() {
   if (!canCancel.value) return
-  // 立刻收起卡片：取消请求是异步的，后端也可能还没发出新的 finished 事件，
-  // 等事件会让用户觉得按钮没反应。
-  cancelDownloadTask()
-  await api.cancelDownload().catch(() => undefined)
+  const cancelOwnedTask = running.value?.cancel
+  // 普通下载沿用立即收起；调用方任务由调用方在取消成功后收尾。
+  if (!cancelOwnedTask) cancelDownloadTask()
+  try {
+    if (cancelOwnedTask) await cancelOwnedTask()
+    else await api.cancelDownload()
+  } catch { /* 原生更新可拒绝取消；仍在下载的调用方任务保留进度。 */ }
 }
 </script>
 

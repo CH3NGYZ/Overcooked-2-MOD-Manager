@@ -15,7 +15,7 @@ export const modChanges: DomainMessages = {
   'item.queued': { 'zh-CN': '等待处理', 'zh-TW': '等待處理', en: 'Queued', ko: '대기 중', ja: '待機中' },
   'item.downloading': { 'zh-CN': '正在下载', 'zh-TW': '正在下載', en: 'Downloading', ko: '다운로드 중', ja: 'ダウンロード中' },
   'item.verifying': { 'zh-CN': '正在验证', 'zh-TW': '正在驗證', en: 'Verifying', ko: '검증 중', ja: '検証中' },
-  'item.ready': { 'zh-CN': '文件已就绪', 'zh-TW': '檔案已就緒', en: 'Files ready', ko: '파일 준비 완료', ja: 'ファイル準備完了' },
+  'item.ready': { 'zh-CN': '准备完成', 'zh-TW': '準備完成', en: 'Prepared', ko: '준비 완료', ja: '準備完了' },
   'item.failed': { 'zh-CN': '准备失败', 'zh-TW': '準備失敗', en: 'Preparation failed', ko: '준비 실패', ja: '準備失敗' },
   confirm: { 'zh-CN': '确认并应用', 'zh-TW': '確認並套用', en: 'Confirm and Apply', ko: '확인 후 적용', ja: '確認して適用' },
   reconfirm: { 'zh-CN': '确认更新后的方案', 'zh-TW': '確認更新後的方案', en: 'Confirm Revised Plan', ko: '수정된 계획 확인', ja: '更新された計画を確認' },

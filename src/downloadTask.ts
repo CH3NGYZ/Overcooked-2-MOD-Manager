@@ -33,6 +33,10 @@ export interface DownloadTaskOptions {
   label: string
   /** 原地重试：只重跑「这次下载」这一段，已经成功的后续步骤不重跑。 */
   retry: () => void | Promise<void>
+  /** Private IPC streams must carry their task token; global events cannot overwrite them. */
+  progressSource?: 'events' | 'caller'
+  /** A caller may own cancellation state while still using the shared download card. */
+  cancel?: () => void | Promise<void>
 }
 
 interface RunningTask extends DownloadTaskOptions {
@@ -126,18 +130,23 @@ export function failDownloadTask(id: number, reason: unknown): void {
   }
 }
 
-/** One event consumer supplies the same progress state to every presentation. */
-export function updateDownloadProgress(progress: DownloadProgress): void {
-  if (!downloadTaskState.running || downloadTaskState.running.cancelled || downloadTaskState.failure) return
+/** Global events use no token; private callers supply theirs, including when clearing progress. */
+export function updateDownloadProgress(progress: DownloadProgress | null, id?: number): void {
+  const running = downloadTaskState.running
+  if (!running || running.cancelled || downloadTaskState.failure) return
+  if (id === undefined ? running.progressSource === 'caller' : running.id !== id) return
+  if (!progress) { downloadTaskState.progress = null; return }
   // Events have no task id. A differently labelled terminal event must not erase
   // another asset's bytes; this cannot distinguish concurrent same-label streams.
   if (progress.finished && downloadTaskState.progress?.label !== progress.label) return
   downloadTaskState.progress = progress.finished ? null : progress
 }
 
-/** Suppress queued events immediately while the native cancellation is pending. */
-export function cancelDownloadTask(): void {
-  if (downloadTaskState.running) downloadTaskState.running.cancelled = true
+/** Suppress queued events; a caller may only cancel its own task. */
+export function cancelDownloadTask(id?: number): void {
+  const running = downloadTaskState.running
+  if (id !== undefined && running?.id !== id) return
+  if (running) running.cancelled = true
   downloadTaskState.progress = null
 }
 

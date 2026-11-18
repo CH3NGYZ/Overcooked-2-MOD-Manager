@@ -37,7 +37,7 @@ test('online selection freezes the exact release or RAW candidate before shared 
  assert.match(source,/candidate_id: raw \? `raw:/);assert.match(source,/`release:\$\{repo\.id\}:\$\{release!\.tag_name\}`/)
  assert.match(source,/asset_name: assetName/);assert.doesNotMatch(source,/prepareInstall|dialog\.warning|api\.installModRepository/)
 })
-test('planning stays indeterminate; preparation uses task-local item bytes and verified package count',()=>{
+test('planning stays indeterminate; task-local bytes use the shared race overlay while rows keep compact status',()=>{
  const strip=read('src/components/DownloadStrip.vue')
  assert.match(dialog,/state\?\.phase === 'planning' \|\| state\?\.phase === 'preparing'/)
  assert.match(dialog,/<NProgress[^>]+:show-indicator="false"[^>]+processing/)
@@ -46,9 +46,11 @@ test('planning stays indeterminate; preparation uses task-local item bytes and v
  assert.ok(dialog.indexOf('<template #footer>')<dialog.indexOf('class="progress-heading"'),'overall progress remains in the fixed footer')
  assert.equal((app.match(/<DownloadStrip\s*\/>/g)||[]).length,1)
  assert.doesNotMatch(dialog,/watchDownloadProgress|<DownloadStrip|speed_bytes|downloaded/)
- assert.doesNotMatch(read('src/modChanges/store.ts'),/beginDownloadTask|endDownloadTask/)
- assert.match(item,/download\.value\.downloaded \/ download\.value\.total/)
- assert.match(item,/formatFileSize\(value.total\)/)
+ const store=read('src/modChanges/store.ts')
+ assert.match(store,/beginDownloadTask/);assert.match(store,/endDownloadTask\(token\)/)
+ assert.match(store,/progressSource: 'caller'/);assert.match(store,/cancel: cancelPreparationDownload/)
+ assert.match(store,/updateDownloadProgress\([\s\S]*?, token\)/)
+ assert.doesNotMatch(item,/<NProgress|<DownloadVolumes|formatFileSize|speed_bytes|item-download/)
  assert.match(strip,/<Teleport to="body">/)
  assert.doesNotMatch(strip,/downloadInlineTarget|mod-changes|dl-inline/)
  assert.equal((strip.match(/void watchDownloadProgress\(/g)||[]).length,1)

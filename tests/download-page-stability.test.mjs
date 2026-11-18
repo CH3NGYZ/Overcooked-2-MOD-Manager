@@ -44,7 +44,7 @@ registerHooks({
 
 const { default: DownloadStrip } = await import('../src/components/DownloadStrip.vue')
 const { default: SourceDirectory } = await import('../src/components/SourceDirectory.vue')
-const { beginDownloadTask, endDownloadTask, downloadTaskState } = await import('../src/downloadTask.ts')
+const { beginDownloadTask, endDownloadTask, downloadTaskState, updateDownloadProgress } = await import('../src/downloadTask.ts')
 const { appUpdateState } = await import('../src/appUpdateState.ts')
 DownloadStrip.render = () => null
 const renderer = createRenderer({
@@ -141,6 +141,27 @@ test('unmount releases a late subscription and ignores events after disposal', a
   assert.equal(downloadTaskState.progress, null)
   endDownloadTask(token)
   boundary.registration = null
+})
+
+test('the overlay delegates cancellation without hiding a caller-owned download when cancellation fails', async () => {
+  boundary.calls = []
+  const app = renderer.createApp(DownloadStrip)
+  app.mount({ children: [] })
+  await tick()
+  const state = app._instance.setupState
+  const token = beginDownloadTask({ label: 'chain', retry() {}, progressSource: 'caller', cancel: async () => {
+    boundary.calls.push('cancel-chain')
+    throw new Error('update.inProgress')
+  } })
+  try {
+    updateDownloadProgress({ label: 'chain file', downloaded: 6, total: 10, speed_bytes: 2048, finished: false }, token)
+    assert.equal(state.visible, true)
+    await state.cancel()
+    assert.deepEqual(boundary.calls, ['cancel-chain'])
+    updateDownloadProgress({ label: 'chain file', downloaded: 9, total: 10, speed_bytes: 2048, finished: false }, token)
+    assert.equal(state.visible, true)
+    assert.equal(state.percent, 90)
+  } finally { endDownloadTask(token); app.unmount() }
 })
 
 test('both official index roots omit the entire heading while child sources and root errors remain reactive', async () => {

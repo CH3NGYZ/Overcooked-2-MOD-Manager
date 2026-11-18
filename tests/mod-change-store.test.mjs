@@ -31,16 +31,19 @@ test('an invalidation during evaluation schedules a second snapshot before the s
 })
 
 const plan=(id='initial',prepared=false)=>({plan_id:id,prepared,status:'ready',nodes:[],roots:[],actions:[],evaluations:[],blockers:[],impacts:[]})
-test('chain preparation owns isolated IPC progress and a revised plan still needs confirmation',async()=>{
+test('chain preparation feeds the shared race overlay from isolated IPC and a revised plan still needs confirmation',async()=>{
  const prepared=deferred(),calls=[];let emit
  globalThis.__changeStoreApi=async(name,args)=>{calls.push([name,...args]);if(name==='planModChanges')return plan();if(name==='prepareModChanges'){emit=args[1];return prepared.promise}if(name==='executeModChanges')return{ok:true,message:''};return snapshot('done')}
  const store=useModChanges(),pending=store.run({roots:[{node_id:'mod:root',enabled:true}]});await tick()
  assert.equal(store.state.value.phase,'confirming');assert.equal(downloadTaskState.running,null)
- const confirm=store.confirm();assert.equal(store.state.value.phase,'preparing');assert.equal(downloadTaskState.running,null)
+ const confirm=store.confirm();assert.equal(store.state.value.phase,'preparing');assert.equal(downloadTaskState.running.progressSource,'caller')
  const progress={plan_id:'initial',stage:'downloading',actions:[],active_node_id:'mod:root',items:[{node_id:'mod:root',candidate_id:'v1',label:'Root',stage:'downloading',download:{label:'asset',downloaded:6,total:10,speed_bytes:50,finished:false}}]}
  emit({...progress,plan_id:'unrelated'});assert.equal(store.preparation.value,null)
  emit(progress);assert.equal(store.preparation.value.items[0].download.downloaded,6)
- updateDownloadProgress({label:'global unrelated',downloaded:2,total:10,speed_bytes:50,finished:false});assert.equal(store.preparation.value.items[0].download.downloaded,6)
+ assert.equal(downloadTaskState.progress.downloaded,6)
+ updateDownloadProgress({label:'global unrelated',downloaded:2,total:10,speed_bytes:50,finished:false});assert.equal(store.preparation.value.items[0].download.downloaded,6);assert.equal(downloadTaskState.progress.downloaded,6)
+ emit({...progress,stage:'verifying',items:[{...progress.items[0],stage:'verifying'}]});assert.equal(downloadTaskState.progress,null)
+ emit({...progress,items:[{...progress.items[0],download:{...progress.items[0].download,downloaded:8}}]});assert.equal(downloadTaskState.progress.downloaded,8)
  prepared.resolve(plan('revised',true));await confirm
  assert.equal(store.state.value.phase,'reconfirming');assert.equal(downloadTaskState.running,null);assert.equal(downloadTaskState.progress,null)
  emit({...progress,items:[]});assert.equal(store.preparation.value.items.length,1,'closed IPC cannot replace retained progress')
@@ -56,18 +59,23 @@ test('preparation failure retains item context and never shows a second download
  emit({plan_id:'initial',stage:'ready',actions:[],items:[]});assert.equal(store.preparation.value,null)
 })
 
-test('preparation cancellation targets the downloader only and is unavailable during final validation',async()=>{
- const prepared=deferred(),calls=[];let emit
- globalThis.__changeStoreApi=async(name,args)=>{calls.push(name);if(name==='planModChanges')return plan();if(name==='prepareModChanges'){emit=args[1];return prepared.promise}return undefined}
+test('preparation cancellation hides progress only after the downloader accepts it',async()=>{
+ const prepared=deferred(),calls=[];let emit,cancels=0
+ globalThis.__changeStoreApi=async(name,args)=>{calls.push(name);if(name==='planModChanges')return plan();if(name==='prepareModChanges'){emit=args[1];return prepared.promise}if(name==='cancelDownload'&&++cancels===1)throw new Error('update.inProgress')}
  const store=useModChanges(),pending=store.run({roots:[{node_id:'mod:root',enabled:true}]});await tick()
  const confirm=store.confirm();assert.equal(store.canCancelDownload.value,false)
- emit({plan_id:'initial',stage:'downloading',actions:[],items:[]});assert.equal(store.canCancelDownload.value,true)
+ const item={node_id:'mod:root',candidate_id:'v1',label:'Root',stage:'downloading',download:{label:'asset',downloaded:6,total:10,speed_bytes:50,finished:false}}
+ const downloading={plan_id:'initial',stage:'downloading',actions:[],active_node_id:item.node_id,items:[item]}
+ emit(downloading);assert.equal(store.canCancelDownload.value,true)
+ await store.cancelPreparationDownload()
+ assert.equal(store.cancellingDownload.value,false);assert.equal(store.canCancelDownload.value,true);assert.equal(downloadTaskState.progress.downloaded,6)
  await store.cancelPreparationDownload();await store.cancelPreparationDownload();await store.cancel()
- assert.equal(calls.filter(call=>call==='cancelDownload').length,1)
+ assert.equal(cancels,2)
+ emit(downloading);assert.equal(downloadTaskState.progress,null,'late private bytes cannot reopen a cancelled task')
  assert.equal(calls.includes('cancelModChanges'),false);assert.equal(store.state.value.phase,'preparing')
  emit({plan_id:'initial',stage:'finalizing',actions:[],items:[]});assert.equal(store.canCancelDownload.value,false)
  prepared.resolve(plan('revised',true));await confirm
  assert.equal(store.cancellingDownload.value,false)
- await store.cancelPreparationDownload();assert.equal(calls.filter(call=>call==='cancelDownload').length,1)
+ await store.cancelPreparationDownload();assert.equal(cancels,2)
  await store.cancel();await pending
 })

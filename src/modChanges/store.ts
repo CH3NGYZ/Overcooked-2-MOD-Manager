@@ -1,5 +1,6 @@
 import { computed, readonly, shallowRef } from 'vue'
 import { api } from '../services/tauri'
+import { beginDownloadTask, cancelDownloadTask, endDownloadTask, updateDownloadProgress } from '../downloadTask'
 import { createChangeWorkflow } from './workflow'
 import { setEvaluationSnapshotReader } from './evaluationProjection'
 import type { ChangeWorkflowState } from './workflow'
@@ -17,6 +18,7 @@ let invalidated = false
 const registeredSubjects = new Map<string, EvaluationSubject>()
 let subjectSequence = 0
 let preparationSequence = 0
+let preparationTaskId: number | undefined
 
 export function registerEvaluationSubject(subject: EvaluationSubject) {
   const token = String(++subjectSequence)
@@ -30,11 +32,22 @@ const workflow = createChangeWorkflow({
   prepare: async planId => {
     const sequence = ++preparationSequence
     preparation.value = null
+    const token = beginDownloadTask({ label: 'modChanges.title', retry: () => workflow.retry(),
+      progressSource: 'caller', cancel: cancelPreparationDownload })
+    preparationTaskId = token
     let active = true
     try { return await api.prepareModChanges(planId, progress => {
-      if (active && sequence === preparationSequence && progress.plan_id === planId) preparation.value = progress
+      if (!active || sequence !== preparationSequence || progress.plan_id !== planId) return
+      preparation.value = progress
+      const item = progress.items.find(item => item.node_id === progress.active_node_id && item.stage === 'downloading')
+      // Each snapshot is complete: verification, candidate replacement and failure clear old bytes.
+      updateDownloadProgress(progress.stage === 'downloading' ? item?.download ?? null : null, token)
     }) }
-    finally { active = false }
+    finally {
+      active = false
+      if (preparationTaskId === token) preparationTaskId = undefined
+      endDownloadTask(token)
+    }
   },
   execute: planId => api.executeModChanges(planId),
   cancel: planId => api.cancelModChanges(planId),
@@ -50,10 +63,15 @@ function canCancelPreparation() {
 
 /** Cancels only the active download; the plan waits for its failure and cleanup. */
 async function cancelPreparationDownload() {
-  if (!canCancelPreparation()) return
+  const token = preparationTaskId
+  if (token === undefined || !canCancelPreparation()) return
   cancellingDownload.value = true
-  try { await api.cancelDownload() }
-  catch { cancellingDownload.value = false }
+  try {
+    await api.cancelDownload()
+    cancelDownloadTask(token)
+  } catch {
+    if (preparationTaskId === token) cancellingDownload.value = false
+  }
 }
 
 /** Batch all visible subjects through one backend snapshot; newer refreshes win. */

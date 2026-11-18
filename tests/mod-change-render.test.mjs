@@ -36,7 +36,6 @@ registerHooks({
     if (url.endsWith('/src/modChanges/planNotes.ts')) return fake('export const changePlanInstallNotes=()=>[]')
     if (url.endsWith('/src/composables/useDashboardStore.ts')) return fake(`export const useDashboard=()=>({config:{value:{repositories:[]}},mods:{value:[]}})`)
     if (url.endsWith('/src/components/AppModal.vue')) return fake(`import{h}from'vue';export default{props:['show'],setup:(p,{slots})=>()=>p.show?h('modal',{},[slots.default?.(),h('footer',{},slots.footer?.())]):null}`)
-    if (url.endsWith('/src/components/DownloadVolumes.vue')) return fake('export default {}')
     if (url.endsWith('/src/markdown.ts')) return fake('export const renderReadme=String')
     if (url.endsWith('/src/locale/backend.ts')) return fake('export const backendMessageOf=String;export const translateBackendMessage=String')
     if (url.endsWith('/src/i18n.ts')) return fake(`export const t=(key,args={})=>{let text=globalThis.__changeRender.messages[key.replace(/^modChanges\\./,'')]?.['zh-CN']??key;for(const[k,v]of Object.entries(args))text=text.replaceAll('{'+k+'}',String(v));return text}`)
@@ -70,27 +69,29 @@ function mounted(t) {
   return root
 }
 
-test('production dialog renders current actions, real byte progress and every disable without exposing technical ids', async t => {
+test('production dialog renders current actions and stages without inline transfer UI or technical ids', async t => {
   const root = mounted(t)
   fixture.state.value = { phase: 'preparing', plan, error: null }
   fixture.preparation.value = { plan_id: 'one', stage: 'downloading', actions: [
     action('web', 'upgrade', { from_tag: 'v4.0.0', to_tag: 'v5.0.0' }), action('web', 'disable', { member_key: 'opaque-uuid' })],
     items: [{ node_id: 'web', label: 'Web 前置', tag: 'v5.0.0', candidate_id: 'candidate', stage: 'downloading',
-      download: { downloaded: 50, total: 100, speed_bytes: 1024, finished: false } }] }
+      download: { downloaded: 50, total: 100, speed_bytes: 1024, finished: false, phase: 'connecting' } }] }
   await nextTick()
   assert.equal(find(root, n => n.tag === 'article' && n.props['data-change-node']).length, 1)
   const row = find(root, n => n.tag === 'article' && n.props['data-change-node'])[0]
   assert.match(text(row), /升级.*禁用.*Web 前置.*v4\.0\.0.*v5\.0\.0/)
   assert.doesNotMatch(text(row), /opaque-uuid|DIYLevel 框架|降级/)
-  assert.match(text(row), /50%.*50 B \/ 100 B.*1\.0 KB\/s/)
-  assert.equal(find(row, n => n.tag === 'progress')[0].props.percentage, 50)
+  assert.match(text(find(row, n => n.props?.role === 'status')[0]), /正在下载/)
+  assert.equal(find(row, n => n.tag === 'progress').length, 0)
+  assert.doesNotMatch(text(row), /50%|50 B|100 B|KB\/s/)
   assert.equal(find(root, n => n.tag === 'footer').flatMap(n => find(n, x => x.tag === 'progress'))[0].props.percentage, 0)
-  fixture.preparation.value = { ...fixture.preparation.value, items: [{ ...fixture.preparation.value.items[0],
-    download: { downloaded: 75, speed_bytes: 1024, finished: false } }] }
+  fixture.preparation.value = { ...fixture.preparation.value, stage: 'verifying', items: [{ ...fixture.preparation.value.items[0],
+    stage: 'verifying', download: { downloaded: 100, total: 100, speed_bytes: 1024, finished: true } }] }
   await nextTick()
-  assert.match(text(row), /75 B \/ —/)
-  assert.equal(find(row, n => n.tag === 'progress')[0].props.processing, true)
-  assert.doesNotMatch(text(row), /75%/)
+  assert.match(text(find(row, n => n.props?.role === 'status')[0]), /正在验证/)
+  assert.equal(find(row, n => n.tag === 'progress').length, 0)
+  assert.doesNotMatch(text(row), /正在下载|100%|100 B|KB\/s/)
+  assert.deepEqual(fixture.calls, [])
 })
 
 test('final confirmation uses the returned plan actions, keeps details collapsed and never self-executes', async t => {
@@ -105,4 +106,28 @@ test('final confirmation uses the returned plan actions, keeps details collapsed
   assert.equal(find(root, n => n.tag === 'details')[0].props.open, undefined)
   assert.deepEqual(fixture.calls, [])
   assert.match(text(find(root, n => n.tag === 'footer')[0]), /确认更新后的方案/)
+})
+
+test('prepared switches show a check and honest preparation status inside the same heading', async t => {
+  const root = mounted(t)
+  const actions = [action('web', 'disable'), action('level', 'upgrade', { from_tag: 'v0.10', to_tag: 'v0.11.1' })]
+  fixture.state.value = { phase: 'preparing', plan: { ...plan, actions }, error: null }
+  fixture.preparation.value = { plan_id: 'one', stage: 'downloading', actions, items: [
+    { node_id: 'web', label: 'Web 前置', candidate_id: 'installed', stage: 'ready' },
+    { node_id: 'level', label: 'DIYLevel 框架', candidate_id: 'next', tag: 'v0.11.1', stage: 'downloading',
+      download: { downloaded: 25, total: 100, speed_bytes: 1024, finished: false } },
+  ] }
+  await nextTick()
+  const rows = find(root, n => n.tag === 'article' && n.props['data-change-node'])
+  const statuses = rows.map(row => find(row, n => n.props?.role === 'status')[0])
+  assert.match(text(rows[0]), /禁用.*Web 前置.*✓准备完成/)
+  assert.equal(statuses[0].parent.props.class, 'item-heading')
+  assert.equal(find(statuses[0], n => n.props?.['aria-hidden'] === 'true').length, 1)
+  assert.equal(find(rows[0], n => n.tag === 'progress').length, 0)
+  assert.doesNotMatch(text(rows[0]), /文件已就绪|执行完毕|已禁用/)
+  assert.equal(statuses[1].parent.props.class, 'item-heading')
+  assert.match(text(rows[1]), /v0\.10.*v0\.11\.1.*正在下载/)
+  assert.equal(find(rows[1], n => n.tag === 'progress').length, 0)
+  assert.doesNotMatch(text(rows[1]), /25%|25 B|KB\/s/)
+  assert.deepEqual(fixture.calls, [])
 })

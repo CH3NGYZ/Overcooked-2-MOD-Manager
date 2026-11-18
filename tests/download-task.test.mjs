@@ -7,6 +7,8 @@ import {
   endDownloadTask,
   failDownloadTask,
   retryDownloadTask,
+  updateDownloadProgress,
+  cancelDownloadTask,
 } from '../src/downloadTask.ts'
 
 /**
@@ -186,4 +188,50 @@ test('关闭失败卡片：只清状态，不跑重试', () => {
   dismissDownloadFailure()
   assert.equal(downloadTaskState.failure, null)
   assert.equal(calls, 0)
+})
+
+const progress = (label, extra = {}) => ({ label, downloaded: 4, total: 10, speed_bytes: 1024, finished: false, ...extra })
+
+test('真实进度属于同一下载状态，终止后的事件不能重开卡片', () => {
+  reset()
+  const id = beginDownloadTask({ label: 'chain', retry: noop, presentation: 'mod-changes' })
+  updateDownloadProgress(progress('asset'))
+  assert.equal(downloadTaskState.progress.downloaded, 4)
+  assert.equal(downloadTaskState.running.presentation, 'mod-changes')
+  endDownloadTask(id)
+  updateDownloadProgress(progress('late'))
+  assert.equal(downloadTaskState.progress, null)
+  assert.equal(downloadTaskState.running, null)
+})
+
+test('取消立即屏蔽在途事件，后端失败完成后可重新开始下载', () => {
+  reset()
+  const id = beginDownloadTask({ label: 'chain', retry: noop })
+  updateDownloadProgress(progress('asset'))
+  cancelDownloadTask()
+  updateDownloadProgress(progress('asset', { downloaded: 8 }))
+  assert.equal(downloadTaskState.progress, null)
+  failDownloadTask(id, 'download.cancelled')
+  assert.equal(downloadTaskState.failure, null)
+  const next = beginDownloadTask({ label: 'retry', retry: noop })
+  updateDownloadProgress(progress('new'))
+  assert.equal(downloadTaskState.progress.label, 'new')
+  endDownloadTask(next)
+})
+
+test('迟到的不同资产finished和旧token收尾不能清掉新任务', () => {
+  reset()
+  const old = beginDownloadTask({ label: 'old', retry: noop })
+  updateDownloadProgress(progress('old asset'))
+  const current = beginDownloadTask({ label: 'new', retry: noop })
+  assert.equal(downloadTaskState.progress, null)
+  updateDownloadProgress(progress('new asset', { downloaded: 7 }))
+  updateDownloadProgress(progress('old asset', { finished: true }))
+  endDownloadTask(old)
+  assert.equal(downloadTaskState.running.id, current)
+  assert.equal(downloadTaskState.progress.downloaded, 7)
+  updateDownloadProgress(progress('new asset', { finished: true }))
+  assert.equal(downloadTaskState.progress, null)
+  assert.equal(downloadTaskState.running.id, current, 'asset completion does not end the batch token')
+  endDownloadTask(current)
 })

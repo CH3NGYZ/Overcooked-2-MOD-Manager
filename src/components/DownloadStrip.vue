@@ -1,23 +1,24 @@
 <script setup lang="ts">
 import { t } from '../i18n'
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, onUnmounted } from 'vue'
 import { NButton, NProgress } from 'naive-ui'
 import { CloseOutline } from '@vicons/ionicons5'
 import { api, watchDownloadProgress } from '../services/tauri'
-import type { DownloadProgress } from '../types'
 import { translateBackendMessage } from '../locale/backend'
-import { downloadTaskState, dismissDownloadFailure, retryDownloadTask } from '../downloadTask'
+import { downloadTaskState, downloadInlineTarget, dismissDownloadFailure, retryDownloadTask, updateDownloadProgress, cancelDownloadTask } from '../downloadTask'
 import { appUpdateState } from '../appUpdateState'
 import DownloadVolumes from './DownloadVolumes.vue'
 import { formatFileSize } from '../repositoryAssets'
 
-const progress = ref<DownloadProgress | null>(null)
+const progress = computed(() => downloadTaskState.progress)
 let unlisten: (() => void) | null = null
+let disposed = false
 
 /** 当前是否有下载任务、以及最近一次失败（失败态由调用方报告，见 downloadTask.ts）。 */
 const running = computed(() => downloadTaskState.running)
 const failure = computed(() => downloadTaskState.failure)
 const canCancel = computed(() => appUpdateState.stage === 'idle')
+const inline = computed(() => running.value?.presentation === 'mod-changes')
 
 function percentValue(value: { downloaded: number; total?: number }): number {
   if (!value.total) return 0
@@ -44,6 +45,7 @@ const visible = computed(() => {
   if (appUpdateState.stage !== 'idle' && appUpdateState.stage !== 'installing') return false
   if (failure.value) return canCancel.value
   if (!running.value) return false
+  if (inline.value && !downloadInlineTarget.value) return false
   const value = progress.value
   if (!value || value.finished) return false
   return true
@@ -95,43 +97,27 @@ const routeText = computed(() => {
   return route === 'proxy' ? t('common.proxy') : route === 'direct' ? t('common.direct') : ''
 })
 
-void watchDownloadProgress((value) => {
-  // 失败态已经接管卡片：此时到达的事件只能是失败任务迟到的尾巴
-  if (failure.value) return
-  progress.value = value
-  if (value.finished) {
-    progress.value = null
-    // Download completion only means the asset is staged. Installation and
-    // conflict handling own their refresh callbacks after actual disk changes.
-  }
-}).then((un) => { unlisten = un })
+// App owns this sole subscription; only the Teleport destination changes.
+void watchDownloadProgress(value => { if (!disposed) updateDownloadProgress(value) })
+  .then(un => { if (disposed) un(); else unlisten = un })
+  .catch(() => undefined)
 
-/*
- * 换任务时清掉上一轮的进度：新下载要等自己的第一个事件，不能先显示上一次
- * 的百分比 —— 失败后点重试时最明显，否则卡片会先闪一下旧的进度再归零。
- */
-watch(() => running.value?.id ?? null, (id) => {
-  // Keep final volume states available on the failure card; only a new task
-  // clears them. Cancel/success already clear progress in their own handlers.
-  if (id !== null) progress.value = null
-})
-
-onUnmounted(() => { unlisten?.() })
+onUnmounted(() => { disposed = true; unlisten?.() })
 
 async function cancel() {
   if (!canCancel.value) return
   // 立刻收起卡片：取消请求是异步的，后端也可能还没发出新的 finished 事件，
   // 等事件会让用户觉得按钮没反应。
-  progress.value = null
+  cancelDownloadTask()
   await api.cancelDownload().catch(() => undefined)
 }
 </script>
 
 <template>
   <!-- 下载进度 / 下载失败卡片：居中浮层，不占用页面布局 -->
-  <Teleport to="body">
+  <Teleport :to="inline && downloadInlineTarget ? downloadInlineTarget : 'body'" defer>
     <Transition name="dl-card">
-      <div v-if="visible" class="dl-mask" :class="{ 'dl-mask-update': !canCancel }">
+      <div v-if="visible" class="dl-mask" :class="{ 'dl-mask-update': !canCancel, 'dl-inline': inline }">
         <!--
           失败态：后端失败路径不发事件，所以这张卡片由调用方通过
           `failDownloadTask` 点亮（见 downloadTask.ts）。卡片不消失，让用户在
@@ -187,7 +173,7 @@ async function cancel() {
             <span>{{ speedText }}</span>
             <span v-if="routeText" class="dl-route">{{ routeText }}</span>
           </div>
-          <div v-if="progress.volumes?.length" class="dl-speed">{{ formatFileSize(progress.downloaded) }} / {{ formatFileSize(progress.total) }}</div>
+          <div class="dl-speed">{{ formatFileSize(progress.downloaded) }} / {{ formatFileSize(progress.total) }}</div>
           <DownloadVolumes v-if="progress.volumes" :volumes="progress.volumes" />
 
           <div v-if="canCancel" class="dl-actions">
@@ -214,6 +200,8 @@ async function cancel() {
   backdrop-filter: blur(1px);
 }
 .dl-mask-update { z-index: var(--oc2-layer-update-progress); }
+.dl-inline { position: static; display: block; background: none; backdrop-filter: none; }
+.dl-inline .dl-card { width: 100%; box-sizing: border-box; box-shadow: none; }
 .dl-card {
   width: min(420px, calc(100vw - 80px));
   padding: 20px 22px 16px;

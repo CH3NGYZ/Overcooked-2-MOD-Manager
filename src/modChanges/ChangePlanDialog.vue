@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
-import { NAlert, NButton, NSpin, NTag } from 'naive-ui'
+import { computed, onUnmounted, ref, watch, useTemplateRef } from 'vue'
+import { NAlert, NButton, NProgress, NSpin, NTag } from 'naive-ui'
 import AppModal from '../components/AppModal.vue'
 import { t } from '../i18n'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
@@ -10,12 +10,16 @@ import { useDashboard } from '../composables/useDashboardStore'
 import { changePlanInstallNotes } from './planNotes'
 import { renderReadme } from '../markdown'
 import { changeReasonKeys } from './messages'
+import { downloadInlineTarget } from '../downloadTask'
 function reasonText(reason: string) { return changeReasonKeys[reason] ? t(changeReasonKeys[reason]!) : translateBackendMessage(reason) }
 
 const changes = useModChanges()
 useModChangesLifecycle()
 const dashboard = useDashboard()
 const state = changes.state
+const downloadTarget = useTemplateRef<HTMLElement>('downloadTarget')
+watch(downloadTarget, target => { downloadInlineTarget.value = target }, { flush: 'post' })
+onUnmounted(() => { downloadInlineTarget.value = null })
 const plan = computed(() => state.value?.plan)
 const waiting = computed(() => ['planning', 'preparing', 'executing'].includes(state.value?.phase ?? ''))
 const canCancel = computed(() => !['preparing', 'executing'].includes(state.value?.phase ?? ''))
@@ -110,15 +114,27 @@ const actionKeys = {
       <p v-if="plan?.status === 'ready'" class="plan-footer-note">{{ t('modChanges.atomicNotice') }}</p>
     </div>
     <template #footer>
-      <NButton :disabled="!canCancel" @click="changes.cancel">{{ t('common.action.cancel') }}</NButton>
-      <NButton type="primary" :loading="waiting" :disabled="waiting || state?.phase === 'failed' || readingSeconds > 0 || plan?.status !== 'ready'"
-        @click="changes.confirm">{{ t(state?.phase === 'reconfirming' ? 'modChanges.reconfirm' : 'modChanges.confirm') }}</NButton>
+      <div class="plan-bottom">
+        <section v-if="state?.phase === 'planning' || state?.phase === 'preparing'" class="plan-progress" role="status" aria-busy="true">
+          <NProgress type="line" :percentage="100" :show-indicator="false" :height="6" processing />
+          <p>{{ t(state.phase === 'planning' ? 'modChanges.progress.planning' : 'modChanges.progress.preparing') }}</p>
+        </section>
+        <div id="mod-change-download-progress" ref="downloadTarget" />
+        <div class="plan-buttons">
+          <NButton :disabled="!canCancel" @click="changes.cancel">{{ t('common.action.cancel') }}</NButton>
+          <NButton type="primary" :loading="waiting" :disabled="waiting || state?.phase === 'failed' || readingSeconds > 0 || plan?.status !== 'ready'"
+            @click="changes.confirm">{{ t(state?.phase === 'reconfirming' ? 'modChanges.reconfirm' : 'modChanges.confirm') }}</NButton>
+        </div>
+      </div>
     </template>
   </AppModal>
 </template>
 
 <style scoped>
 .change-plan { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.plan-progress p { margin: 8px 0 0; color: var(--oc2-text-3); font-size: 12px; }
+.plan-bottom { width: 100%; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.plan-buttons { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
 .plan-phase, .plan-root { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0; }
 .plan-roots { display: flex; flex-direction: column; gap: 8px; }
 .plan-root strong { min-width: 0; overflow-wrap: anywhere; }

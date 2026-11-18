@@ -2,6 +2,7 @@ import { computed, readonly, shallowRef } from 'vue'
 import { api } from '../services/tauri'
 import { createChangeWorkflow } from './workflow'
 import { setEvaluationSnapshotReader } from './evaluationProjection'
+import { beginDownloadTask, endDownloadTask } from '../downloadTask'
 import type { ChangeWorkflowState } from './workflow'
 import type { ChangeRequest, EvaluationSnapshot, EvaluationSubject } from './types'
 
@@ -24,7 +25,11 @@ export function registerEvaluationSubject(subject: EvaluationSubject) {
 
 const workflow = createChangeWorkflow({
   plan: request => api.planModChanges(request),
-  prepare: planId => api.prepareModChanges(planId),
+  prepare: async planId => {
+    const token = beginDownloadTask({ label: 'modChanges.phase.preparing', presentation: 'mod-changes', retry: () => undefined })
+    try { return await api.prepareModChanges(planId) }
+    finally { endDownloadTask(token) }
+  },
   execute: planId => api.executeModChanges(planId),
   cancel: planId => api.cancelModChanges(planId),
 }, value => { state.value = value })

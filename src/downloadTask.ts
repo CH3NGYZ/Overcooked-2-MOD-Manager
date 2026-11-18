@@ -22,20 +22,24 @@
  * `beginDownloadTask` 领一个递增号，`end` / `fail` 带上自己的号，号对不上
  * 就整条丢弃。
  */
-import { reactive } from 'vue'
+import { reactive, shallowRef } from 'vue'
 // 带扩展名：本模块由 `tests/download-task.test.mjs` 直接 import 真实源码
 // （与 `modRelations.ts` / `refreshState.ts` 那一批纯逻辑模块同一约定）。
 import { backendMessageOf } from './locale/backend.ts'
+import type { DownloadProgress } from './types'
 
 export interface DownloadTaskOptions {
   /** 失败卡片上的标题：条目名、地图名、产品名这类可读文案（可以是后端 tag）。 */
   label: string
   /** 原地重试：只重跑「这次下载」这一段，已经成功的后续步骤不重跑。 */
   retry: () => void | Promise<void>
+  /** The App's single progress card can render inside the active change dialog. */
+  presentation?: 'overlay' | 'mod-changes'
 }
 
 interface RunningTask extends DownloadTaskOptions {
   id: number
+  cancelled?: boolean
 }
 
 export interface DownloadFailure extends DownloadTaskOptions {
@@ -49,6 +53,8 @@ export interface DownloadTaskState {
   running: RunningTask | null
   /** 最近一次失败；`null` 表示没有需要用户处理的失败。 */
   failure: DownloadFailure | null
+  /** Real backend bytes; closed/cancelled tasks do not accept further events. */
+  progress: DownloadProgress | null
 }
 
 /**
@@ -59,7 +65,11 @@ export interface DownloadTaskState {
 export const downloadTaskState = reactive<DownloadTaskState>({
   running: null,
   failure: null,
+  progress: null,
 })
+
+/** Set by the actual modal slot, which Naive UI may mount after its first tick. */
+export const downloadInlineTarget = shallowRef<HTMLElement | null>(null)
 
 /** 递增任务号：只允许最近开始的任务改写状态。 */
 let sequence = 0
@@ -68,7 +78,8 @@ let sequence = 0
 export function beginDownloadTask(options: DownloadTaskOptions): number {
   sequence += 1
   const id = sequence
-  downloadTaskState.running = { id, label: options.label, retry: options.retry }
+  downloadTaskState.running = { ...options, id }
+  downloadTaskState.progress = null
   // 新任务开始时上一轮的失败已经过期：卡片要立刻从错误态回到进度态
   downloadTaskState.failure = null
   return id
@@ -84,6 +95,7 @@ export function endDownloadTask(id: number): void {
   const running = downloadTaskState.running
   if (!running || running.id !== id) return
   downloadTaskState.running = null
+  downloadTaskState.progress = null
   // 最近的任务成功结束，之前残留的失败结论作废
   downloadTaskState.failure = null
 }
@@ -108,6 +120,7 @@ export function failDownloadTask(id: number, reason: unknown): void {
   downloadTaskState.running = null
   if (isCancelled(reason)) {
     downloadTaskState.failure = null
+    downloadTaskState.progress = null
     return
   }
   downloadTaskState.failure = {
@@ -116,6 +129,21 @@ export function failDownloadTask(id: number, reason: unknown): void {
     retry: running.retry,
     message: backendMessageOf(reason),
   }
+}
+
+/** One event consumer supplies the same progress state to every presentation. */
+export function updateDownloadProgress(progress: DownloadProgress): void {
+  if (!downloadTaskState.running || downloadTaskState.running.cancelled || downloadTaskState.failure) return
+  // Events have no task id. A differently labelled terminal event must not erase
+  // another asset's bytes; this cannot distinguish concurrent same-label streams.
+  if (progress.finished && downloadTaskState.progress?.label !== progress.label) return
+  downloadTaskState.progress = progress.finished ? null : progress
+}
+
+/** Suppress queued events immediately while the native cancellation is pending. */
+export function cancelDownloadTask(): void {
+  if (downloadTaskState.running) downloadTaskState.running.cancelled = true
+  downloadTaskState.progress = null
 }
 
 /** 用户关掉失败卡片：不重试，也不再显示原因。 */

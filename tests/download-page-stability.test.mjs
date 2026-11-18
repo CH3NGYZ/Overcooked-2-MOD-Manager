@@ -3,9 +3,9 @@ import { readFileSync } from 'node:fs'
 import { registerHooks } from 'node:module'
 import test from 'node:test'
 import { compileScript, parse } from '@vue/compiler-sfc'
-import { createRenderer, h, nextTick, shallowRef } from 'vue'
+import { createRenderer, h, nextTick, shallowRef, toRaw } from 'vue'
 
-const boundary = { listener: null, calls: [], unlistens: 0 }
+const boundary = { listener: null, calls: [], unlistens: 0, registration: null }
 globalThis.__downloadPageBoundary = boundary
 registerHooks({
   resolve(specifier, context, next) {
@@ -30,7 +30,7 @@ registerHooks({
         NTag=leaf('tag'),NAlert=leaf('alert'),NProgress=leaf('progress')`)
     if (url.endsWith('/src/services/tauri.ts')) return module(`
       const state=globalThis.__downloadPageBoundary
-      export const watchDownloadProgress=async listener => {state.listener=listener;return () => state.unlistens++}
+      export const watchDownloadProgress=async listener => {state.listener=listener;await state.registration;return () => state.unlistens++}
       export const api={cancelDownload:async () => {state.calls.push('cancelDownload')}}`)
     if (url.endsWith('/src/composables/useDashboardStore.ts')) return module(`
       export const useDashboard=() => ({refresh:async () => globalThis.__downloadPageBoundary.calls.push('refresh')})`)
@@ -44,7 +44,8 @@ registerHooks({
 
 const { default: DownloadStrip } = await import('../src/components/DownloadStrip.vue')
 const { default: SourceDirectory } = await import('../src/components/SourceDirectory.vue')
-const { beginDownloadTask, endDownloadTask } = await import('../src/downloadTask.ts')
+const { beginDownloadTask, endDownloadTask, downloadTaskState, downloadInlineTarget } = await import('../src/downloadTask.ts')
+const { appUpdateState } = await import('../src/appUpdateState.ts')
 DownloadStrip.render = () => null
 const renderer = createRenderer({
   createElement: tag => ({ tag, props: {}, children: [] }),
@@ -87,6 +88,65 @@ test('download progress completion and cancellation never reload local lists bef
     assert.deepEqual(boundary.calls, ['cancelDownload'])
   } finally { app.unmount() }
   assert.equal(boundary.unlistens, 1)
+})
+
+test('one progress subscription changes between inline chain and normal download without retaining bytes', async () => {
+  boundary.calls = []
+  const root = { children: [] }, app = renderer.createApp(DownloadStrip)
+  app.mount(root)
+  await tick()
+  const state = app._instance.setupState
+  try {
+    const chain = beginDownloadTask({ label: 'chain', retry() {}, presentation: 'mod-changes' })
+    assert.equal(state.inline, true)
+    assert.equal(state.progress, null, 'preparing begins with indeterminate stage, not previous percentages')
+    boundary.listener({ label: 'package A', downloaded: 25, total: 100, speed_bytes: 2048, finished: false })
+    assert.equal(state.percent, 25)
+    assert.equal(state.speedText, '2 KB/s')
+    assert.equal(state.visible, false, 'the modal may mount its Teleport slot in a later tick')
+    await tick()
+    downloadInlineTarget.value = { nodeType: 1 }
+    assert.equal(state.visible, true, 'already received bytes become visible when the actual slot mounts')
+    await state.cancel()
+    assert.deepEqual(boundary.calls, ['cancelDownload'], 'inline cancel must reach the real IPC boundary')
+    boundary.listener({ label: 'package A', downloaded: 50, total: 100, finished: false })
+    assert.equal(state.progress, null, 'queued bytes do not reopen a cancelled download')
+    endDownloadTask(chain)
+    assert.equal(state.inline, false)
+    assert.equal(state.visible, false)
+
+    const ordinary = beginDownloadTask({ label: 'normal', retry() {} })
+    boundary.listener({ label: 'package B', downloaded: 40, total: 100, speed_bytes: 1024, finished: false })
+    boundary.listener({ label: 'package A', downloaded: 100, total: 100, finished: true })
+    assert.equal(state.inline, false)
+    assert.equal(state.percent, 40, 'differently labelled old finished event does not erase current bytes')
+    assert.equal(downloadTaskState.running.id, ordinary)
+    // The public transition owns this readonly state; raw reset is fixture cleanup only.
+    const { requireAppUpdate, beginAppUpdate } = await import('../src/appUpdateState.ts')
+    requireAppUpdate({ version: 'fixture', current_version: 'fixture' })
+    assert.equal(beginAppUpdate(), true)
+    await state.cancel()
+    assert.equal(state.canCancel, false)
+    assert.deepEqual(boundary.calls, ['cancelDownload'], 'update installation remains non-cancellable')
+    toRaw(appUpdateState).stage = 'idle'
+    endDownloadTask(ordinary)
+  } finally { toRaw(appUpdateState).stage = 'idle'; downloadInlineTarget.value = null; app.unmount() }
+})
+
+test('unmount releases a late subscription and ignores events after disposal', async () => {
+  let finishRegistration
+  boundary.registration = new Promise(resolve => { finishRegistration = resolve })
+  const before = boundary.unlistens, app = renderer.createApp(DownloadStrip)
+  app.mount({ children: [] })
+  app.unmount()
+  finishRegistration()
+  await tick()
+  assert.equal(boundary.unlistens, before + 1)
+  const token = beginDownloadTask({ label: 'new owner', retry() {} })
+  boundary.listener({ label: 'disposed', downloaded: 5, finished: false })
+  assert.equal(downloadTaskState.progress, null)
+  endDownloadTask(token)
+  boundary.registration = null
 })
 
 test('both official index roots omit the entire heading while child sources and root errors remain reactive', async () => {

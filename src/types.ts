@@ -653,6 +653,8 @@ export interface ModRepositoryInstallOutcome extends OperationResult {
 }
 export interface DownloadProgress {
   label: string
+  /** Actual transfer file name; label remains the display name for the download task. */
+  file_name?: string
   downloaded: number
   total?: number
   speed_bytes: number

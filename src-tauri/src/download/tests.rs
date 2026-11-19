@@ -145,23 +145,30 @@ fn configured_policy_only_replaces_sources_strictly_below_the_speed_floor() {
 
 #[test]
 fn unknown_or_zero_size_stays_unknown_until_a_source_reports_a_positive_size() {
+    let context = DownloadContext {
+        execution: None,
+        app: None,
+        label: "test",
+        file_name: None,
+        expected_size: None,
+    };
     let now = Instant::now();
     let first = source(50, now);
     let mut known_total = None;
     let mut snapshot = first.reporter.snapshot();
     snapshot.total = Some(0);
     first.reporter.update(snapshot.clone());
-    let progress = source_progress("test", &first, 0, 3, &mut known_total);
+    let progress = source_progress(&context, &first, 0, 3, &mut known_total);
     assert_eq!(progress.total, None);
     assert_eq!(progress.phase, DownloadPhase::Downloading);
     snapshot.total = Some(200);
     first.reporter.update(snapshot);
     assert_eq!(
-        source_progress("test", &first, 0, 3, &mut known_total).total,
+        source_progress(&context, &first, 0, 3, &mut known_total).total,
         Some(200)
     );
     let next = source(100, now);
-    let progress = source_progress("test", &next, 1, 3, &mut known_total);
+    let progress = source_progress(&context, &next, 1, 3, &mut known_total);
     assert_eq!(progress.total, Some(200));
     assert_eq!(progress.downloaded, 100);
     assert_eq!(progress.phase, DownloadPhase::Downloading);
@@ -229,6 +236,7 @@ async fn repeated_proxy_failures_preserve_api_or_learned_size_until_validated_co
                 execution: None,
                 app: None,
                 label: "test",
+                file_name: None,
                 expected_size,
             }),
             RacePolicy {
@@ -400,6 +408,7 @@ async fn slow_proxy_rotation_preserves_total_size_and_reports_the_actual_leading
             execution: None,
             app: None,
             label: "test",
+            file_name: None,
             expected_size: Some(1000),
         }),
         RacePolicy {
@@ -650,6 +659,7 @@ async fn chunked_proxy_without_content_length_publishes_real_percentages_from_me
             execution: None,
             app: None,
             label: "test",
+            file_name: None,
             expected_size: Some(size),
         }),
         RacePolicy {
@@ -771,6 +781,7 @@ async fn configured_sequence_attempts_only_one_candidate_and_stops_after_success
         Some(DownloadContext {
             app: None,
             label: "sequence",
+            file_name: None,
             expected_size: None,
             execution: Some(DownloadExecution {
                 max_parallelism: 1,
@@ -811,6 +822,7 @@ async fn configured_race_honors_two_candidate_limit() {
         Some(DownloadContext {
             app: None,
             label: "race",
+            file_name: None,
             expected_size: None,
             execution: Some(DownloadExecution {
                 max_parallelism: 2,

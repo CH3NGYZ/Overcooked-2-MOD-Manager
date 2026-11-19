@@ -79,6 +79,8 @@ impl Drop for TemporaryFile {
 
 fn aggregate(label: &str, volumes: &[VolumeProgress], finished: bool) -> DownloadProgress {
     let mut result = DownloadProgress::connecting(label);
+    // `asset_set` puts the main ZIP last, even when another volume is active.
+    result.set_file_name(volumes.last().map(|v| v.name.as_str()));
     result.downloaded = volumes.iter().map(|v| v.progress.downloaded).sum();
     result.total = volumes
         .iter()
@@ -176,6 +178,7 @@ where
                             execution: Some(planned.execution),
                             app: None,
                             label,
+                            file_name: (!split).then_some(asset.name.as_str()),
                             expected_size,
                         }),
                         |progress| {

@@ -234,7 +234,11 @@ async fn real_http_downloads_two_volumes_and_cleans_all_parts_after_reassembly()
         .iter()
         .enumerate()
         .map(|(i, b)| ReleaseAsset {
-            name: format!("part{i}"),
+            name: if i + 1 == parts.len() {
+                "Fixture.zip".into()
+            } else {
+                format!("Fixture.z{:02}", i + 1)
+            },
             size: b.len() as u64,
             download_count: None,
             download_url: format!("{}/{i}", server.url),
@@ -242,29 +246,50 @@ async fn real_http_downloads_two_volumes_and_cleans_all_parts_after_reassembly()
         })
         .collect();
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let path = download(
-        &client,
-        assets,
-        &dir.0,
-        "test",
-        None,
-        &crate::models::NetworkConfig::default(),
-        |url| {
-            Ok(RepositoryDownloadPlan {
-                candidates: vec![DownloadCandidate {
-                    route: DownloadRoute::Direct,
-                    url: url.into(),
-                }],
-                download_threads: 1,
-                execution: DownloadExecution {
-                    max_parallelism: 1,
-                    race: false,
-                },
-            })
-        },
+    let progress = Arc::new(Mutex::new(Vec::new()));
+    let captured = progress.clone();
+    let path = crate::archive::observe_download_progress(
+        move |value| captured.lock().unwrap().push(value),
+        download(
+            &client,
+            assets,
+            &dir.0,
+            "test",
+            None,
+            &crate::models::NetworkConfig::default(),
+            |url| {
+                Ok(RepositoryDownloadPlan {
+                    candidates: vec![DownloadCandidate {
+                        route: DownloadRoute::Direct,
+                        url: url.into(),
+                    }],
+                    download_threads: 1,
+                    execution: DownloadExecution {
+                        max_parallelism: 1,
+                        race: false,
+                    },
+                })
+            },
+        ),
     )
     .await
     .unwrap();
+    let seen = progress.lock().unwrap();
+    assert!(
+        seen.iter()
+            .all(|p| p.file_name.as_deref() == Some("Fixture.zip"))
+    );
+    assert!(seen.iter().any(|p| p.phase == DownloadPhase::Merging));
+    let finished = seen.last().unwrap();
+    assert!(finished.finished);
+    assert_eq!(
+        finished
+            .volumes
+            .iter()
+            .map(|part| part.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Fixture.z01", "Fixture.z02", "Fixture.zip"]
+    );
     assert_eq!(server.calls.load(Ordering::Relaxed), 3);
     assert_eq!(server.peak.load(Ordering::Relaxed), 2);
     assert_eq!(std::fs::read_dir(&dir.0).unwrap().count(), 1);
@@ -320,6 +345,10 @@ async fn real_http_download_observer_retains_exact_bytes_and_scope_ends_with_the
     assert_eq!(std::fs::read(path).unwrap(), bytes);
     let seen = progress.lock().unwrap();
     assert!(!seen.first().unwrap().finished);
+    assert!(
+        seen.iter()
+            .all(|p| p.file_name.as_deref() == Some("fixture.dll"))
+    );
     let last = seen.last().unwrap();
     assert!(last.finished);
     assert_eq!(last.downloaded, 50000);

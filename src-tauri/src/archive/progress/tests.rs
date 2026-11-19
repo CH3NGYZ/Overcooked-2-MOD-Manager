@@ -9,7 +9,7 @@ fn waiting_progress_is_visible_before_size_or_bytes_and_omits_connection_context
     assert_eq!(event["downloaded"], 0);
     assert!(event["total"].is_null());
     assert_eq!(event["finished"], false);
-    for key in ["route", "source", "attempt", "attempt_total"] {
+    for key in ["file_name", "route", "source", "attempt", "attempt_total"] {
         assert!(!event.as_object().unwrap().contains_key(key));
     }
 }

@@ -34,6 +34,7 @@ pub fn candidate_progress(
     });
     DownloadProgress {
         label: label.into(),
+        file_name: None,
         downloaded: 0,
         total: None,
         speed_bytes: 0,
@@ -62,6 +63,7 @@ pub struct DownloadContext<'a> {
     pub execution: Option<DownloadExecution>,
     pub app: Option<&'a AppHandle>,
     pub label: &'a str,
+    pub file_name: Option<&'a str>,
     pub expected_size: Option<u64>,
 }
 
@@ -168,13 +170,15 @@ fn leading_source(
 }
 
 fn source_progress(
-    label: &str,
+    context: &DownloadContext<'_>,
     source: &ActiveSource,
     id: usize,
     total_candidates: usize,
     known_total: &mut Option<u64>,
 ) -> DownloadProgress {
-    let mut progress = candidate_progress(label, &source.candidate, id + 1, total_candidates);
+    let mut progress =
+        candidate_progress(context.label, &source.candidate, id + 1, total_candidates);
+    progress.set_file_name(context.file_name);
     let snapshot = source.reporter.snapshot();
     // Release metadata is authoritative. Without it, retain the first known
     // file size when the next leading proxy uses a response without a length.
@@ -373,7 +377,7 @@ where
         leader = leading_source(&sources, leader);
         if let (Some(context), Some(id)) = (&context, leader) {
             let mut progress = source_progress(
-                context.label,
+                context,
                 &sources[&id],
                 id,
                 total_candidates,
@@ -395,7 +399,7 @@ where
                         // guards) before handing the winner to installation.
                         drop(active);
                         if let (Some(context), Some(source)) = (&context, source) {
-                            let mut progress = source_progress(context.label, &source, id, total_candidates, &mut known_total);
+                            let mut progress = source_progress(context, &source, id, total_candidates, &mut known_total);
                             progress.finished = true;
                             progress.phase = DownloadPhase::Finished;
                             progress.parallel_sources = Some(1);

@@ -104,7 +104,8 @@ test('only manual fallback keeps its guidance; release notes render without the 
 test('UI hides cancellation; native cancel, exit and close share the atomic update guard', () => {
   const strip = source('src/components/DownloadStrip.vue')
   assert.match(strip, /if \(!canCancel.value\) return/)
-  assert.match(strip, /<template v-if="canCancel" #footer>[\s\S]*?data-download-action="cancel"/)
+  assert.match(strip, /<NButton v-if="canCancel && !failure && progress"[^>]*data-download-action="cancel"/)
+  assert.match(strip, /<template v-if="canCancel && failure" #footer>/)
   assert.match(strip, /<AppModal :show="visible" :closable="false"[^>]*:z-index="canCancel \? 2600 : 6200"/)
   const title = source('src/components/AppTitleBar.vue')
   assert.match(title, /:disabled="action === 'close' && updateBusy"/)

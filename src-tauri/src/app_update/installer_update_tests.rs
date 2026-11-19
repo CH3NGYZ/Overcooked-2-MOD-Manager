@@ -832,26 +832,37 @@ async fn gitee_package_uses_one_get_without_range_requests() {
         route: AssetDownloadRoute::Direct,
         url: format!("{}/package", server.base),
     }];
-    let bytes = download_verified_installer(
-        &reqwest::Client::new(),
-        &info,
-        &GitHubProxyConfig::default(),
-        candidates,
-        None,
-        InstallerRegion::MainlandChina,
-        |bytes| {
-            crate::app_update::verify_with_key(
-                bytes,
-                crate::app_update::TEST_SIGNATURE,
-                crate::app_update::TEST_KEY,
-                &info.version,
-            )
-        },
-        &crate::models::NetworkConfig::default(),
+    let progress = Arc::new(Mutex::new(Vec::new()));
+    let captured = progress.clone();
+    let bytes = archive::observe_download_progress(
+        move |value| captured.lock().unwrap().push(value),
+        download_verified_installer(
+            &reqwest::Client::new(),
+            &info,
+            &GitHubProxyConfig::default(),
+            candidates,
+            None,
+            InstallerRegion::MainlandChina,
+            |bytes| {
+                crate::app_update::verify_with_key(
+                    bytes,
+                    crate::app_update::TEST_SIGNATURE,
+                    crate::app_update::TEST_KEY,
+                    &info.version,
+                )
+            },
+            &crate::models::NetworkConfig::default(),
+        ),
     )
     .await
     .unwrap();
     assert_eq!(bytes, valid);
+    let seen = progress.lock().unwrap();
+    assert!(seen.last().unwrap().finished);
+    assert!(seen.iter().all(|p| {
+        p.label == "update.downloadingInstaller"
+            && p.file_name.as_deref() == Some(info.installer_name.as_str())
+    }));
     let requests = server.requests.lock().unwrap();
     assert_eq!(requests.len(), 1);
     assert!(requests[0].starts_with("GET /package "));

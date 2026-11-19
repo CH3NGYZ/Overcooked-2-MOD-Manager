@@ -265,6 +265,7 @@ pub(crate) async fn download_remote_to_temp(
             // 大小由下载源自己上报（有 Content-Length 时显示确定进度）。
             app: Some(app),
             label,
+            file_name: Some(&filename),
             expected_size: None,
         }),
     )

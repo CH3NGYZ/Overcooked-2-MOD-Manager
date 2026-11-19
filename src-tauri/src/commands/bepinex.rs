@@ -104,6 +104,7 @@ pub async fn install_bepinex(
             execution: None,
             app: Some(&app),
             label: "BepInEx",
+            file_name: download_url.rsplit_once('/').map(|(_, name)| name),
             expected_size: None,
         }),
     )

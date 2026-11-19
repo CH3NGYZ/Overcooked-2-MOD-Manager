@@ -21,6 +21,8 @@ pub(crate) fn observe_download_progress<T>(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadProgress {
     pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_name: Option<String>,
     pub downloaded: u64,
     pub total: Option<u64>,
     pub speed_bytes: u64,
@@ -66,9 +68,16 @@ pub enum DownloadRoute {
 }
 
 impl DownloadProgress {
+    pub(crate) fn set_file_name(&mut self, name: Option<&str>) {
+        self.file_name = name
+            .filter(|name| !name.trim().is_empty())
+            .map(str::to_owned);
+    }
+
     pub fn connecting(label: &str) -> Self {
         Self {
             label: label.into(),
+            file_name: None,
             downloaded: 0,
             total: None,
             speed_bytes: 0,
@@ -144,6 +153,7 @@ pub fn emit_progress(
     );
     reporter.update(DownloadProgress {
         label: label.into(),
+        file_name: None,
         downloaded,
         total,
         speed_bytes,

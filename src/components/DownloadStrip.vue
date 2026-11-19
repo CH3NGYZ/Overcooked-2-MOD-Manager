@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, shallowRef, useTemplateRef, watch } from 'vue'
 import { NButton, NProgress } from 'naive-ui'
+import { AlertCircleOutline, CloseOutline, DownloadOutline, ServerOutline, SpeedometerOutline } from '@vicons/ionicons5'
 import { t } from '../i18n'
 import { api, watchDownloadProgress } from '../services/tauri'
 import { translateBackendMessage } from '../locale/backend'
@@ -19,33 +20,35 @@ const visible = computed(() => canCancel.value
   : appUpdateState.stage === 'installing' && !failure.value && !!progress.value)
 
 const label = computed(() => translateBackendMessage(failure.value?.label ?? progress.value?.label ?? ''))
-const title = computed(() => failure.value ? t('tools.downloadFailed') : label.value || t('tools.downloadProgress'))
+const fileName = computed(() => progress.value?.file_name || label.value)
 const percent = computed(() => progress.value ? downloadPercent(progress.value) : null)
-const stageText = computed(() => {
+const percentText = computed(() => percent.value?.toFixed(1))
+const title = computed(() => {
+  if (failure.value) return t('tools.downloadFailed')
   switch (progress.value?.phase) {
     case 'connecting': return t('tools.connectingToDownloadSource')
     case 'switching': return t('tools.switchingToAFasterSource')
-    case 'downloading': return ''
     case 'merging': return t('tools.mergingVolumes')
-    default: return t('tools.preparing2')
+    default: return t('tools.downloading')
   }
 })
 const route = computed(() => progress.value ? downloadRoute(progress.value) : '')
 const race = computed(() => progress.value ? downloadRace(progress.value) : '')
 const rate = computed(() => progress.value ? downloadRate(progress.value) : '')
 const volumes = computed(() => downloadTaskState.progress?.volumes)
-const volumeKey = computed(() => `${running.value?.id ?? failure.value?.id}:${label.value}`)
+const volumeKey = computed(() => `${running.value?.id ?? failure.value?.id}:${fileName.value}`)
+const cancelLabel = computed(() => t('common.cancelDownload'))
 
 const titleElement = useTemplateRef<HTMLElement>('titleElement')
-const actions = useTemplateRef<HTMLElement>('actions')
 
 // NModal owns the focus stack. Teleported children can mount before its focus
 // trap is active; if opening left focus outside, retry after the enter transition.
 function focusActions(keepExisting = false) {
   const heading = titleElement.value
   if (!visible.value || !heading) return
-  if (keepExisting && heading.closest('.dl-card')?.contains(document.activeElement)) return
-  const target = actions.value?.querySelector<HTMLElement>('[data-download-action]') ?? heading
+  const card = heading.closest('.dl-card')
+  if (keepExisting && card?.contains(document.activeElement)) return
+  const target = card?.querySelector<HTMLElement>('[data-download-action]') ?? heading
   target.focus({ preventScroll: true })
 }
 
@@ -65,6 +68,7 @@ void watchDownloadProgress(value => { if (!disposed) updateDownloadProgress(valu
 onUnmounted(() => { disposed = true; unlisten?.() })
 
 const cancelling = shallowRef<number | null>(null)
+const cancelPending = computed(() => running.value !== null && cancelling.value === running.value.id)
 async function cancel() {
   if (!canCancel.value) return
   const task = running.value
@@ -82,9 +86,26 @@ async function cancel() {
 <template>
   <AppModal :show="visible" :closable="false" :block-scroll="false" :z-index="canCancel ? 2600 : 6200"
     :card-class="`dl-card${failure ? ' dl-card-error' : ''}${canCancel ? '' : ' dl-card-update'}`"
-    max-width="min(480px, 94%)" aria-labelledby="download-modal-title" @after-enter="focusActions(true)">
+    style="width: 480px" max-width="94%" aria-labelledby="download-modal-title" @after-enter="focusActions(true)">
     <template #header>
-      <h2 id="download-modal-title" ref="titleElement" class="dl-title" :tabindex="canCancel ? -1 : 0" :title="title">{{ title }}</h2>
+      <div class="dl-heading" :class="{ 'dl-heading-progress': !failure && progress }">
+        <span class="dl-heading-icon" aria-hidden="true">
+          <AlertCircleOutline v-if="failure" width="22" height="22" />
+          <DownloadOutline v-else width="22" height="22" />
+        </span>
+        <h2 id="download-modal-title" ref="titleElement" class="dl-title" :tabindex="canCancel ? -1 : 0">
+          <span role="status">{{ title }}</span>
+        </h2>
+        <NButton v-if="canCancel && !failure && progress" class="dl-cancel" data-download-action="cancel"
+          quaternary circle size="small" :aria-label="cancelLabel" :title="cancelLabel"
+          :loading="cancelPending" :aria-busy="cancelPending" @click="cancel">
+          <template #icon><CloseOutline width="18" height="18" aria-hidden="true" /></template>
+        </NButton>
+        <div v-if="!failure && progress" class="dl-file-row">
+          <span v-if="fileName" id="download-modal-file" class="dl-file" :title="fileName">{{ fileName }}</span>
+          <strong v-if="percentText !== undefined" class="dl-percent" aria-hidden="true">{{ percentText }}<span>%</span></strong>
+        </div>
+      </div>
     </template>
 
     <template v-if="failure">
@@ -95,19 +116,18 @@ async function cancel() {
     </template>
     <div v-else-if="progress" class="dl-body">
       <div class="dl-progress-row" role="progressbar" :aria-label="t('tools.downloadProgress')"
-        :aria-valuenow="percent === null ? undefined : Math.round(percent)" aria-valuemin="0" aria-valuemax="100">
+        :aria-describedby="fileName ? 'download-modal-file' : undefined"
+        :aria-valuenow="percentText" aria-valuemin="0" aria-valuemax="100">
         <!-- Naive always exposes a value, including when processing. The wrapper owns accessible progress. -->
         <NProgress type="line" :percentage="percent ?? 100" :processing="percent === null" :show-indicator="false"
-          :height="6" :border-radius="3" aria-hidden="true" class="dl-bar" />
-        <span v-if="percent !== null" class="dl-percent">{{ percent.toFixed(1) }}%</span>
+          :height="8" :border-radius="4" aria-hidden="true" class="dl-bar" />
       </div>
       <div class="dl-stats">
         <div class="dl-amount-rate">
-          <span class="dl-amount">{{ downloadAmount(progress) }}</span>
-          <span v-if="rate" class="dl-rate">{{ rate }}</span>
+          <span class="dl-amount"><ServerOutline width="15" height="15" aria-hidden="true" />{{ downloadAmount(progress) }}</span>
+          <span v-if="rate" class="dl-rate"><SpeedometerOutline width="15" height="15" aria-hidden="true" />{{ rate }}</span>
         </div>
-        <span v-if="stageText" class="dl-stage" role="status">{{ stageText }}</span>
-        <div v-if="route || race" class="dl-state-route">
+        <div v-if="route || race" class="dl-state-route" :class="{ 'is-transferring': progress.phase === 'downloading' && progress.speed_bytes > 0 }">
           <span v-if="route" class="dl-route" :title="route">{{ route }}</span>
           <span v-if="race" class="dl-race">{{ race }}</span>
         </div>
@@ -116,14 +136,10 @@ async function cancel() {
 
     <DownloadVolumes v-if="volumes?.length" :key="volumeKey" :volumes="volumes" />
 
-    <template v-if="canCancel" #footer>
-      <div ref="actions" class="dl-actions">
-        <template v-if="failure">
-          <NButton data-download-action="retry" tabindex="0" type="primary" size="small" @click="retryDownloadTask">{{ t('common.action.retry') }}</NButton>
-          <NButton data-download-action="close" tabindex="0" secondary size="small" @click="dismissDownloadFailure">{{ t('nav.close') }}</NButton>
-        </template>
-        <NButton v-else data-download-action="cancel" tabindex="0" secondary size="small"
-          :loading="running !== null && cancelling === running.id" @click="cancel">{{ t('common.cancelDownload') }}</NButton>
+    <template v-if="canCancel && failure" #footer>
+      <div class="dl-actions">
+        <NButton data-download-action="retry" tabindex="0" type="primary" size="small" @click="retryDownloadTask">{{ t('common.action.retry') }}</NButton>
+        <NButton data-download-action="close" tabindex="0" secondary size="small" @click="dismissDownloadFailure">{{ t('nav.close') }}</NButton>
       </div>
     </template>
   </AppModal>
@@ -131,32 +147,58 @@ async function cancel() {
 
 <style>
 .dl-card.n-card {
-  --dl-gutter: 18px;
+  --dl-gutter: 24px;
   --n-padding-left: var(--dl-gutter);
   --n-padding-right: var(--dl-gutter);
-  --n-padding-top: 14px;
-  --n-padding-bottom: 14px;
+  --n-padding-top: 16px;
+  --n-padding-bottom: 16px;
+  border-radius: 18px;
 }
-.dl-card .n-card-header { align-items: flex-start; padding: 14px var(--dl-gutter) 10px; }
+.dl-card .n-card-header { padding: 16px var(--dl-gutter) 8px; }
 .dl-card .n-card-header__main { min-width: 0; }
-.dl-card .n-card-content { padding: 0 var(--dl-gutter) 14px; }
-.dl-card .app-modal-scroll { gap: 9px; }
-.dl-card .app-modal-footer { margin-top: 8px; padding-top: 9px; }
+/* Match AppModal's scroll lane so header and bar stay aligned even when volumes overflow. */
+.dl-card:not(.dl-card-error) .n-card-header__main { overflow: hidden; scrollbar-gutter: stable; padding-right: 2px; }
+.dl-card .n-card-content { padding: 0 var(--dl-gutter) 16px; }
+.dl-card .app-modal-scroll { gap: 8px; }
+.dl-card .app-modal-footer { margin-top: 4px; padding-top: 8px; border-top: 0; }
 </style>
 
 <style scoped>
-.dl-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 0; font-size: 16px; line-height: 1.35; font-weight: 650; color: var(--oc2-text-1); overflow-wrap: anywhere; }
+.dl-heading { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; column-gap: 12px; }
+.dl-heading-icon {
+  display: grid; place-items: center; grid-area: 1 / 1; aspect-ratio: 1; border-radius: 50%;
+  color: var(--oc2-accent); background: color-mix(in srgb, currentColor 14%, transparent);
+}
+.dl-heading-progress .dl-heading-icon { grid-row: 1 / span 2; }
+.dl-card-error .dl-heading-icon { color: var(--oc2-tone-critical-text); }
+.dl-title { grid-area: 1 / 2; min-width: 0; margin: 0; font-size: 17px; line-height: 1.35; font-weight: 650; color: var(--oc2-text-1); overflow-wrap: anywhere; }
+.dl-cancel { grid-area: 1 / 3; justify-self: end; }
+.dl-cancel:focus-visible { outline: 2px solid var(--oc2-accent); outline-offset: -2px; }
 .dl-body { display: grid; gap: 8px; min-width: 0; }
-.dl-progress-row { display: flex; align-items: center; gap: 9px; min-height: 16px; }
-.dl-bar { flex: 1; min-width: 0; }
-.dl-percent { flex: none; min-width: 48px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--oc2-text-2); }
-.dl-stats { display: grid; gap: 4px; font-size: 12px; color: var(--oc2-text-2); font-variant-numeric: tabular-nums; }
-.dl-amount-rate, .dl-state-route { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.dl-file-row { grid-area: 2 / 2 / auto / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 12px; min-width: 0; }
+.dl-file {
+  font-size: 14px; font-weight: 600; color: var(--oc2-text-1);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dl-progress-row, .dl-bar { min-width: 0; }
+.dl-percent {
+  grid-column: 2; min-inline-size: 5.6ch; text-align: end; font-size: 32px; line-height: 1.1;
+  font-weight: 700; font-variant-numeric: tabular-nums; color: var(--oc2-text-1); white-space: nowrap;
+}
+.dl-percent > span { margin-inline-start: 2px; font-size: .65em; }
+.dl-stats { display: grid; gap: 8px; font-size: 13px; color: var(--oc2-text-2); font-variant-numeric: tabular-nums; }
+.dl-amount-rate, .dl-state-route { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.dl-amount, .dl-rate { display: inline-flex; align-items: center; gap: 6px; }
+.dl-amount svg, .dl-rate svg { flex: none; color: var(--oc2-text-3); }
 .dl-rate, .dl-race { flex: none; margin-inline-start: auto; white-space: nowrap; }
 .dl-rate { font-weight: 650; }
-.dl-stage { font-weight: 550; }
-.dl-route { color: var(--oc2-text-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dl-race { color: var(--oc2-accent); }
+.dl-state-route { border-top: 1px solid var(--oc2-row-line); padding-top: 8px; font-size: 12px; }
+.dl-route { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl-route::before {
+  content: ''; display: inline-block; width: 6px; height: 6px; margin-inline-end: 8px; vertical-align: .15em;
+  border-radius: 50%; background: var(--oc2-text-3);
+}
+.dl-state-route.is-transferring .dl-route::before { background: var(--oc2-accent); }
 .dl-error { overflow-wrap: anywhere; }
 .dl-error-label { margin: 0; font-size: 13px; font-weight: 600; color: var(--oc2-text-2); }
 .dl-error-reason { margin: 4px 0 0; font-size: 13px; line-height: 1.45; color: var(--oc2-text-1); white-space: pre-wrap; }

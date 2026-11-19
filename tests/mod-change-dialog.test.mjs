@@ -10,7 +10,7 @@ test('App owns the only shared plan modal and all pages use its store',()=>{
 })
 test('confirmation shows a compact item list and preserves full reasons and package states inside collapsed details',()=>{
  for(const pattern of [/root\.tag/,/in plan\.actions/,/action\.caused_by/,/in node\.members/,/member\.enabled/,/member\.dll_file/])assert.match(details,pattern)
- for(const pattern of [/row\.action\.from_tag/,/row\.action\?\.to_tag/])assert.match(item,pattern)
+ for(const pattern of [/v-if="row\.version" class="item-version"/,/row\.version\.from/,/row\.version\.to/])assert.match(item,pattern)
  assert.match(details,/<details class="plan-details">/);assert.doesNotMatch(details,/<details[^>]+open/)
  assert.match(dialog,/in plan\.blockers/);assert.match(dialog,/blocker\.owner_id/);assert.match(dialog,/v-for="row in rows"/)
  assert.doesNotMatch(dialog,/api\.(?:install|toggle|uninstall)|execute\(action|done\.value|failures\.value/)

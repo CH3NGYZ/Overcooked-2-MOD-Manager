@@ -14,8 +14,8 @@ const stageText = computed(() => t(`modChanges.item.${row.item?.stage ?? 'queued
     <div class="item-heading">
       <span v-if="actionKinds.length" class="item-kinds"><NTag v-for="kind in actionKinds" :key="kind" :type="kind === 'disable' ? 'warning' : 'info'" size="small">{{ t(`modChanges.action.${kind}`) }}</NTag></span>
       <strong>{{ row.label || t('modChanges.unnamedItem') }}</strong>
-      <span v-if="row.action?.from_tag || row.action?.to_tag || row.item?.tag" class="item-version">
-        <template v-if="row.action?.from_tag">{{ row.action.from_tag }}<span aria-hidden="true"> → </span></template>{{ row.item?.tag || row.action?.to_tag || '—' }}
+      <span v-if="row.version" class="item-version">
+        <template v-if="row.version.from">{{ row.version.from }}<span aria-hidden="true"> → </span></template>{{ row.version.to || '—' }}
       </span>
       <span v-if="row.item || processing" class="item-stage" :class="{ 'is-ready': row.item?.stage === 'ready' }" role="status"><span v-if="row.item?.stage === 'ready'" aria-hidden="true">✓</span>{{ stageText }}</span>
     </div>

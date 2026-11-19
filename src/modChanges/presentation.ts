@@ -1,13 +1,12 @@
-import type { ChangeAction, ChangeNode, ChangePlan, ChangePreparationItem, ChangePreparationProgress } from './types'
+import type { ChangeAction, ChangePlan, ChangePreparationItem, ChangePreparationProgress } from './types'
 import type { DeepReadonly } from 'vue'
 
 export interface ChangePlanRow {
   nodeId: string
   label: string
-  action?: DeepReadonly<ChangeAction>
   actions: DeepReadonly<ChangeAction>[]
-  node?: DeepReadonly<ChangeNode>
   item?: DeepReadonly<ChangePreparationItem>
+  version?: { from?: string | null; to?: string | null }
 }
 
 /** One readable row per package; member switches remain available in details. */
@@ -18,18 +17,25 @@ export function changePlanRows(plan: DeepReadonly<ChangePlan> | null | undefined
     const row = rows.get(action.node_id)
     if (row) {
       row.actions.push(action)
-      if (row.action?.member_key && !action.member_key) row.action = action
       continue
     }
     const node = plan.nodes.find(item => item.node_id === action.node_id)
     const root = plan.roots.find(item => item.node_id === action.node_id)
     rows.set(action.node_id, { nodeId: action.node_id, label: node?.label || root?.label || '',
-      action, actions: [action], node })
+      actions: [action] })
   }
   for (const item of progress?.items ?? []) {
     const row = rows.get(item.node_id)
     if (row) { row.item = item; row.label = item.label || row.label }
     else rows.set(item.node_id, { nodeId: item.node_id, label: item.label, actions: [], item })
+  }
+  for (const row of rows.values()) {
+    // Switch actions also carry the installed tag, even though the package isn't changing.
+    const action = row.actions.find(({ kind }) => kind !== 'enable' && kind !== 'disable')
+    if (!action) continue
+    const from = action.from_tag
+    const to = row.item?.tag || action.to_tag
+    if (from || to) row.version = { from, to }
   }
   return [...rows.values()]
 }

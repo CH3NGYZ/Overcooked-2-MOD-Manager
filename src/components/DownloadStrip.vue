@@ -88,23 +88,23 @@ async function cancel() {
     :card-class="`dl-card${failure ? ' dl-card-error' : ''}${canCancel ? '' : ' dl-card-update'}`"
     style="width: 480px" max-width="94%" aria-labelledby="download-modal-title" @after-enter="focusActions(true)">
     <template #header>
-      <div class="dl-heading" :class="{ 'dl-heading-progress': !failure && progress }">
+      <div class="dl-heading">
         <span class="dl-heading-icon" aria-hidden="true">
           <AlertCircleOutline v-if="failure" width="22" height="22" />
           <DownloadOutline v-else width="22" height="22" />
         </span>
-        <h2 id="download-modal-title" ref="titleElement" class="dl-title" :tabindex="canCancel ? -1 : 0">
-          <span role="status">{{ title }}</span>
-        </h2>
+        <div class="dl-heading-text">
+          <h2 id="download-modal-title" ref="titleElement" class="dl-title" :tabindex="canCancel ? -1 : 0" :title="title">
+            <span role="status">{{ title }}</span>
+          </h2>
+          <span v-if="!failure && progress && fileName" id="download-modal-file" class="dl-file" :title="fileName">{{ fileName }}</span>
+        </div>
+        <strong v-if="!failure && percentText !== undefined" class="dl-percent" aria-hidden="true">{{ percentText }}<span>%</span></strong>
         <NButton v-if="canCancel && !failure && progress" class="dl-cancel" data-download-action="cancel"
           quaternary circle size="small" :aria-label="cancelLabel" :title="cancelLabel"
           :loading="cancelPending" :aria-busy="cancelPending" @click="cancel">
           <template #icon><CloseOutline width="18" height="18" aria-hidden="true" /></template>
         </NButton>
-        <div v-if="!failure && progress" class="dl-file-row">
-          <span v-if="fileName" id="download-modal-file" class="dl-file" :title="fileName">{{ fileName }}</span>
-          <strong v-if="percentText !== undefined" class="dl-percent" aria-hidden="true">{{ percentText }}<span>%</span></strong>
-        </div>
       </div>
     </template>
 
@@ -164,25 +164,22 @@ async function cancel() {
 </style>
 
 <style scoped>
-.dl-heading { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; column-gap: 12px; }
+.dl-heading { display: flex; align-items: center; gap: 12px; }
 .dl-heading-icon {
-  display: grid; place-items: center; grid-area: 1 / 1; aspect-ratio: 1; border-radius: 50%;
+  display: grid; place-items: center; flex: 0 0 42px; aspect-ratio: 1; border-radius: 50%;
   color: var(--oc2-accent); background: color-mix(in srgb, currentColor 14%, transparent);
 }
-.dl-heading-progress .dl-heading-icon { grid-row: 1 / span 2; }
 .dl-card-error .dl-heading-icon { color: var(--oc2-tone-critical-text); }
-.dl-title { grid-area: 1 / 2; min-width: 0; margin: 0; font-size: 17px; line-height: 1.35; font-weight: 650; color: var(--oc2-text-1); overflow-wrap: anywhere; }
-.dl-cancel { grid-area: 1 / 3; justify-self: end; }
+.dl-heading-text { flex: 1; min-width: 0; }
+.dl-title, .dl-file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl-title { margin: 0; font-size: 17px; line-height: 1.35; font-weight: 650; color: var(--oc2-text-1); }
+.dl-file { display: block; margin: 2px 0 0; font-size: 13px; line-height: 1.35; font-weight: 500; color: var(--oc2-text-2); }
+.dl-cancel { flex: none; }
 .dl-cancel:focus-visible { outline: 2px solid var(--oc2-accent); outline-offset: -2px; }
 .dl-body { display: grid; gap: 8px; min-width: 0; }
-.dl-file-row { grid-area: 2 / 2 / auto / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 12px; min-width: 0; }
-.dl-file {
-  font-size: 14px; font-weight: 600; color: var(--oc2-text-1);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 .dl-progress-row, .dl-bar { min-width: 0; }
 .dl-percent {
-  grid-column: 2; min-inline-size: 5.6ch; text-align: end; font-size: 32px; line-height: 1.1;
+  flex: none; min-inline-size: 5.6ch; text-align: end; font-size: 28px; line-height: 1.1;
   font-weight: 700; font-variant-numeric: tabular-nums; color: var(--oc2-text-1); white-space: nowrap;
 }
 .dl-percent > span { margin-inline-start: 2px; font-size: .65em; }

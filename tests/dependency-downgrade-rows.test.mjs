@@ -15,11 +15,16 @@ const localMap = { dir_name: 'Map', name: 'Map', author: 'A', relations: [relati
 const options = { mods: [owner, target], repositories: [{ id: 'runtime', name: 'Runtime', plugin_guid: relation.guid,
   cached_releases: [{ tag_name: 'v3.10.2' }, { tag_name: 'v4.0' }] }], jumpToRepository: true }
 
-test('absent backend evaluation remains unknown even when local data appears to satisfy a range', () => {
+test('absent backend evaluation stays unassessed even when local data appears to satisfy a range', () => {
   clearEvaluation()
-  const row = dependencyRowFromRelation(relation, { ...options, mods: [{ ...target, version: '3.10.2' }] })
-  assert.equal(row.status, 'modChanges.relation.unknown')
-  assert.equal(row.jump, undefined)
+  const compatible = { ...options, mods: [{ ...target, version: '3.10.2' }] }
+  for (const row of [dependencyRowFromRelation(relation, compatible), installedModDependencyRows(owner, compatible)[0],
+    levelSetDependencyRows(localMap, { ...compatible, maps: [map] })[0], mapDependencyRows(map, compatible)[0]]) {
+    assert.equal(row.requirement, relation.version)
+    assert.equal(row.status, undefined)
+    assert.equal(row.tone, undefined)
+    assert.equal(row.jump, undefined)
+  }
 })
 
 for (const [state, text] of [['missing', 'modsOnline.missingDep'], ['disabled', 'modChanges.relation.disabled'],
@@ -57,7 +62,8 @@ test('an exact online tag never borrows the installed owner evaluation', () => {
   assert.equal(old.status, 'modsOnline.missingDep')
   assert.deepEqual(old.jump.repair, { node_id: 'mod:repo', candidate_id: 'release:repo:v1', enabled: true })
   const absent = dependencyRowsFor([relation], { ...options, ownerRepository: online, version: 'v0' })[0]
-  assert.equal(absent.status, 'modChanges.relation.unknown')
+  assert.equal(absent.status, undefined)
+  assert.equal(absent.jump, undefined)
   clearEvaluation()
 })
 

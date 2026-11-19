@@ -28,10 +28,9 @@ import {
   relationsForMapRelease,
   resolveRelation,
   relationsForRelease,
-  relationStatusFromEvaluation,
+  relationStatusesForSubject,
   type RelationStatus,
 } from './modRelations.ts'
-import { relationsForSubject } from './modChanges/evaluationProjection.ts'
 import type { EvaluationSubject } from './modChanges/types'
 import type { RootIntent } from './modChanges/types'
 import { compareVersions, isPrereleaseVersion, repositoryForMod } from './modStatus.ts'
@@ -77,8 +76,8 @@ export interface DependencyRow {
   line?: 'prerelease' | 'stable'
   /** 版本要求文本（区间表达式原文，如 `>=1.2.0,<2.0.0`）；空表示不限版本。 */
   requirement?: string
-  /** 状态文案（已满足 / 可安装 / 可更新 / 可降级 / 缺依赖 / 冲突 …）。 */
-  status: string
+  /** 尚未取得该条权威评估时不显示状态标签。 */
+  status?: string
   /** 状态色调，走 `theme.ts` 的统一刻度。 */
   tone?: TagTone
   /** 有解法可去时给出目标，标签变成可点；省略表示这行无处可去。 */
@@ -243,8 +242,9 @@ function statusFor(
   status: RelationStatus,
   translate: DependencyTranslate,
   downgrade: boolean,
-): { text: string; tone: TagTone } {
+): { text: string; tone: TagTone } | undefined {
   const kind = status.relation.kind ?? 'requires'
+  if (status.state === 'unassessed') return undefined
   if (status.state === 'unknown') return { text: translate('modChanges.relation.unknown'), tone: 'moderate' }
   if (status.state === 'disabled') return { text: translate('modChanges.relation.disabled'), tone: 'critical' }
   if (status.state === 'version_mismatch') return { text: translate('modChanges.relation.versionMismatch'), tone: 'critical' }
@@ -299,7 +299,7 @@ export function dependencyRowFromStatus(status: RelationStatus, options: Depende
   const versionChange = (order === 1 || order === -1) && status.installedVersion
     ? { direction: order === 1 ? 'downgrade' as const : 'upgrade' as const,
         installedVersion: status.installedVersion, targetVersion } : undefined
-  const { text, tone } = statusFor(status, translate, versionChange?.direction === 'downgrade')
+  const presentation = statusFor(status, translate, versionChange?.direction === 'downgrade')
 
   const row: DependencyRow = {
     // key 必须带上发布线：同一 GUID 的「与测试版互斥 / 与正式版互斥」是两条
@@ -309,8 +309,7 @@ export function dependencyRowFromStatus(status: RelationStatus, options: Depende
     kind,
     line,
     requirement: dependencyRequirement(relation),
-    status: text,
-    tone,
+    ...(presentation ? { status: presentation.text, tone: presentation.tone } : {}),
   }
 
   /*
@@ -353,16 +352,8 @@ export function dependencyRowsFor(
 ): DependencyRow[] {
   const subject = options.subject ?? (options.ownerRepository
     ? { repository_id: options.ownerRepository.id, ...(options.version ? { tag: options.version } : {}) } : undefined)
-  const evaluations = subject ? relationsForSubject(subject) : undefined
-  if (evaluations) return evaluations.filter(entry => !entry.relation.optional)
-    .map(entry => dependencyRowFromStatus(relationStatusFromEvaluation(entry, options.mods ?? []), options))
-  const rows: DependencyRow[] = []
-  for (const relation of relations) {
-    const kind = relation.kind ?? 'requires'
-    if (kind === 'requires' && relation.optional) continue
-    rows.push(dependencyRowFromRelation(relation, { ...options, subject }))
-  }
-  return rows
+  return relationStatusesForSubject(subject, options.mods ?? [], () => relations)
+    .map(status => dependencyRowFromStatus(status, options))
 }
 
 /* ===== 卡片上的关系提醒标签 → 见 `modRelations.dependencyTagFor` ===== */

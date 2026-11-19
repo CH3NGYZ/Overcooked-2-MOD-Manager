@@ -26,7 +26,7 @@ import { markdownSummary } from '../markdown'
 import { formatVersionSpec } from '../versionSpec'
 import { modRepositoryIsAvailable } from '../repositoryAvailability'
 import { useFocusHighlight, useLevelSetLink, useModRepositoryLink } from '../crossLink'
-import { dependencyTagFor, primaryRelation, relationJumpRepositoryId } from '../modRelations'
+import { dependencyTagFor, primaryRelation, relationJumpRepositoryId, unmetRelations } from '../modRelations'
 import { dependencyRowFromStatus } from '../dependencyRows'
 import { useDependencyNavigation } from '../composables/useDependencyNavigation'
 import {
@@ -464,7 +464,7 @@ function dependencyOf(map: MapInfo): CardDependencyTag | null {
   const statuses = mapDependencyStatuses(map)
   const tag = dependencyTagFor(statuses, hasLocalMap(map))
   if (!tag) return null
-  const missing = statuses.filter(status => status.state !== 'ok' && (status.relation.kind ?? 'requires') === 'requires')
+  const missing = unmetRelations(statuses).filter(status => (status.relation.kind ?? 'requires') === 'requires')
     .map(status => ({ guid: status.relation.guid, version: status.relation.version ?? '',
       installedVersion: status.installedVersion, satisfied: false }))
   return {

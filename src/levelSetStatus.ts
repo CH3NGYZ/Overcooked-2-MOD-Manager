@@ -2,10 +2,9 @@ import type { RelationSubject } from './modRelations'
 import { aggregateLevelSetVersion, isSameLevelSet, mapUpdateState, mapVersionRef, type MapVersionRef } from './mapVersion.ts'
 export { aggregateLevelSetVersion, isSameLevelSet, mapsForLevelSet, mapUpdateState, type MapVersionRef, type MapVersionOrder } from './mapVersion.ts'
 import {
-  dependencyTagFor, primaryRelation, relationsForMapRelease, relationStatusFromEvaluation,
+  dependencyTagFor, primaryRelation, relationsForMapRelease, relationStatusesForSubject, unmetRelations,
   type RelationStatus,
 } from './modRelations.ts'
-import { relationsForSubject } from './modChanges/evaluationProjection.ts'
 import type { InstalledMod, LevelSetInfo, MapInfo, ModRepository } from './types'
 
 /**
@@ -253,11 +252,10 @@ export function levelSetRelationStatuses(
   mods: readonly InstalledMod[],
   _repositories: readonly ModRepository[] = [],
 ): RelationStatus[] {
-  const rows = set.dir_name ? relationsForSubject({ map_dir_name: set.dir_name }) : undefined
-  if (rows) return rows.filter(entry => !entry.relation.optional).map(entry => relationStatusFromEvaluation(entry, mods))
-  const bound = mapForLevelSet(set, maps)
-  const relations = bound ? relationsForMapRelease(bound, set.version) : set.relations ?? []
-  return relations.filter(relation => !relation.optional).map(relation => ({ relation, state: 'unknown', installedVersion: null }))
+  return relationStatusesForSubject(set.dir_name ? { map_dir_name: set.dir_name } : undefined, mods, () => {
+    const bound = mapForLevelSet(set, maps)
+    return bound ? relationsForMapRelease(bound, set.version) : set.relations ?? []
+  })
 }
 
 /**
@@ -276,10 +274,8 @@ export function mapRelationStatuses(
   version?: string | null,
 ): RelationStatus[] {
   if (!map) return []
-  const rows = relationsForSubject({ map_id: map.id, tag: version ?? mapReleaseVersion(map) ?? undefined })
-  if (rows) return rows.filter(entry => !entry.relation.optional).map(entry => relationStatusFromEvaluation(entry, mods))
-  return relationsForMapRelease(map, version ?? mapReleaseVersion(map)).filter(relation => !relation.optional)
-    .map(relation => ({ relation, state: 'unknown', installedVersion: null }))
+  const tag = version ?? mapReleaseVersion(map) ?? undefined
+  return relationStatusesForSubject({ map_id: map.id, tag }, mods, () => relationsForMapRelease(map, tag))
 }
 
 /**
@@ -320,8 +316,8 @@ export function mapDependencyMissing(
   if (!gameProbed) return null
   if (!map) return false
   const states = mapRelationStatuses(map, mods, repositories)
-  if (states.some(state => state.state !== 'ok' && state.state !== 'unknown')) return true
-  return states.some(state => state.state === 'unknown') ? null : false
+  if (unmetRelations(states).length) return true
+  return states.some(state => state.state !== 'ok') ? null : false
 }
 
 /** 关卡集卡片状态区的一个标签。 */

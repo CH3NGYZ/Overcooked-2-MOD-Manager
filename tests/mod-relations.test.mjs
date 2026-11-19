@@ -49,6 +49,18 @@ test('primaryRelation 优先返回冲突，其次可安装，最后只提示的'
   assert.equal(primaryRelation([]), undefined)
 })
 
+test('卡头不把尚未评估或无法确认的依赖当成已确认的问题', () => {
+  const unassessed = resolveRelation(DEP, [], [])
+  const unknown = { ...unassessed, state: 'unknown' }
+  const missing = { ...unassessed, state: 'missing' }
+  assert.equal(unassessed.state, 'unassessed')
+  assert.equal(relationCardTag(unassessed, true), undefined)
+  assert.equal(relationCardTag(unknown, true), undefined)
+  assert.equal(dependencyTagFor([unassessed, unknown], true), undefined)
+  assert.deepEqual(unmetRelations([unassessed, unknown, missing]), [missing])
+  assert.equal(dependencyTagFor([unassessed, unknown, missing], true)?.text, 'modsOnline.missingDep')
+})
+
 /* ===== 按 Release 覆盖 ===== */
 
 /*

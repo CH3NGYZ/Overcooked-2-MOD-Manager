@@ -111,7 +111,7 @@ function lineLabel(line: DependencyRow['line']): string {
             </td>
             <td class="dep-req mono">{{ row.requirement || '-' }}</td>
             <td class="dep-state">
-              <n-tag size="tiny" :bordered="false" class="state-tag"
+              <n-tag v-if="row.status" size="tiny" :bordered="false" class="state-tag"
                 :class="{ 'state-tag--link': !!row.jump }" :color="tagColorForAny(row.tone ?? 'muted')"
                 :title="row.jump?.title" :role="row.jump ? 'button' : undefined"
                 :tabindex="row.jump ? 0 : undefined"
@@ -119,6 +119,7 @@ function lineLabel(line: DependencyRow['line']): string {
                 @keydown.space.prevent="clickStatus(row, $event)">
                 {{ row.status }}
               </n-tag>
+              <span v-else>—</span>
             </td>
           </tr>
         </tbody>

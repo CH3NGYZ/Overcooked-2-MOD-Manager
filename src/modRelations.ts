@@ -14,7 +14,7 @@ import type {
   RepositoryRelation,
 } from './types'
 
-export type RelationState = 'ok' | 'installable' | 'missing' | 'conflict' | 'unknown' | 'disabled' | 'version_mismatch'
+export type RelationState = 'ok' | 'installable' | 'missing' | 'conflict' | 'unknown' | 'unassessed' | 'disabled' | 'version_mismatch'
 
 export interface RelationStatus {
   relation: RepositoryRelation
@@ -157,7 +157,11 @@ export function relationStatusFromEvaluation(
     ...(state !== 'ok' && state !== 'unknown' ? { repair: repairRoot(evaluation.owner_id) } : {}) }
 }
 
-/** No local fallback: absence of an authoritative snapshot means unknown. */
+/** A declaration can be displayed before its exact subject has been evaluated. */
+function unassessedRelation(relation: RepositoryRelation): RelationStatus {
+  return { relation, state: 'unassessed', installedVersion: null }
+}
+
 export function resolveRelation(
   relation: RepositoryRelation,
   mods: readonly InstalledMod[],
@@ -167,7 +171,19 @@ export function resolveRelation(
 ): RelationStatus {
   const evaluation = relationForSubject(relation, subject ?? (owner ? { repository_id: owner.id } : undefined))
   return evaluation ? relationStatusFromEvaluation(evaluation, mods)
-    : { relation, state: 'unknown', installedVersion: null }
+    : unassessedRelation(relation)
+}
+
+/** A known empty assessment still overrides source declarations. */
+export function relationStatusesForSubject(
+  subject: EvaluationSubject | undefined,
+  mods: readonly InstalledMod[],
+  declarations?: () => readonly RepositoryRelation[],
+): RelationStatus[] {
+  const evaluations = subject ? relationsForSubject(subject) : undefined
+  return evaluations
+    ? evaluations.filter(({ relation }) => !relation.optional).map(entry => relationStatusFromEvaluation(entry, mods))
+    : (declarations?.() ?? []).filter(relation => !relation.optional).map(unassessedRelation)
 }
 
 /** 这个本地 MOD 是否来自该仓库（按 id 或结构化绑定判断）。 */
@@ -189,15 +205,16 @@ export function resolveRelations(
   releaseVersion?: string | null,
 ): RelationStatus[] {
   const subject = { repository_id: repo.id, ...(releaseVersion ? { tag: releaseVersion } : {}) }
-  const evaluations = relationsForSubject(subject)
-  if (evaluations) return evaluations.filter(entry => !entry.relation.optional).map(entry => relationStatusFromEvaluation(entry, mods))
-  return relationsForRelease(repo, releaseVersion).filter(relation => !relation.optional)
-    .map(relation => ({ relation, state: 'unknown' as const, installedVersion: null }))
+  return relationStatusesForSubject(subject, mods, () => relationsForRelease(repo, releaseVersion))
 }
 
-/** 汇总：所有未满足的状态（用于决定卡片显示什么、按钮指向哪条）。 */
+function relationIsUnmet(status: RelationStatus): boolean {
+  return status.state !== 'ok' && status.state !== 'unknown' && status.state !== 'unassessed'
+}
+
+/** 只汇总已确认的问题，供卡头、悬停说明和处理按钮使用。 */
 export function unmetRelations(statuses: readonly RelationStatus[]): RelationStatus[] {
-  return statuses.filter((status) => status.state !== 'ok')
+  return statuses.filter(relationIsUnmet)
 }
 
 /* ===== 展示：关系目标是谁 ===== */
@@ -268,7 +285,6 @@ export function primaryRelation(
   const unmet = unmetRelations(statuses)
   return unmet.find((status) => status.state === 'conflict')
     ?? unmet.find((status) => status.state === 'installable')
-    ?? unmet.find((status) => status.state !== 'unknown')
     ?? unmet[0]
 }
 
@@ -357,8 +373,7 @@ export interface DependencyTagView {
  * 上（跳过去就能补装），只有线上真的没有来源才不带（标签不可点）。
  */
 export function relationTagView(status: RelationStatus | undefined): DependencyTagView | undefined {
-  if (!status || status.state === 'ok') return undefined
-  if (status.state === 'unknown') return { text: 'modChanges.relation.unknown', tone: 'moderate', kind: 'missingDependency' }
+  if (!status || !relationIsUnmet(status)) return undefined
   if (status.state === 'disabled') return { text: 'modChanges.relation.disabled', tone: 'critical', kind: 'missingDependency' }
   if (status.state === 'version_mismatch') return { text: 'modChanges.relation.versionMismatch', tone: 'critical', kind: 'missingDependency' }
   const kind = status.relation.kind ?? 'requires'

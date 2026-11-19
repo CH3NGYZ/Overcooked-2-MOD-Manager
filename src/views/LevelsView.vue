@@ -21,6 +21,7 @@ import { useListVisibility } from '../composables/useListVisibility'
 import { bulkSwitchValue as bulkSwitchValueOf } from '../listVisibility'
 import { cachedInstallRelease } from '../repositoryAssets'
 import { dependencyActionLabel, dependencyRowFromStatus, levelSetDependencyRows } from '../dependencyRows'
+import { unmetRelations } from '../modRelations'
 import { useDependencyNavigation } from '../composables/useDependencyNavigation'
 import { buildLevelSetGroups } from '../levelSetGroups'
 import {
@@ -568,14 +569,14 @@ async function runCardAction(set: LevelSetInfo) {
  */
 function tagTitle(set: LevelSetInfo, tag: LevelSetCardTag): string | undefined {
   if (tag.kind === 'dependency') {
-    const list = levelSetRelationStatuses(set, maps.value, mods.value, repositories.value)
-      .filter((status) => status.state !== 'ok' && (status.relation.kind ?? 'requires') === 'requires')
+    const list = unmetRelations(levelSetRelationStatuses(set, maps.value, mods.value, repositories.value))
+      .filter((status) => (status.relation.kind ?? 'requires') === 'requires')
       .map((status) => {
         const spec = formatVersionSpec(status.relation.version ?? '')
         return `${status.relation.guid}${spec ? ` ${spec}` : ''}`
       })
       .join(' · ')
-    return t('levelSet.frameworksNotMet', { list: list || t('modsOnline.missingDep') })
+    return list ? t('levelSet.frameworksNotMet', { list }) : undefined
   }
   if (tag.mapId) return t('levelSet.viewInMapDownload')
   return undefined

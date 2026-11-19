@@ -7,7 +7,7 @@ import ts from 'typescript'
 import { effectScope } from 'vue'
 import { dependencyActionLabel, dependencyRowFromStatus, levelSetDependencyRows } from '../src/dependencyRows.ts'
 import { levelSetCardAction, levelSetCardTags, levelSetForMap, levelSetRelationStatuses } from '../src/levelSetStatus.ts'
-import { dependencyTagFor, primaryRelation, relationJumpRepositoryId, relationStatusFromEvaluation, resolveRelations } from '../src/modRelations.ts'
+import { dependencyTagFor, primaryRelation, relationJumpRepositoryId, relationStatusFromEvaluation, resolveRelations, unmetRelations } from '../src/modRelations.ts'
 import { repositoryForMod } from '../src/modStatus.ts'
 import { evaluationSnapshot, clearEvaluation } from './helpers/mod-change-evaluations.mjs'
 import { statusActionFor } from '../src/statusActions.ts'
@@ -59,7 +59,7 @@ const createMod = handlers('../src/views/ModsLocalView.vue', [
 const createOnlineMap = handlers('../src/views/MapsOnlineView.vue', [
   'mapDependencyStatuses', 'dependencyOf', 'jumpToDependency', 'openDependencyJump',
 ], ['maps', 'sets', 'mods', 'repositories', 'gameProbed', 'levelSetForMap', 'levelSetRelationStatuses',
-  'dependencyTagFor', 'primaryRelation', 'relationJumpRepositoryId', 'hasLocalMap', 'describeFramework',
+  'dependencyTagFor', 'primaryRelation', 'relationJumpRepositoryId', 'hasLocalMap', 'describeFramework', 'unmetRelations',
   'dependencyRowFromStatus', 'useDependencyNavigation', 'linkToModRepository', 't', 'pickI18n'])
 const createOnlineMod = handlers('../src/views/ModsOnlineView.vue', [
   'unmetRelation', 'relationTag', 'relationJumpId', 'cardDependency', 'jumpToRelationRepository', 'openDependencyJump',
@@ -145,7 +145,7 @@ for (const state of ['missing', 'disabled', 'version_mismatch', 'conflict']) {
     ])
     const environment = { mods: f.mods, maps: f.maps, sets: f.sets, repositories: f.repositories,
       gameProbed: { value: true }, levelSetForMap, levelSetRelationStatuses, dependencyTagFor, primaryRelation,
-      relationJumpRepositoryId, resolveRelations, dependencyRowFromStatus, useDependencyNavigation,
+      relationJumpRepositoryId, resolveRelations, unmetRelations, dependencyRowFromStatus, useDependencyNavigation,
       hasLocalMap: entry => !!levelSetForMap(entry, f.sets.value), hasLocalInstall: () => true,
       describeFramework: entry => entry.guid, relationTagTitle: () => '',
       linkToModRepository: (...args) => f.jumps.push(args), focusRepository: (...args) => f.jumps.push(args),

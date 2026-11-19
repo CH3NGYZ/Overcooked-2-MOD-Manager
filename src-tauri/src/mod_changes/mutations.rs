@@ -56,9 +56,14 @@ pub(super) fn assemble(
     transaction_roots: TransactionRoots,
 ) -> Result<Vec<OwnedMutation>, String> {
     let solved = session.solved.as_ref().ok_or("modChanges.notPrepared")?;
-    if session.plan.retired_mod_copies != session.trusted.duplicate_release_retirements {
+    if session.plan.retired_mod_copies
+        != session
+            .trusted
+            .duplicate_releases
+            .selected(&session.trusted.inventory, solved)?
+    {
         // The generic replacement must never remove a copy absent from the confirmed list.
-        return Err("modChanges.multipleInstalledCopies".into());
+        return Err(MULTIPLE_INSTALLED_COPIES.into());
     }
     let mut builder = Builder {
         roots: transaction_roots,

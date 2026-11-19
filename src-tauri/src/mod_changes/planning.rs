@@ -214,17 +214,47 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
             }
         }
         // Manual previews already changed session.trusted. Merge exact remote roots there too.
-        let allow_duplicate_upgrade = session.wire_request.roots.len() == 1
-            && session.wire_request.map_import.is_none()
-            && session.wire_request.toggle_scope.is_none()
-            && !session.wire_request.bulk_toggle;
+        let duplicate_upgrade_root = match session.wire_request.roots.as_slice() {
+            [root]
+                if root.intent.enabled
+                    && root.intent.member_key.is_none()
+                    && session.wire_request.map_import.is_none()
+                    && session.wire_request.toggle_scope.is_none()
+                    && !session.wire_request.bulk_toggle =>
+            {
+                Some(root)
+            }
+            _ => None,
+        };
+        let exact_upgrade = duplicate_upgrade_root.is_some_and(|root| {
+            root.intent
+                .candidate_id
+                .as_deref()
+                .is_some_and(|id| id.starts_with("release:"))
+        });
         for root in &session.wire_request.roots {
             if !root.intent.node_id.starts_with("preview:") {
                 attach_exact_root(
                     &mut session.trusted,
                     root,
-                    allow_duplicate_upgrade.then_some(data.as_path()),
+                    exact_upgrade.then_some(data.as_path()),
                 )?;
+            }
+        }
+        if let Some(root) = duplicate_upgrade_root {
+            // An explicit repair of an installed MOD keeps that root's actual
+            // version. Only its dependencies may gain an upgrade candidate.
+            let repair = root.intent.candidate_id.is_none()
+                && root.asset_name.is_none()
+                && session
+                    .trusted
+                    .files
+                    .get(&root.intent.node_id)
+                    .is_some_and(|files| {
+                        files.summary.kind == NodeKind::Mod && !files.summary.dll_files.is_empty()
+                    });
+            if exact_upgrade || repair {
+                duplicate_release::attach_dependencies(&mut session.trusted, root, &data);
             }
         }
         if session.wire_request.map_import.is_some() {
@@ -301,7 +331,7 @@ fn attach_exact_root(
 ) -> Result<(), String> {
     if let Some(data_root) = duplicate_upgrade_data_root
         && !trusted.files.contains_key(&root.intent.node_id)
-        && duplicate_release::attach(trusted, root, data_root)?
+        && duplicate_release::attach_root(trusted, root, data_root)?
     {
         return Ok(());
     }
@@ -375,16 +405,7 @@ fn missing_root_error(trusted: &TrustedInventory, root: &RootRequest) -> &'stati
     if let (Some(repo_id), Some(id)) = (
         root.intent.node_id.strip_prefix("mod:"),
         root.intent.candidate_id.as_deref(),
-    ) && trusted
-        .files
-        .values()
-        .filter(|files| {
-            files.summary.kind == NodeKind::Mod
-                && files.summary.repository_id.as_deref() == Some(repo_id)
-                && !files.summary.dll_files.is_empty()
-        })
-        .nth(1)
-        .is_some()
+    ) && duplicate_release::has_copies(trusted, repo_id)
         && trusted.config.repositories.iter().any(|repo| {
             repo.id == repo_id
                 && candidates::for_root_asset(
@@ -397,7 +418,7 @@ fn missing_root_error(trusted: &TrustedInventory, root: &RootRequest) -> &'stati
                 .any(|candidate| candidate.id == id && candidate.installable)
         })
     {
-        return "modChanges.multipleInstalledCopies";
+        return MULTIPLE_INSTALLED_COPIES;
     }
     "modChanges.targetChanged"
 }
@@ -559,7 +580,15 @@ pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(),
     }
     let (mut result, mut solved) =
         super::inventory_maps::runtime_conflict::solve_toggle(state, session, &input)?
-            .unwrap_or_else(|| super::solve_with_inventory(&input, &session.request));
+            .unwrap_or_else(|| {
+                super::solve::solve_with_policy(&input, &session.request, |node_id| {
+                    session
+                        .trusted
+                        .duplicate_releases
+                        .upgrades
+                        .contains_key(node_id)
+                })
+            });
     if !unbound.is_empty() {
         if let Some(solved) = &mut solved {
             for (node, installed) in solved.nodes.iter_mut().zip(&original.nodes) {
@@ -574,9 +603,16 @@ pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(),
         }
         result.evaluations = super::evaluate(solved.as_ref().unwrap_or(original));
     }
-    if let Some(solved) = &solved {
+    let retirements = if let Some(solved) = &solved {
         inventory::validate_solution(&session.trusted, &session.request, solved, &unbound)?;
-    }
+        session
+            .trusted
+            .duplicate_releases
+            .selected(original, solved)?
+    } else {
+        duplicate_release::explain_blockers(&session.trusted, &mut result);
+        Default::default()
+    };
     session.plan = presentation(
         &session.trusted,
         &session.request,
@@ -584,6 +620,7 @@ pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(),
         session.plan.plan_id.clone(),
         false,
     );
+    session.plan.retired_mod_copies = retirements;
     if let Some(inventory) = &solved {
         session.plan.install_notes = super::install_notes::for_plan(
             &session.trusted.config,

@@ -179,7 +179,7 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
         managed_mods: Default::default(),
         toggle_unbound_nodes: Default::default(),
         installed_mods: Default::default(),
-        duplicate_release_retirements: Default::default(),
+        duplicate_releases: Default::default(),
         duplicate_release_safe_nodes: Default::default(),
     };
     let zip_path = staging.join("map.zip");

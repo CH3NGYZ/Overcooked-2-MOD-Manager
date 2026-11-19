@@ -61,7 +61,7 @@ fn trusted(game: &Path, provides: Vec<ProvidedPlugin>) -> TrustedInventory {
         managed_mods: Default::default(),
         toggle_unbound_nodes: Default::default(),
         installed_mods: Default::default(),
-        duplicate_release_retirements: Default::default(),
+        duplicate_releases: Default::default(),
         duplicate_release_safe_nodes: Default::default(),
     }
 }
@@ -96,7 +96,7 @@ fn real_metadata_and_unique_guid_preserve_disabled_member_after_directory_change
         &mods::plugin_blob("test-primary", "Primary", "2.0.0"),
     );
     let mut files = vec!["BepInEx/plugins/new/Primary.dll".into()];
-    let members = read_members(&trusted, "fixture", &root, &mut files, false).unwrap();
+    let members = read_members(&trusted, "fixture", &root, &mut files, false, None).unwrap();
     assert!(!members[0].enabled);
     assert_eq!(members[0].version.as_deref(), Some("2.0.0"));
     assert!(files[0].ends_with(".dll.disabled"));
@@ -119,7 +119,7 @@ fn new_member_keeps_asset_state_and_duplicate_variants_are_rejected() {
     let bytes = mods::plugin_blob("test-primary", "Primary", "2.0.0");
     write(&root, "Primary.dll.disabled", &bytes);
     let mut files = vec!["Primary.dll.disabled".into()];
-    let members = read_members(&trusted, "fixture", &root, &mut files, true).unwrap();
+    let members = read_members(&trusted, "fixture", &root, &mut files, true, None).unwrap();
     assert!(!members[0].enabled);
     assert_eq!(members[0].prerelease, Some(true));
     write(&root, "Primary.dll", &bytes);
@@ -129,7 +129,8 @@ fn new_member_keeps_asset_state_and_duplicate_variants_are_rejected() {
             "fixture",
             &root,
             &mut ["Primary.dll".into(), "Primary.dll.disabled".into()],
-            true
+            true,
+            None,
         )
         .is_err()
     );
@@ -148,7 +149,17 @@ fn ambiguous_old_guid_does_not_guess_enabled_state() {
         "new.dll",
         &mods::plugin_blob("test-primary", "Primary", "2.0.0"),
     );
-    assert!(read_members(&trusted, "fixture", &root, &mut ["new.dll".into()], false).is_err());
+    assert!(
+        read_members(
+            &trusted,
+            "fixture",
+            &root,
+            &mut ["new.dll".into()],
+            false,
+            None
+        )
+        .is_err()
+    );
 }
 
 #[test]

@@ -25,7 +25,12 @@ fn loose(f: &Fixture, enabled: bool) {
     );
 }
 
-fn toggle(f: &Fixture, node_id: &str, member_key: Option<String>, enabled: bool) -> PlanRequest {
+pub(super) fn toggle(
+    f: &Fixture,
+    node_id: &str,
+    member_key: Option<String>,
+    enabled: bool,
+) -> PlanRequest {
     let config = f.state.config.load_or_default();
     let scanned =
         mods::scan_mods_with_manifests(&f.game, &config, Some(&f.state.config.manifests_dir()));

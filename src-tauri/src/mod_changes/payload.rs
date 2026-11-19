@@ -282,15 +282,31 @@ fn stage_asset(
         if Fingerprint::capture(source)? != source_fingerprint {
             return Err("modChanges.targetChanged".into());
         }
-        let mut provides = read_members(trusted, node_id, stage_root, &mut files, prerelease)?;
+        let retiring = trusted
+            .duplicate_releases
+            .copies_for(node_id, &candidate.id);
+        let primary = repo.map(|repo| repo.plugin_guid.as_str());
+        let mut provides = read_members(
+            trusted,
+            node_id,
+            stage_root,
+            &mut files,
+            prerelease,
+            retiring.zip(primary),
+        )?;
         if provides.is_empty() {
             return Err("archive.noInstallableContent".into());
         }
-        retired_copies::verify(trusted, node_id, repo, &provides)?;
-        if let Some(primary) = repo
-            .map(|repo| repo.plugin_guid.trim())
-            .filter(|guid| !guid.is_empty())
-        {
+        if let Some(copies) = retiring {
+            retired_copies::verify(
+                trusted,
+                node_id,
+                copies,
+                primary.ok_or(retired_copies::INVALID)?,
+                &provides,
+            )?;
+        }
+        if let Some(primary) = primary.map(str::trim).filter(|guid| !guid.is_empty()) {
             match provides
                 .iter()
                 .filter(|member| member.guid.eq_ignore_ascii_case(primary))
@@ -455,6 +471,7 @@ fn read_members(
     stage_root: &Path,
     files: &mut [String],
     prerelease: bool,
+    retirement: Option<(&[inventory::RetiredModCopy], &str)>,
 ) -> Result<Vec<ProvidedPlugin>, String> {
     let indices = files
         .iter()
@@ -477,16 +494,7 @@ fn read_members(
         crate::concurrency::workers_from(trusted.config.mod_metadata_concurrency),
         &|_, _| {},
     );
-    let retiring = trusted.duplicate_release_retirements.get(node_id);
-    let primary = retiring.and_then(|_| {
-        let repo_id = trusted.files.get(node_id)?.summary.repository_id.as_ref()?;
-        trusted
-            .config
-            .repositories
-            .iter()
-            .find(|repo| &repo.id == repo_id)
-            .map(|repo| repo.plugin_guid.as_str())
-    });
+    let (retiring, primary) = retirement.unzip();
     let previous = trusted
         .inventory
         .nodes

@@ -234,18 +234,6 @@ pub(crate) fn presentation(
             (node.id.clone(), enabled_keys)
         })
         .collect();
-    let retired_mod_copies = trusted
-        .duplicate_release_retirements
-        .iter()
-        .filter(|(id, _)| {
-            result.actions.iter().any(|action| {
-                &action.node_id == *id
-                    && action.member_key.is_none()
-                    && action.kind == ActionKind::Upgrade
-            })
-        })
-        .map(|(id, copies)| (id.clone(), copies.clone()))
-        .collect();
     ChangePlan {
         plan_id: id,
         result,
@@ -276,7 +264,7 @@ pub(crate) fn presentation(
             .collect(),
         nodes: trusted.files.values().map(|f| f.summary.clone()).collect(),
         previous_enabled_members,
-        retired_mod_copies,
+        retired_mod_copies: BTreeMap::new(),
         install_notes: Vec::new(),
     }
 }

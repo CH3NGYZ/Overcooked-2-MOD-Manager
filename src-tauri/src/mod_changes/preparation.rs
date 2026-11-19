@@ -217,6 +217,7 @@ fn replace_candidate(
 
 pub(super) fn select_payloads(session: &mut PlanSession) -> Result<(), String> {
     let solved = session.solved.as_ref().ok_or("modChanges.notPrepared")?;
+    let mut selected = HashMap::new();
     for node in &solved.nodes {
         let Some(current) = &node.current else {
             continue;
@@ -235,7 +236,7 @@ pub(super) fn select_payloads(session: &mut PlanSession) -> Result<(), String> {
             .verified_payloads
             .get(&(node.id.clone(), current.id.clone()))
         {
-            session.payloads.insert(node.id.clone(), payload.clone());
+            selected.insert(node.id.clone(), payload.clone());
         } else if session
             .map_payload
             .as_ref()
@@ -244,6 +245,7 @@ pub(super) fn select_payloads(session: &mut PlanSession) -> Result<(), String> {
             return Err("modChanges.notPrepared".into());
         }
     }
+    session.payloads = selected;
     Ok(())
 }
 

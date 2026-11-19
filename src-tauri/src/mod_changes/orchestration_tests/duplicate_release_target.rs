@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(windows)]
+#[path = "duplicate_release_target/dependencies.rs"]
+mod dependencies;
 #[path = "duplicate_release_target/release_contents.rs"]
 mod release_contents;
 

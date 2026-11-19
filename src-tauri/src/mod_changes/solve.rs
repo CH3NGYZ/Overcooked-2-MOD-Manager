@@ -35,6 +35,9 @@ enum SearchPass {
 
 struct Search<'a> {
     original: &'a Inventory,
+    /// The adapter proved a specific replacement of these groups, not switches
+    /// on their old DLLs or permission to upgrade already satisfied edges.
+    replacement_only: BTreeSet<usize>,
     fixed: BTreeSet<usize>,
     roots: BTreeSet<usize>,
     visited: BTreeMap<String, bool>,
@@ -323,7 +326,14 @@ impl Search<'_> {
                 return None;
             }
         }
-        if let Some(current) = &state.inventory.nodes[index].current {
+        let installed = state.inventory.nodes[index].current.as_ref();
+        if self.replacement_only.contains(&index) {
+            if installed.is_some_and(|current| current.id == candidate.id) {
+                return None;
+            }
+            // The combined old group cannot supply switch defaults for its new
+            // release. Payload verification preserves eligible real members.
+        } else if let Some(current) = installed {
             for plugin in &mut candidate.provides {
                 let existing = current
                     .provides
@@ -403,7 +413,7 @@ impl Search<'_> {
         source: DisableSource,
     ) -> Option<SearchState> {
         let node = &state.inventory.nodes[index];
-        if self.fixed.contains(&index) || !node.mutable {
+        if self.fixed.contains(&index) || !node.mutable || self.replacement_only.contains(&index) {
             return None;
         }
         let mut next = state.clone();
@@ -565,7 +575,8 @@ impl Search<'_> {
             let node = &state.inventory.nodes[index];
             // Deciding a package fixes its version, not every sibling's switch.
             // Later requirements may still enable members of that exact candidate.
-            if (self.fixed.contains(&index) || (state.decided.contains(&index) && node.mutable))
+            if !self.replacement_only.contains(&index)
+                && (self.fixed.contains(&index) || (state.decided.contains(&index) && node.mutable))
                 && relation.kind == RelationKind::Requires
                 && node.enabled
             {
@@ -689,6 +700,14 @@ pub(crate) fn solve_with_inventory(
     inventory: &Inventory,
     request: &ChangeRequest,
 ) -> (SolveResult, Option<Inventory>) {
+    solve_with_policy(inventory, request, |_| false)
+}
+
+pub(super) fn solve_with_policy(
+    inventory: &Inventory,
+    request: &ChangeRequest,
+    replacement_only: impl Fn(&str) -> bool,
+) -> (SolveResult, Option<Inventory>) {
     let failure = |blocker: Diagnostic| SolveResult {
         status: if blocker.incomplete {
             SolveStatus::Incomplete
@@ -700,7 +719,7 @@ pub(crate) fn solve_with_inventory(
         blockers: vec![blocker],
         impacts: Vec::new(),
     };
-    match solve_inner(inventory, request) {
+    match solve_inner(inventory, request, replacement_only) {
         Ok((result, solved)) => (result, Some(solved)),
         Err(blocker) => (failure(blocker), None),
     }
@@ -709,6 +728,7 @@ pub(crate) fn solve_with_inventory(
 fn solve_inner(
     inventory: &Inventory,
     request: &ChangeRequest,
+    replacement_only: impl Fn(&str) -> bool,
 ) -> Result<(SolveResult, Inventory), Diagnostic> {
     let mut state = SearchState {
         inventory: inventory.clone(),
@@ -743,10 +763,17 @@ fn solve_inner(
         }
         let node = &mut state.inventory.nodes[index];
         let before = node.clone();
-        if !node.mutable
-            && (root.candidate_id.is_some()
-                || node.enabled != root.enabled
-                || root.member_key.is_some())
+        if (replacement_only(&node.id)
+            && (!root.enabled
+                || root.member_key.is_some()
+                || !node
+                    .candidates
+                    .iter()
+                    .any(|candidate| Some(&candidate.id) == root.candidate_id.as_ref())))
+            || !node.mutable
+                && (root.candidate_id.is_some()
+                    || node.enabled != root.enabled
+                    || root.member_key.is_some())
         {
             return Err(diagnostic("root_ownership_unsafe", Some(&node.id), true));
         }
@@ -866,6 +893,12 @@ fn solve_inner(
     let prefer_newest = request.roots.iter().any(|root| root.candidate_id.is_some());
     let mut search = Search {
         original: inventory,
+        replacement_only: inventory
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, node)| replacement_only(&node.id).then_some(index))
+            .collect(),
         fixed: roots.clone(),
         roots,
         fixed_members,

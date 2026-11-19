@@ -1,23 +1,40 @@
 //! Session-only consolidation of proven physical copies during a Release upgrade.
 use crate::mod_changes::{
     candidates,
-    evaluate::same_guid,
-    inventory::{self, NodeFiles, RetiredModCopy, TrustedInventory},
-    model::{Candidate, ChangeNode, NodeKind},
+    evaluate::{DUPLICATE_ENABLED_PROVIDERS, matches, same_guid},
+    inventory::{self, DuplicateReleaseUpgrade, NodeFiles, RetiredModCopy, TrustedInventory},
+    model::{
+        Candidate, ChangeNode, EvaluationState, MULTIPLE_INSTALLED_COPIES as AMBIGUOUS, NodeKind,
+        SolveResult,
+    },
     session::RootRequest,
     transaction::{Fingerprint, RootKind, TransactionPath, TransactionRoots, has_single_link},
 };
 use crate::{models::*, mods, releases};
 use std::{
     cmp::Ordering,
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
 
-const AMBIGUOUS: &str = "modChanges.multipleInstalledCopies";
+fn installed_groups(trusted: &TrustedInventory) -> impl Iterator<Item = (&str, &NodeFiles)> {
+    trusted.files.values().filter_map(|files| {
+        (files.summary.kind == NodeKind::Mod && !files.summary.dll_files.is_empty())
+            .then_some(files.summary.repository_id.as_deref())
+            .flatten()
+            .map(|id| (id, files))
+    })
+}
 
-pub(super) fn attach(
+pub(super) fn has_copies(trusted: &TrustedInventory, repo_id: &str) -> bool {
+    installed_groups(trusted)
+        .filter(|(id, _)| *id == repo_id)
+        .nth(1)
+        .is_some()
+}
+
+pub(super) fn attach_root(
     trusted: &mut TrustedInventory,
     root: &RootRequest,
     data_root: &Path,
@@ -31,16 +48,7 @@ pub(super) fn attach(
     if !root.intent.enabled || root.intent.member_key.is_some() {
         return Ok(false);
     }
-    let groups = trusted
-        .files
-        .values()
-        .filter(|files| {
-            files.summary.kind == NodeKind::Mod
-                && files.summary.repository_id.as_deref() == Some(repo_id)
-                && !files.summary.dll_files.is_empty()
-        })
-        .collect::<Vec<_>>();
-    if groups.len() < 2 {
+    if !has_copies(trusted, repo_id) {
         return Ok(false);
     }
     let Some(repo) = trusted.config.repositories.iter().find(|r| r.id == repo_id) else {
@@ -53,7 +61,121 @@ pub(super) fn attach(
     else {
         return Ok(false);
     };
-    let (tag, prerelease) = eligible_release(trusted, repo, &candidate).ok_or(AMBIGUOUS)?;
+    let default_assets = candidates::for_root_asset(repo, None, &trusted.config, None);
+    let (tag, prerelease) = eligible_release(repo, &candidate, &default_assets).ok_or(AMBIGUOUS)?;
+    let proof = prove(trusted, repo, tag, prerelease, data_root)?;
+    attach(trusted, repo_id, candidate, proof);
+    Ok(true)
+}
+
+/// Consider only cached Releases. An installed repair's physical root must
+/// keep its identity; only other groups can be consolidated as dependencies.
+pub(super) fn attach_dependencies(
+    trusted: &mut TrustedInventory,
+    root: &RootRequest,
+    data_root: &Path,
+) {
+    let root_repo = trusted
+        .files
+        .get(&root.intent.node_id)
+        .and_then(|files| files.summary.repository_id.clone());
+    let mut counts = BTreeMap::new();
+    for (repo_id, _) in installed_groups(trusted) {
+        if root_repo.as_deref() == Some(repo_id) {
+            continue;
+        }
+        *counts.entry(repo_id).or_insert(0) += 1;
+    }
+    let ids = counts
+        .into_iter()
+        .filter_map(|(id, count)| (count > 1).then(|| id.to_owned()))
+        .collect::<Vec<_>>();
+    for repo_id in ids {
+        let Some(repo) = trusted
+            .config
+            .repositories
+            .iter()
+            .find(|repo| repo.id == repo_id)
+        else {
+            continue;
+        };
+        let default_assets = candidates::for_root_asset(repo, None, &trusted.config, None);
+        let mut blocked = Vec::new();
+        let mut upgrade = None;
+        for candidate in candidates::for_repository(repo, None, false, &trusted.config) {
+            let Some((tag, prerelease)) = eligible_release(repo, &candidate, &default_assets)
+            else {
+                continue;
+            };
+            match prove(trusted, repo, tag, prerelease, data_root) {
+                Ok(proof) => {
+                    upgrade = Some((candidate, proof));
+                    break;
+                }
+                Err(error) => {
+                    log::debug!(
+                        "整链无法确认重复副本升级：仓库={repo_id}，版本={tag}，原因={error}"
+                    );
+                    blocked.extend(candidate.provides);
+                }
+            }
+        }
+        if let Some((candidate, proof)) = upgrade {
+            attach(trusted, &repo_id, candidate, proof);
+        } else {
+            trusted.duplicate_releases.blocked.extend(blocked);
+        }
+    }
+}
+
+/// Report the rejected candidate on its actual failed dependency edge, not
+/// on an ancestor or on an otherwise successful plan.
+pub(super) fn explain_blockers(trusted: &TrustedInventory, result: &mut SolveResult) {
+    let blocked = &trusted.duplicate_releases.blocked;
+    if blocked.is_empty() {
+        return;
+    }
+    for trace in result
+        .blockers
+        .iter_mut()
+        .flat_map(|blocker| &mut blocker.traces)
+    {
+        if let Some(step) = trace.last_mut()
+            && (matches!(
+                step.state,
+                EvaluationState::Missing
+                    | EvaluationState::Disabled
+                    | EvaluationState::VersionMismatch
+            ) || step.reason == DUPLICATE_ENABLED_PROVIDERS)
+            && let Some(relation) = &step.relation
+            && relation.kind == RelationKind::Requires
+            && !relation.optional
+            && blocked.iter().any(|plugin| {
+                same_guid(&plugin.guid, &relation.guid) && matches(relation, plugin) == Some(true)
+            })
+        {
+            step.reason = AMBIGUOUS.into();
+        }
+    }
+}
+
+struct Consolidation {
+    node: ChangeNode,
+    files: NodeFiles,
+    retired: Vec<RetiredModCopy>,
+    replaced_ids: BTreeSet<String>,
+}
+
+fn prove(
+    trusted: &TrustedInventory,
+    repo: &ModRepositoryConfig,
+    tag: &str,
+    prerelease: bool,
+    data_root: &Path,
+) -> Result<Consolidation, String> {
+    let groups = installed_groups(trusted)
+        .filter_map(|(id, files)| (id == repo.id).then_some(files))
+        .collect::<Vec<_>>();
     let mut copies = Vec::with_capacity(groups.len());
     for files in groups {
         let id = &files.summary.node_id;
@@ -152,9 +274,30 @@ pub(super) fn attach(
     // Retain the chosen core's version; its first scanned member was not
     // necessarily the core (a package may have optional siblings).
     current.version.clone_from(&primary.item.version);
-    let id = root.intent.node_id.clone();
+    Ok(Consolidation {
+        node: combined,
+        files,
+        retired,
+        replaced_ids,
+    })
+}
+
+fn attach(
+    trusted: &mut TrustedInventory,
+    repo_id: &str,
+    candidate: Candidate,
+    proof: Consolidation,
+) {
+    let Consolidation {
+        node: mut combined,
+        mut files,
+        retired,
+        replaced_ids,
+    } = proof;
+    let id = format!("mod:{repo_id}");
     combined.id.clone_from(&id);
     combined.mutable = true;
+    let candidate_id = candidate.id.clone();
     files.summary.node_id.clone_from(&id);
     files.summary.enabled = combined.enabled;
     files.summary.candidates.push(inventory::CandidateSummary {
@@ -169,8 +312,13 @@ pub(super) fn attach(
     trusted.files.retain(|id, _| !replaced_ids.contains(id));
     trusted.inventory.nodes.push(combined);
     trusted.files.insert(id.clone(), files);
-    trusted.duplicate_release_retirements.insert(id, retired);
-    Ok(true)
+    trusted.duplicate_releases.upgrades.insert(
+        id,
+        DuplicateReleaseUpgrade {
+            candidate_id,
+            copies: retired,
+        },
+    );
 }
 
 struct Copy<'a> {
@@ -209,9 +357,9 @@ fn representative<'a>(
 }
 
 fn eligible_release<'a>(
-    trusted: &TrustedInventory,
     repo: &ModRepositoryConfig,
     candidate: &'a Candidate,
+    default_assets: &[Candidate],
 ) -> Option<(&'a str, bool)> {
     let tag = candidate.tag.as_deref()?;
     let prerelease = candidate.provides.first()?.prerelease?;
@@ -226,13 +374,13 @@ fn eligible_release<'a>(
     }
     // A UI pin can choose a download, but cannot authorize retiring other
     // copies when a later installable Release exists on this line.
-    let has_newer = candidates::for_root_asset(repo, None, &trusted.config, None)
-        .into_iter()
+    let has_newer = default_assets
+        .iter()
         .filter(|other| {
             other.installable
                 && other.provides.first().and_then(|p| p.prerelease) == Some(prerelease)
         })
-        .filter_map(|other| other.tag)
+        .filter_map(|other| other.tag.as_deref())
         .any(|other| {
             other != tag
                 && releases::compare_release_versions(tag, &other) != Some(Ordering::Greater)

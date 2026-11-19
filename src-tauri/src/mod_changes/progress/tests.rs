@@ -95,7 +95,7 @@ fn session(candidate_id: &str) -> PlanSession {
             managed_mods: Default::default(),
             toggle_unbound_nodes: Default::default(),
             installed_mods: Default::default(),
-            duplicate_release_retirements: Default::default(),
+            duplicate_releases: Default::default(),
             duplicate_release_safe_nodes: Default::default(),
         },
         request: ChangeRequest::default(),

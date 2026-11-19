@@ -1,10 +1,10 @@
-use super::{ModRepositoryConfig, ProvidedPlugin, TrustedInventory, mods};
+use super::{ProvidedPlugin, TrustedInventory, mods};
 use crate::mod_changes::{evaluate::same_guid, inventory::RetiredModCopy};
 use std::cmp::Ordering;
 
 pub(super) const INVALID: &str = "modChanges.duplicateReleasePayload";
 
-pub(super) fn contains(copies: Option<&Vec<RetiredModCopy>>, plugin: &ProvidedPlugin) -> bool {
+pub(super) fn contains(copies: Option<&[RetiredModCopy]>, plugin: &ProvidedPlugin) -> bool {
     copies.is_some_and(|copies| {
         copies
             .iter()
@@ -17,13 +17,10 @@ pub(super) fn contains(copies: Option<&Vec<RetiredModCopy>>, plugin: &ProvidedPl
 pub(super) fn verify(
     trusted: &TrustedInventory,
     node_id: &str,
-    repo: Option<&ModRepositoryConfig>,
+    copies: &[RetiredModCopy],
+    guid: &str,
     actual: &[ProvidedPlugin],
 ) -> Result<(), String> {
-    let Some(copies) = trusted.duplicate_release_retirements.get(node_id) else {
-        return Ok(());
-    };
-    let guid = &repo.ok_or(INVALID)?.plugin_guid;
     let mut core = actual.iter().filter(|plugin| same_guid(&plugin.guid, guid));
     let first = core.next().ok_or(INVALID)?;
     let version = first.version.as_deref().ok_or(INVALID)?;

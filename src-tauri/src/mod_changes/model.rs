@@ -1,6 +1,8 @@
 use crate::models::RepositoryRelation;
 use serde::{Deserialize, Serialize};
 
+pub(super) const MULTIPLE_INSTALLED_COPIES: &str = "modChanges.multipleInstalledCopies";
+
 /// A node is one atomic replacement unit: an asset/package, a loose DLL, or a map.
 /// Adapters must not offer unrelated package members as independently replaceable nodes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -9,6 +9,9 @@ use std::{
     sync::Arc,
 };
 
+mod duplicate_releases;
+pub(super) use duplicate_releases::{DuplicateReleaseUpgrade, DuplicateReleases};
+
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct MemberSummary {
     pub key: String,
@@ -77,7 +80,7 @@ pub(crate) struct TrustedInventory {
     /// Physical ownership checks separate from the missing repository alias.
     pub(super) duplicate_release_safe_nodes: BTreeSet<String>,
     /// Filled only on the plan's private inventory, never in the scan cache.
-    pub duplicate_release_retirements: BTreeMap<String, Vec<RetiredModCopy>>,
+    pub(super) duplicate_releases: DuplicateReleases,
 }
 
 pub(crate) fn relative(root: &Path, path: &Path) -> Result<String, String> {
@@ -511,7 +514,7 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
         toggle_unbound_nodes,
         installed_mods,
         duplicate_release_safe_nodes,
-        duplicate_release_retirements: BTreeMap::new(),
+        duplicate_releases: DuplicateReleases::default(),
     })
 }
 

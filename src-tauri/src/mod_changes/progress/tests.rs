@@ -93,6 +93,7 @@ fn session(candidate_id: &str) -> PlanSession {
             level_roots: crate::level_sets::LevelSetRoots::new(PathBuf::new(), None),
             config: crate::config::default_config(),
             managed_mods: Default::default(),
+            toggle_unbound_nodes: Default::default(),
         },
         request: ChangeRequest::default(),
         wire_request: PlanRequest::default(),

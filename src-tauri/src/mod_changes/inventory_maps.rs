@@ -15,7 +15,7 @@ pub(crate) fn append(
     roots: &level_sets::LevelSetRoots,
     inventory: &mut Inventory,
     files: &mut BTreeMap<String, NodeFiles>,
-) -> Result<(), String> {
+) -> Result<BTreeSet<String>, String> {
     let manifests = state.config.manifests_dir();
     append_at(&manifests, config, root, roots, inventory, files)
 }
@@ -27,7 +27,7 @@ pub(crate) fn append_at(
     roots: &level_sets::LevelSetRoots,
     inventory: &mut Inventory,
     files: &mut BTreeMap<String, NodeFiles>,
-) -> Result<(), String> {
+) -> Result<BTreeSet<String>, String> {
     let snapshots = archive::read_map_relation_snapshots(manifests);
     let registered = level_sets::read_registered_plugins(manifests);
     let sets = level_sets::scan_level_sets_with_progress(
@@ -40,6 +40,7 @@ pub(crate) fn append_at(
     for set in &sets {
         *names.entry(key(&set.dir_name)).or_default() += 1;
     }
+    let mut toggle_unbound_nodes = BTreeSet::new();
     for set in &sets {
         let path = relative(root, &set.path)?;
         let unique = names.get(&key(&set.dir_name)) == Some(&1);
@@ -50,10 +51,8 @@ pub(crate) fn append_at(
         };
         let mut info = level_sets::view::level_set_to_info(set.clone());
         level_sets::view::bind_map_relation_snapshot(&mut info, config, &snapshots);
-        // The view historically returned early when a source disappeared. Its
-        // installed snapshot still owns the installed map's declarations.
-        if info.map_id.is_none()
-            && let Some(snapshot) = snapshots.entries.values().find(|entry| {
+        let historical = if info.map_id.is_none() {
+            snapshots.entries.values().find(|entry| {
                 level_sets::level_set_identity_matches(
                     &info.name,
                     info.name_zh.as_deref(),
@@ -63,7 +62,12 @@ pub(crate) fn append_at(
                     &entry.author,
                 )
             })
-        {
+        } else {
+            None
+        };
+        // The view returns early when a source disappears. Its installed
+        // snapshot still owns the installed map's declarations.
+        if let Some(snapshot) = historical {
             let relations = crate::mods::select_release_relations(
                 &snapshot.release_relations,
                 Some(&info.version),
@@ -95,6 +99,17 @@ pub(crate) fn append_at(
             .iter()
             .filter_map(|member| member.member_key.as_ref())
             .all(|member| member_keys.insert(member));
+        // Bundled-member declarations do not bind the local map itself, and
+        // an unreadable info file cannot establish that a map is unbound.
+        if unique
+            && members_unique
+            && set.error.is_none()
+            && !info.name.trim().is_empty()
+            && info.map_id.is_none()
+            && historical.is_none()
+        {
+            toggle_unbound_nodes.insert(id.clone());
+        }
         inventory.nodes.push(ChangeNode {
             id: id.clone(),
             kind: NodeKind::Map,
@@ -179,7 +194,7 @@ pub(crate) fn append_at(
             files,
         )?;
     }
-    Ok(())
+    Ok(toggle_unbound_nodes)
 }
 
 pub(crate) fn require_framework(relations: &mut Vec<RepositoryRelation>) {

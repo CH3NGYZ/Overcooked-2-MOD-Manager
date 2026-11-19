@@ -16,7 +16,7 @@ function canApplyDirectly(request: ChangeRequest, plan: ChangePlan) {
     || plan.roots.length !== 1 || plan.roots[0]?.node_id !== root.node_id
     || plan.impacts.some(id => id !== root.node_id)) return false
   const node = plan.nodes.find(node => node.node_id === root.node_id)
-  if (!node || (node.kind !== 'map' && (node.kind !== 'mod' || root.enabled))) return false
+  if (!node || (node.kind !== 'map' && node.kind !== 'mod')) return false
   const soleDll = node.kind === 'mod' && node.dll_files.length === 1
   if (node.kind === 'mod' && root.member_key == null && !soleDll) return false
   const kind = root.enabled ? 'enable' : 'disable'

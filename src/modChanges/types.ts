@@ -7,6 +7,7 @@ export interface ChangeRequest {
   map_import?: { zip_path: string; selected: string[]; origin?: MapInstallOrigin | null }
   /** Local scan seen at click and trusted inventory used to resolve its root. */
   toggle_scope?: { generation: number; revision: string }
+  bulk_toggle?: boolean
 }
 export type ChangeActionKind = 'install' | 'upgrade' | 'downgrade' | 'replace' | 'enable' | 'disable'
 export interface ChangeAction {

@@ -55,8 +55,8 @@ function toggle(kind, enabled, memberKey) {
     choice: plan('switch', { roots: [root], nodes: [node], actions: [action], impacts: [id] }) }
 }
 
-test('a single map switch or MOD self-disable commits silently through normal preparation', async () => {
-  for (const [kind, enabled, member] of [['map', true], ['map', false], ['mod', false, 'owner-dll']]) {
+test('a single map or MOD switch commits silently through normal preparation', async () => {
+  for (const [kind, enabled, member] of [['map', true], ['map', false], ['mod', false, 'owner-dll'], ['mod', true, 'owner-dll']]) {
     const { request, choice } = toggle(kind, enabled, member), checked = []
     const f = fixture({ plan: async () => choice, prepare: async id => { checked.push(id); return { ...choice, prepared: true } } })
     assert.equal((await f.run(request)).ok, true)
@@ -68,10 +68,11 @@ test('a single map switch or MOD self-disable commits silently through normal pr
 })
 
 test('an extra dependency action, a different package member, or a blocker still opens review', async () => {
-  const { request, choice } = toggle('mod', false, 'owner-dll')
+  const { request, choice } = toggle('mod', true, 'owner-dll')
   const [action] = choice.actions
   for (const plan of [
     { ...choice, actions: [action, { ...action, node_id: 'mod:dependent' }], impacts: ['mod:owner', 'mod:dependent'] },
+    { ...choice, actions: [action, { ...action, kind: 'disable', node_id: 'mod:conflict' }], impacts: ['mod:owner', 'mod:conflict'] },
     { ...choice, actions: [{ ...action, member_key: 'different-dll' }] },
     { ...choice, status: 'incomplete', blockers: [{ code: 'search_exhausted' }] },
   ]) {

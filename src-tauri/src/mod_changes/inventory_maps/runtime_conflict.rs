@@ -13,6 +13,7 @@ use std::{cmp::Ordering, fs};
 pub(in crate::mod_changes) fn solve_toggle(
     state: &AppState,
     session: &PlanSession,
+    original: &Inventory,
 ) -> Result<Option<(SolveResult, Option<Inventory>)>, String> {
     let [root] = session.request.roots.as_slice() else {
         return Ok(None);
@@ -25,7 +26,6 @@ pub(in crate::mod_changes) fn solve_toggle(
         return Ok(None);
     }
     let trusted = &session.trusted;
-    let original = &trusted.inventory;
     let Some((map_index, map)) = original.nodes.iter().enumerate().find(|(_, node)| {
         node.id == root.node_id && node.kind == NodeKind::Map && !node.enabled && node.mutable
     }) else {

@@ -63,6 +63,7 @@ fn fixture() -> Fixture {
         level_roots: crate::level_sets::LevelSetRoots::new(game_root.clone(), None),
         config: crate::config::default_config(),
         managed_mods: Default::default(),
+        toggle_unbound_nodes: Default::default(),
     };
     let session = PlanSession {
         trusted,

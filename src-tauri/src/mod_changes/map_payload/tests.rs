@@ -177,6 +177,7 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
         level_roots: live_roots,
         config,
         managed_mods: Default::default(),
+        toggle_unbound_nodes: Default::default(),
     };
     let zip_path = staging.join("map.zip");
     let mut writer = zip::ZipWriter::new(fs::File::create(&zip_path).unwrap());

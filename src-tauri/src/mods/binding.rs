@@ -205,18 +205,7 @@ pub(super) fn repository_matches_mod(
     original_filename: Option<&str>,
     installed_version: Option<&str>,
 ) -> bool {
-    let identity_matches = [
-        (guid, repo.plugin_guid.as_str()),
-        (product_name, repo.local_product_name.as_str()),
-        (original_filename, repo.local_original_filename.as_str()),
-    ]
-    .into_iter()
-    .any(|(actual, configured)| {
-        let configured = configured.trim();
-        !configured.is_empty()
-            && actual.is_some_and(|value| value.trim().eq_ignore_ascii_case(configured))
-    });
-    if !identity_matches {
+    if !repository_matches_identity(repo, guid, product_name, original_filename) {
         return false;
     }
     let pattern = repo.version_regex.trim();
@@ -231,6 +220,27 @@ pub(super) fn repository_matches_mod(
                 .map(|regex| regex.is_match(value))
         })
         .unwrap_or(false)
+}
+
+/// Identity evidence can exist even when a repository is filtered out, or
+/// when there is no version/channel match to select it as the current source.
+pub(crate) fn repository_matches_identity(
+    repo: &crate::models::ModRepositoryConfig,
+    guid: Option<&str>,
+    product_name: Option<&str>,
+    original_filename: Option<&str>,
+) -> bool {
+    [
+        (guid, repo.plugin_guid.as_str()),
+        (product_name, repo.local_product_name.as_str()),
+        (original_filename, repo.local_original_filename.as_str()),
+    ]
+    .into_iter()
+    .any(|(actual, configured)| {
+        let configured = configured.trim();
+        !configured.is_empty()
+            && actual.is_some_and(|value| value.trim().eq_ignore_ascii_case(configured))
+    })
 }
 
 /// Match either a scan result or an existing local snapshot against the current

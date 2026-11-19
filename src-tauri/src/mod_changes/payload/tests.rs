@@ -59,6 +59,7 @@ fn trusted(game: &Path, provides: Vec<ProvidedPlugin>) -> TrustedInventory {
         level_roots: crate::level_sets::LevelSetRoots::new(game.into(), None),
         config,
         managed_mods: Default::default(),
+        toggle_unbound_nodes: Default::default(),
     }
 }
 

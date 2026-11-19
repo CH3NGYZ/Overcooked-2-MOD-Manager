@@ -13,7 +13,7 @@ export interface ToggleTargets {
 export async function requestToggleChanges(targets: ToggleTargets): Promise<ChangeExecutionResult | null> {
   const changes = useModChanges()
   const directMap = targets.mapDirectories?.length === 1 && !targets.dllFiles?.length
-  const directMod = !targets.enabled && targets.dllFiles?.length === 1 && !targets.mapDirectories?.length
+  const directMod = targets.dllFiles?.length === 1 && !targets.mapDirectories?.length
   const tryDirectToggle = !targets.wholeNodes && (directMap || directMod)
   // Capture the card's scan before an evaluation or game-directory switch can finish.
   const generation = tryDirectToggle ? useDashboard().modsGeneration.value : 0
@@ -38,7 +38,7 @@ export async function requestToggleChanges(targets: ToggleTargets): Promise<Chan
     peer.node_id === root.node_id && peer.member_key === root.member_key) === index)
   if (!unique.length) throw new Error('modChanges.targetChanged')
   return changes.run({ roots: unique,
-    ...(tryDirectToggle ? { toggle_scope: { generation, revision: inventory.revision } } : {}),
+    ...(tryDirectToggle ? { toggle_scope: { generation, revision: inventory.revision } } : { bulk_toggle: true }),
   })
 }
 
@@ -49,5 +49,5 @@ export async function requestAllToggleChanges(kind: 'mod' | 'map', enabled: bool
     && (kind === 'map' ? !!node.map_dir_name : node.dll_files.length > 0))
     .map(node => ({ node_id: node.node_id, enabled })) ?? []
   if (!roots.length) return null
-  return changes.run({ roots })
+  return changes.run({ roots, bulk_toggle: true })
 }

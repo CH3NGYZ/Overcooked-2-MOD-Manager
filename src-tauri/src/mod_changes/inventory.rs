@@ -3,7 +3,7 @@ use super::{install_notes::ManagedMods, model::*};
 use crate::{app_state::AppState, archive, game, level_sets, models::*, mods};
 use serde::Serialize;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
 };
@@ -56,6 +56,8 @@ pub(crate) struct TrustedInventory {
     pub level_roots: level_sets::LevelSetRoots,
     pub config: AppConfig,
     pub managed_mods: ManagedMods,
+    /// Installed nodes with no current, filtered or historical binding evidence.
+    pub toggle_unbound_nodes: BTreeSet<String>,
 }
 
 pub(crate) fn relative(root: &Path, path: &Path) -> Result<String, String> {
@@ -248,6 +250,7 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
     }
     let mut inventory = Inventory::default();
     let mut files = BTreeMap::new();
+    let mut toggle_unbound_nodes = BTreeSet::new();
     for (fallback, items) in grouped {
         let ids = items
             .iter()
@@ -277,6 +280,22 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
             .cloned()
             .collect();
         let current = current_candidate(&items, repo, &owned_manifests, &id, &config);
+        if items.iter().all(|item| {
+            item.repository_id.is_none()
+                && item.repository_ids.is_empty()
+                && item.repository_binding.is_none()
+                && (item.package_id.is_none() || item.manual_install)
+                && !config.repositories.iter().any(|repo| {
+                    mods::repository_matches_identity(
+                        repo,
+                        item.guid.as_deref(),
+                        item.product_name.as_deref(),
+                        item.original_filename.as_deref(),
+                    )
+                })
+        }) {
+            toggle_unbound_nodes.insert(id.clone());
+        }
         let enabled = items.iter().any(|i| i.enabled);
         let summary = NodeSummary {
             node_id: id.clone(),
@@ -391,14 +410,14 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
             },
         );
     }
-    super::inventory_maps::append(
+    toggle_unbound_nodes.extend(super::inventory_maps::append(
         state,
         &config,
         &game_root,
         &level_roots,
         &mut inventory,
         &mut files,
-    )?;
+    )?);
     for node in &inventory.nodes {
         if let Some(entry) = files.get_mut(&node.id) {
             entry.summary.candidates = node
@@ -423,6 +442,7 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
         level_roots,
         config,
         managed_mods,
+        toggle_unbound_nodes,
     })
 }
 
@@ -462,6 +482,7 @@ pub(crate) fn validate_solution(
     trusted: &TrustedInventory,
     request: &ChangeRequest,
     solved: &Inventory,
+    suppressed: &BTreeSet<&str>,
 ) -> Result<(), String> {
     use super::evaluate::{matches, relation_active, targets};
     use std::collections::BTreeSet;
@@ -486,7 +507,10 @@ pub(crate) fn validate_solution(
     loop {
         let before = affected.len();
         for node in &solved.nodes {
-            if !node.enabled || !affected.contains(&node.id) {
+            if !node.enabled
+                || !affected.contains(&node.id)
+                || suppressed.contains(node.id.as_str())
+            {
                 continue;
             }
             let Some(candidate) = &node.current else {

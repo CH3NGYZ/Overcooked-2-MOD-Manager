@@ -16,6 +16,8 @@ mod map_runtime_duplicate;
 mod retired_members;
 #[path = "orchestration_tests/toggle_scope.rs"]
 mod toggle_scope;
+#[path = "orchestration_tests/unbound_toggle.rs"]
+mod unbound_toggle;
 
 struct Fixture {
     _temp: tempfile::TempDir,

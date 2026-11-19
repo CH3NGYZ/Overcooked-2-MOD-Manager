@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{app_state::AppState, game, releases};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fs};
+use std::{borrow::Cow, collections::HashMap, fs};
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub(crate) struct EvaluationSubject {
@@ -479,12 +479,40 @@ fn attach_preview(
 }
 
 pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(), String> {
-    let (result, solved) = super::inventory_maps::runtime_conflict::solve_toggle(state, session)?
-        .unwrap_or_else(|| {
-            super::solve_with_inventory(&session.trusted.inventory, &session.request)
-        });
+    let original = &session.trusted.inventory;
+    let unbound = session.unbound_toggle_roots();
+    let mut input = Cow::Borrowed(original);
+    // Project only the toggled nodes' outgoing declarations. Their actual
+    // GUIDs still participate in reverse dependencies and inferred conflicts.
+    if !unbound.is_empty() {
+        for node in &mut input.to_mut().nodes {
+            if unbound.contains(node.id.as_str())
+                && let Some(current) = &mut node.current
+            {
+                current.relations.clear();
+                current.relations_known = true;
+            }
+        }
+    }
+    let (mut result, mut solved) =
+        super::inventory_maps::runtime_conflict::solve_toggle(state, session, &input)?
+            .unwrap_or_else(|| super::solve_with_inventory(&input, &session.request));
+    if !unbound.is_empty() {
+        if let Some(solved) = &mut solved {
+            for (node, installed) in solved.nodes.iter_mut().zip(&original.nodes) {
+                if unbound.contains(node.id.as_str())
+                    && let (Some(current), Some(previous)) = (&mut node.current, &installed.current)
+                    && current.id == previous.id
+                {
+                    current.relations.clone_from(&previous.relations);
+                    current.relations_known = previous.relations_known;
+                }
+            }
+        }
+        result.evaluations = super::evaluate(solved.as_ref().unwrap_or(original));
+    }
     if let Some(solved) = &solved {
-        inventory::validate_solution(&session.trusted, &session.request, solved)?;
+        inventory::validate_solution(&session.trusted, &session.request, solved, &unbound)?;
     }
     session.plan = presentation(
         &session.trusted,

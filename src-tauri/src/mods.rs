@@ -16,7 +16,9 @@ pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use binding::{installed_prerelease, rebind_installed_mods};
+pub(crate) use binding::{
+    installed_prerelease, rebind_installed_mods, repository_matches_identity,
+};
 pub(crate) use file_state::{canonical_dll_name, disabled_dll_file};
 pub(crate) use identity::{
     PluginIdentity, compare_mod_versions, is_safe_replacement_mod, note_key, same_plugin_identity,

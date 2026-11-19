@@ -67,7 +67,12 @@ pub(super) fn commit(state: &AppState, session: &mut PlanSession) -> Result<(), 
     }
     preparation::verify_fingerprints(&session.payload_fingerprints)?;
     let solved = session.solved.as_ref().ok_or("modChanges.notPrepared")?;
-    inventory::validate_solution(&session.trusted, &session.request, solved)?;
+    inventory::validate_solution(
+        &session.trusted,
+        &session.request,
+        solved,
+        &session.unbound_toggle_roots(),
+    )?;
     let changes = session.mutations.take().ok_or("modChanges.notPrepared")?;
     // Consuming frozen mutations consumes approval, including prepare failures.
     session.plan.prepared = false;

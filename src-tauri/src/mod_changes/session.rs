@@ -1,7 +1,11 @@
 //! Backend-owned plan IDs bind approval to one inventory and prepared payload set.
 use super::{install_notes::InstallNote, inventory::*, model::*, transaction::Fingerprint};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    path::PathBuf,
+    sync::Arc,
+};
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub(crate) struct PlanRequest {
@@ -9,6 +13,8 @@ pub(crate) struct PlanRequest {
     pub roots: Vec<RootRequest>,
     pub map_import: Option<MapImport>,
     pub toggle_scope: Option<ToggleScope>,
+    #[serde(default)]
+    pub bulk_toggle: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -74,6 +80,35 @@ pub(crate) struct PlanSession {
     /// Frozen under preparation; execute must not recapture changed live targets.
     pub mutations: Option<Vec<super::transaction::Mutation>>,
     pub created: std::time::Instant,
+}
+
+impl PlanSession {
+    /// Only the requested installed switches can omit their own declarations.
+    /// Roots from a repair or an explicit release request keep full validation.
+    pub(super) fn unbound_toggle_roots(&self) -> BTreeSet<&str> {
+        let wire = &self.wire_request;
+        if (wire.toggle_scope.is_none() && !wire.bulk_toggle)
+            || wire.map_import.is_some()
+            || wire.roots.iter().any(|root| root.asset_name.is_some())
+            || self
+                .request
+                .roots
+                .iter()
+                .any(|root| root.candidate_id.is_some())
+        {
+            return BTreeSet::new();
+        }
+        self.request
+            .roots
+            .iter()
+            .filter_map(|root| {
+                self.trusted
+                    .toggle_unbound_nodes
+                    .contains(&root.node_id)
+                    .then_some(root.node_id.as_str())
+            })
+            .collect()
+    }
 }
 
 #[derive(Default)]

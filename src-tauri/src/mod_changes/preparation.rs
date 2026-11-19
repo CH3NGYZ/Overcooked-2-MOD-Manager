@@ -251,7 +251,12 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
     ensure_fresh(state, &session.trusted.revision)?;
     verify_fingerprints(&session.payload_fingerprints)?;
     if let Some(solved) = &session.solved {
-        inventory::validate_solution(&session.trusted, &session.request, solved)?;
+        inventory::validate_solution(
+            &session.trusted,
+            &session.request,
+            solved,
+            &session.unbound_toggle_roots(),
+        )?;
     }
     let mut mutations = super::mutations::build(state, session)?;
     if session.map_payload.is_some() {

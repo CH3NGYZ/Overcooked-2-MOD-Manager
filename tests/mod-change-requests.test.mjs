@@ -18,14 +18,16 @@ function fixture(nodes, duringRefresh=()=>{}) {
  return calls
 }
 test('single member toggles use fresh backend inventory and stable member keys',async()=>{
- const calls=fixture([node('package:actual',{dll_files:['a.dll','b.dll'],members:[{key:'stable-a',dll_file:'a.dll',enabled:true}]})])
- await requestToggleChanges({dllFiles:['a.dll'],enabled:false})
- assert.deepEqual(calls,['refresh',{roots:[{node_id:'package:actual',member_key:'stable-a',enabled:false}],toggle_scope:clickScope}])
+ for(const enabled of [false, true]) {
+  const calls=fixture([node('package:actual',{dll_files:['a.dll','b.dll'],members:[{key:'stable-a',dll_file:'a.dll',enabled:!enabled}]})])
+  await requestToggleChanges({dllFiles:['a.dll'],enabled})
+  assert.deepEqual(calls,['refresh',{roots:[{node_id:'package:actual',member_key:'stable-a',enabled}],toggle_scope:clickScope}])
+ }
 })
 test('whole package toggles deduplicate DLL selections without member keys',async()=>{
  const calls=fixture([node('package:actual',{dll_files:['a.dll','b.dll']})])
  await requestToggleChanges({dllFiles:['a.dll','b.dll'],wholeNodes:true,enabled:true})
- assert.deepEqual(calls[1],{roots:[{node_id:'package:actual',enabled:true}]})
+ assert.deepEqual(calls[1],{roots:[{node_id:'package:actual',enabled:true}],bulk_toggle:true})
 })
 for(const nodes of [[],[node('one'),node('two')],[node('one',{dll_files:['a.dll','b.dll']})]])test(`missing, ambiguous or missing-member inventory cannot create a plan: ${nodes.length}`,async()=>{
  const calls=fixture(nodes);await assert.rejects(()=>requestToggleChanges({dllFiles:['a.dll'],enabled:false}),/modChanges.targetChanged/);assert.deepEqual(calls,['refresh'])
@@ -53,6 +55,6 @@ test('a missing local scan or a failed evaluation cannot start a switch plan',as
 for(const kind of ['mod','map'])test(`bulk ${kind} includes all physical installed nodes and excludes display/remote subjects`,async()=>{
  const physical=node('physical',{kind,dll_files:kind==='mod'?['a.dll']:[],map_dir_name:kind==='map'?'Map-A':undefined})
  const calls=fixture([physical,node('other',{kind:kind==='mod'?'map':'mod'}),node('remote',{kind,dll_files:[]}),{...physical,node_id:'subject:version',subject_tag:'v2'}])
- await requestAllToggleChanges(kind,false);assert.deepEqual(calls[1],{roots:[{node_id:'physical',enabled:false}]})
+ await requestAllToggleChanges(kind,false);assert.deepEqual(calls[1],{roots:[{node_id:'physical',enabled:false}],bulk_toggle:true})
 })
 test('empty physical inventory makes no bulk request',async()=>{const calls=fixture([]);assert.equal(await requestAllToggleChanges('mod',true),null);assert.deepEqual(calls,['refresh'])})

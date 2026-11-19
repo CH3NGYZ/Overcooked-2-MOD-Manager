@@ -159,6 +159,7 @@ fn ready_session(test: &DisableFixture) -> PlanSession {
         &session.trusted,
         &session.request,
         session.solved.as_ref().unwrap(),
+        &session.unbound_toggle_roots(),
     )
     .unwrap();
     preparation::finish(&f.state, &mut session).unwrap();

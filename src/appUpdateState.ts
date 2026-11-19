@@ -1,11 +1,11 @@
 import { readonly, shallowReactive } from 'vue'
-import type { AppUpdateCheckResult, AppUpdateInfo } from './types.ts'
+import type { AppDistribution, AppUpdateCheckResult, AppUpdateInfo } from './types.ts'
 
 type UpdateStage = 'idle' | 'required' | 'installing' | 'handoff' | 'manual'
 
 // 启动与手动检查共用一个门；路由卸载不能让已知新版被跳过。
 const state = shallowReactive<{
-  distribution: AppUpdateCheckResult['distribution'] | null
+  distribution: AppDistribution | null
   update: AppUpdateInfo | null
   stage: UpdateStage
   error: string
@@ -13,9 +13,13 @@ const state = shallowReactive<{
 
 export const appUpdateState = readonly(state)
 
+export function setAppDistribution(distribution: AppDistribution): void {
+  state.distribution = distribution
+}
+
 // 发行渠道由运行中的包身份决定；商店检查不能触发独立安装器的强制更新门。
 export function applyAppUpdateCheck(result: AppUpdateCheckResult): void {
-  state.distribution = result.distribution ?? 'standalone'
+  setAppDistribution(result.distribution ?? state.distribution ?? 'standalone')
   if (state.distribution === 'microsoft_store' || result.all_failed) return
   if (result.update) requireAppUpdate(result.update)
 }

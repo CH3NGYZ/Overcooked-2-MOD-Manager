@@ -13,7 +13,8 @@ test('commands root only declares domains; registered IPC points at the real imp
   const handler = read('lib.rs').match(/generate_handler!\s*\[([\s\S]*?)\]/)?.[1]
   assert.ok(handler)
   const paths = [...handler.matchAll(/\bcommands::([a-z_]+)::([a-z_]+)\b/g)]
-  assert.equal(paths.length, 132, '既有 IPC、五个链式变更命令与数据迁移命令，集合不得丢失')
+  assert.equal(paths.length, 133, '既有 IPC 加入渠道识别命令，集合不得丢失')
+  assert.ok(paths.some(([, domain, name]) => domain === 'update' && name === 'get_app_distribution'))
   for (const name of ['evaluate_mod_changes', 'plan_mod_changes', 'prepare_mod_changes', 'execute_mod_changes', 'cancel_mod_changes']) assert.ok(paths.some(([, domain, actual]) => domain === 'mod_changes' && actual === name))
   for (const name of ['get_manager_data_directory', 'clear_all_config', 'migrate_manager_data']) assert.ok(paths.some(([, domain, actual]) => domain === 'manager_data' && actual === name))
   for (const name of ['open_diychef_editor', 'migrate_diychef_resources', 'initialize_diychef_config', 'validate_diychef_draft', 'save_diychef_config', 'delete_diychef_resource']) assert.ok(paths.some(([, domain, actual]) => domain === 'diychef_editor' && actual === name))

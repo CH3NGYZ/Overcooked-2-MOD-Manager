@@ -72,9 +72,11 @@ function mounted(t) {
 
 test('startup Store identity is visible before manual checking and opens Store without a new check', async t => {
   const view = mounted(t)
-  shared.applyAppUpdateCheck(result({ distribution: 'microsoft_store' }))
+  assert.equal(view.distributionLabel, '', 'do not show the wrong channel while native identity is pending')
+  shared.setAppDistribution('microsoft_store')
   await nextTick()
   assert.equal(view.storeManaged, true)
+  assert.equal(view.distributionLabel, 'Microsoft Store')
   await view.checkUpdate()
   assert.deepEqual(boundary.calls, [['open']])
   assert.deepEqual(boundary.notices, [])
@@ -109,6 +111,8 @@ test('Store launch errors translate normally; duplicate clicks share checking ga
 
 test('ordinary checks preserve current, update and all-channel failure behavior', async t => {
   const view = mounted(t)
+  shared.setAppDistribution('standalone')
+  assert.equal(view.distributionLabel, 'update.standaloneChannel')
   await view.checkUpdate()
   assert.deepEqual(boundary.notices, [['success', 'dialogs.youAreUpToDate']])
   assert.equal(view.storeManaged, false)
@@ -122,10 +126,13 @@ test('ordinary checks preserve current, update and all-channel failure behavior'
   assert.equal(boundary.calls.filter(([kind]) => kind === 'open').length, 0)
 })
 
-test('Store UI uses the same settings row and replaces the independent check control', () => {
+test('About shows the channel to the left of the version and one check control for both channels', () => {
   const source = readFileSync(new URL('../src/views/SettingsView.vue', import.meta.url), 'utf8')
   assert.deepEqual(parse(source).errors, [])
   assert.match(source, /<SettingsRow v-if="storeManaged" title="Microsoft Store" :description="t\('update\.storeManaged'\)"/)
-  assert.match(source, /t\('update\.openStore'\)/)
-  assert.match(source, /<n-button v-if="!storeManaged"[^>]+@click\.stop="checkUpdate"/)
+  const about = source.match(/<SettingsRow[^>]+data-testid="app-about"[^]*?<\/SettingsRow>/)?.[0]
+  assert.ok(about)
+  assert.match(about, /data-testid="app-distribution"[^]*?data-testid="app-version"[^]*?data-testid="app-check-update"/)
+  assert.match(about, /<n-button(?![^>]*\bv-if=)[^>]+@click\.stop="checkUpdate"/)
+  assert.equal([...source.matchAll(/@click\.stop="checkUpdate"/g)].length, 1)
 })

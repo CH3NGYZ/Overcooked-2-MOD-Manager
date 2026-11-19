@@ -62,7 +62,7 @@ test('startup and settings use one App-level prompt; route and drop cannot dismi
   const app = source('src/App.vue')
   const settings = source('src/views/SettingsView.vue')
   assert.match(app, /applyAppUpdateCheck\(result\)/)
-  assert.match(settings, /applyAppUpdateCheck\(updateResult.value\)/)
+  assert.match(settings, /const result = await api\.checkAppUpdate\([^)]*\)\s*applyAppUpdateCheck\(result\)/)
   assert.equal((app.match(/<UpdatePrompt\b/g) ?? []).length, 1)
   assert.doesNotMatch(settings, /<UpdatePrompt|showUpdate|updateInfo/)
   assert.match(app, /:inert="appUpdateState.stage !== 'idle'"/)

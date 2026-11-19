@@ -15,12 +15,12 @@ export const update: DomainMessages = {
     ko: '업데이트는 Microsoft Store에서 관리합니다. 스토어에서 자동 업데이트를 켤 수 있습니다.',
     ja: '更新は Microsoft Store で管理されます。ストアで自動更新を有効にできます。',
   },
-  openStore: {
-    'zh-CN': '打开 Microsoft Store',
-    'zh-TW': '開啟 Microsoft Store',
-    en: 'Open Microsoft Store',
-    ko: 'Microsoft Store 열기',
-    ja: 'Microsoft Store を開く',
+  standaloneChannel: {
+    'zh-CN': '普通渠道',
+    'zh-TW': '一般管道',
+    en: 'Standalone',
+    ko: '일반 배포',
+    ja: '通常版',
   },
   microsoftStoreOnly: {
     'zh-CN': '此版本由 Microsoft Store 管理，请在商店更新管理器。',

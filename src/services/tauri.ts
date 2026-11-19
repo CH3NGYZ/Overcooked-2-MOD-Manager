@@ -10,6 +10,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { locale } from '../i18n'
 import type {
   StartupProbe,
+  AppDistribution,
   AppUpdateChannelEvent,
   AppUpdateCheckResult,
   AppUpdatePhaseEvent,
@@ -383,6 +384,7 @@ export const api = {
    */
   refreshCommunityRepositories: (provider: Provider) =>
     invoke<PublicConfig>('refresh_community_repositories', { provider }),
+  getAppDistribution: () => invoke<AppDistribution>('get_app_distribution'),
   /**
    * 查一次新版本。
    *

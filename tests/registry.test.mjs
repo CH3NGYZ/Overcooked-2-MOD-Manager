@@ -33,7 +33,7 @@ test('v2 调用面覆盖核心命令', () => {
     'install_bepinex', 'uninstall_bepinex', 'backup_bepinex', 'restore_bepinex', 'switch_winhttp',
     'uninstall_local_mod', 'refresh_mod_repository',
     'evaluate_mod_changes', 'plan_mod_changes', 'prepare_mod_changes', 'execute_mod_changes', 'cancel_mod_changes',
-    'check_app_update', 'install_app_update', 'save_settings', 'clear_diychef_cache']) {
+    'get_app_distribution', 'check_app_update', 'install_app_update', 'save_settings', 'clear_diychef_cache']) {
     assert.ok(invoked.has(required), `services/tauri.ts 缺少 ${required}`)
   }
 })

@@ -22,6 +22,11 @@ use tauri::State;
 use url::Url;
 
 #[tauri::command]
+pub fn get_app_distribution() -> Result<AppDistribution, String> {
+    distribution::current()
+}
+
+#[tauri::command]
 pub fn open_update_repository(state: State<'_, AppState>) -> Result<OperationResult, String> {
     if distribution::current()? == AppDistribution::MicrosoftStore {
         shell_open::open_url(distribution::STORE_UPDATES_URI)?;

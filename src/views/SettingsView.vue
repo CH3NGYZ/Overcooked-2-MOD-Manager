@@ -20,7 +20,7 @@ import { useNotify } from '../useNotify'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useDataProviderSwitch, type DataSelectionPatch } from '../composables/useDataProviderSwitch'
 import { displayPath } from '../gameRuntime'
-import type { AppUpdateCheckResult, DataProvider, GameRuntime, PermissionStatus, PublicConfig, UserRegion } from '../types'
+import type { DataProvider, GameRuntime, PermissionStatus, PublicConfig, UserRegion } from '../types'
 import { normalizeRepositoryRegion } from '../repositoryAvailability'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { demoActive, withDemoConfig, withDemoDiyLevelTarget, withDemoGame, withDemoMods } from '../tutorial/demo'
@@ -51,8 +51,11 @@ const githubToken = ref('')
 const giteeToken = ref('')
 const gitcodeToken = ref('')
 const savingTokens = ref(false)
-const updateResult = ref<AppUpdateCheckResult | null>(null)
 const storeManaged = computed(() => appUpdateState.distribution === 'microsoft_store')
+const distributionLabel = computed(() => {
+  if (storeManaged.value) return 'Microsoft Store'
+  return appUpdateState.distribution === 'standalone' ? t('update.standaloneChannel') : ''
+})
 
 /* ===== 游戏版本（macOS：CrossOver / 原生） ===== */
 
@@ -262,19 +265,16 @@ async function checkUpdate() {
   if (checking.value) return
   checking.value = true
   try {
-    if (storeManaged.value) {
-      await api.openUpdateRepository()
-      return
+    if (!storeManaged.value) {
+      const result = await api.checkAppUpdate('zh-CN', true)
+      applyAppUpdateCheck(result)
+      if (!storeManaged.value) {
+        if (result.all_failed) openReleaseFallback()
+        else if (!result.update) message.success(t('dialogs.youAreUpToDate'))
+        return
+      }
     }
-    updateResult.value = await api.checkAppUpdate('zh-CN', true)
-    applyAppUpdateCheck(updateResult.value)
-    if (storeManaged.value) {
-      await api.openUpdateRepository()
-    } else if (updateResult.value.all_failed) {
-      openReleaseFallback()
-    } else if (!updateResult.value.update) {
-      message.success(t('dialogs.youAreUpToDate'))
-    }
+    await api.openUpdateRepository()
   } catch (reason) { fail(reason) } finally { checking.value = false }
 }
 
@@ -515,21 +515,10 @@ async function clearTokens() {
     </n-drawer-content>
   </n-drawer>
 
-  <!--
-    程序更新：商店版展示商店管理说明；独立版启动检查恒开，没有开关。
-    保留成一条只读说明，既解释启动时会做什么，也是教程 `settings-update`
-    步骤的高亮锚点。手动检测不在这里 —— 它和版本号是同一件事，放在最下方
-    「关于」的版本号旁边，那里用户才看得到「我现在是什么版本」。
-  -->
+  <!-- 只读更新说明也是教程 `settings-update` 的锚点；操作入口统一放在「关于」。 -->
   <SettingsGroup :title="t('settings.appUpdate')" data-tutorial="settings-update">
     <SettingsRow v-if="storeManaged" title="Microsoft Store" :description="t('update.storeManaged')"
-      class="store-update-row" data-testid="store-update">
-      <template #right>
-        <n-button size="small" secondary :loading="checking" @click.stop="checkUpdate">
-          {{ t('update.openStore') }}
-        </n-button>
-      </template>
-    </SettingsRow>
+      class="store-update-row" data-testid="store-update" />
     <SettingsRow v-else :title="t('overview.checkForUpdatesOnStartup')"
       :description="t('overview.checkForUpdatesOnStartupHint')">
       <template #right>
@@ -677,14 +666,12 @@ async function clearTokens() {
   </SettingsGroup>
 
   <SettingsGroup :title="t('overview.about')">
-    <SettingsRow :icon="InformationCircleOutline" :title="t('nav.oc2ModManager')" :description="t('overview.about') + ' · Tauri 2 / Vue 3 / Naive UI / Rust'">
+    <SettingsRow :icon="InformationCircleOutline" :title="t('nav.oc2ModManager')" data-testid="app-about"
+      :description="t('overview.about') + ' · Tauri 2 / Vue 3 / Naive UI / Rust'">
       <template #right>
-        <n-tag size="small" :bordered="false">v{{ version || '…' }}</n-tag>
-        <!--
-          手动检测更新放在版本号右边：用户想知道「我是不是最新」时才看版本，
-          这两个动作是同一个意图。按钮只负责检测，安装走检测出的更新弹窗。
-        -->
-        <n-button v-if="!storeManaged" size="small" :secondary="!checking" :loading="checking" @click.stop="checkUpdate">
+        <n-tag v-if="distributionLabel" size="small" :bordered="false" data-testid="app-distribution">{{ distributionLabel }}</n-tag>
+        <n-tag size="small" :bordered="false" data-testid="app-version">v{{ version || '…' }}</n-tag>
+        <n-button size="small" :secondary="!checking" :loading="checking" data-testid="app-check-update" @click.stop="checkUpdate">
           <template #icon><DownloadOutline width="14" height="14" /></template>
           {{ t('overview.check') }}
         </n-button>

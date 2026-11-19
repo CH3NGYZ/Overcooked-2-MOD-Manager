@@ -373,6 +373,7 @@ pub fn run() {
             commands::mod_settings::save_bepinex_config,
             commands::paths::open_backup_directory,
             commands::update::open_release_page,
+            commands::update::get_app_distribution,
             commands::update::open_update_repository,
             commands::system::exit_app,
             commands::system::open_devtools,

@@ -6,6 +6,14 @@ const source = path => readFileSync(new URL(`../src-tauri/src/${path}`, import.m
 const commands = source('commands/update.rs')
 const distribution = source('app_update/distribution.rs')
 
+test('About reads the same native package identity at startup without waiting for the update check', () => {
+  assert.match(commands, /#\[tauri::command\]\s*pub fn get_app_distribution\(\) -> Result<AppDistribution, String> \{\s*distribution::current\(\)\s*\}/)
+  const app = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
+  const mount = app.slice(app.indexOf('onMounted(() => {'))
+  const identity = mount.indexOf('api.getAppDistribution().then(setAppDistribution)')
+  assert.ok(identity >= 0 && identity < mount.indexOf('await api.checkAppUpdate('))
+})
+
 test('Store checks and installs stop before standalone cache, network or update locks', () => {
   const check = commands.slice(commands.indexOf('pub async fn check_app_update('), commands.indexOf('fn failed_app_update_check('))
   assert.match(check, /distribution::current\(\)\? == AppDistribution::MicrosoftStore[^]*?return Ok\(distribution::store_check\(region.as_str\(\)\)\);/)

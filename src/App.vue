@@ -25,7 +25,7 @@ import { pageTitleOverride, resetPageHeader } from './pageHeader'
 import { api, watchDataProvider } from './services/tauri'
 import { isTauri } from './runtime'
 import type { PublicConfig } from './types'
-import { appUpdateState, applyAppUpdateCheck } from './appUpdateState'
+import { appUpdateState, applyAppUpdateCheck, setAppDistribution } from './appUpdateState'
 import { naiveTheme, themeOverrides } from './theme'
 import { naiveDateLocale, naiveLocale, t } from './i18n'
 import { setTutorialProgressSink, onTutorialSettled, startTutorialIfFirstRun } from './tutorial/engine'
@@ -151,6 +151,8 @@ onMounted(() => {
     return
   }
   getVersion().then((value) => { version.value = value }).catch(() => undefined)
+  // 渠道标签不必等待配置或独立版的网络检查。
+  void api.getAppDistribution().then(setAppDistribution).catch(() => undefined)
   void (async () => {
     /*
      * 配置读取只服务教程进度（只播没看过的步骤）。

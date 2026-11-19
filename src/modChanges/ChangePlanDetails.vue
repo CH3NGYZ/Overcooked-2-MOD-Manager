@@ -3,9 +3,10 @@ import { computed, type DeepReadonly } from 'vue'
 import { CheckmarkOutline, CloseOutline } from '@vicons/ionicons5'
 import { NSpin, NTag } from 'naive-ui'
 import { locale, t } from '../i18n'
+import { formatVersionSpec } from '../versionSpec'
 import { changeReasonText } from './messages'
 import { changePlanDetails } from './presentation'
-import type { ChangeExecutionStage, ChangePlan, ChangePreparationProgress } from './types'
+import type { ChangeExecutionStage, ChangePlan, ChangePreparationProgress, DiagnosticStep } from './types'
 
 const { plan, progress, execution } = defineProps<{
   plan: DeepReadonly<ChangePlan>
@@ -17,6 +18,7 @@ const details = computed(() => changePlanDetails(plan, progress))
 const listFormat = computed(() => new Intl.ListFormat(locale.value, { style: 'short', type: 'conjunction' }))
 type Row = ReturnType<typeof changePlanDetails>['rows'][number]
 type Reason = NonNullable<Row['reasons']>[number]
+type Edge = NonNullable<NonNullable<Row['diagnostic']>['edge']>
 const stageLabels = {
   applying: 'modChanges.apply.applying', processed: 'modChanges.apply.processed',
   applied: 'modChanges.apply.applied', failed: 'modChanges.apply.failed',
@@ -24,22 +26,56 @@ const stageLabels = {
 } as const
 
 const rows = computed(() => details.value.rows.map(row => {
+  const terminal = row.diagnostic?.terminal
+  if (terminal) {
+    const reason = diagnosticReason(terminal)
+    return { ...row, terminalReason: reason, status: { stage: 'blocked', label: t('modChanges.diagnostic.blocked', { reason }), error: true, busy: false } }
+  }
   const applied = row.statusKey ? execution.get(row.statusKey) : undefined
   const prepared = row.preparationStage
   const stage = applied ?? (prepared === 'failed' ? 'preparationFailed' : prepared === 'downloading' || prepared === 'verifying' ? prepared : undefined)
-  return { ...row, status: stage ? { stage, label: t(stageLabels[stage]),
+  return { ...row, terminalReason: undefined, status: stage ? { stage, label: t(stageLabels[stage]),
+    error: stage === 'failed' || stage === 'preparationFailed',
     busy: stage === 'applying' || stage === 'downloading' || stage === 'verifying' } : undefined }
 }))
+
+function diagnosticReason({ state, reason, relation }: DeepReadonly<DiagnosticStep>) {
+  if (reason === 'candidate_relations_unknown') return changeReasonText(reason)
+  if (reason === 'duplicate_enabled_providers') return t('modChanges.diagnostic.duplicateProviders')
+  switch (state) {
+    case 'missing': return t('modsOnline.missingDependency')
+    case 'disabled': return t('modChanges.relation.disabled')
+    case 'version_mismatch': return t('modChanges.relation.versionMismatch')
+    case 'conflict': return t(relation?.kind === 'compatible' ? 'modsOnline.incompatible' : 'modsOnline.conflict')
+    default: return t('modChanges.relation.unknown')
+  }
+}
+
+function diagnosticRelation({ step, ownerLabel }: Edge) {
+  const label = ownerLabel || t('modChanges.unnamedItem')
+  const names = step.owner_version ? `${label} (${step.owner_version})` : label
+  const kind = step.relation?.kind
+  return t(kind === 'conflicts' ? 'modChanges.cause.conflicts_with' : kind === 'compatible'
+    ? 'modChanges.diagnostic.compatibleWith' : 'modChanges.cause.required_by', { names })
+}
 
 function describeReason(reason: Reason) {
   return t(`modChanges.cause.${reason.kind}`, { names: listFormat.value.format(reason.related) })
 }
 
-function describeCondition(reason: Reason) {
+function conditionParts(requirement: string | null | undefined, prerelease: boolean | null | undefined, conflict: boolean) {
   const parts: string[] = []
-  if (reason.requirement) parts.push(t(reason.kind === 'conflicts_with' ? 'modChanges.cause.conflictRange' : 'modChanges.cause.requiredRange', { range: reason.requirement }))
-  if (reason.prerelease != null) parts.push(t(reason.prerelease ? 'modChanges.cause.prereleaseOnly' : 'modChanges.cause.stableOnly'))
-  const rule = parts.join(' · ')
+  if (requirement) parts.push(t(conflict ? 'modChanges.cause.conflictRange' : 'modChanges.cause.requiredRange', { range: requirement }))
+  if (prerelease != null) parts.push(t(prerelease ? 'modChanges.cause.prereleaseOnly' : 'modChanges.cause.stableOnly'))
+  return parts.join(' · ')
+}
+
+function diagnosticCondition({ step: { relation } }: Edge) {
+  return conditionParts(formatVersionSpec(relation?.version), relation?.prerelease, relation?.kind === 'conflicts')
+}
+
+function describeCondition(reason: Reason) {
+  const rule = conditionParts(reason.requirement, reason.prerelease, reason.kind === 'conflicts_with')
   if (!rule || (reason.kind !== 'conflicts_with' && reason.kind !== 'incompatible_with')) return rule
   const subject = reason.conditionOnRelated ? listFormat.value.format(reason.related) : t('modChanges.cause.thisItem')
   return t('modChanges.cause.condition', { subject, rule })
@@ -58,7 +94,8 @@ function describeCondition(reason: Reason) {
       </tr>
     </thead>
     <tbody>
-      <tr v-for="row in rows" :key="row.key" :class="{ 'is-child': row.bundled || row.retired }"
+      <tr v-for="row in rows" :key="row.key" :class="{ 'is-child': row.bundled || row.retired, 'diagnostic-start': row.diagnostic?.path }"
+        :data-diagnostic-path="row.diagnostic?.path"
         :data-change-node="row.bundled || row.retired ? undefined : row.nodeId"
         :data-change-parent="row.bundled || row.retired ? row.nodeId : undefined" :data-change-retired="row.retired">
         <td class="details-operation">
@@ -68,7 +105,7 @@ function describeCondition(reason: Reason) {
           <span v-if="row.status" class="row-status-icon" role="img" :aria-label="row.status.label"
             :title="row.status.label" :data-change-stage="row.status.stage">
             <NSpin v-if="row.status.busy" :size="16" aria-hidden="true" />
-            <CloseOutline v-else-if="row.status.stage === 'failed' || row.status.stage === 'preparationFailed'" width="16" height="16" aria-hidden="true" />
+            <CloseOutline v-else-if="row.status.error" width="16" height="16" aria-hidden="true" />
             <CheckmarkOutline v-else width="16" height="16" aria-hidden="true" />
           </span>
         </td>
@@ -77,9 +114,23 @@ function describeCondition(reason: Reason) {
           <strong v-else-if="!row.bundled">{{ row.label || t('modChanges.unnamedItem') }}</strong>
           <span v-if="row.memberOnly || row.bundled" class="details-member" :title="row.member?.path">{{ row.member?.name || t('modChanges.unnamedPlugin') }}</span>
         </th>
-        <td class="details-version">{{ row.version ? `${row.version.from ? `${row.version.from} → ` : ''}${row.version.to || '—'}` : '' }}</td>
+        <td class="details-version">{{ row.version ? `${row.version.from ? `${row.version.from} → ` : ''}${row.version.to || '—'}` : row.diagnostic?.edge && !row.diagnostic.providers?.length ? '—' : '' }}</td>
         <td class="details-reason">
-          <ul v-if="row.reasons?.length" class="reason-list">
+          <template v-if="row.diagnostic">
+            <strong v-if="row.diagnostic.path">{{ t('modChanges.diagnostic.path', { number: row.diagnostic.path }) }}<template v-if="row.selected"> · {{ t('modChanges.detailsSelection') }}</template></strong>
+            <template v-if="row.diagnostic.edge">
+              {{ diagnosticRelation(row.diagnostic.edge) }}
+              <span v-if="diagnosticCondition(row.diagnostic.edge)" class="reason-condition"> · {{ diagnosticCondition(row.diagnostic.edge) }}</span>
+            </template>
+            <ul v-if="row.diagnostic.providers && row.diagnostic.providers.length > 1" class="reason-list details-secondary">
+              <li v-for="(provider, index) in row.diagnostic.providers" :key="index">
+                {{ provider.label }} · {{ provider.version || '—' }}<template v-if="!provider.enabled"> · {{ t('common.state.disabled') }}</template>
+              </li>
+            </ul>
+            <span v-else-if="row.diagnostic.providers?.[0]?.enabled === false && row.diagnostic.terminal?.state !== 'disabled'" class="details-secondary">{{ t('common.state.disabled') }}</span>
+            <strong v-if="row.terminalReason" class="diagnostic-blocked">{{ row.terminalReason }}</strong>
+          </template>
+          <ul v-else-if="row.reasons?.length" class="reason-list">
             <li v-for="reason in row.reasons" :key="reason.key">
               {{ describeReason(reason) }}
               <span v-if="reason.requirement || reason.prerelease != null" class="reason-condition"> · {{ describeCondition(reason) }}</span>
@@ -116,7 +167,12 @@ function describeCondition(reason: Reason) {
 .details-table .is-child .details-item { padding-inline-start: 24px; }
 .is-child .details-item, .is-child .details-reason { color: var(--oc2-text-2); }
 .row-status-icon { display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; min-height: 16px; color: var(--oc2-accent); }
-.row-status-icon:is([data-change-stage='failed'], [data-change-stage='preparationFailed']) { color: var(--oc2-danger, #e5484d); }
+.row-status-icon:is([data-change-stage='failed'], [data-change-stage='preparationFailed'], [data-change-stage='blocked']), .diagnostic-blocked { color: var(--oc2-danger, #e5484d); }
+.diagnostic-blocked { display: block; margin-top: 3px; }
+.diagnostic-start th, .diagnostic-start td { background: var(--oc2-sunken); }
+.details-table:has(.diagnostic-start) :is(th, td) { padding-block: 5px; }
+.details-table:has(.diagnostic-start) .details-version { width: 12%; }
+.details-table:has(.diagnostic-start) .details-reason { width: 44%; }
 .details-secondary, .reason-condition { color: var(--oc2-text-2); }
 .details-secondary { display: block; font-size: 12px; }
 .reason-list { list-style: none; padding: 0; margin: 0; }

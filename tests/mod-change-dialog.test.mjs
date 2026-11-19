@@ -13,7 +13,7 @@ test('shared confirmation delegates the single action table and only connects tr
  assert.equal(existsSync(new URL('../src/modChanges/ChangePlanItem.vue',import.meta.url)),false)
  assert.doesNotMatch(dialog,/ChangePlanItem|changePlanRows/)
  assert.doesNotMatch(details,/plan\.impacts/)
- assert.match(dialog,/in plan\.blockers/);assert.match(dialog,/blocker\.owner_id/)
+ assert.match(dialog,/in diagnostics\.notes/);assert.match(dialog,/blocker\.owner_id/)
  assert.doesNotMatch(dialog,/api\.(?:install|toggle|uninstall)|execute\(action|done\.value|failures\.value/)
 })
 test('blocked and busy plans cannot confirm; failure can only replan; preparation and execution cannot cancel',()=>{

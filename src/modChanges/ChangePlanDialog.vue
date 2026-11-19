@@ -24,10 +24,17 @@ const completion = computed(() => preparationCompletion(preparation.value))
 const waiting = computed(() => ['planning', 'preparing', 'executing'].includes(state.value?.phase ?? ''))
 const canCancel = computed(() => !['preparing', 'executing'].includes(state.value?.phase ?? ''))
 const labels = computed(() => new Map(plan.value?.nodes.map(node => [node.node_id, node.label]) ?? []))
+const diagnostics = computed(() => {
+  const blockers = plan.value?.blockers ?? []
+  const notes = blockers.filter(blocker => plan.value?.status === 'ready' || !blocker.traces?.some(path => path.length))
+  return { notes, hasPaths: notes.length !== blockers.length, truncated: blockers.some(blocker => blocker.traces_truncated) }
+})
 const error = computed(() => state.value?.error ? backendMessageOf(state.value.error) : '')
-const phase = computed(() => state.value?.phase === 'preparing' && preparation.value
-  ? t(`modChanges.preparation.${preparation.value.stage}`)
-  : t(`modChanges.phase.${state.value?.phase ?? 'planning'}`))
+const phase = computed(() => {
+  if (state.value?.phase === 'preparing' && preparation.value) return t(`modChanges.preparation.${preparation.value.stage}`)
+  if (plan.value && plan.value.status !== 'ready') return t('modChanges.phase.failed')
+  return t(`modChanges.phase.${state.value?.phase ?? 'planning'}`)
+})
 const downloadAbove = computed(() => state.value?.phase === 'preparing' && appUpdateState.stage === 'idle'
   && !!activeDownloadProgress.value)
 const showDownloadFallback = computed(() => appUpdateState.stage === 'idle' && !downloadAbove.value
@@ -70,15 +77,17 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
       </div>
     </template>
     <div class="change-plan" data-mod-changes-plan>
-      <NAlert v-if="state?.phase === 'reconfirming'" type="warning" :bordered="false">
+      <NAlert v-if="state?.phase === 'reconfirming' && plan?.status === 'ready'" type="warning" :bordered="false">
         {{ t('modChanges.changed') }}
       </NAlert>
       <NAlert v-if="plan && plan.status !== 'ready'" type="error" :bordered="false">
         {{ t(plan.status === 'incomplete' ? 'modChanges.incomplete' : 'modChanges.unsatisfiable') }}
+        <p v-if="diagnostics.hasPaths" class="diagnostic-note">{{ t('modChanges.diagnostic.note') }}</p>
+        <p v-if="diagnostics.truncated" class="diagnostic-note">{{ t('modChanges.diagnostic.truncated') }}</p>
       </NAlert>
       <NAlert v-if="error" type="error" :bordered="false">{{ error }}</NAlert>
-      <ul v-if="plan?.blockers.length" class="plan-notes">
-        <li v-for="(blocker, index) in plan.blockers" :key="index">
+      <ul v-if="diagnostics.notes.length" class="plan-notes">
+        <li v-for="(blocker, index) in diagnostics.notes" :key="index">
           {{ changeReasonText(blocker.message || blocker.code) }}
           <span v-if="blocker.owner_id && labels.get(blocker.owner_id)"> · {{ labels.get(blocker.owner_id) }}</span>
           <span v-if="blocker.target_guid"> · {{ blocker.target_guid }}</span>
@@ -121,4 +130,5 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
 .plan-phase-spinner { flex: none; }
 .progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--oc2-text-3); margin-bottom: 8px; font-variant-numeric: tabular-nums; }
 .plan-notes { margin: 0; padding-left: 20px; overflow-wrap: anywhere; }
+.diagnostic-note { margin: 3px 0 0; font-size: 12px; overflow-wrap: anywhere; }
 </style>

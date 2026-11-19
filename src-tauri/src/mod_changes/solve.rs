@@ -40,6 +40,7 @@ struct Search<'a> {
     visited: BTreeMap<String, bool>,
     baseline: BTreeSet<String>,
     failure: Option<Diagnostic>,
+    failure_traces: diagnostics::FailureTraces,
     catalog_unknown: bool,
     fixed_members: BTreeSet<(usize, String)>,
     prefer_newest: bool,
@@ -48,6 +49,7 @@ struct Search<'a> {
     preference_pruned: bool,
 }
 
+mod diagnostics;
 mod reasons;
 mod visit;
 
@@ -293,13 +295,9 @@ impl Search<'_> {
         incomplete: bool,
         code: &str,
     ) {
-        self.failure = Some(Diagnostic {
-            code: code.into(),
-            owner_id: Some(owner.id.clone()),
-            target_guid: relation.map(|relation| relation.guid.clone()),
-            message: code.into(),
-            incomplete,
-        });
+        let mut blocker = diagnostic(code, Some(&owner.id), incomplete);
+        blocker.target_guid = relation.map(|relation| relation.guid.clone());
+        self.failure = Some(blocker);
     }
 
     fn with_candidate(
@@ -674,6 +672,8 @@ fn diagnostic(code: &str, owner: Option<&str>, incomplete: bool) -> Diagnostic {
         target_guid: None,
         message: code.into(),
         incomplete,
+        traces: Vec::new(),
+        traces_truncated: false,
     }
 }
 
@@ -872,6 +872,7 @@ fn solve_inner(
         visited: BTreeMap::new(),
         baseline,
         failure: None,
+        failure_traces: diagnostics::FailureTraces::default(),
         catalog_unknown: inventory.nodes.iter().any(|node| !node.candidates_complete),
         prefer_newest,
         pass: SearchPass::CompatibleVersions,
@@ -885,6 +886,7 @@ fn solve_inner(
                 .failure
                 .unwrap_or_else(|| diagnostic("search_exhausted", None, incomplete));
             blocker.incomplete |= incomplete;
+            search.failure_traces.attach(&mut blocker);
             return Err(blocker);
         }
     };

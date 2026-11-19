@@ -46,12 +46,23 @@ export interface NodeEvaluation {
   runtime: RelationEvaluation[]
   readiness: RelationEvaluation[]
 }
+export interface DiagnosticStep {
+  owner_id: string
+  owner_version?: string | null
+  relation?: RepositoryRelation | null
+  targets: { node_id: string; version?: string | null; enabled: boolean }[]
+  state: RelationEvaluation['state']
+  reason: string
+}
 export interface ChangeDiagnostic {
   code: string
   owner_id?: string | null
   target_guid?: string | null
   message: string
   incomplete: boolean
+  /** Each path follows one tried branch and ends at the relation that blocked it. */
+  traces?: DiagnosticStep[][]
+  traces_truncated?: boolean
 }
 /** Source text selected against the same trusted inventory as the plan. */
 export interface ChangeInstallNote {

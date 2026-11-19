@@ -1,5 +1,5 @@
 //! Depth-first search preserves local uncertainty before accepting disable fallbacks.
-use super::super::evaluate::DUPLICATE_ENABLED_PROVIDERS;
+use super::super::evaluate::{DUPLICATE_ENABLED_PROVIDERS, runtime_relations};
 use super::*;
 
 impl Search<'_> {
@@ -43,6 +43,7 @@ impl Search<'_> {
         self.preference_pruned = false;
         self.visited.clear();
         self.failure = None;
+        self.failure_traces = Default::default();
         self.visit(state)
     }
 
@@ -62,6 +63,7 @@ impl Search<'_> {
             return Err(*incomplete);
         }
         if self.visited.len() >= MAX_SEARCH_STATES {
+            self.failure_traces.mark_truncated();
             return Err(true);
         }
         if preference {
@@ -89,17 +91,27 @@ impl Search<'_> {
                     .as_ref()
                     .is_some_and(|candidate| !candidate.relations_known)
             {
+                self.failure_traces.record(
+                    &state.inventory,
+                    &evaluations,
+                    &self.roots,
+                    index,
+                    None,
+                    Some("candidate_relations_unknown"),
+                );
                 self.mark_failure(node, None, true, "candidate_relations_unknown");
                 return Err(true);
             }
         }
         let mut issues = Vec::new();
         for (index, evaluation) in evaluations.iter().enumerate() {
-            for issue in &evaluation.runtime {
+            for (owned, issue) in
+                runtime_relations(&state.inventory.nodes[index]).zip(&evaluation.runtime)
+            {
                 if issue.state.is_issue()
                     && self.relevant(&state, index, &issue.relation, &protected, &changed_guids)
                 {
-                    issues.push((index, issue.clone()));
+                    issues.push((index, owned, issue));
                 }
             }
         }
@@ -109,7 +121,7 @@ impl Search<'_> {
             return Ok(state);
         }
         let distances = self.order(&state);
-        issues.sort_by_key(|(index, issue)| {
+        issues.sort_by_key(|(index, _, issue)| {
             (
                 self.node_order(&state, &distances, *index),
                 issue.relation.guid.to_lowercase(),
@@ -118,20 +130,20 @@ impl Search<'_> {
         let next_issue = issues.first().map(|first| {
             // Resolve a known conflict that can remove the ambiguous provider,
             // then let the next visit check the requirement against the survivor.
-            if first.1.reason == DUPLICATE_ENABLED_PROVIDERS {
+            if first.2.reason == DUPLICATE_ENABLED_PROVIDERS {
                 issues
                     .iter()
-                    .find(|(_, issue)| {
+                    .find(|(_, _, issue)| {
                         issue.state == EvaluationState::Conflict
                             && issue.relation.kind == RelationKind::Conflicts
-                            && same_guid(&issue.relation.guid, &first.1.relation.guid)
+                            && same_guid(&issue.relation.guid, &first.2.relation.guid)
                     })
                     .unwrap_or(first)
             } else {
                 first
             }
         });
-        if let Some((owner, issue)) = next_issue {
+        if let Some((owner, owned, issue)) = next_issue {
             let missing_history = state.inventory.nodes.iter().any(|node| {
                 !node.candidates_complete
                     && (node
@@ -155,6 +167,14 @@ impl Search<'_> {
             let mut incomplete =
                 issue.state == EvaluationState::Unknown || missing_history || target_unknown;
             if metadata_unknown {
+                self.failure_traces.record(
+                    &state.inventory,
+                    &evaluations,
+                    &self.roots,
+                    *owner,
+                    Some((owned, issue)),
+                    Some("candidate_relations_unknown"),
+                );
                 self.mark_failure(
                     &state.inventory.nodes[*owner],
                     Some(&issue.relation),
@@ -164,6 +184,7 @@ impl Search<'_> {
                 return Err(true);
             }
             let (branches, fallback) = self.repair(&state, *owner, issue, &protected);
+            let mut tried_repair = !branches.is_empty();
             // Missing history prevents discarding an owner, but a known candidate
             // can still produce a completely verified solution in either pass.
             for branch in branches {
@@ -174,11 +195,27 @@ impl Search<'_> {
             }
             if !incomplete {
                 if let Some(fallback) = fallback {
+                    tried_repair = true;
                     match self.visit(fallback) {
                         Ok(solution) => return Ok(solution),
                         Err(unknown) => incomplete |= unknown,
                     }
                 }
+            }
+            // A parent mismatch was only the reason to try its children. Keep
+            // those children's real failures, not their pre-repair ancestor.
+            if (!tried_repair && !self.preference_pruned) || issue.state == EvaluationState::Unknown
+            {
+                self.failure_traces.record(
+                    &state.inventory,
+                    &evaluations,
+                    &self.roots,
+                    *owner,
+                    Some((owned, issue)),
+                    (issue.state == EvaluationState::Missing
+                        && (missing_history || target_unknown))
+                        .then_some("relation_metadata_unknown"),
+                );
             }
             self.mark_failure(
                 &state.inventory.nodes[*owner],

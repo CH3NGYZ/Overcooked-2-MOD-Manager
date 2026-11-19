@@ -73,6 +73,7 @@ fn action_for<'a>(result: &'a SolveResult, id: &str, kind: ActionKind) -> &'a Ch
 }
 
 mod constraints;
+mod diagnostics;
 mod evaluation;
 mod maps;
 mod members;

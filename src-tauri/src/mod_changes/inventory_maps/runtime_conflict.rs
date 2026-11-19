@@ -132,6 +132,8 @@ pub(in crate::mod_changes) fn solve_toggle(
                     target_guid: None, // The parameterized message includes the GUID.
                     message: duplicates.get(&guid)?.clone(),
                     incomplete: blocker.incomplete,
+                    traces: Vec::new(),
+                    traces_truncated: false,
                 })
             })
             .collect();

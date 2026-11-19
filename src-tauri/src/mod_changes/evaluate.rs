@@ -248,6 +248,15 @@ fn evaluate_relation(
     }
 }
 
+pub(super) fn runtime_relations(node: &ChangeNode) -> impl Iterator<Item = &OwnedRelation> {
+    node.current.iter().flat_map(move |candidate| {
+        candidate
+            .relations
+            .iter()
+            .filter(move |owned| node.enabled && relation_active(candidate, owned, false))
+    })
+}
+
 /// Authoritative batch evaluation of installed facts and hypothetical re-enablement.
 /// Disabled owners emit readiness diagnostics, never current-runtime constraints.
 pub(crate) fn evaluate(inventory: &Inventory) -> Vec<NodeEvaluation> {
@@ -255,18 +264,12 @@ pub(crate) fn evaluate(inventory: &Inventory) -> Vec<NodeEvaluation> {
         .nodes
         .iter()
         .map(|node| {
-            let mut runtime = Vec::new();
+            let runtime = runtime_relations(node)
+                .map(|owned| evaluate_relation(inventory, node, owned, RelationScope::Runtime))
+                .collect();
             let mut readiness = Vec::new();
             if let Some(candidate) = &node.current {
                 for owned in &candidate.relations {
-                    if node.enabled && relation_active(candidate, owned, false) {
-                        runtime.push(evaluate_relation(
-                            inventory,
-                            node,
-                            owned,
-                            RelationScope::Runtime,
-                        ));
-                    }
                     readiness.push(evaluate_relation(
                         inventory,
                         node,

@@ -185,6 +185,8 @@ async fn prepare_inner(
             target_guid: None,
             message: "modChanges.reason.searchLimit".into(),
             incomplete: true,
+            traces: Vec::new(),
+            traces_truncated: false,
         });
     }
     session.plan.plan_id = uuid::Uuid::new_v4().to_string();

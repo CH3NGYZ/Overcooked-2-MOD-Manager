@@ -194,6 +194,31 @@ pub struct Diagnostic {
     pub target_guid: Option<String>,
     pub message: String,
     pub incomplete: bool,
+    /// Examples from failed search states, not actions or original-inventory evaluations.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub traces: Vec<Vec<DiagnosticStep>>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub traces_truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DiagnosticStep {
+    pub owner_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relation: Option<RepositoryRelation>,
+    pub targets: Vec<DiagnosticTarget>,
+    pub state: EvaluationState,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DiagnosticTarget {
+    pub node_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

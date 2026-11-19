@@ -4,7 +4,7 @@ import { changePlanDetails, changeStatusKey, preparationCompletion } from '../sr
 
 const action = (node, kind = 'downgrade', extra = {}) => ({ node_id: node, kind, reason: '', caused_by: [], ...extra })
 const node = (id, label) => ({ node_id: id, label, members: [], dll_files: [], candidates: [] })
-const plan = { nodes: [node('web', 'DIYLevel Web 前置'), node('level', 'DIYLevel - 自定义关卡')], roots: [],
+const plan = { status: 'ready', blockers: [], nodes: [node('web', 'DIYLevel Web 前置'), node('level', 'DIYLevel - 自定义关卡')], roots: [],
   actions: [action('web', 'downgrade', { from_tag: 'v4.0.0', to_tag: 'v3.10.2' }),
     action('level', 'enable', { from_tag: 'v0.10', to_tag: 'v0.10' }),
     action('level', 'replace', { from_tag: 'v0.10', to_tag: 'v0.10' })] }
@@ -82,6 +82,16 @@ test('uncovered selected targets and newly discovered candidates remain visible 
     items: [{ node_id: 'web', stage: 'ready', label: 'Prepared Web' }, { node_id: 'new', stage: 'queued', label: 'Discovered', tag: 'v2' }] })
   assert.deepEqual(rows.map(({ label, version }) => [label, version?.to]).sort(), [
     ['Chosen Level', 'v0.10'], ['Chosen local map', 'v1'], ['Discovered', 'v2'], ['Prepared Web', 'v3.10.2'],
+  ])
+})
+
+test('a rejected Release keeps the selected tag distinct from the DLL version actually evaluated', () => {
+  const { rows } = changePlanDetails({ ...plan, status: 'unsatisfiable', roots: [{ node_id: 'web', label: 'Web', tag: 'v4.0.0' }],
+    blockers: [{ traces: [[{ owner_id: 'web', owner_version: '3.10.2', relation: { guid: 'com.example.missing' }, targets: [],
+      state: 'missing', reason: 'required_plugin_missing' }]] }],
+  })
+  assert.deepEqual(rows.map(row => [row.version?.to, row.selected, row.diagnostic?.path]), [
+    ['v4.0.0', true, undefined], ['3.10.2', false, 1], [undefined, undefined, undefined],
   ])
 })
 

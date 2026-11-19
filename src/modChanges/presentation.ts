@@ -1,4 +1,4 @@
-import type { ChangeAction, ChangeActionKind, ChangeActionReason, ChangePlan, ChangePreparationItem, ChangePreparationProgress } from './types'
+import type { ChangeAction, ChangeActionKind, ChangeActionReason, ChangePlan, ChangePreparationItem, ChangePreparationProgress, DiagnosticStep } from './types'
 import type { DeepReadonly } from 'vue'
 
 const isVersionChange = ({ kind }: DeepReadonly<ChangeAction>) => kind !== 'enable' && kind !== 'disable'
@@ -52,11 +52,57 @@ interface ChangePlanDetailRow {
   causes?: string[]
   version?: ReturnType<typeof versionPair>
   preparationStage?: ChangePreparationItem['stage']
+  diagnostic?: {
+    path?: number
+    edge?: { step: DeepReadonly<DiagnosticStep>; ownerLabel?: string }
+    terminal?: DeepReadonly<DiagnosticStep>
+    providers?: { label: string; version?: string | null; enabled: boolean }[]
+  }
 }
 
-/** Keep the order of package actions; related file rows follow each parent. */
+function diagnosticDetails(plan: DeepReadonly<ChangePlan>, labels: ReadonlyMap<string, string>) {
+  const paths = plan.blockers.flatMap(blocker => blocker.traces?.filter(trace => trace.length) ?? [])
+  const selected = new Set<string>()
+  const diagnosticRows = paths.flatMap((path, index) => {
+    const first = path[0]!
+    const root = plan.roots.find(root => root.node_id === first.owner_id)
+    const ownerVersion = first.owner_version || root?.tag
+    // The exact Release can declare a different DLL version. Keep the user's
+    // selected tag as its own row when the path evaluated a different version.
+    const sameVersion = root && (!root.tag || root.tag === ownerVersion)
+    if (sameVersion) selected.add(first.owner_id)
+    const start: ChangePlanDetailRow = {
+      key: `path:${index}`, nodeId: first.owner_id, label: labels.get(first.owner_id), selected: !!sameVersion,
+      version: versionPair(undefined, ownerVersion), diagnostic: { path: index + 1 },
+    }
+    const rows = first.relation ? [start] : []
+    path.forEach((step, stepIndex) => {
+      const terminal = stepIndex === path.length - 1 ? step : undefined
+      const key = `path:${index}:${stepIndex}`
+      if (!step.relation) {
+        rows.push({ ...start, key, nodeId: step.owner_id, label: labels.get(step.owner_id), selected: stepIndex === 0 && !!sameVersion,
+          version: versionPair(undefined, step.owner_version || (stepIndex === 0 ? ownerVersion : undefined)),
+          diagnostic: { path: stepIndex === 0 ? index + 1 : undefined, terminal } })
+        return
+      }
+      const { guid } = step.relation
+      const providers = step.targets.map(target => ({ label: labels.get(target.node_id) ?? guid, version: target.version, enabled: target.enabled }))
+      const only = providers.length === 1 ? providers[0] : undefined
+      rows.push({ key, nodeId: only ? step.targets[0]!.node_id : step.owner_id, label: only?.label ?? guid,
+        version: versionPair(undefined, only?.version), diagnostic: { edge: { step, ownerLabel: labels.get(step.owner_id) }, terminal, providers } })
+    })
+    return rows
+  })
+  const roots: ChangePlanDetailRow[] = plan.roots.filter(root => !selected.has(root.node_id)).map(root => ({
+    key: `selected:${root.node_id}`, nodeId: root.node_id, label: root.label, version: versionPair(undefined, root.tag), selected: true,
+  }))
+  return { rows: [...roots, ...diagnosticRows] }
+}
+
+/** Keep the order of package actions, or, for a blocked plan, explain the tried paths instead of showing proposed work. */
 export function changePlanDetails(plan: DeepReadonly<ChangePlan>, progress?: DeepReadonly<ChangePreparationProgress> | null) {
   const labels = planLabels(plan)
+  if (plan.status !== 'ready') return diagnosticDetails(plan, labels)
   const nodes = new Map(plan.nodes.map(node => [node.node_id, node]))
   const items = new Map(progress?.items.map(item => [item.node_id, item]))
   for (const [nodeId, item] of items) {

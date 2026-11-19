@@ -250,11 +250,13 @@ impl Search<'_> {
                     {
                         continue;
                     }
-                    if let Some((target, _)) = targets(&state.inventory, &owned.relation.guid, true)
-                        .into_iter()
-                        .find(|(_, plugin)| matches(&owned.relation, plugin) == Some(true))
+                    // As in evaluation, a required edge is only satisfied by
+                    // a unique enabled provider, regardless of version matches.
+                    if let [(target, plugin)] =
+                        targets(&state.inventory, &owned.relation.guid, true).as_slice()
+                        && matches(&owned.relation, plugin) == Some(true)
                     {
-                        protected.insert(target);
+                        protected.insert(*target);
                     }
                 }
             }

@@ -1,4 +1,5 @@
 //! Depth-first search preserves local uncertainty before accepting disable fallbacks.
+use super::super::evaluate::DUPLICATE_ENABLED_PROVIDERS;
 use super::*;
 
 impl Search<'_> {
@@ -114,7 +115,23 @@ impl Search<'_> {
                 issue.relation.guid.to_lowercase(),
             )
         });
-        if let Some((owner, issue)) = issues.first() {
+        let next_issue = issues.first().map(|first| {
+            // Resolve a known conflict that can remove the ambiguous provider,
+            // then let the next visit check the requirement against the survivor.
+            if first.1.reason == DUPLICATE_ENABLED_PROVIDERS {
+                issues
+                    .iter()
+                    .find(|(_, issue)| {
+                        issue.state == EvaluationState::Conflict
+                            && issue.relation.kind == RelationKind::Conflicts
+                            && same_guid(&issue.relation.guid, &first.1.relation.guid)
+                    })
+                    .unwrap_or(first)
+            } else {
+                first
+            }
+        });
+        if let Some((owner, issue)) = next_issue {
             let missing_history = state.inventory.nodes.iter().any(|node| {
                 !node.candidates_complete
                     && (node

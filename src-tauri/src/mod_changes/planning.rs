@@ -220,7 +220,7 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
         if session.wire_request.map_import.is_some() {
             super::map_payload::attach(state, &mut session)?;
         }
-        resolve(&mut session)?;
+        resolve(state, &mut session)?;
         remember_payloads(&mut session)?;
         Ok(session.plan.clone())
     })();
@@ -478,9 +478,11 @@ fn attach_preview(
     Ok(())
 }
 
-pub(crate) fn resolve(session: &mut PlanSession) -> Result<(), String> {
-    let (result, solved) =
-        super::solve_with_inventory(&session.trusted.inventory, &session.request);
+pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(), String> {
+    let (result, solved) = super::inventory_maps::runtime_conflict::solve_toggle(state, session)?
+        .unwrap_or_else(|| {
+            super::solve_with_inventory(&session.trusted.inventory, &session.request)
+        });
     if let Some(solved) = &solved {
         inventory::validate_solution(&session.trusted, &session.request, solved)?;
     }

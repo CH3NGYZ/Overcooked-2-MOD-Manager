@@ -1,6 +1,8 @@
 use super::model::*;
 use crate::models::RelationKind;
 
+pub(super) const DUPLICATE_ENABLED_PROVIDERS: &str = "duplicate_enabled_providers";
+
 pub(crate) fn same_guid(left: &str, right: &str) -> bool {
     left.trim().eq_ignore_ascii_case(right.trim())
 }
@@ -174,7 +176,7 @@ fn evaluate_relation(
     };
     let reason =
         if duplicate_provider && relation.kind == RelationKind::Requires && !relation.optional {
-            "duplicate_enabled_providers"
+            DUPLICATE_ENABLED_PROVIDERS
         } else {
             match state {
                 EvaluationState::Satisfied => "relation_satisfied",

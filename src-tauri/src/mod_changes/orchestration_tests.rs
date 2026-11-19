@@ -10,6 +10,8 @@ mod disable_fallback;
 mod install_notes;
 #[path = "orchestration_tests/installed_relations.rs"]
 mod installed_relations;
+#[path = "orchestration_tests/map_runtime_duplicate.rs"]
+mod map_runtime_duplicate;
 #[path = "orchestration_tests/retired_members.rs"]
 mod retired_members;
 #[path = "orchestration_tests/toggle_scope.rs"]
@@ -158,7 +160,7 @@ fn take(f: &Fixture, plan: &ChangePlan) -> PlanSession {
 /// metadata and the selected exact source/tag. No HTTP request is needed here.
 fn verify_selected(f: &Fixture, session: &mut PlanSession) {
     for _ in 0..16 {
-        planning::resolve(session).unwrap();
+        planning::resolve(&f.state, session).unwrap();
         assert_eq!(
             session.plan.result.status,
             SolveStatus::Ready,
@@ -488,7 +490,7 @@ fn verified_assets_survive_a_later_preparation_failure_and_remain_frozen() {
     session.verified_payloads.insert(key, payload.clone());
     planning::remember_payloads(&mut session).unwrap();
     // This is the persisted state after a subsequent asset download failed.
-    planning::resolve(&mut session).unwrap();
+    planning::resolve(&f.state, &mut session).unwrap();
     preparation::select_payloads(&mut session).unwrap();
     preparation::finish(&f.state, &mut session).unwrap();
     assert_eq!(session.payloads["mod:one"].stage_root, payload.stage_root);

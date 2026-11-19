@@ -184,7 +184,7 @@ fn installed_secondary_declarations_survive_actual_prepare_commit_and_rescan() {
             .find(|entry| entry.id == candidate.id)
             .unwrap() = payload.candidate.clone();
         session.payloads.insert("mod:a".into(), payload);
-        planning::resolve(&mut session).unwrap();
+        planning::resolve(&f.state, &mut session).unwrap();
         assert_eq!(
             session.plan.result.status,
             SolveStatus::Ready,

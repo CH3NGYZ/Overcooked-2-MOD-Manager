@@ -57,7 +57,18 @@ async fn prepare_inner(
         if archive::is_download_cancelled() {
             return Err("download.cancelled".into());
         }
-        planning::resolve(session)?;
+        // Re-solving a map toggle can inspect live manifest ownership and DLL links.
+        let resolve_state = state.clone();
+        let mut owned = lease.session.take().ok_or("modChanges.planExpired")?;
+        let (owned, outcome) = tauri::async_runtime::spawn_blocking(move || {
+            let result = planning::resolve(&resolve_state, &mut owned);
+            (owned, result)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        lease.session = Some(owned);
+        outcome?;
+        let session = lease.session.as_mut().ok_or("modChanges.planExpired")?;
         progress.synchronize(session);
         if session.plan.result.status != SolveStatus::Ready {
             break;
@@ -166,6 +177,7 @@ async fn prepare_inner(
         planning::remember_payloads(session)?;
         progress.verified(&node_id, &verified_candidate);
     }
+    let session = lease.session.as_mut().ok_or("modChanges.planExpired")?;
     if session.plan.result.status == SolveStatus::Ready {
         session.plan.result.status = SolveStatus::Incomplete;
         session.plan.install_notes.clear();

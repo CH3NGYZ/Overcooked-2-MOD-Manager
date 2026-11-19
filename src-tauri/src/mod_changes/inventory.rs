@@ -463,7 +463,7 @@ pub(crate) fn validate_solution(
     request: &ChangeRequest,
     solved: &Inventory,
 ) -> Result<(), String> {
-    use super::evaluate::{matches, relation_active, same_guid, targets};
+    use super::evaluate::{matches, relation_active, targets};
     use std::collections::BTreeSet;
     let mut affected = request
         .roots
@@ -578,18 +578,17 @@ pub(crate) fn validate_solution(
                     return Err("modChanges.ambiguousOwnership".into());
                 }
             }
-            if node.enabled && plugin.enabled && !plugin.guid.trim().is_empty() {
-                let duplicates = solved
-                    .nodes
-                    .iter()
-                    .filter(|other| other.enabled)
-                    .flat_map(|other| &other.current)
-                    .flat_map(|candidate| &candidate.provides)
-                    .filter(|other| other.enabled && same_guid(&other.guid, &plugin.guid))
-                    .count();
-                if duplicates > 1 {
-                    return Err("modChanges.ambiguousOwnership".into());
-                }
+            if node.enabled
+                && plugin.enabled
+                && !plugin.guid.trim().is_empty()
+                && let Some(error) = super::inventory_maps::runtime_conflict::duplicate_runtime(
+                    &plugin.guid,
+                    targets(solved, &plugin.guid, true)
+                        .into_iter()
+                        .map(|(_, member)| member),
+                )
+            {
+                return Err(error);
             }
         }
     }

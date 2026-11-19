@@ -2,7 +2,37 @@
 
 use super::identity::level_set_identity_matches;
 use super::zip_inspect::ImportedLevelSet;
+use crate::models::MapRelationSnapshots;
 use std::path::Path;
+
+const INSTALLED_PREFIX: &str = "installed:";
+
+pub(crate) fn installed_repository_id<'a>(
+    snapshots: &'a MapRelationSnapshots,
+    name: &str,
+    name_zh: Option<&str>,
+    author: &str,
+) -> Option<&'a str> {
+    let mut ids = snapshots.entries.iter().filter_map(|(key, entry)| {
+        (key.starts_with(INSTALLED_PREFIX)
+            && !entry.repository_id.is_empty()
+            && level_set_identity_matches(
+                name,
+                name_zh,
+                author,
+                &entry.level_set_name,
+                Some(&entry.level_set_name_zh),
+                &entry.author,
+            )
+            && entry
+                .level_set_name_zh
+                .trim()
+                .eq_ignore_ascii_case(name_zh.unwrap_or_default().trim()))
+        .then_some(entry.repository_id.as_str())
+    });
+    let first = ids.next()?;
+    ids.all(|id| id == first).then_some(first)
+}
 
 /// 新快照有中文身份时优先精确匹配，避免旧版无中文名的记录抢走另一张同名图的版本。
 /// 老快照仍按仓库 ID / 身份兜底，不因升级凭空抹掉修复版的安装记录。
@@ -56,24 +86,25 @@ pub(super) fn record_installed_mapset_versions(
     let previous = snapshots.entries.clone();
     for set in sets {
         let metadata = &set.metadata;
-        let version = origin
-            .filter(|source| {
-                level_set_identity_matches(
-                    &metadata.name,
-                    metadata.name_zh.as_deref(),
-                    &metadata.author,
-                    &source.level_set_name,
-                    Some(&source.level_set_name_zh),
-                    &source.author,
-                ) && source
-                    .level_set_name_zh
-                    .trim()
-                    .eq_ignore_ascii_case(metadata.name_zh.as_deref().unwrap_or_default().trim())
-            })
+        let installed = origin.filter(|source| {
+            level_set_identity_matches(
+                &metadata.name,
+                metadata.name_zh.as_deref(),
+                &metadata.author,
+                &source.level_set_name,
+                Some(&source.level_set_name_zh),
+                &source.author,
+            ) && source
+                .level_set_name_zh
+                .trim()
+                .eq_ignore_ascii_case(metadata.name_zh.as_deref().unwrap_or_default().trim())
+        });
+        let version = installed
             .map(|source| source.mapset_version.trim())
             .unwrap_or("");
+        let repository_id = installed.and_then(|source| source.repository_id.as_deref());
         let mut matched = false;
-        for entry in snapshots.entries.values_mut() {
+        for (key, entry) in &mut snapshots.entries {
             if !level_set_identity_matches(
                 &metadata.name,
                 metadata.name_zh.as_deref(),
@@ -84,8 +115,12 @@ pub(super) fn record_installed_mapset_versions(
             ) {
                 continue;
             }
+            // 不再保留已替换地图的来源偏好；仓库声明条目的 ID 与关系仍保持原样。
+            if key.starts_with(INSTALLED_PREFIX) {
+                entry.repository_id.clear();
+            }
             // 老条目缺中文名时不能猜它属于哪个同名集：清掉可能串用的版本，
-            // 另建含完整身份的新记录。关系/分组及仓库 ID 不改。
+            // 另建含完整身份的新记录。
             if !entry
                 .level_set_name_zh
                 .trim()
@@ -97,10 +132,10 @@ pub(super) fn record_installed_mapset_versions(
             matched = true;
             entry.installed_mapset_version = version.to_string();
         }
-        if !matched && !version.is_empty() {
+        if repository_id.is_some() || (!matched && !version.is_empty()) {
             // 带上中文身份并转义分隔符，两个 GAODA/GAODA 不能共用安装记录。
             let key = format!(
-                "installed:{:?}",
+                "{INSTALLED_PREFIX}{:?}",
                 (
                     metadata.author.trim(),
                     metadata.name.trim(),
@@ -110,7 +145,7 @@ pub(super) fn record_installed_mapset_versions(
             snapshots.entries.insert(
                 key,
                 crate::models::MapRelationSnapshot {
-                    repository_id: String::new(),
+                    repository_id: repository_id.unwrap_or_default().to_owned(),
                     level_set_name: metadata.name.clone(),
                     level_set_name_zh: metadata.name_zh.clone().unwrap_or_default(),
                     author: metadata.author.clone(),

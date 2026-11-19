@@ -62,6 +62,10 @@ fn write(root: &Path, relative: &str, bytes: &[u8]) {
 }
 
 fn fixture() -> Fixture {
+    fixture_with_release(None)
+}
+
+fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
     let temp = tempfile::tempdir().unwrap();
     let root = fs::canonicalize(temp.path()).unwrap();
     let game = root.join("game");
@@ -104,7 +108,20 @@ fn fixture() -> Fixture {
         &registry_bytes,
     );
     copy_metadata(&manifests, &stage_manifests).unwrap();
-    let config = crate::config::default_config();
+    let mut config = crate::config::default_config();
+    if origin.is_some() {
+        config.map_repositories = ["mirror", "selected"]
+            .into_iter()
+            .map(|id| {
+                serde_json::from_value(serde_json::json!({
+                    "id": id, "level_set_name": "Fixture", "author": "Tests",
+                    "group": id,
+                    "relations": [{"kind": "compatible", "guid": format!("fixture-{id}")}],
+                }))
+                .unwrap()
+            })
+            .collect();
+    }
     let live_roots = level_sets::LevelSetRoots::new(
         game.clone(),
         Some(game.join(crate::framework::DIYLEVEL_DIR)),
@@ -200,15 +217,22 @@ fn fixture() -> Fixture {
         stage.clone(),
         Some(stage.join(crate::framework::DIYLEVEL_DIR)),
     );
+    let metadata_refs = [&imported.metadata];
+    let primary = validate_origin(&metadata_refs, origin.as_ref(), &trusted.config).unwrap();
+    projection::seed_snapshots(&trusted.config, &metadata_refs, primary, &stage_manifests).unwrap();
+    if primary.is_some() {
+        assert!(verify_staged_source(&stage_manifests, primary).is_err());
+    }
     level_sets::install_parsed_sets(
-        &[imported],
+        std::slice::from_ref(&imported),
         &zip_path,
         &roots,
         &stage_manifests,
         &["NewDirectory".into()],
-        None,
+        origin.as_ref(),
     )
     .unwrap();
+    verify_staged_source(&stage_manifests, primary).unwrap();
     level_sets::seed_info_metadata(&stage.join(info_entry), metadata);
     let mut projected = Inventory::default();
     let mut projected_files = BTreeMap::new();
@@ -277,6 +301,137 @@ fn fixture() -> Fixture {
         session,
         registry_other,
     }
+}
+
+#[test]
+fn online_map_update_uses_the_chosen_source_when_a_mirror_has_the_same_identity() {
+    let origin = serde_json::from_value(serde_json::json!({
+        "repository_id": "selected", "level_set_name": "Fixture", "level_set_name_zh": "",
+        "author": "Tests", "mapset_version": "2.0",
+    }))
+    .unwrap();
+    let fixture = fixture_with_release(Some(origin));
+    let planned = fixture
+        .session
+        .solved
+        .as_ref()
+        .unwrap()
+        .nodes
+        .iter()
+        .find(|node| node.id == "map:KeepDirectory")
+        .unwrap()
+        .current
+        .as_ref()
+        .unwrap();
+    assert_eq!(planned.source_id.as_deref(), Some("selected"));
+    assert!(
+        planned
+            .relations
+            .iter()
+            .any(|owned| owned.relation.guid == "fixture-selected")
+    );
+    assert!(
+        !planned
+            .relations
+            .iter()
+            .any(|owned| owned.relation.guid == "fixture-mirror")
+    );
+    let mutations = output::build_at(&fixture.roots.data_root, &fixture.session).unwrap();
+    super::super::transaction::prepare(
+        &fixture.roots.data_root.join("transactions"),
+        &fixture.roots,
+        mutations,
+    )
+    .unwrap()
+    .apply()
+    .unwrap();
+    let snapshots =
+        archive::read_map_relation_snapshots(&fixture.roots.data_root.join("manifests"));
+    let staged_info = fixture
+        .session
+        .map_payload
+        .as_ref()
+        .unwrap()
+        .stage_root
+        .join(format!(
+            "{}/levels/NewDirectory/info",
+            crate::framework::DIYLEVEL_DIR
+        ));
+    let installed_info = fixture.roots.game_root.join(format!(
+        "{}/levels/KeepDirectory/info",
+        crate::framework::DIYLEVEL_DIR
+    ));
+    assert_eq!(fs::read(&installed_info).unwrap(), b"new-info");
+    // The fixture's tiny synthetic info does not parse as UnityFS. Seed the
+    // same parsed metadata after verifying the transaction replaced its bytes.
+    level_sets::seed_info_metadata(
+        &installed_info,
+        level_sets::read_info_metadata(&staged_info).unwrap(),
+    );
+    let mut info = level_sets::scan_level_sets(&fixture.session.trusted.level_roots)
+        .into_iter()
+        .find(|set| set.dir_name == "KeepDirectory")
+        .map(level_sets::view::level_set_to_info)
+        .unwrap();
+    level_sets::view::bind_map_relation_snapshot(
+        &mut info,
+        &fixture.session.trusted.config,
+        &snapshots,
+    );
+    assert_eq!(info.map_id.as_deref(), Some("selected"));
+    assert_eq!(info.installed_mapset_version, "2.0");
+    assert_eq!(info.map_group.as_deref(), Some("selected"));
+    assert_eq!(info.version, "2.0");
+    assert_eq!(info.relations[0].guid, "fixture-selected");
+}
+
+#[test]
+fn map_update_does_not_guess_missing_or_inconsistent_source_provenance() {
+    let fixture = fixture_with_release(None);
+    let mut config = fixture.session.trusted.config;
+    let metadata = crate::asset_bundle::LevelSetMetadata {
+        name: "Fixture".into(),
+        author: "Tests".into(),
+        ..Default::default()
+    };
+    let mut origin: MapInstallOrigin = serde_json::from_value(serde_json::json!({
+        "level_set_name": "Fixture", "level_set_name_zh": "", "author": "Tests", "mapset_version": "2.0",
+    })).unwrap();
+    config.map_repositories = vec![
+        serde_json::from_value(serde_json::json!({
+            "id": "first", "author": "Tests", "level_set_name": "Fixture"
+        }))
+        .unwrap(),
+    ];
+    let validated = validate_origin(&[&metadata], Some(&origin), &config)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        validated.1.id, "first",
+        "legacy DTO must work for a unique source"
+    );
+    let mut duplicate = config.map_repositories[0].clone();
+    duplicate.id = "second".to_owned();
+    config.map_repositories.push(duplicate);
+    assert!(validate_origin(&[&metadata], Some(&origin), &config).is_err());
+    assert!(
+        projection::seed_snapshots(
+            &config,
+            &[&metadata],
+            None,
+            fixture.roots.data_root.as_path()
+        )
+        .is_err()
+    );
+    origin.repository_id = Some("second".to_owned());
+    assert!(validate_origin(&[&metadata, &metadata], Some(&origin), &config).is_err());
+    config.map_repositories[1].level_set_name = "Different".to_owned();
+    assert!(validate_origin(&[&metadata], Some(&origin), &config).is_err());
+    config.map_repositories[1].id = "first".to_owned();
+    origin.repository_id = Some("first".to_owned());
+    assert!(validate_origin(&[&metadata], Some(&origin), &config).is_err());
+    origin.repository_id = Some("gone".to_owned());
+    assert!(validate_origin(&[&metadata], Some(&origin), &config).is_err());
 }
 
 #[test]

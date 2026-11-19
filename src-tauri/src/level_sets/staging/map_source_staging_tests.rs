@@ -185,6 +185,7 @@ fn real_pear_bundle_install_and_scan_keep_versions_separate() {
     assert_eq!(primary.metadata.version, "11.0");
     assert_eq!(bundled.metadata.version, "1.1");
     let origin = MapInstallOrigin {
+        repository_id: None,
         level_set_name: primary.metadata.name.clone(),
         level_set_name_zh: primary.metadata.name_zh.clone().unwrap_or_default(),
         author: primary.metadata.author.clone(),

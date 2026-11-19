@@ -11,6 +11,11 @@ use std::{
 mod output;
 mod projection;
 
+type MapSource<'a> = (
+    &'a crate::asset_bundle::LevelSetMetadata,
+    &'a crate::models::MapRepositoryConfig,
+);
+
 pub(crate) struct MapBatch {
     pub stage_root: PathBuf,
     pub manifests_root: PathBuf,
@@ -54,7 +59,7 @@ struct StagedExternal {
 }
 
 pub(crate) fn attach(state: &AppState, session: &mut PlanSession) -> Result<(), String> {
-    let request = session
+    let mut request = session
         .wire_request
         .map_import
         .clone()
@@ -88,21 +93,18 @@ pub(crate) fn attach(state: &AppState, session: &mut PlanSession) -> Result<(), 
         .iter()
         .filter(|set| selected.contains(&set.dir_name))
         .collect::<Vec<_>>();
-    validate_origin(
-        &chosen.iter().map(|set| &set.metadata).collect::<Vec<_>>(),
-        request.origin.as_ref(),
-        config,
-    )?;
+    let metadata = chosen.iter().map(|set| &set.metadata).collect::<Vec<_>>();
+    let primary = validate_origin(&metadata, request.origin.as_ref(), config)?;
+    if let (Some((_, map)), Some(origin)) = (primary, request.origin.as_mut()) {
+        // An old caller did not send an ID; resolve it only if the source was unique.
+        origin.repository_id = Some(map.id.clone());
+    }
     let stage_root = session.staging.join("map-game");
     let manifests_root = session.staging.join("map-manifests");
     create_sandbox(state, session, &stage_root)?;
     create_sandbox(state, session, &manifests_root)?;
     copy_metadata(&state.config.manifests_dir(), &manifests_root)?;
-    projection::seed_snapshots(
-        config,
-        &chosen.iter().map(|set| &set.metadata).collect::<Vec<_>>(),
-        &manifests_root,
-    )?;
+    projection::seed_snapshots(config, &metadata, primary, &manifests_root)?;
     let roots = level_sets::LevelSetRoots::new(
         stage_root.clone(),
         Some(stage_root.join(crate::framework::DIYLEVEL_DIR)),
@@ -115,6 +117,7 @@ pub(crate) fn attach(state: &AppState, session: &mut PlanSession) -> Result<(), 
         &request.selected,
         request.origin.as_ref(),
     )?;
+    verify_staged_source(&manifests_root, primary)?;
     if Fingerprint::capture(&source)? != source_fingerprint {
         return Err("modChanges.payloadChanged".into());
     }
@@ -211,13 +214,13 @@ fn copy_metadata(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_origin(
-    metadata: &[&crate::asset_bundle::LevelSetMetadata],
+fn validate_origin<'a>(
+    metadata: &[&'a crate::asset_bundle::LevelSetMetadata],
     origin: Option<&MapInstallOrigin>,
-    config: &crate::models::AppConfig,
-) -> Result<(), String> {
+    config: &'a crate::models::AppConfig,
+) -> Result<Option<MapSource<'a>>, String> {
     let Some(origin) = origin else {
-        return Ok(());
+        return Ok(None);
     };
     let matches = |name: &str, zh: Option<&str>, author: &str| {
         level_sets::level_set_identity_matches(
@@ -229,19 +232,74 @@ fn validate_origin(
             &origin.author,
         )
     };
-    if metadata
-        .iter()
-        .filter(|m| matches(&m.name, m.name_zh.as_deref(), &m.author))
-        .count()
-        != 1
-        || config
+    let mut chosen = metadata.iter().copied().filter(|m| {
+        matches(&m.name, m.name_zh.as_deref(), &m.author)
+            && m.name_zh
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .eq_ignore_ascii_case(origin.level_set_name_zh.trim())
+    });
+    let primary = chosen
+        .next()
+        .filter(|_| chosen.next().is_none())
+        .ok_or_else(|| {
+            log::warn!("地图更新拒绝：ZIP 里没有唯一的主地图");
+            "modChanges.targetChanged".to_owned()
+        })?;
+    let source = if let Some(id) = origin.repository_id.as_deref() {
+        level_sets::map_repository_by_id(&config.map_repositories, id)
+    } else {
+        let mut sources = config
             .map_repositories
             .iter()
-            .filter(|m| matches(&m.level_set_name, Some(&m.level_set_name_zh), &m.author))
-            .count()
-            != 1
-    {
+            .filter(|m| matches(&m.level_set_name, Some(&m.level_set_name_zh), &m.author));
+        sources
+            .next()
+            .filter(|_| sources.next().is_none())
+            .and_then(|map| level_sets::map_repository_by_id(&config.map_repositories, &map.id))
+    };
+    let Some(source) = source.filter(|map| {
+        let mut matching = metadata.iter().copied().filter(|m| {
+            level_sets::level_set_identity_matches(
+                &m.name,
+                m.name_zh.as_deref(),
+                &m.author,
+                &map.level_set_name,
+                Some(&map.level_set_name_zh),
+                &map.author,
+            )
+        });
+        matches(
+            &map.level_set_name,
+            Some(&map.level_set_name_zh),
+            &map.author,
+        ) && matching
+            .next()
+            .is_some_and(|candidate| std::ptr::eq(candidate, primary))
+            && matching.next().is_none()
+    }) else {
+        log::warn!("地图更新拒绝：已选地图源不存在、重复或与 ZIP 主地图身份不一致");
         return Err("modChanges.targetChanged".into());
+    };
+    Ok(Some((primary, source)))
+}
+
+fn verify_staged_source(manifests: &Path, primary: Option<MapSource<'_>>) -> Result<(), String> {
+    if let Some((metadata, source)) = primary {
+        let snapshots = archive::read_map_relation_snapshots(manifests);
+        let persisted = level_sets::installed_repository_id(
+            &snapshots,
+            &metadata.name,
+            metadata.name_zh.as_deref(),
+            &metadata.author,
+        );
+        // Existing importers log snapshot write errors. A planner must not use
+        // a different channel's relations if the chosen source was not recorded.
+        if persisted != Some(source.id.as_str()) {
+            log::warn!("地图更新拒绝：暂存未保存已选地图源");
+            return Err("modChanges.targetChanged".into());
+        }
     }
     Ok(())
 }

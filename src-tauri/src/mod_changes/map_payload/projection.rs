@@ -5,28 +5,32 @@ use std::collections::HashSet;
 pub(super) fn seed_snapshots(
     config: &crate::models::AppConfig,
     metadata: &[&crate::asset_bundle::LevelSetMetadata],
+    primary: Option<MapSource<'_>>,
     manifests: &Path,
 ) -> Result<(), String> {
     let mut snapshots = archive::read_map_relation_snapshots(manifests);
     for metadata in metadata {
-        let sources = config
-            .map_repositories
-            .iter()
-            .filter(|map| {
-                level_sets::level_set_identity_matches(
-                    &metadata.name,
-                    metadata.name_zh.as_deref(),
-                    &metadata.author,
-                    &map.level_set_name,
-                    Some(&map.level_set_name_zh),
-                    &map.author,
-                )
-            })
-            .collect::<Vec<_>>();
-        if sources.len() > 1 {
-            return Err("modChanges.ambiguousOwnership".into());
-        }
-        if let Some(map) = sources.first() {
+        let map =
+            if let Some((_, source)) = primary.filter(|(main, _)| std::ptr::eq(*main, *metadata)) {
+                Some(source)
+            } else {
+                let mut sources = config.map_repositories.iter().filter(|map| {
+                    level_sets::level_set_identity_matches(
+                        &metadata.name,
+                        metadata.name_zh.as_deref(),
+                        &metadata.author,
+                        &map.level_set_name,
+                        Some(&map.level_set_name_zh),
+                        &map.author,
+                    )
+                });
+                let map = sources.next();
+                if sources.next().is_some() {
+                    return Err("modChanges.ambiguousOwnership".into());
+                }
+                map
+            };
+        if let Some(map) = map {
             snapshots.entries.insert(
                 map.id.clone(),
                 crate::models::MapRelationSnapshot {
@@ -137,27 +141,6 @@ pub(super) fn merge(
         let target_prefix = format!("{package}/levels/{name}");
         let mut candidate = node.current.take().ok_or("modChanges.targetChanged")?;
         candidate.id = format!("map-import:{}:{id}", session.plan.plan_id);
-        if let Some(metadata) = files.map_metadata.as_ref() {
-            let matches = session
-                .trusted
-                .config
-                .map_repositories
-                .iter()
-                .filter(|map| {
-                    level_sets::level_set_identity_matches(
-                        &metadata.name,
-                        metadata.name_zh.as_deref(),
-                        &metadata.author,
-                        &map.level_set_name,
-                        Some(&map.level_set_name_zh),
-                        &map.author,
-                    )
-                })
-                .count();
-            if matches > 1 {
-                return Err("modChanges.ambiguousOwnership".into());
-            }
-        }
         for plugin in &mut candidate.provides {
             remap_key(&mut plugin.member_key, &stage_path, &target_prefix)?;
         }

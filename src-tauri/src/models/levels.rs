@@ -233,6 +233,8 @@ pub struct LevelSetImportResult {
 /// 在线暂存实际选中的版本及其主地图身份；资产版本不能广播给 ZIP 内其它地图。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MapInstallOrigin {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_id: Option<String>,
     pub level_set_name: String,
     pub level_set_name_zh: String,
     pub author: String,

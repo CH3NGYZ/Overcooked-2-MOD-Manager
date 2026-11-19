@@ -24,14 +24,15 @@ pub(crate) mod view;
 
 pub use conflicts::find_install_conflicts_with_workers;
 pub use flatten::flatten_level_sets;
-pub(crate) use identity::allocate_dir_name;
 pub use identity::level_set_identity_matches;
+pub(crate) use identity::{allocate_dir_name, map_repository_by_id};
 pub use info_cache::clear_info_cache;
 pub(crate) use info_cache::read_info_metadata;
 #[cfg(test)]
 pub(crate) use info_cache::seed_info_metadata;
 pub use install::install_parsed_sets;
 pub use installed_versions::installed_mapset_version;
+pub(crate) use installed_versions::installed_repository_id;
 pub use operations::locate_level_set_directory;
 pub use operations::remove_level_set;
 #[cfg(test)]

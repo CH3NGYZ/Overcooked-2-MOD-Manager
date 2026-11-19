@@ -69,7 +69,7 @@ pub(crate) fn bind_map_relation_snapshot(
     config: &AppConfig,
     snapshots: &MapRelationSnapshots,
 ) {
-    let bound = config.map_repositories.iter().find(|map| {
+    let matches = |map: &crate::models::MapRepositoryConfig| {
         crate::level_sets::level_set_identity_matches(
             &info.name,
             info.name_zh.as_deref(),
@@ -78,7 +78,16 @@ pub(crate) fn bind_map_relation_snapshot(
             Some(map.level_set_name_zh.as_str()).filter(|value| !value.is_empty()),
             &map.author,
         )
-    });
+    };
+    let bound = super::installed_versions::installed_repository_id(
+        snapshots,
+        &info.name,
+        info.name_zh.as_deref(),
+        &info.author,
+    )
+    .and_then(|id| super::map_repository_by_id(&config.map_repositories, id))
+    .filter(|map| matches(map))
+    .or_else(|| config.map_repositories.iter().find(|map| matches(map)));
     /*
      * 分组来源：绑定地图的当前声明 → 快照（先按地图 id，再按身份找）。
      *

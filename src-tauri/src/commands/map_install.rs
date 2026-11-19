@@ -279,6 +279,7 @@ pub async fn stage_map_release(
             sets.first().map(|set| set.conflicts.len()).unwrap_or(0)
         );
         let origin = MapInstallOrigin {
+            repository_id: Some(map.id.clone()),
             level_set_name: primary.name.clone(),
             level_set_name_zh: primary.name_zh.clone().unwrap_or_default(),
             author: primary.author.clone(),

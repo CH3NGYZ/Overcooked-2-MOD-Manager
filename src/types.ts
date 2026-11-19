@@ -403,6 +403,7 @@ export interface InstallConflict {
 
 /** 在线暂存实际选中的资产版本，只属于声明的主地图。 */
 export interface MapInstallOrigin {
+  repository_id?: string
   level_set_name: string
   level_set_name_zh: string
   author: string

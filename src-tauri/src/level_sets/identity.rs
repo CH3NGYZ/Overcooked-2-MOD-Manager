@@ -44,6 +44,19 @@ pub fn level_set_identity_matches(
     }
 }
 
+/// Repository IDs identify distribution channels; duplicate IDs are not a reliable binding.
+pub(crate) fn map_repository_by_id<'a>(
+    maps: &'a [crate::models::MapRepositoryConfig],
+    id: &str,
+) -> Option<&'a crate::models::MapRepositoryConfig> {
+    if id.trim().is_empty() {
+        return None;
+    }
+    let mut matches = maps.iter().filter(|map| map.id == id);
+    let map = matches.next()?;
+    matches.next().is_none().then_some(map)
+}
+
 /// 两张关卡集是否同一张图：`levelSetName + levelSetNameZH + author`。
 pub(super) fn same_level_set(left: &LevelSetMetadata, right: &LevelSetMetadata) -> bool {
     level_set_identity_matches(

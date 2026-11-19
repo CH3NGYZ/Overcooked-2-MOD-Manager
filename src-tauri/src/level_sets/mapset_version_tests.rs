@@ -22,6 +22,7 @@ fn imported(name: &str, author: &str) -> ImportedLevelSet {
 
 fn origin(set: &ImportedLevelSet, version: &str) -> crate::models::MapInstallOrigin {
     crate::models::MapInstallOrigin {
+        repository_id: None,
         level_set_name: set.metadata.name.clone(),
         level_set_name_zh: set.metadata.name_zh.clone().unwrap_or_default(),
         author: set.metadata.author.clone(),

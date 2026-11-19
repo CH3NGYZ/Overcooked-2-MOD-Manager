@@ -2,7 +2,54 @@
 use super::*;
 
 impl Search<'_> {
-    pub(super) fn visit(&mut self, state: SearchState) -> Result<SearchState, bool> {
+    pub(super) fn find_solution(&mut self, state: &SearchState) -> Result<SearchState, bool> {
+        let mut limit = 0;
+        while !self.prefer_newest && self.preference_remaining > 0 {
+            let result = self.run_pass(SearchPass::LimitReplacements(limit), state.clone());
+            if result.is_ok() {
+                return result;
+            }
+            if self.preference_remaining == 0 {
+                break;
+            }
+            if !self.preference_pruned {
+                // This pass visited every branch of the unbounded search.
+                return self.try_dependency_disable(result, state);
+            }
+            limit += 1;
+        }
+        // A preference limit cannot prove a graph unsatisfiable. Fall back to
+        // the complete compatibility search with its original admission budget.
+        let result = self.run_pass(SearchPass::CompatibleVersions, state.clone());
+        self.try_dependency_disable(result, state)
+    }
+
+    fn try_dependency_disable(
+        &mut self,
+        result: Result<SearchState, bool>,
+        state: &SearchState,
+    ) -> Result<SearchState, bool> {
+        // Unknown declarations, incomplete history and search limits block this.
+        if matches!(result, Err(false)) {
+            self.run_pass(SearchPass::AllowDependencyDisable, state.clone())
+        } else {
+            result
+        }
+    }
+
+    fn run_pass(&mut self, pass: SearchPass, state: SearchState) -> Result<SearchState, bool> {
+        self.pass = pass;
+        self.preference_pruned = false;
+        self.visited.clear();
+        self.failure = None;
+        self.visit(state)
+    }
+
+    fn visit(&mut self, state: SearchState) -> Result<SearchState, bool> {
+        let preference = matches!(self.pass, SearchPass::LimitReplacements(_));
+        if preference && self.preference_remaining == 0 {
+            return Err(true);
+        }
         let key = serde_json::to_string(&(
             &state.inventory,
             &state.decided,
@@ -15,6 +62,9 @@ impl Search<'_> {
         }
         if self.visited.len() >= MAX_SEARCH_STATES {
             return Err(true);
+        }
+        if preference {
+            self.preference_remaining -= 1;
         }
         // A pending state closes cycles. Completed failures retain uncertainty so
         // reaching them through another branch cannot unlock a disable fallback.
@@ -51,6 +101,11 @@ impl Search<'_> {
                     issues.push((index, issue.clone()));
                 }
             }
+        }
+        // A switch or installed repair is finished once the affected graph is
+        // compatible. Only an exact-version request optimizes a satisfied chain.
+        if issues.is_empty() && !self.prefer_newest {
+            return Ok(state);
         }
         let distances = self.order(&state);
         issues.sort_by_key(|(index, issue)| {
@@ -130,7 +185,7 @@ impl Search<'_> {
                 return self.visit(next);
             }
             let mut incomplete = false;
-            for candidate in ordered_candidates(node) {
+            for candidate in ordered_candidates(node, false) {
                 if node
                     .current
                     .as_ref()
@@ -138,10 +193,11 @@ impl Search<'_> {
                 {
                     continue;
                 }
-                let next = self.with_candidate(&state, index, candidate, None, index);
-                match self.visit(next) {
-                    Ok(solution) => return Ok(solution),
-                    Err(unknown) => incomplete |= unknown,
+                if let Some(next) = self.with_candidate(&state, index, candidate, None, index) {
+                    match self.visit(next) {
+                        Ok(solution) => return Ok(solution),
+                        Err(unknown) => incomplete |= unknown,
+                    }
                 }
             }
             return Err(incomplete);

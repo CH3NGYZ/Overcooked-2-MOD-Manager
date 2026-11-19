@@ -10,6 +10,7 @@ const MAX_SEARCH_STATES: usize = 30_000;
 struct SearchState {
     inventory: Inventory,
     decided: BTreeSet<usize>,
+    replaced_installed: usize,
     /// Explicit/conflict disablement preserves its immediate reverse cascade.
     disabled_guids: BTreeSet<String>,
     /// Dependency fallback cascades search compatible owner versions before disabling.
@@ -23,6 +24,13 @@ enum DisableSource {
     DependencyFallback,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SearchPass {
+    LimitReplacements(usize),
+    CompatibleVersions,
+    AllowDependencyDisable,
+}
+
 struct Search<'a> {
     original: &'a Inventory,
     fixed: BTreeSet<usize>,
@@ -32,7 +40,10 @@ struct Search<'a> {
     failure: Option<Diagnostic>,
     catalog_unknown: bool,
     fixed_members: BTreeSet<(usize, String)>,
-    allow_dependency_disable: bool,
+    prefer_newest: bool,
+    pass: SearchPass,
+    preference_remaining: usize,
+    preference_pruned: bool,
 }
 
 mod visit;
@@ -77,7 +88,7 @@ fn preserves_package_identity(current: &Candidate, candidate: &Candidate) -> boo
             .all(|plugin| provides(candidate, &plugin.guid))
 }
 
-fn ordered_candidates(node: &ChangeNode) -> Vec<Candidate> {
+fn ordered_candidates(node: &ChangeNode, prefer_installed: bool) -> Vec<Candidate> {
     let mut candidates = node
         .candidates
         .iter()
@@ -93,6 +104,11 @@ fn ordered_candidates(node: &ChangeNode) -> Vec<Candidate> {
         }
     }
     candidates.sort_by(|left, right| {
+        let current = node.current.as_ref().map(|candidate| &candidate.id);
+        let installed_order = (Some(&right.id) == current).cmp(&(Some(&left.id) == current));
+        if prefer_installed && installed_order != Ordering::Equal {
+            return installed_order;
+        }
         crate::releases::compare_release_versions(
             right
                 .tag
@@ -105,10 +121,7 @@ fn ordered_candidates(node: &ChangeNode) -> Vec<Candidate> {
                 .unwrap_or(""),
         )
         .unwrap_or(Ordering::Equal)
-        .then_with(|| {
-            let current = node.current.as_ref().map(|candidate| &candidate.id);
-            (Some(&right.id) == current).cmp(&(Some(&left.id) == current))
-        })
+        .then(installed_order)
         .then(left.source_id.cmp(&right.source_id))
         .then(left.id.cmp(&right.id))
     });
@@ -285,13 +298,28 @@ impl Search<'_> {
     }
 
     fn with_candidate(
-        &self,
+        &mut self,
         state: &SearchState,
         index: usize,
         mut candidate: Candidate,
         relation: Option<&RepositoryRelation>,
         cause: usize,
-    ) -> SearchState {
+    ) -> Option<SearchState> {
+        let mut replaced_installed = state.replaced_installed;
+        if let SearchPass::LimitReplacements(limit) = self.pass {
+            // In the bounded pass each candidate decision is final on its branch.
+            // Switches and new installs do not replace an installed package.
+            replaced_installed += usize::from(
+                self.original.nodes[index]
+                    .current
+                    .as_ref()
+                    .is_some_and(|installed| installed.id != candidate.id),
+            );
+            if replaced_installed > limit {
+                self.preference_pruned = true;
+                return None;
+            }
+        }
         if let Some(current) = &state.inventory.nodes[index].current {
             for plugin in &mut candidate.provides {
                 let existing = current
@@ -320,6 +348,7 @@ impl Search<'_> {
             }
         }
         let mut next = state.clone();
+        next.replaced_installed = replaced_installed;
         next.inventory.nodes[index].current = Some(candidate);
         next.inventory.nodes[index].enabled = true;
         next.decided.insert(index);
@@ -327,10 +356,15 @@ impl Search<'_> {
             .entry(index)
             .or_default()
             .insert(state.inventory.nodes[cause].id.clone());
-        next
+        Some(next)
     }
 
-    fn replacements(&self, state: &SearchState, index: usize, cause: usize) -> Vec<SearchState> {
+    fn replacements(
+        &mut self,
+        state: &SearchState,
+        index: usize,
+        cause: usize,
+    ) -> Vec<SearchState> {
         let node = &state.inventory.nodes[index];
         if self.fixed.contains(&index)
             || state.decided.contains(&index)
@@ -339,14 +373,14 @@ impl Search<'_> {
         {
             return Vec::new();
         }
-        ordered_candidates(node)
+        ordered_candidates(node, false)
             .into_iter()
             .filter(|candidate| {
                 node.current.as_ref().is_none_or(|current| {
                     candidate.id != current.id && preserves_package_identity(current, candidate)
                 })
             })
-            .map(|candidate| self.with_candidate(state, index, candidate, None, cause))
+            .filter_map(|candidate| self.with_candidate(state, index, candidate, None, cause))
             .collect()
     }
 
@@ -506,7 +540,19 @@ impl Search<'_> {
         }
         let mut indices = (0..state.inventory.nodes.len()).collect::<Vec<_>>();
         let distances = self.order(state);
-        indices.sort_by_key(|index| self.node_order(state, &distances, *index));
+        indices.sort_by_key(|index| {
+            let installed_match = !self.prefer_newest
+                && relation.kind == RelationKind::Requires
+                && self.original.nodes[*index]
+                    .current
+                    .iter()
+                    .flat_map(|candidate| &candidate.provides)
+                    .any(|plugin| {
+                        same_guid(&plugin.guid, &relation.guid)
+                            && matches(relation, plugin) == Some(true)
+                    });
+            (!installed_match, self.node_order(state, &distances, *index))
+        });
         for index in indices {
             let node = &state.inventory.nodes[index];
             // Deciding a package fixes its version, not every sibling's switch.
@@ -548,7 +594,10 @@ impl Search<'_> {
             {
                 continue;
             }
-            for candidate in ordered_candidates(node) {
+            // A switch or installed repair should re-enable a suitable installed
+            // provider before downloading a replacement. Mismatches still try
+            // compatible releases from newest to oldest.
+            for candidate in ordered_candidates(node, !self.prefer_newest) {
                 if node
                     .current
                     .as_ref()
@@ -565,7 +614,7 @@ impl Search<'_> {
                 }) {
                     continue;
                 }
-                branches.push(self.with_candidate(
+                branches.extend(self.with_candidate(
                     state,
                     index,
                     candidate,
@@ -580,7 +629,7 @@ impl Search<'_> {
         let mut fallback = None;
         // Only a complete version-only search may unlock this second-pass fallback.
         // Never discard a newly installed requirement to make its own install succeed.
-        if self.allow_dependency_disable
+        if self.pass == SearchPass::AllowDependencyDisable
             && relation.kind == RelationKind::Requires
             && issue.state != EvaluationState::Unknown
             && self.original.nodes[owner].enabled
@@ -649,6 +698,7 @@ fn solve_inner(
     let mut state = SearchState {
         inventory: inventory.clone(),
         decided: BTreeSet::new(),
+        replaced_installed: 0,
         disabled_guids: BTreeSet::new(),
         fallback_disabled_guids: BTreeSet::new(),
         causes: BTreeMap::new(),
@@ -795,6 +845,7 @@ fn solve_inner(
             ))
         })
         .collect();
+    let prefer_newest = request.roots.iter().any(|root| root.candidate_id.is_some());
     let mut search = Search {
         original: inventory,
         fixed: roots.clone(),
@@ -804,19 +855,12 @@ fn solve_inner(
         baseline,
         failure: None,
         catalog_unknown: inventory.nodes.iter().any(|node| !node.candidates_complete),
-        allow_dependency_disable: false,
+        prefer_newest,
+        pass: SearchPass::CompatibleVersions,
+        preference_remaining: MAX_SEARCH_STATES,
+        preference_pruned: false,
     };
-    let initial = state.clone();
-    let mut solution = search.visit(state);
-    if matches!(solution, Err(false)) {
-        // Exhaust every compatible-version branch before allowing dependency owners
-        // off. Unknown declarations, incomplete history and search limits block this.
-        search.allow_dependency_disable = true;
-        search.visited.clear();
-        search.failure = None;
-        solution = search.visit(initial.clone());
-    }
-    let solution = match solution {
+    let solution = match search.find_solution(&state) {
         Ok(solution) => solution,
         Err(incomplete) => {
             let mut blocker = search
@@ -836,7 +880,7 @@ fn solve_inner(
         .map(|(_, node)| node.id.clone())
         .collect::<Vec<_>>();
     impacts.extend(
-        initial
+        state
             .inventory
             .nodes
             .iter()

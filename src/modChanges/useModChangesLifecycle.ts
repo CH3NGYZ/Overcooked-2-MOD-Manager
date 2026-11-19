@@ -14,32 +14,48 @@ export function useModChangesLifecycle() {
   let disposed = false
   let stop: (() => void) | undefined
   let appliedRefresh: Promise<void> | undefined
-  let appliedAgain = false
+  let pendingRefresh: { scope: 'local' | 'full', mods: Promise<void> } | undefined
+  let evaluatingApplied = false
 
   watch([dashboard.config, dashboard.mods, maps.maps, levels.levelSets,
     () => dashboard.game.value?.path, () => dashboard.game.value?.kitchen_running, demoActive], () => {
+    if (appliedRefresh && (!evaluatingApplied || pendingRefresh)) return
     changes.clearEvaluation()
-    if (!appliedRefresh && !demoActive.value && isTauri() && dashboard.game.value?.path)
+    if (!demoActive.value && isTauri() && dashboard.game.value?.path)
       void changes.invalidate().catch(() => undefined)
   }, { flush: 'post' })
 
-  function refreshApplied() {
-    appliedAgain = true
+  function refreshApplied(mapToggleOnly: boolean) {
+    if (!pendingRefresh) {
+      // Mark the current DLL generation unusable before an older map response
+      // can publish. The actual reads still coalesce against the fresh snapshot.
+      pendingRefresh = {
+        scope: mapToggleOnly ? 'local' : 'full',
+        mods: dashboard.loadLocalMods({ afterPending: true }),
+      }
+      changes.clearEvaluation()
+    } else if (!mapToggleOnly) pendingRefresh.scope = 'full'
     if (appliedRefresh) return appliedRefresh
-    changes.clearEvaluation()
     appliedRefresh = Promise.resolve().then(async () => {
-      do {
-        appliedAgain = false
-        await Promise.all([dashboard.load(), maps.loadMaps({ force: true })])
-        await levels.scanLevelSets()
-        if (!disposed) await changes.invalidate()
-      } while (appliedAgain && !disposed)
+      while (pendingRefresh && !disposed) {
+        const { scope, mods } = pendingRefresh
+        pendingRefresh = undefined
+        if (scope === 'local') await mods
+        else await Promise.all([mods, dashboard.loadBase(), maps.loadMaps({ force: true })])
+        if (pendingRefresh || disposed) continue
+        await levels.scanLevelSets({ reuseCurrentGeneration: true }).catch(() => undefined)
+        if (!pendingRefresh && !disposed) {
+          evaluatingApplied = true
+          try { await changes.invalidate().catch(() => undefined) }
+          finally { evaluatingApplied = false }
+        }
+      }
     }).finally(() => { appliedRefresh = undefined })
     return appliedRefresh
   }
 
   onMounted(() => {
-    if (isTauri()) void watchModChangesApplied(() => { void refreshApplied().catch(() => undefined) })
+    if (isTauri()) void watchModChangesApplied(event => { void refreshApplied(event?.map_toggle_only === true).catch(() => undefined) })
       .then(unlisten => { if (disposed) unlisten(); else stop = unlisten })
       .catch(() => undefined)
   })

@@ -9,7 +9,8 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve)),deferred=()=>{let res
 const snapshot=revision=>({revision,nodes:[],evaluations:[]})
 test('newer evaluation refresh wins even when an older IPC finishes last',async()=>{
  const first=deferred(),second=deferred();let i=0;globalThis.__changeStoreApi=()=>++i===1?first.promise:second.promise
- const store=useModChanges(),a=store.refresh(),b=store.refresh();second.resolve(snapshot('new'));await b;first.resolve(snapshot('old'));await a
+ const store=useModChanges(),a=store.refresh(),b=store.refresh();second.resolve(snapshot('new'));await b;first.resolve(snapshot('old'))
+ assert.equal((await a).revision,'old','request callers receive their own inventory, even if no longer displayed')
  assert.equal(store.evaluation.value.revision,'new');assert.equal(store.evaluating.value,false)
 })
 test('source invalidation clears existing state and rejects an older in-flight result',async()=>{

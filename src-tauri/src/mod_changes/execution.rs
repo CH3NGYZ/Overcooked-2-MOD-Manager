@@ -1,5 +1,11 @@
 //! Commit one prepared whole-chain plan under the existing write lock.
-use super::{inventory, model::SolveStatus, preparation, session::*, transaction::*};
+use super::{
+    inventory,
+    model::{ActionKind, NodeKind, SolveStatus},
+    preparation,
+    session::*,
+    transaction::*,
+};
 use crate::{app_state::AppState, game, models::OperationResult, mods};
 use std::{fs, path::Path};
 use tauri::{AppHandle, Emitter};
@@ -12,12 +18,29 @@ pub(crate) fn execute(
     let mut lease = SessionLease::take(state, id)?;
     let session = lease.session.as_mut().ok_or("modChanges.planExpired")?;
     commit(state, session)?;
+    // Only a completed solution can scope the notification. A map request may
+    // also enable or replace MODs, so the original intent alone is insufficient.
+    let actions = &session.plan.result.actions;
+    let map_toggle_only = session.wire_request.map_import.is_none()
+        && !actions.is_empty()
+        && session.solved.as_ref().is_some_and(|inventory| {
+            actions.iter().all(|action| {
+                matches!(action.kind, ActionKind::Enable | ActionKind::Disable)
+                    && inventory
+                        .nodes
+                        .iter()
+                        .any(|node| node.id == action.node_id && node.kind == NodeKind::Map)
+            })
+        });
     let staging = session.staging.clone();
     lease.session = None;
     if let Err(error) = cleanup(state, &staging) {
         log::warn!("整链已完成，暂存清理延后：{error}");
     }
-    let _ = app.emit("mod-changes-applied", ());
+    let _ = app.emit(
+        "mod-changes-applied",
+        serde_json::json!({ "map_toggle_only": map_toggle_only }),
+    );
     Ok(OperationResult {
         ok: true,
         message: "modChanges.completed".into(),

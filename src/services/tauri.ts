@@ -1,5 +1,5 @@
 import type { LevelPreview, LevelPreviewDetail } from '../types'
-import type { ChangeRequest, ChangePlan, ChangePreparationOutcome, ChangePreparationProgress, EvaluationSnapshot, EvaluationSubject, ChangeExecutionResult } from '../modChanges/types'
+import type { ChangeRequest, ChangePlan, ChangePreparationOutcome, ChangePreparationProgress, EvaluationSnapshot, EvaluationSubject, ChangeExecutionResult, ChangeAppliedEvent } from '../modChanges/types'
 import type { LocalModSnapshot, ChefEditorOpen, ChefEditorSnapshot, ChefDraft, ChefValidation, ChefFilesChanged } from '../diychef/types'
 import type { ChefPreviewScene } from '../diychef/preview/types'
 import type { PublishProvider } from '../types'
@@ -477,8 +477,8 @@ export function watchDataProvider(callback: () => void): Promise<UnlistenFn> {
 }
 
 /** A committed batch publishes once, after all MOD and map changes are visible. */
-export function watchModChangesApplied(callback: () => void): Promise<UnlistenFn> {
-  return listen('mod-changes-applied', () => callback())
+export function watchModChangesApplied(callback: (event?: ChangeAppliedEvent | null) => void): Promise<UnlistenFn> {
+  return listen<ChangeAppliedEvent | null>('mod-changes-applied', (event) => callback(event.payload))
 }
 
 /** One process-wide subscription keeps both recycle-bin surfaces current. */

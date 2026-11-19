@@ -5,7 +5,7 @@ import { createChangeWorkflow } from './workflow'
 import { setEvaluationSnapshotReader } from './evaluationProjection'
 import { installNoteKey, localizedInstallNotes, type InstallNote } from './planNotes'
 import type { ChangeWorkflowState } from './workflow'
-import type { ChangePreparationProgress, ChangeRequest, EvaluationSnapshot, EvaluationSubject } from './types'
+import type { ChangePreparationProgress, EvaluationSnapshot, EvaluationSubject } from './types'
 
 const state = shallowRef<ChangeWorkflowState | null>(null)
 const preparation = shallowRef<ChangePreparationProgress | null>(null)
@@ -107,6 +107,7 @@ async function refresh(subjects?: EvaluationSubject[]) {
       && peer.map_dir_name === subject.map_dir_name) === index)
     const result = await api.evaluateModChanges(unique.length ? unique : undefined)
     if (mine === revision) evaluation.value = result
+    return result
   } finally {
     if (mine === revision) evaluating.value = false
   }
@@ -128,12 +129,6 @@ function invalidate() {
   return pending
 }
 
-async function run(request: ChangeRequest) {
-  const result = await workflow.run(request)
-  if (result?.ok) await invalidate().catch(() => undefined)
-  return result
-}
-
 export function useModChanges() {
   return {
     state: readonly(state), preparation: readonly(preparation), cancellingDownload: readonly(cancellingDownload),
@@ -141,6 +136,6 @@ export function useModChanges() {
     installNotes, acceptInstallNotes,
     evaluation: readonly(evaluation), evaluating: readonly(evaluating),
     busy: computed(() => state.value !== null),
-    run, refresh, invalidate, clearEvaluation, confirm, cancel: workflow.cancel, retry: workflow.retry,
+    run: workflow.run, refresh, invalidate, clearEvaluation, confirm, cancel: workflow.cancel, retry: workflow.retry,
   }
 }

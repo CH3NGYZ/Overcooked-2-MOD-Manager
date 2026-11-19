@@ -11,7 +11,7 @@
  * 最近一次本地结果也由此保存，供两页展示与已安装优先排序复用；在飞扫描
  * 合并为一次，但不等待任何在线地图请求。在线与本地分别发布、分别处理失败。
  */
-import { computed, ref, shallowRef } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 import { api, watchLevelSetScan } from '../services/tauri'
 import { useDashboard } from './useDashboardStore'
 import { demoActive } from '../tutorial/demo'
@@ -22,8 +22,22 @@ import type { UnlistenFn } from '@tauri-apps/api/event'
  * 在飞扫描数；并发调用复用 pendingScan，同一轮只扫描一次。
  */
 const inFlight = ref(0)
-/** Latest local scan, independent of online maps; reused for installed-first scheduling. */
-const levelSets = shallowRef<LevelSetInfo[]>([])
+const dashboard = useDashboard()
+const result = shallowRef<LevelSetInfo[] | null>(null)
+const error = shallowRef<unknown>(null)
+const empty: LevelSetInfo[] = []
+const levelSets = computed(() => result.value ?? empty)
+const hasResult = computed(() => result.value !== null)
+let resultGeneration = 0
+let contextRevision = 0
+// A DLL re-scan on the same game/target may keep displaying the last result.
+// A different root or target must clear it even if the identity later reverts.
+watch([() => dashboard.game.value?.path, () => dashboard.config.value?.game?.path,
+  () => dashboard.config.value?.game?.runtime, dashboard.diyLevelTarget], () => {
+  contextRevision += 1
+  result.value = null
+  error.value = null
+}, { flush: 'sync' })
 let pendingScan: Promise<LevelSetInfo[]> | undefined
 
 /** 是否有扫描在飞（总览卡片的按钮转圈读它）。 */
@@ -54,33 +68,46 @@ function ensureProgressListener(): void {
  * **所有入口都必须走这里**，不要直接调 `api.levelSets()`：绕过它就等于让总览
  * 卡片看不到那次读取，这个模块存在的意义也就没了。
  */
-export function scanLevelSets(): Promise<LevelSetInfo[]> {
+export function scanLevelSets({ reuseCurrentGeneration = false } = {}): Promise<LevelSetInfo[]> {
   // Keep this cache real. Pages project the tutorial list without publishing it here.
   if (demoActive.value) return Promise.resolve(levelSets.value)
   if (pendingScan) return pendingScan
+  // A post-commit caller can share a read that raced ahead against the new
+  // DLL generation. Manual and external change reads always hit the disk.
+  if (reuseCurrentGeneration && result.value && dashboard.modsStatus.value === 'ready'
+    && resultGeneration === dashboard.modsGeneration.value) return Promise.resolve(result.value)
   ensureProgressListener()
+  error.value = null
   progress.value = null
   inFlight.value += 1
   pendingScan = (async () => {
     try {
       await listening
-      const dashboard = useDashboard()
       for (;;) {
         if (demoActive.value) return levelSets.value
         // DIYLevel's root comes from the completed DLL scan; online map reads
         // remain independent of this local dependency.
         const generation = await dashboard.ensureLocalModsLoaded()
         if (demoActive.value) return levelSets.value
+        const context = contextRevision
+        const isCurrent = () => context === contextRevision && dashboard.modsStatus.value === 'ready'
+          && generation === dashboard.modsGeneration.value
+        if (!isCurrent()) continue
         try {
-          const result = await api.levelSets()
-          if (dashboard.modsStatus.value !== 'ready' || generation !== dashboard.modsGeneration.value) continue
-          levelSets.value = result
-          return result
+          const sets = await api.levelSets()
+          if (!isCurrent()) continue
+          if (demoActive.value) return levelSets.value
+          resultGeneration = generation
+          result.value = sets
+          return sets
         } catch (reason) {
-          if (dashboard.modsStatus.value !== 'ready' || generation !== dashboard.modsGeneration.value) continue
+          if (!isCurrent()) continue
           throw reason
         }
       }
+    } catch (reason) {
+      if (!demoActive.value) error.value = reason
+      throw reason
     } finally {
       inFlight.value -= 1
       progress.value = null
@@ -91,5 +118,5 @@ export function scanLevelSets(): Promise<LevelSetInfo[]> {
 }
 
 export function useLevelSetScan() {
-  return { scanning, progress, scanLevelSets, levelSets }
+  return { scanning, progress, scanLevelSets, levelSets, hasResult, error }
 }

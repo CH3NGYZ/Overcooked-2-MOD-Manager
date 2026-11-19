@@ -12,6 +12,8 @@ mod install_notes;
 mod installed_relations;
 #[path = "orchestration_tests/retired_members.rs"]
 mod retired_members;
+#[path = "orchestration_tests/toggle_scope.rs"]
+mod toggle_scope;
 
 struct Fixture {
     _temp: tempfile::TempDir,
@@ -138,7 +140,7 @@ fn request(id: &str, tag: Option<&str>, enabled: bool) -> PlanRequest {
             },
             asset_name: None,
         }],
-        map_import: None,
+        ..Default::default()
     }
 }
 
@@ -355,7 +357,7 @@ fn manual_replacement_inherits_disabled_member_and_preserves_original_preview() 
                 },
                 asset_name: None,
             }],
-            map_import: None,
+            ..Default::default()
         },
     )
     .unwrap();
@@ -532,7 +534,7 @@ fn missing_loader_blocks_online_local_prepare_and_commit_but_allows_disabling() 
             },
             asset_name: None,
         }],
-        map_import: None,
+        ..Default::default()
     };
     assert_eq!(planning::create(&f.state, local).err().unwrap(), expected);
     assert!(source.is_file());

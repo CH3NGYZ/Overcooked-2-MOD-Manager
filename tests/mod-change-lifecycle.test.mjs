@@ -35,9 +35,14 @@ async function setup(t, registration) {
   let load = async () => {}, stops = 0
   const fixture = {
     dashboard: { config: shallowRef({}), mods: shallowRef([]), game: shallowRef({ path: 'game', kitchen_running: false }),
-      load: async () => { calls.push('mods'); await load(); fixture.dashboard.mods.value = [{}] } },
+      loadBase: async () => { calls.push('dashboard') },
+      loadLocalMods: async options => {
+        assert.deepEqual(options, { afterPending: true }); calls.push('mods'); await load(); fixture.dashboard.mods.value = [{}]
+      } },
     maps: { maps: shallowRef([]), loadMaps: async options => { assert.deepEqual(options, { force: true }); calls.push('maps'); fixture.maps.maps.value = [{}] } },
-    levels: { levelSets: shallowRef([]), scanLevelSets: async () => { calls.push('levels'); fixture.levels.levelSets.value = [{}] } },
+    levels: { levelSets: shallowRef([]), scanLevelSets: async options => {
+      assert.deepEqual(options, { reuseCurrentGeneration: true }); calls.push('levels'); fixture.levels.levelSets.value = [{}]
+    } },
     changes: { clearEvaluation: () => calls.push('clear'), invalidate: async () => { calls.push('evaluate') } },
     listen: async callback => { if (registration) await registration.promise; listeners.add(callback); return () => { stops++; listeners.delete(callback) } },
   }
@@ -48,27 +53,35 @@ async function setup(t, registration) {
   const dispose = () => { if (!disposed) { disposed = true; app.unmount() } }
   t.after(dispose)
   await tick()
-  return { ...fixture, calls, get stops() { return stops }, listeners, dispose, setLoad(value) { load = value }, emit() { for (const callback of listeners) callback() } }
+  return { ...fixture, calls, get stops() { return stops }, listeners, dispose, setLoad(value) { load = value },
+    emit(event) { for (const callback of listeners) callback(event) } }
 }
 
 test('one applied batch refreshes both domains before reevaluating, with no intermediate evaluation', async t => {
   const f = await setup(t), hold = deferred()
   f.setLoad(() => hold.promise)
   f.emit(); f.emit(); await tick()
-  assert.deepEqual(f.calls.filter(call => call !== 'clear'), ['mods', 'maps'])
+  assert.deepEqual(f.calls.filter(call => call !== 'clear'), ['mods', 'dashboard', 'maps'])
   assert.equal(f.calls.includes('evaluate'), false)
   hold.resolve(); await tick(); await tick()
-  assert.deepEqual(f.calls.filter(call => call !== 'clear'), ['mods', 'maps', 'levels', 'evaluate'])
+  assert.deepEqual(f.calls.filter(call => call !== 'clear'), ['mods', 'dashboard', 'maps', 'levels', 'evaluate'])
   f.dispose(); assert.equal(f.stops, 1); assert.equal(f.listeners.size, 0)
 })
 
-test('a later applied batch during refresh receives another complete refresh', async t => {
+test('pure map toggles refresh only the trusted DLL and map snapshots, then evaluate once', async t => {
+  const f = await setup(t)
+  f.emit({ map_toggle_only: true }); await tick()
+  assert.deepEqual(f.calls, ['mods', 'clear', 'levels', 'evaluate'])
+})
+
+test('mixed batches arriving during a scoped refresh run a full pass before map scan and evaluation', async t => {
   const f = await setup(t), hold = deferred()
   let loads = 0
   f.setLoad(async () => { if (++loads === 1) await hold.promise })
-  f.emit(); await tick(); f.emit(); hold.resolve(); await tick(); await tick()
+  f.emit({ map_toggle_only: true }); await tick()
+  f.emit({ map_toggle_only: false }); hold.resolve(); await tick(); await tick()
   assert.equal(loads, 2)
-  assert.deepEqual(f.calls.filter(call => call !== 'clear'), ['mods', 'maps', 'levels', 'evaluate', 'mods', 'maps', 'levels', 'evaluate'])
+  assert.deepEqual(f.calls.filter(call => call !== 'clear'), ['mods', 'mods', 'dashboard', 'maps', 'levels', 'evaluate'])
 })
 
 test('game and source snapshot changes invalidate the shared evaluation once per watcher flush', async t => {

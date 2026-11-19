@@ -130,7 +130,15 @@ test('chef, local maps and drawer share missing-state routing and centered layou
   assert.match(levels, /!diyLevelTarget\.value && !localReadError\.value/)
   assert.match(levels, /modsStatus === 'error' \|\| localReadError/)
   assert.match(levels, /<ModNotInstalled[^>]*diyLevelMissing[^>]*guid="dev\.gua\.overcooked\.diylevel"/)
-  assert.match(levels, /realSetsTarget\.value === diyLevelTarget\.value \? realSets\.value : \[\]/)
+  assert.match(levels, /levelSets: realSets, hasResult,[\s\S]*?\} = useLevelSetScan\(\)/)
+  assert.match(levels, /const showMapList = computed\(\(\) => demoActive\.value \|\| \(hasResult\.value && !!diyLevelTarget\.value\)\)/)
+  assert.match(levels, /withDemoLevelSets\(showMapList\.value \? realSets\.value : \[\]\)/)
+  // Target changes clear the shared list immediately; in-flight reads must
+  // still belong to that context before the page can show their result.
+  const scan = read('src/composables/useLevelSetScan.ts')
+  assert.match(scan, /dashboard\.diyLevelTarget\], \(\) => \{\s*contextRevision \+= 1\s*result\.value = null[^}]*\}, \{ flush: 'sync' \}\)/)
+  assert.match(scan, /const hasResult = computed\(\(\) => result\.value !== null\)/)
+  assert.match(scan, /const isCurrent = \(\) => context === contextRevision/)
   assert.match(panel, /<ModNotInstalled[^>]*layout="inline"/)
   assert.doesNotMatch(panel, /cached_releases|installableRepository/)
   assert.match(shared, /useModRepositoryLink\(\)/)

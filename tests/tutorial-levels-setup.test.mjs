@@ -119,7 +119,6 @@ test('local maps setup evaluates immediate grouping watchers with tutorial depen
     }
     assert.ok(state.statusSummary.length > 0)
 
-    await state.load()
     await state.reloadSets()
     await tick()
     assert.deepEqual(errors, [])

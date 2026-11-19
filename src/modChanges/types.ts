@@ -2,7 +2,12 @@ import type { DownloadProgress, MapInstallOrigin, RepositoryRelation } from '../
 
 /** Rust mod_changes/model.rs is the authority for relation and action semantics. */
 export interface RootIntent { node_id: string; candidate_id?: string; enabled: boolean; member_key?: string; asset_name?: string }
-export interface ChangeRequest { roots: RootIntent[]; map_import?: { zip_path: string; selected: string[]; origin?: MapInstallOrigin | null } }
+export interface ChangeRequest {
+  roots: RootIntent[]
+  map_import?: { zip_path: string; selected: string[]; origin?: MapInstallOrigin | null }
+  /** Local scan seen at click and trusted inventory used to resolve its root. */
+  toggle_scope?: { generation: number; revision: string }
+}
 export type ChangeActionKind = 'install' | 'upgrade' | 'downgrade' | 'replace' | 'enable' | 'disable'
 export interface ChangeAction {
   node_id: string
@@ -78,6 +83,8 @@ export interface ChangeNode {
 }
 export interface EvaluationSubject { repository_id?: string; tag?: string; map_id?: string; dll_file?: string; map_dir_name?: string }
 export interface ChangeExecutionResult { ok: boolean; message: string }
+/** Refresh scope of the committed solution, and not of the requested intent. */
+export interface ChangeAppliedEvent { map_toggle_only: boolean }
 export interface ChangePreparationItem {
   node_id: string
   candidate_id: string

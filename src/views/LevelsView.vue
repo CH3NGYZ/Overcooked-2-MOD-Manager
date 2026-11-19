@@ -113,11 +113,16 @@ const { config: realConfig, game: realGame, mods: realMods, modsStatus, modsErro
 const config = computed(() => withDemoConfig(realConfig.value))
 const game = computed(() => withDemoGame(realGame.value))
 const mods = computed(() => withDemoMods(realMods.value))
-const localReadError = ref('')
+const { progress: scanProgress, scanLevelSets, levelSets: realSets, hasResult,
+  error: scanError, scanning } = useLevelSetScan()
+const localReadError = computed(() => scanError.value ? backendMessageOf(scanError.value) : '')
 // The completed backend scan owns GUID/version selection. Tutorial data has
 // its own presentation and never adopts or changes this real target token.
 const diyLevelAvailable = computed(() => demoActive.value || (modsStatus.value === 'ready' && !!diyLevelTarget.value))
 const diyLevelMissing = computed(() => !demoActive.value && modsStatus.value === 'ready' && !diyLevelTarget.value && !localReadError.value)
+// The shared scan drops its prior list if the game root or DIYLevel target
+// changes. During a same-target rescan the cards and their scroll range stay mounted.
+const showMapList = computed(() => demoActive.value || (hasResult.value && !!diyLevelTarget.value))
 const { linkToMap } = useMapLink()
 /**
  * 「缺依赖」的安装入口与 MOD 管理页同一个落点：跳到 MOD 安装页并高亮那张
@@ -136,12 +141,7 @@ const { highlightId } = useFocusHighlight()
 const levelPreview = ref<InstanceType<typeof LevelPreviewDialog> | null>(null)
 const toolsMinWidth = computed(() => TOOL_BUTTON_WIDTH * 3 + TOOL_GAP * 2)
 
-/** 扫描缓存只存真实数据，教程展示通过同一批示例投影。 */
-const realSets = ref<LevelSetInfo[]>([])
-const realSetsTarget = ref<string | null>(null)
-const sets = computed(() => withDemoLevelSets(
-  diyLevelAvailable.value && realSetsTarget.value === diyLevelTarget.value ? realSets.value : [],
-))
+const sets = computed(() => withDemoLevelSets(showMapList.value ? realSets.value : []))
 /**
  * 地图源声明的地图与刷新状态，全部来自模块级单例（`useMapSources`）。
  *
@@ -165,27 +165,12 @@ const repositories = computed<ModRepository[]>(() =>
       config.value?.platform,
     )),
 )
-const realLoading = ref(true)
-const loading = computed(() => !demoActive.value && (realLoading.value || modsStatus.value === 'idle' || modsStatus.value === 'loading'))
-/**
- * 扫描进度（后端 `level-set-scan-progress` 逐份上报，订阅在 `useLevelSetScan` 里）。
- *
- * 只用来填转圈条下面的那两行；`null` 表示「还不知道总数」（刚发出请求、
- * 后端还没列完目录），这时只显示不确定动画，不编一个假百分比。
- */
-const { progress: scanProgress, scanLevelSets } = useLevelSetScan()
+const loading = computed(() => !demoActive.value && !hasResult.value
+  && !localReadError.value && modsStatus.value !== 'error')
 /** 每个集自己的开关请求状态（互不阻塞）。 */
 const busy = ref<Record<string, boolean>>({})
 /** 每个集自己的删除请求状态。 */
 const deleting = ref<Record<string, boolean>>({})
-/*
- * 「页面自己刚重读完」的时间戳写入器。
- *
- * 外部变更闸门要知道这次 `level-sets-changed` 是不是我们自己写盘的回声。
- * 闸门的构造需要 `importing`（来自下面的 `useLevelSetImport`），而 `load` /
- * `reloadSets` 在这之前就定义了 —— 用可赋值的占位函数避开初始化顺序问题，
- * 默认空动作在闸门装上之前是安全的（那时根本没有订阅）。
- */
 /*
  * 卡片展开状态（规则在 `useCardExpansion` 里）：外层是关卡集卡片，内层是集详情
  * 里的随包插件。`singleOuter` 表示一次只展开一张集卡片，点另一张就换过去；
@@ -294,39 +279,18 @@ function expandGroupForHighlight() {
 }
 watch([highlightId, groups], expandGroupForHighlight, { immediate: true })
 
-/** Local scanning owns only its loading/result. Online map loading starts
- * independently on mount and must never delay publication of this list. */
-async function load() {
-  if (demoActive.value) return
-  realLoading.value = realSets.value.length === 0
-  localReadError.value = ''
-  try {
-    const levelSets = await scanLevelSets()
-    realSets.value = levelSets
-    realSetsTarget.value = diyLevelTarget.value
-  } catch (reason) {
-    localReadError.value = backendMessageOf(reason)
-    message.error(localReadError.value)
-  } finally {
-    realLoading.value = false
-  }
-}
-
 /**
  * 只重读关卡集。
  *
- * 开关 / 删除 / 导入改的都是 `levels/` 与 `BepInEx/cache/modmanager_disabled_maps/` 下的目录，
- * 地图源列表（`useMapSources` 的 `maps`）不会因此变化，重拉纯属浪费。
+ * 本页用于手动扫描、删除、整理和外部变化。整链开关的成功事件由全局监听重读，
+ * 两者共用扫描结果；在线地图加载也不阻塞本地发布。
  */
 async function reloadSets() {
   if (demoActive.value) return
-  localReadError.value = ''
   try {
-    realSets.value = await scanLevelSets()
-    realSetsTarget.value = diyLevelTarget.value
+    await scanLevelSets()
   } catch (reason) {
-    localReadError.value = backendMessageOf(reason)
-    message.error(localReadError.value)
+    message.error(backendMessageOf(reason))
   }
 }
 
@@ -418,7 +382,7 @@ onMounted(() => {
    */
   void ensureLoaded()
   void loadMaps()
-  void load()
+  void reloadSets()
   // 从 MOD 页「去安装」跳过来：路径已暂存在模块里，直接接着走导入
   const pending = takePendingDrop('map')
   if (pending) void startDropInstall(pending)
@@ -428,10 +392,11 @@ watch(demoActive, active => {
   if (active) return
   void ensureLoaded()
   void loadMaps()
-  void load()
+  void reloadSets()
 })
-watch(diyLevelTarget, () => {
-  if (!demoActive.value && modsStatus.value === 'ready') void load()
+watch([() => realGame.value?.path, () => realConfig.value?.game?.path,
+  () => realConfig.value?.game?.runtime, diyLevelTarget], () => {
+  if (!demoActive.value) void reloadSets()
 })
 
 /** 本地关卡集绑定的地图源条目（身份匹配规则与「有更新」标签同源）。 */
@@ -680,7 +645,7 @@ function pluginTitle(plugin: LevelSetPlugin) {
   return plugin.name?.trim() || plugin.file_name.replace(/\.dll(\.disabled)?$/i, '')
 }
 
-/** 切换地图开关允许游戏运行，由后端负责路径、冲突与回滚。 */
+/** 单张开关沿用后端的整链校验；成功事件发布同一份共享扫描结果。 */
 async function toggle(set: LevelSetInfo, enabled: boolean) {
   if (busy.value[set.dir_name]) return
   busy.value = { ...busy.value, [set.dir_name]: true }
@@ -692,7 +657,6 @@ async function toggle(set: LevelSetInfo, enabled: boolean) {
       return
     }
     message.success(translateBackendMessage(result.message))
-    await reloadSets()
   } catch (reason) {
     // 开关失败时列表保持原状：下一次重读会拿到真实磁盘状态
     message.error(backendMessageOf(reason))
@@ -845,7 +809,6 @@ async function setAllEnabled(enabled: boolean) {
     if (!result) return
     if (result.ok) {
       message.success(translateBackendMessage(result.message))
-      await reloadSets()
     } else {
       message.error(translateBackendMessage(result.message))
     }
@@ -1082,11 +1045,11 @@ visibility.reconcileStatuses(computed(() => [...statusSummary.value, ...toggleSu
     </template>
     <ModNotInstalled v-if="!loading && diyLevelMissing" guid="dev.gua.overcooked.diylevel" name="DIYLevel" data-tutorial="levels-page" />
     <ContentState v-else-if="!loading && !demoActive && (modsStatus === 'error' || localReadError)" :description="modsError || localReadError" />
-    <ContentState v-else-if="!loading && diyLevelAvailable && !visibleSets.length" data-tutorial="levels-page"
+    <ContentState v-else-if="!loading && showMapList && !visibleSets.length" data-tutorial="levels-page"
       :description="emptyDescription" />
 
     <!-- 按作者分组折叠：同一位作者的地图归在一张折叠项里 -->
-    <n-collapse v-else-if="diyLevelAvailable" :expanded-names="groupsExpanded" class="group-collapse" data-tutorial="levels-page"
+    <n-collapse v-else-if="showMapList" :expanded-names="groupsExpanded" class="group-collapse" data-tutorial="levels-page"
       @update:expanded-names="onGroupsExpanded">
       <!--
         折叠项里只挂组件、不写卡片：`n-collapse` 的动态 prop 只有
@@ -1107,8 +1070,8 @@ visibility.reconcileStatuses(computed(() => [...statusSummary.value, ...toggleSu
     「检测更新」在页头，两者职责分开：一个读本地，一个看线上。
   -->
   <n-float-button position="fixed" bottom="28" right="32" :tooltip="t('levelSet.rescanLocal')"
-    :disabled="loading" @click="load">
-    <RefreshOutline width="17" height="17" :class="{ 'spin-icon': loading }" />
+    :disabled="loading || scanning" @click="reloadSets">
+    <RefreshOutline width="17" height="17" :class="{ 'spin-icon': loading || scanning }" />
   </n-float-button>
 </template>
 

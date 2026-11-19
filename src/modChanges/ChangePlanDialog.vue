@@ -65,7 +65,7 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
 <template>
   <ModInstallNoteDialog v-if="installNotes.length" :notes="installNotes"
     @continue="changes.acceptInstallNotes" @cancel="changes.cancel" />
-  <AppModal v-else :show="!!state" :title="t('modChanges.title')" :z-index="2599" max-width="min(760px, 94%)"
+  <AppModal v-else :show="!!state && !state.silent" :title="t('modChanges.title')" :z-index="2599" max-width="min(760px, 94%)"
     :closable="canCancel" :mask-closable="false" card-class="mod-changes-modal"
     @update:show="(show: boolean) => { if (!show) void changes.cancel() }">
     <div class="change-plan" data-mod-changes-plan>

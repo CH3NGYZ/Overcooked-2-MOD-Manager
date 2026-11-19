@@ -94,6 +94,10 @@ test('map engine honors cache on cards/checks, forces only full refresh, and upd
   const engine = useMapSources()
   const singleMap = { id: 'fast', level_set_name: 'Fast', author: 'A' }
   const slowMap = { id: 'slow', level_set_name: 'Slow', author: 'B' }
+  // Bound refresh uses installed maps from the current local scan. Do not
+  // borrow a previous test's result, which a changed game identity clears.
+  globalThis.__loadingApi.levelSets = async () => [{ name: 'Fast', author: 'A' }]
+  await useLevelSetScan().scanLevelSets()
   const slow = deferred()
   const source = deferred()
   const requests = []
@@ -460,4 +464,73 @@ test('DIYLevel summaries retain only the backend-selected DLL token, including d
   await d.loadLocalMods()
   d.applyConfigSnapshot({ repositories: [], game: { path: 'invalidated-target', runtime: 'native' } })
   assert.equal(d.diyLevelTarget.value, null)
+})
+
+test('a committed map switch preserves the current list and reuses only a post-commit map scan', async () => {
+  const d = useDashboard(), local = useLevelSetScan()
+  d.applyConfigSnapshot({ repositories: [], game: { path: 'map-toggle', runtime: 'native' } })
+  const oldList = [{ dir_name: 'map', enabled: false }]
+  const newList = [{ dir_name: 'map', enabled: true }]
+  globalThis.__loadingApi = {
+    localMods: async () => ({ generation: 61, mods: [], diy_level_target: 'DIYLevel.dll' }),
+    levelSets: async () => oldList,
+  }
+  await local.scanLevelSets()
+  const oldMaps = deferred(), oldMods = deferred(), newMods = deferred(), newMaps = deferred()
+  let modScans = 0, setScans = 0
+  globalThis.__loadingApi = {
+    localMods: () => ++modScans === 1 ? oldMods.promise : newMods.promise,
+    levelSets: () => ++setScans === 1 ? oldMaps.promise : newMaps.promise,
+  }
+  const overlappingMaps = local.scanLevelSets()
+  await tick()
+  assert.equal(setScans, 1)
+  const overlappingMods = d.loadLocalMods()
+  const newDllSnapshot = d.loadLocalMods({ afterPending: true })
+  oldMaps.resolve([{ dir_name: 'overtaken', enabled: false }])
+  oldMods.resolve({ generation: 62, mods: [], diy_level_target: 'overtaken.dll' })
+  await overlappingMods
+  await tick()
+  assert.strictEqual(local.levelSets.value, oldList, 'mounted list remains intact until the replacement is ready')
+  assert.equal(d.diyLevelTarget.value, 'DIYLevel.dll', 'the previous DLL read never publishes its target')
+  assert.equal(modScans, 2)
+  assert.equal(setScans, 1, 'the stale map scan must wait for the DLL generation acquired after commit')
+  newMods.resolve({ generation: 63, mods: [], diy_level_target: 'DIYLevel.dll' })
+  await newDllSnapshot
+  newMaps.resolve(newList)
+  assert.strictEqual(await overlappingMaps, newList)
+  assert.strictEqual(await local.scanLevelSets({ reuseCurrentGeneration: true }), newList)
+  assert.equal(setScans, 2, 'the successful post-commit scan is reused even after it completes')
+  await local.scanLevelSets()
+  assert.equal(setScans, 3, 'external/manual reads still hit the disk')
+})
+
+test('changing game or DIYLevel away and back does not republish old map cards', async () => {
+  const d = useDashboard(), local = useLevelSetScan()
+  const configure = path => d.applyConfigSnapshot({ repositories: [], game: { path, runtime: 'native' } })
+  configure('A')
+  let generation = 65
+  const localMods = target => async () => ({ generation: generation++, mods: [], diy_level_target: target })
+  globalThis.__loadingApi = { localMods: localMods('A.dll'), levelSets: async () => [{ dir_name: 'before' }] }
+  await local.scanLevelSets()
+  assert.equal(local.hasResult.value, true)
+  configure('B'); configure('A')
+  assert.equal(local.hasResult.value, false)
+  assert.deepEqual(local.levelSets.value, [])
+  await local.scanLevelSets()
+  assert.equal(local.levelSets.value[0].dir_name, 'before')
+  const oldMaps = deferred()
+  let setScans = 0
+  globalThis.__loadingApi.levelSets = () => ++setScans === 1 ? oldMaps.promise : Promise.resolve([{ dir_name: 'after' }])
+  const overlapping = local.scanLevelSets()
+  await tick()
+  globalThis.__loadingApi.localMods = localMods('B.dll')
+  await d.loadLocalMods()
+  assert.equal(local.hasResult.value, false)
+  globalThis.__loadingApi.localMods = localMods('A.dll')
+  await d.loadLocalMods()
+  assert.deepEqual(local.levelSets.value, [])
+  oldMaps.resolve([{ dir_name: 'overtaken' }])
+  assert.deepEqual(await overlapping, [{ dir_name: 'after' }])
+  assert.equal(setScans, 2)
 })

@@ -49,7 +49,7 @@ fn manual_preview(f: &Fixture, members: &[(&str, &str)]) -> PlanRequest {
             },
             asset_name: None,
         }],
-        map_import: None,
+        ..Default::default()
     }
 }
 

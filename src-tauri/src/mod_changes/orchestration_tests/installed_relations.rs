@@ -264,7 +264,7 @@ fn contradictory_installed_secondary_sources_remain_unknown_instead_of_choosing_
                 },
                 asset_name: None,
             }],
-            map_import: None,
+            ..Default::default()
         },
     )
     .unwrap();

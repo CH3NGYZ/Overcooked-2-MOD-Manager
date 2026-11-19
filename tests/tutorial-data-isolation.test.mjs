@@ -306,7 +306,8 @@ test('page wiring projects every data lane, skips mount/drop reads and restores 
     const source = read(file)
     assert.match(source, /withDemoMaps\(realMaps\.value\)/, file)
     if (file === 'LevelsView') {
-      assert.match(source, /withDemoLevelSets\(\s*diyLevelAvailable\.value && realSetsTarget\.value === diyLevelTarget\.value \? realSets\.value : \[\]/, file)
+      assert.match(source, /withDemoLevelSets\(showMapList\.value \? realSets\.value : \[\]/, file)
+      assert.match(source, /const showMapList = computed\(\(\) => demoActive\.value \|\|/)
       assert.match(source, /const diyLevelAvailable = computed\(\(\) => demoActive\.value \|\|/)
     } else assert.match(source, /withDemoLevelSets\(real(?:Level)?Sets\.value\)/, file)
   }

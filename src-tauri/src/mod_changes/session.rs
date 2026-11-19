@@ -8,6 +8,13 @@ pub(crate) struct PlanRequest {
     #[serde(default)]
     pub roots: Vec<RootRequest>,
     pub map_import: Option<MapImport>,
+    pub toggle_scope: Option<ToggleScope>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct ToggleScope {
+    pub generation: u64,
+    pub revision: String,
 }
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct RootRequest {

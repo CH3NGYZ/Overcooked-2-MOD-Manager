@@ -224,15 +224,20 @@ export function useDashboard() {
     return basePending
   }
 
-  function loadLocalMods(): Promise<void> {
+  function loadLocalMods({ afterPending = false } = {}): Promise<void> {
     if (demoActive.value) return Promise.resolve()
-    if (modsPending) return modsPending
+    const previous = modsPending
+    if (previous && !afterPending) return previous
     modsLoading.value = true
     modsStatus.value = 'loading'
     modsError.value = ''
+    // A commit revokes the old scan immediately; serialize the replacement IPC
+    // so a previously queued backend scan cannot start after the replacement.
     const revision = ++modsRequestRevision
     modsPending = (async () => {
       try {
+        if (previous) await previous
+        if (revision !== modsRequestRevision) return
         const snapshot = await api.localMods()
         if (revision !== modsRequestRevision) return
         localMods.value = snapshot.mods

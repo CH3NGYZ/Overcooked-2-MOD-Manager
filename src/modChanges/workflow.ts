@@ -5,6 +5,26 @@ export interface ChangeWorkflowState {
   phase: ChangePhase
   plan: ChangePlan | null
   error: unknown
+  silent?: boolean
+}
+
+/** Only skip the UI when the trusted plan has no change outside the requested switch. */
+function canApplyDirectly(request: ChangeRequest, plan: ChangePlan) {
+  const root = request.roots[0]
+  if (!root || request.roots.length !== 1 || request.map_import || root.candidate_id != null || root.asset_name != null
+    || plan.status !== 'ready' || plan.blockers.length || plan.install_notes.length
+    || plan.roots.length !== 1 || plan.roots[0]?.node_id !== root.node_id
+    || plan.impacts.some(id => id !== root.node_id)) return false
+  const node = plan.nodes.find(node => node.node_id === root.node_id)
+  if (!node || (node.kind !== 'map' && (node.kind !== 'mod' || root.enabled))) return false
+  const soleDll = node.kind === 'mod' && node.dll_files.length === 1
+  if (node.kind === 'mod' && root.member_key == null && !soleDll) return false
+  const kind = root.enabled ? 'enable' : 'disable'
+  return plan.actions.length <= 1 && plan.actions.every(action =>
+    action.node_id === root.node_id && action.kind === kind && action.from_candidate_id === action.to_candidate_id
+    && ((action.member_key ?? undefined) === root.member_key
+      // The solver emits a node-level switch for a one-member MOD.
+      || (action.member_key == null && soleDll && node.members?.[0]?.key === root.member_key)))
 }
 
 /** One batch is prepared and committed once; a revised plan always needs consent. */
@@ -26,46 +46,52 @@ export function createChangeWorkflow(backend: ChangeBackend, publish: (state: Ch
   async function run(request: ChangeRequest): Promise<ChangeExecutionResult | null> {
     if (current) throw new Error('modChanges.busy')
     // IPC input is JSON data and may contain Vue proxies; detach it before retry.
-    originalRequest = JSON.parse(JSON.stringify(request)) as ChangeRequest
+    const submitted = JSON.parse(JSON.stringify(request)) as ChangeRequest
+    originalRequest = submitted
     const mine = ++generation
-    update({ phase: 'planning', plan: null, error: null })
+    update({ phase: 'planning', plan: null, error: null, silent: !!submitted.toggle_scope })
     const result = new Promise<ChangeExecutionResult | null>((resolve) => { settle = resolve })
     try {
-      const plan = await backend.plan(originalRequest)
+      const plan = await backend.plan(submitted)
       if (mine !== generation) { await backend.cancel(plan.plan_id).catch(() => undefined); return result }
-      update({ phase: 'confirming', plan, error: null })
+      if (submitted.toggle_scope && canApplyDirectly(submitted, plan)) await apply(plan, submitted)
+      else update({ phase: 'confirming', plan, error: null })
     } catch (error) {
       if (mine === generation) update({ phase: 'failed', plan: null, error })
     }
     return result
   }
 
-  async function confirm() {
-    const state = current
-    if (!state?.plan || !['confirming', 'reconfirming'].includes(state.phase)) return
-    if (state.plan.status !== 'ready') return
+  async function apply(plan: ChangePlan, directRequest?: ChangeRequest) {
+    if (plan.status !== 'ready') return
     const mine = generation
+    const silent = !!directRequest
     try {
-      let plan = state.plan
       if (!plan.prepared) {
-        update({ phase: 'preparing', plan, error: null })
+        update({ phase: 'preparing', plan, error: null, silent })
         const prepared = await backend.prepare(plan.plan_id)
         if (mine !== generation) { await backend.cancel(prepared.plan_id).catch(() => undefined); return }
         // Backend changes plan_id whenever root, actions, dependencies or package contents change.
-        if (prepared.plan_id !== plan.plan_id || prepared.status !== 'ready') {
+        if (prepared.plan_id !== plan.plan_id || prepared.status !== 'ready'
+          || (directRequest && (!prepared.prepared || !canApplyDirectly(directRequest, prepared)))) {
           update({ phase: 'reconfirming', plan: prepared, error: null })
           return
         }
         plan = prepared
       }
-      update({ phase: 'executing', plan, error: null })
+      update({ phase: 'executing', plan, error: null, silent })
       const result = await backend.execute(plan.plan_id)
       if (mine !== generation) return
       if (!result.ok) { update({ phase: 'failed', plan, error: result.message }); return }
       finish(result)
     } catch (error) {
-      if (mine === generation) update({ phase: 'failed', plan: current?.plan ?? state.plan, error })
+      if (mine === generation) update({ phase: 'failed', plan, error })
     }
+  }
+
+  async function confirm() {
+    const state = current
+    if (state?.plan && (state.phase === 'confirming' || state.phase === 'reconfirming')) await apply(state.plan)
   }
 
   async function cancel() {

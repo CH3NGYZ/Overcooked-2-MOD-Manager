@@ -43,6 +43,93 @@ test('changed downloaded content requires a second confirmation of the complete 
   assert.deepEqual(f.calls.filter(call => call[0] === 'execute'), [['execute', 'verified-2']])
 })
 
+function toggle(kind, enabled, memberKey) {
+  const id = `${kind}:owner`, candidate = `installed:${id}`
+  const root = { node_id: id, enabled, ...(memberKey ? { member_key: memberKey } : {}) }
+  const node = { node_id: id, kind, dll_files: kind === 'mod' ? ['Owner.dll'] : [],
+    members: memberKey ? [{ key: memberKey, dll_file: 'Owner.dll' }] : [] }
+  // A single DLL's physical enablement can appear as a node-level action.
+  const action = { node_id: id, kind: enabled ? 'enable' : 'disable', member_key: null,
+    from_candidate_id: candidate, to_candidate_id: candidate }
+  return { request: { roots: [root], toggle_scope: { generation: 41, revision: 'scope-1' } },
+    choice: plan('switch', { roots: [root], nodes: [node], actions: [action], impacts: [id] }) }
+}
+
+test('a single map switch or MOD self-disable commits silently through normal preparation', async () => {
+  for (const [kind, enabled, member] of [['map', true], ['map', false], ['mod', false, 'owner-dll']]) {
+    const { request, choice } = toggle(kind, enabled, member), checked = []
+    const f = fixture({ plan: async () => choice, prepare: async id => { checked.push(id); return { ...choice, prepared: true } } })
+    assert.equal((await f.run(request)).ok, true)
+    assert.deepEqual(checked, ['switch'])
+    assert.deepEqual(f.calls, [['execute', 'switch']])
+    assert.deepEqual(f.states.filter(Boolean).map(state => [state.phase, state.silent]),
+      [['planning', true], ['preparing', true], ['executing', true]])
+  }
+})
+
+test('an extra dependency action, a different package member, or a blocker still opens review', async () => {
+  const { request, choice } = toggle('mod', false, 'owner-dll')
+  const [action] = choice.actions
+  for (const plan of [
+    { ...choice, actions: [action, { ...action, node_id: 'mod:dependent' }], impacts: ['mod:owner', 'mod:dependent'] },
+    { ...choice, actions: [{ ...action, member_key: 'different-dll' }] },
+    { ...choice, status: 'incomplete', blockers: [{ code: 'search_exhausted' }] },
+  ]) {
+    const f = fixture({ plan: async () => plan }), pending = f.run(request)
+    await tick()
+    assert.equal(f.state.phase, 'confirming')
+    assert.equal(f.state.silent, undefined)
+    assert.deepEqual(f.calls, [])
+    await f.cancel(); assert.equal(await pending, null)
+  }
+})
+
+test('a silent switch cannot authorize extra changes discovered during preparation', async () => {
+  const { request, choice } = toggle('map', true)
+  const f = fixture({ plan: async () => choice, prepare: async () => ({ ...choice, plan_id: 'verified', prepared: true,
+    actions: [...choice.actions, { node_id: 'mod:dependency', kind: 'enable' }], impacts: [...choice.impacts, 'mod:dependency'] }) })
+  const pending = f.run(request)
+  await tick()
+  assert.equal(f.state.phase, 'reconfirming')
+  assert.equal(f.state.silent, undefined)
+  assert.deepEqual(f.calls, [])
+  await f.confirm(); assert.equal((await pending).ok, true)
+  assert.deepEqual(f.calls, [['execute', 'verified']])
+})
+
+test('a failed direct switch displays its error and does not retry by itself', async () => {
+  const { request, choice } = toggle('map', false)
+  let calls = 0
+  const f = fixture({ plan: async () => ({ ...choice, prepared: true }), execute: async () => {
+    calls++
+    return { ok: false, message: 'modChanges.targetChanged' }
+  } })
+  const pending = f.run(request)
+  await tick()
+  assert.equal(f.state.phase, 'failed')
+  assert.equal(f.state.error, 'modChanges.targetChanged')
+  assert.equal(f.state.silent, undefined)
+  assert.equal(calls, 1)
+  await f.cancel(); assert.equal(await pending, null)
+})
+
+test('a stale click scope stays attached on retry and never applies another context', async () => {
+  const { request, choice } = toggle('map', false)
+  const scopes = []
+  const f = fixture({ plan: async value => {
+    scopes.push(value.toggle_scope)
+    if (value.toggle_scope) throw new Error('modChanges.targetChanged')
+    return choice
+  } })
+  const pending = f.run(request)
+  await tick(); await f.retry()
+  assert.deepEqual(scopes, [request.toggle_scope, request.toggle_scope])
+  assert.equal(f.state.phase, 'failed')
+  assert.match(f.state.error.message, /modChanges.targetChanged/)
+  assert.deepEqual(f.calls, [])
+  await f.cancel(); assert.equal(await pending, null)
+})
+
 for (const status of ['unsatisfiable', 'incomplete']) test(`${status} plans cannot prepare or execute`, async () => {
   const f = fixture({ plan: async () => plan('blocked', { status, blockers: [{ code: 'relation_has_no_solution' }] }) })
   const pending = f.run(request)

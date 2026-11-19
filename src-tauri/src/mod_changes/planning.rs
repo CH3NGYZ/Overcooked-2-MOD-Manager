@@ -157,6 +157,7 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
         super::guard::ensure_recovered(state)?;
     }
     let trusted = (*inventory::cached(state)?).clone();
+    ensure_toggle_scope(state, &trusted, &wire_request)?;
     game::ensure_game_stopped(&trusted.game_root)?;
     let data = state
         .config
@@ -233,6 +234,54 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
             Err(error)
         }
     }
+}
+
+fn ensure_toggle_scope(
+    state: &AppState,
+    trusted: &TrustedInventory,
+    request: &PlanRequest,
+) -> Result<(), String> {
+    let Some(scope) = &request.toggle_scope else {
+        return Ok(());
+    };
+    let [root] = request.roots.as_slice() else {
+        return Err("modChanges.targetChanged".into());
+    };
+    let summary = &trusted
+        .files
+        .get(&root.intent.node_id)
+        .ok_or("modChanges.targetChanged")?
+        .summary;
+    if scope.revision != trusted.revision {
+        return Err("modChanges.targetChanged".into());
+    }
+    // Node IDs for installed items are game-relative. The scan that supplied the
+    // clicked card must still belong to the root recognized by fresh inventory.
+    let snapshot = state
+        .local_mod_snapshot
+        .lock()
+        .map_err(|_| "lock.poisoned")?
+        .get(scope.generation, &trusted.game_root)
+        .map_err(|_| "modChanges.targetChanged")?;
+    if summary.kind == NodeKind::Map {
+        let package = snapshot
+            .diy_level_target
+            .as_deref()
+            .and_then(|target| snapshot.mods.iter().find(|item| item.dll_file == target))
+            .map(|item| {
+                crate::mods::plugin_target::directory(
+                    &trusted.game_root,
+                    &item.dll_file,
+                    item.enabled,
+                )
+                .map_err(|_| "modChanges.targetChanged")
+            })
+            .transpose()?;
+        if package.as_deref() != trusted.level_roots.package_root() {
+            return Err("modChanges.targetChanged".into());
+        }
+    }
+    Ok(())
 }
 
 fn attach_exact_root(trusted: &mut TrustedInventory, root: &RootRequest) -> Result<(), String> {

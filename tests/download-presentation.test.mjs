@@ -36,14 +36,16 @@ test('statistics carry only reported data, including a known stalled rate', () =
 test('unknown totals, route, and race summaries render in all five languages', () => {
   const original = i18n.global.locale.value
   const unknown = ['大小未知', '大小未知', 'Unknown size', '크기 알 수 없음', 'サイズ不明']
+  const racing = ['竞速中', '競速中', 'Racing', '경쟁 중', '競争中']
+  const attempt = ['第 5/32 次尝试', '第 5/32 次嘗試', 'Attempt 5/32', '5/32번째 시도', '5/32 回目の試行']
   try {
     for (const [i, language] of LOCALE_CODES.entries()) {
       i18n.global.locale.value = language
       assert.equal(downloadAmount({ downloaded: 0, total: null }), `0 B / ${unknown[i]}`)
       assert.equal(downloadRoute({ route: 'proxy', source: 'mirror.example' }), `${i18n.global.t('common.proxy')} · mirror.example`)
-      const racing = downloadRace({ parallel_sources: 3, attempt: 2, attempt_total: 8 })
-      assert.match(racing, /3.*2.*8/)
-      assert.doesNotMatch(racing, /tools\.|\{/)
+      assert.equal(downloadRace({ parallel_sources: 3, attempt: 5, attempt_total: 32 }), `${racing[i]} · 5/32`)
+      assert.equal(downloadRace({ parallel_sources: 3, attempt: 5 }), racing[i])
+      assert.equal(downloadRace({ parallel_sources: 1, attempt: 5, attempt_total: 32 }), attempt[i])
     }
   } finally { i18n.global.locale.value = original }
 })

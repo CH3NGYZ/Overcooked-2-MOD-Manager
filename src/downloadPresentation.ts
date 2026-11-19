@@ -23,8 +23,10 @@ export function downloadRoute({ route, source }: Pick<DownloadProgress, 'route' 
 }
 
 export function downloadRace({ parallel_sources, attempt, attempt_total }: Pick<DownloadProgress, 'parallel_sources' | 'attempt' | 'attempt_total'>): string {
-  const parts: string[] = []
-  if (parallel_sources && parallel_sources > 1) parts.push(t('tools.sourcesRacing', { count: parallel_sources }))
-  if (attempt && attempt_total && attempt_total > 1) parts.push(t('tools.attempt', { current: attempt, total: attempt_total }))
-  return parts.join(' · ')
+  const hasAttempts = !!attempt && !!attempt_total && attempt_total > 1
+  if ((parallel_sources ?? 0) > 1) {
+    const racing = t('tools.sourcesRacing')
+    return hasAttempts ? `${racing} · ${attempt}/${attempt_total}` : racing
+  }
+  return hasAttempts ? t('tools.attempt', { current: attempt, total: attempt_total }) : ''
 }

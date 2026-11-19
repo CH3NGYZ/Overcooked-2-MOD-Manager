@@ -251,14 +251,6 @@ export const toolsUiRepository: DomainMessages = {
     ko: '더 빠른 소스로 전환 중…',
     ja: 'より速いソースに切り替え中…',
   },
-  // 正在下载
-  downloading: {
-    'zh-CN': '正在下载',
-    'zh-TW': '正在下載',
-    en: 'Downloading',
-    ko: '다운로드 중',
-    ja: 'ダウンロード中',
-  },
   // 已完成
   completed: {
     'zh-CN': '已完成',
@@ -267,13 +259,13 @@ export const toolsUiRepository: DomainMessages = {
     ko: '완료',
     ja: '完了',
   },
-  // {count} 源竞速
+  // 竞速进行中
   sourcesRacing: {
-    'zh-CN': '{count} 源竞速',
-    'zh-TW': '{count} 源競速',
-    en: '{count} sources racing',
-    ko: '{count}개 소스 경쟁',
-    ja: '{count} ソース競争',
+    'zh-CN': '竞速中',
+    'zh-TW': '競速中',
+    en: 'Racing',
+    ko: '경쟁 중',
+    ja: '競争中',
   },
   // 第 {current}/{total} 次尝试
   attempt: {

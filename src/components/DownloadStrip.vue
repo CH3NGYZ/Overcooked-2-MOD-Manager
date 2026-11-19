@@ -25,7 +25,7 @@ const stageText = computed(() => {
   switch (progress.value?.phase) {
     case 'connecting': return t('tools.connectingToDownloadSource')
     case 'switching': return t('tools.switchingToAFasterSource')
-    case 'downloading': return t('tools.downloading')
+    case 'downloading': return ''
     case 'merging': return t('tools.mergingVolumes')
     default: return t('tools.preparing2')
   }
@@ -106,8 +106,8 @@ async function cancel() {
           <span class="dl-amount">{{ downloadAmount(progress) }}</span>
           <span v-if="rate" class="dl-rate">{{ rate }}</span>
         </div>
-        <div class="dl-state-route">
-          <span class="dl-stage" role="status">{{ stageText }}</span>
+        <span v-if="stageText" class="dl-stage" role="status">{{ stageText }}</span>
+        <div v-if="route || race" class="dl-state-route">
           <span v-if="route" class="dl-route" :title="route">{{ route }}</span>
           <span v-if="race" class="dl-race">{{ race }}</span>
         </div>
@@ -151,10 +151,11 @@ async function cancel() {
 .dl-bar { flex: 1; min-width: 0; }
 .dl-percent { flex: none; min-width: 48px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--oc2-text-2); }
 .dl-stats { display: grid; gap: 4px; font-size: 12px; color: var(--oc2-text-2); font-variant-numeric: tabular-nums; }
-.dl-amount-rate, .dl-state-route { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 10px; }
-.dl-rate { font-weight: 650; white-space: nowrap; }
+.dl-amount-rate, .dl-state-route { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.dl-rate, .dl-race { flex: none; margin-inline-start: auto; white-space: nowrap; }
+.dl-rate { font-weight: 650; }
 .dl-stage { font-weight: 550; }
-.dl-route { color: var(--oc2-text-3); min-width: 0; overflow-wrap: anywhere; }
+.dl-route { color: var(--oc2-text-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dl-race { color: var(--oc2-accent); }
 .dl-error { overflow-wrap: anywhere; }
 .dl-error-label { margin: 0; font-size: 13px; font-weight: 600; color: var(--oc2-text-2); }

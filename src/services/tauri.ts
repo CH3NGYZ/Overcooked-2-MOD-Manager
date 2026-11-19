@@ -489,6 +489,11 @@ export function watchModChangesApplied(callback: (event?: ChangeAppliedEvent | n
   return listen<ChangeAppliedEvent | null>('mod-changes-applied', (event) => callback(event.payload))
 }
 
+/** Re-read the local DLL snapshot after the OS reports plugin changes. */
+export function watchLocalModsChanged(callback: () => void): Promise<UnlistenFn> {
+  return listen('local-mods-changed', () => callback())
+}
+
 /** One process-wide subscription keeps both recycle-bin surfaces current. */
 export function watchRecycleBin(callback: () => void): Promise<UnlistenFn> {
   return listen('recycle-bin-changed', () => callback())

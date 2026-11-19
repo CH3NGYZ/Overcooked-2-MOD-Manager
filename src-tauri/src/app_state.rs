@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 pub struct AppState {
     pub config: ConfigService,
     pub(crate) local_mod_snapshot: Arc<Mutex<crate::mods::snapshot::LocalModSnapshots>>,
+    pub(crate) local_mod_watch: Arc<crate::mods::watch::LocalModWatcher>,
     pub(crate) mod_changes: Arc<Mutex<crate::mod_changes::session::ChangeSessions>>,
     pub(crate) diychef_sessions: Arc<Mutex<crate::diychef::session::ChefSessions>>,
     pub(crate) diychef_watch: Arc<crate::diychef::watch::ChefWatcher>,
@@ -76,6 +77,7 @@ impl AppState {
         Self {
             config,
             local_mod_snapshot: Arc::default(),
+            local_mod_watch: Arc::default(),
             mod_changes: Arc::default(),
             diychef_sessions: Arc::default(),
             diychef_watch,

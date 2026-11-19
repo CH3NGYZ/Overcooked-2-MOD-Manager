@@ -14,6 +14,7 @@ impl RecycleWatcher {
         self.directory.watch(
             (),
             vec![root.clone()],
+            &[],
             move |event| {
                 // A missing root is watched through its nearest existing parent.
                 // Ignore unrelated user-data writes and all read-access events.

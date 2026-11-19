@@ -57,6 +57,7 @@ impl ChefWatcher {
         self.directory.watch(
             key,
             vec![root.to_path_buf()],
+            &[],
             move |event| {
                 #[cfg(test)]
                 tests::trace(

@@ -30,6 +30,7 @@ impl LevelWatcher {
         self.directory.watch(
             (),
             roots.clone(),
+            &[],
             |_| true,
             move |paths| {
                 let app = emit_app.clone();

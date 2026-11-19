@@ -73,7 +73,7 @@ test('Release domains keep credential isolation, shared fetch and distinct versi
   assert.match(projection, /version: parse_version\(&tag\)\.map/)
   assert.match(projection, /a\.version\.as_deref\(\)\.and_then\(parse_version\)/)
   assert.match(read('version.rs'), /Some\(SegmentVersion::parse\(remote\)\?\.cmp\(&SegmentVersion::parse\(local\)\?\)\)/)
-  assert.match(read('../mods/status.rs'), /crate::releases::compare_release_versions\(&release\.tag_name, &local\)/)
+  assert.match(read('../mods/status.rs'), /crate::releases::compare_release_versions\(&release\.tag_name, local\)/)
   assert.match(read('../map_sources/releases.rs'), /crate::releases::fetch_releases\(/)
   assert.match(read('../map_sources/release_tags.rs'), /crate::releases::fetch_releases\(/)
   assert.match(read('../repository_readme.rs'), /releases::fetch_repository_default_branch\(/)

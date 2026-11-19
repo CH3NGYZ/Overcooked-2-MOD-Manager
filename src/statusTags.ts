@@ -1,5 +1,5 @@
 import type { InstalledMod, InstalledModStatusLabel, ModRepository } from './types'
-import { compareVersions, isPrereleaseVersion, modsForRepository, repositoryForMod } from './modStatus.ts'
+import { compareVersions, isPrereleaseVersion, localVersion, modsForRepository, repositoryForMod } from './modStatus.ts'
 
 /**
  * MOD 状态标签：两页共用同一套「文案 + 语义色」，避免两边各写一份。
@@ -193,41 +193,6 @@ export function installedModTags(mod: InstalledMod): StatusTag[] {
 }
 
 /**
- * 本地已装版本：优先安装清单记录的 Release tag，其次插件元数据版本。
- *
- * 这是**展示用**版本（预发布判定、仓库卡片的已装版本）。判断「要不要提示
- * 更新」一律用 `localCompareVersion`，两者在用户手动换过 DLL 时会分叉。
- */
-export function localVersion(mod: InstalledMod): string | undefined {
-  return mod.repository_binding?.tag || mod.version
-}
-
-/**
- * 版本比较用的本地版本：清单记录的安装 tag 与 DLL 自报版本取较高者。
- *
- * 清单 tag 是「装的是哪个 Release」，DLL 版本是「磁盘上实际的文件版本」。
- * 用户手动换过 DLL 时两者分叉，只看其中一边都会判错：
- *   - 手动降级（DLL 低于清单 tag）：按 DLL 版本比，会把「安装时就是线上
- *     最新版」的包误报成可更新 —— 用户主动降级不该被当成待更新；
- *   - 手动升级（DLL 高于清单 tag）：按清单 tag 比，会漏掉「本地其实已经
- *     是线上版本」，一直提示更新。
- *
- * 取较高者后，DLL 版本只能**抑制**更新、绝不会凭空制造一条更新；
- * 线上真的发布了更高版本时，两种情况都照常报告。
- *
- * 后端 `mods/status.rs` 的 `binding_update_state` 用同一规则（`effective_local_version`），
- * 两处必须一起改，否则刷新完成后前端会推翻后端结论。
- */
-export function localCompareVersion(mod: InstalledMod): string | undefined {
-  const tag = mod.repository_binding?.tag
-  if (!tag) return mod.version
-  const dll = mod.version
-  if (!dll) return tag
-  const compared = compareVersions(dll, tag)
-  return compared !== null && compared > 0 ? dll : tag
-}
-
-/**
  * 状态聚合：把一组 MOD 的标签按「轻重缓急」汇总成带数量的标签。
  *
  * MOD 管理页的页头聚合与 MOD 包标题共用这一份实现 —— 两处都是
@@ -374,7 +339,7 @@ export function packageStatuses(mods: readonly InstalledMod[]): PackageStatus[] 
   const present = new Set<string>()
   for (const mod of real) {
     for (const label of (mod.labels as string[] | undefined) ?? []) {
-      if (STATUS_META[label] && (!mod.bundled_with_dll || !isVersionConclusion(label))) present.add(label)
+      if (STATUS_META[label] && (!(mod.bundled_with_dll || mod.release_companion) || !isVersionConclusion(label))) present.add(label)
     }
   }
 
@@ -383,7 +348,8 @@ export function packageStatuses(mods: readonly InstalledMod[]): PackageStatus[] 
    * 预发布与单个 MOD 一致：取「元数据标记」或「版本号带 - 后缀」的或关系，
    * 放在结论前面。整包共用一个 tag，所以只看是否存在，不数个数。
    */
-  const prerelease = real.some((mod) => !mod.bundled_with_dll && isPrereleaseVersion(localVersion(mod), mod.prerelease))
+  const prerelease = real.some((mod) => !mod.bundled_with_dll && !mod.release_companion
+    && isPrereleaseVersion(localVersion(mod), mod.prerelease))
   if (prerelease) {
     const meta = STATUS_META.prerelease
     result.push({ key: 'prerelease', text: meta.text, tone: meta.tone })
@@ -422,11 +388,6 @@ export function packageStatuses(mods: readonly InstalledMod[]): PackageStatus[] 
   return result
 }
 
-/**
- * 仓库维度的状态：用「已安装 MOD 的最高版本」与「仓库最新 Release」比较。
- * 后端按真实安装清单判定（含渠道、Tag 绑定、重复副本），能对上这个仓库时优先采信；
- * 只在后端绑定的不是这个仓库时，才退回本地版本比较。
- */
 /** 仓库卡片主按钮的动作：安装 / 重装 / 更新。 */
 export type InstallAction = 'install' | 'reinstall' | 'update'
 
@@ -453,6 +414,7 @@ export function repositoryInstallAction(status: StatusTag, repo: ModRepository):
   }
 }
 
+/** Only the core plugin can represent a Release; compare it with the current cache. */
 export function repositoryStatus(repo: ModRepository, installedMods: InstalledMod[]): StatusTag {
   const tag = (key: keyof typeof STATUS_META): StatusTag => ({
     key,
@@ -471,50 +433,52 @@ export function repositoryStatus(repo: ModRepository, installedMods: InstalledMo
     if (repo.last_error) return tag('refresh_failed')
   }
 
-  const release = repo.cached_releases[0]
-  const matches = modsForRepository(installedMods, repo)
+  const matches = modsForRepository(installedMods, repo).filter((mod) => mod.repository_binding
+    ? matchesReleaseBinding(repo, mod.repository_binding) : isRaw || mod.status !== 'not_release_asset')
+  if (isRaw && matches.length) return tag('installed')
+  if (!matches.length) return tag(isRaw ? 'not_installed_raw' : repo.cached_releases[0] ? 'not_installed' : 'not_refreshed')
   const installed = matches.reduce<InstalledMod | undefined>((best, mod) => {
+    if (mod.is_dependency || mod.release_companion || mod.duplicate_cleanup_available
+      || mod.status === 'duplicate_lower_version') return best
     if (!best) return mod
-    const compared = compareVersions(localCompareVersion(mod), localCompareVersion(best))
-    return compared !== null && compared > 0 ? mod : best
+    const currentVersion = localVersion(mod)
+    const bestVersion = localVersion(best)
+    return currentVersion && (!bestVersion || compareVersions(currentVersion, bestVersion) === 1) ? mod : best
   }, undefined)
-
-  if (!installed) return tag(isRaw ? 'not_installed_raw' : release ? 'not_installed' : 'not_refreshed')
-  // RAW 已安装：没有版本比较的意义，直接显示「已安装」
-  if (isRaw) return tag('installed')
-
-  const boundHere = installed.repository_id === repo.id || !!installed.repository_ids?.includes(repo.id)
-  if (boundHere && installed.labels?.length) {
-    if (installed.update_available) return tag('update_available')
-    if (installed.labels.includes('latest')) return tag('latest')
-  }
-
-  if (!release) return tag('unknown')
-  const compared = compareVersions(
-    release.version || release.tag_name,
-    localCompareVersion(installed),
-  )
-  if (compared === null) return tag('unknown')
-  return compared > 0 ? tag('update_available') : tag('latest')
+  const verdict = installed && releaseUpdateVerdict(installed, repo)
+  return tag(verdict === undefined ? 'unknown' : verdict ? 'update_available' : 'latest')
 }
 
-/**
- * 用当前 Release 缓存判断一个已安装 MOD 的更新状态 —— 唯一的判定入口。
- *
- * 为什么需要重算：MOD 的 `labels` / `update_available` 是后端**扫描时**
- * 算好的，而仓库 Release 是之后异步刷新回来的。刷新期间 Dashboard 不重读
- * （那会重扫磁盘），所以标签会停在旧结论，直到整批结束才更新。
- * 这里按同一套版本规则用当前 Release 缓存重算，让「刷完一个仓库 →
- * 该仓库绑定的 MOD 立刻显示最新版/可更新」，不需要 IPC，也不碰磁盘。
- *
- * **所有需要「这个 MOD 现在能不能更新」的地方都必须调它。** 曾经拆成
- * 「返回可空的重算」+ 一层包装函数，结果总览页用错了一个 —— 刷新完 Release
- * 后管理页显示可更新、总览写着全部最新。合并成一个函数后没有选择空间。
- *
- * `mods.ts` 里的后端扫描用同样规则算 `update_available`，两者必须一致：
- * 「线上版本 > 本地有效版本」，本地有效版本 = max(清单 tag, DLL 版本)，
- * 见 `localCompareVersion`（后端对应 `effective_local_version`）。
- */
+function matchesReleaseBinding(repo: ModRepository, binding: NonNullable<InstalledMod['repository_binding']>): boolean {
+  return repo.download_mode === 'release' && binding.provider === repo.provider
+    && binding.owner.toLowerCase() === repo.username.toLowerCase()
+    && binding.repository.toLowerCase() === repo.repository.toLowerCase()
+    && (repo.channel === binding.channel || repo.channel === 'all')
+}
+
+/** The installation card, local card and refresh summary read the latest
+ * cache with the same disk-scan version, even while Rust is rebinding it. */
+function releaseUpdateVerdict(mod: InstalledMod, repo: ModRepository): boolean | undefined {
+  const local = localVersion(mod)
+  if (!local) return undefined
+  const binding = mod.repository_binding
+  if (binding && !matchesReleaseBinding(repo, binding)) return undefined
+  const release = repo.cached_releases.find((release) => {
+    if (release.draft) return false
+    const channel = binding?.channel ?? repo.channel
+    if (channel === 'all') return true
+    const beta = isPrereleaseVersion(release.tag_name, release.apiPrerelease, release.prerelease)
+    return channel === 'beta' ? beta : !beta
+  })
+  if (!release) return undefined
+  const remote = binding ? release.tag_name : release.version || release.tag_name
+  if (binding && remote === local) return false
+  const compared = compareVersions(remote, local)
+  // Opaque installed Release tags retain exact-tag semantics. An opaque DLL
+  // reported after a replacement cannot prove anything about the Release.
+  return compared !== null ? compared > 0 : binding?.tag === local ? true : undefined
+}
+
 export type ModUpdateVerdict =
   /** 能按当前缓存判定。 */
   | { known: true; updateAvailable: boolean; source: 'release' }
@@ -523,20 +487,16 @@ export type ModUpdateVerdict =
   /** 无法判定（未绑定 / 仓库报错 / RAW / 版本不可比较），调用方保留后端快照。 */
   | { known: false }
 
-export function modUpdateVerdict(mod: InstalledMod, repositories: ModRepository[]): ModUpdateVerdict {
+export function modUpdateVerdict(mod: InstalledMod, repositories: readonly ModRepository[]): ModUpdateVerdict {
   // 纯依赖不是 MOD，不参与更新判定
-  if (mod.is_dependency) return { known: false }
+  if (mod.is_dependency || mod.release_companion) return { known: false }
   if (mod.duplicate_cleanup_available) return { known: true, updateAvailable: false, source: 'newer_copy' }
   const repo = repositoryForMod(repositories, mod)
   if (!repo || repo.last_error) return { known: false }
   // 仓库文件模式没有版本比较的意义
   if (repo.download_mode === 'repository_file') return { known: false }
-  const release = repo.cached_releases[0]
-  if (!release) return { known: false }
-  // 本地有效版本 = max(清单 tag, DLL 版本)，规则见 localCompareVersion
-  const compared = compareVersions(release.version || release.tag_name, localCompareVersion(mod))
-  if (compared === null) return { known: false }
-  return { known: true, updateAvailable: compared > 0, source: 'release' }
+  const updateAvailable = releaseUpdateVerdict(mod, repo)
+  return updateAvailable === undefined ? { known: false } : { known: true, updateAvailable, source: 'release' }
 }
 
 /**
@@ -546,7 +506,7 @@ export function modUpdateVerdict(mod: InstalledMod, repositories: ModRepository[
  * 需要区分「已判定 / 无法判定」的地方（MOD 管理页要显示「检查中」）
  * 直接调 `modUpdateVerdict`。
  */
-export function modUpdateAvailable(mod: InstalledMod, repositories: ModRepository[]): boolean {
+export function modUpdateAvailable(mod: InstalledMod, repositories: readonly ModRepository[]): boolean {
   const verdict = modUpdateVerdict(mod, repositories)
   return verdict.known ? verdict.updateAvailable : mod.update_available
 }

@@ -33,7 +33,7 @@ import {
 } from './modRelations.ts'
 import type { EvaluationSubject } from './modChanges/types'
 import type { RootIntent } from './modChanges/types'
-import { compareVersions, isPrereleaseVersion, repositoryForMod } from './modStatus.ts'
+import { compareVersions, isPrereleaseVersion, localVersion, repositoryForMod } from './modStatus.ts'
 import { mapForLevelSet, mapReleaseVersion } from './levelSetStatus.ts'
 import { formatVersionSpec } from './versionSpec.ts'
 import type { TagTone } from './theme'
@@ -384,13 +384,16 @@ export function installedModRelations(
   mod: InstalledMod,
   repositories: readonly ModRepository[],
 ): RepositoryRelation[] {
-  const repo = repositoryForMod([...repositories], mod)
+  // A companion shares the package's binding, but not its primary declaration.
+  // The solver projects its independent relations from its own GUID/version.
+  if (mod.release_companion) return []
+  const repo = repositoryForMod(repositories, mod)
   if (!repo) return mod.relations ?? []
   /*
    * 传已装版本：仓库可以按版本区间声明不同依赖（`release_relations`），
    * 拿最新版的关系去解释旧版本会给出错误结论。
    */
-  return relationsForRelease(repo, mod.version ?? null)
+  return relationsForRelease(repo, localVersion(mod) ?? null)
 }
 
 /**

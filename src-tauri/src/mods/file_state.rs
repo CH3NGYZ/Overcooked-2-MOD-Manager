@@ -173,6 +173,12 @@ pub fn canonical_dll_name(dll_file: &str) -> String {
     }
 }
 
+/// The same portable, case-insensitive key for manifest ownership and the DLL
+/// version snapshot. Enable/disable renames must not change the snapshot key.
+pub(crate) fn manifest_dll_key(path: &str) -> String {
+    canonical_dll_name(path).replace('\\', "/").to_lowercase()
+}
+
 pub fn disabled_dll_file(dll_file: &str) -> String {
     format!("{dll_file}.disabled")
 }

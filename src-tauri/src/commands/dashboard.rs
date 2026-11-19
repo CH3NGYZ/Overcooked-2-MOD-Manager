@@ -53,6 +53,9 @@ pub async fn get_local_mods(
                 return Err("diychef.staleScan".into());
             }
             state
+                .local_mod_watch
+                .watch_selected(&app, scan_root.as_deref());
+            state
                 .local_mod_snapshot
                 .lock()
                 .map_err(|e| e.to_string())?

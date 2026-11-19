@@ -132,6 +132,7 @@ fn imports_collisions_without_overwriting_and_recycles_all_old_directories_in_on
     w.write("BepInEx/plugins/old-b/readme.txt", b"kept in recycle");
     let manifest = crate::archive::InstallManifest {
         repository_id: "old-chef".into(),
+        installed_dll_versions: Default::default(),
         release_tag: "v1.9".into(),
         repository_binding: None,
         package_name_i18n: Default::default(),
@@ -235,6 +236,7 @@ fn active_peer_manifest_using_legacy_resources_rejects_migration_before_copy() {
     let model = "BepInEx/plugins/old/Resources/Fox/Body.obj";
     w.write(model, b"old model");
     let peer = crate::archive::InstallManifest {
+        installed_dll_versions: Default::default(),
         repository_id: "unrelated-package".into(),
         release_tag: "v1".into(),
         repository_binding: None,

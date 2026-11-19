@@ -5,7 +5,7 @@ import type { InstalledMod, ModRepository } from './types'
  * 安装清单优先记录 repository_id；旧清单或身份绑定兜底用 provider + owner/repository。
  * 两个页面（MOD 管理分组、MOD 安装状态）共用同一套判定，避免两边结论不一致。
  */
-export function repositoryForMod(repositories: ModRepository[], mod: InstalledMod): ModRepository | undefined {
+export function repositoryForMod(repositories: readonly ModRepository[], mod: InstalledMod): ModRepository | undefined {
   if (mod.repository_id) {
     const byId = repositories.find((repo) => repo.id === mod.repository_id)
     if (byId) return byId
@@ -23,6 +23,11 @@ export function repositoryForMod(repositories: ModRepository[], mod: InstalledMo
     if (byId) return byId
   }
   return undefined
+}
+
+/** Prefer the disk scan's reconciled version; explicit null is unknown. */
+export function localVersion(mod: InstalledMod): string | undefined {
+  return mod.update_version === undefined ? mod.version : mod.update_version ?? undefined
 }
 
 /** 同一仓库可能对应多个本地副本（旧版本共存），全部返回以便取最高版本比较。 */

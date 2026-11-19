@@ -1,6 +1,6 @@
 fn clear_dll_details_cache() {
     if let Ok(mut cache) = dll_details_cache().lock() {
-        cache.clear();
+        cache.entries.clear();
     }
 }
 

@@ -68,6 +68,11 @@ pub struct InstallManifest {
     pub relations: Vec<crate::models::RepositoryRelation>,
     pub installed_at: String,
     pub files: Vec<String>,
+    /// Version facts from the verified asset, keyed by logical DLL path. An
+    /// absent key is legacy/uncaptured; an empty string records no readable version
+    /// (TOML has no null value).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub installed_dll_versions: BTreeMap<String, String>,
 }
 
 /// 清单的反序列化中间层：同时接受「只有 i18n」和「旧单语字段」两种格式。
@@ -100,6 +105,8 @@ struct ManifestWire {
     relations: Vec<crate::models::RepositoryRelation>,
     installed_at: String,
     files: Vec<String>,
+    #[serde(default)]
+    installed_dll_versions: BTreeMap<String, String>,
 }
 
 /// 把单语值折进 i18n 映射的 `zh-CN` 键（已有该键时不覆盖）。
@@ -133,6 +140,7 @@ impl From<ManifestWire> for InstallManifest {
             relations: wire.relations,
             installed_at: wire.installed_at,
             files: wire.files,
+            installed_dll_versions: wire.installed_dll_versions,
         }
     }
 }
@@ -270,6 +278,7 @@ pub fn new_manifest(
         relations,
         installed_at: Utc::now().to_rfc3339(),
         files,
+        installed_dll_versions: BTreeMap::new(),
     }
 }
 

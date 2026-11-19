@@ -4,7 +4,7 @@ import test from 'node:test'
 /** 共享状态标签：真实源码直接执行（Node 24 类型擦除）。 */
 const {
   STATUS_META, installedModTags, repositoryStatus, replaceVersionConclusion, isVersionConclusion,
-  packageStatuses, summarizeUnits, modUpdateAvailable,
+  packageStatuses, summarizeUnits, modUpdateAvailable, repositoryInstallAction,
 } = await import('../src/statusTags.ts')
 
 function repo(overrides = {}) {
@@ -75,20 +75,20 @@ test('仓库刷新失败与已安装 MOD 的仓库刷新失败同文案同等级
   assert.equal(fromRepository.tone, 'moderate')
 })
 
-test('后端已给出 latest 时直接采信；版本落后时判为可更新', () => {
+test('本地比较版本与所选 Release 一致则显示最新版，落后则显示可更新', () => {
   const installed = mod({
     repository_id: 'repo-1', labels: ['latest'], version: '2.0.0',
     repository_binding: { provider: 'github', owner: 'Owner', repository: 'Repo', tag: 'v2.0.0', channel: 'all' },
   })
   assert.equal(repositoryStatus(repo(), [installed]).text, 'modsLocal.latest')
 
-  const outdated = { ...installed, labels: ['update_available'], update_available: true }
+  const outdated = { ...installed, version: '1.0.0' }
   assert.equal(repositoryStatus(repo(), [outdated]).text, 'tools.update')
 })
 
 test('后端未绑定该仓库时回退到版本比较', () => {
   const installed = mod({
-    repository_binding: { provider: 'github', owner: 'Owner', repository: 'Repo', tag: 'v1.0.0', channel: 'all' },
+    version: '1.0.0', repository_binding: { provider: 'github', owner: 'Owner', repository: 'Repo', tag: 'v1.0.0', channel: 'all' },
   })
   const status = repositoryStatus(repo(), [installed])
   assert.equal(status.text, 'tools.update')
@@ -435,30 +435,37 @@ test('包标题认得「可安装」，且与缺依赖同位置、中档色', ()
   assert.equal(installable[0].text, 'tools.installable')
 })
 
-/* ===== 更新判定：线上版本 > max(清单 tag, DLL 版本) ===== */
-
-test('localCompareVersion 取清单 tag 与 DLL 版本较高者', async () => {
-  const { localCompareVersion } = await import('../src/statusTags.ts')
-  assert.equal(localCompareVersion(mod({ version: '1.2.0' })), '1.2.0')
-  // 手动降级：DLL 低于清单 tag，以清单 tag 为准，DLL 不会制造更新
-  assert.equal(localCompareVersion(mod({
-    version: '1.2.0',
-    repository_binding: { provider: 'github', owner: 'o', repository: 'r', tag: 'v2.0.0', channel: 'all' },
-  })), 'v2.0.0')
-  // 手动升级：DLL 高于清单 tag，以 DLL 为准
-  assert.equal(localCompareVersion(mod({
-    version: '2.1.0',
-    repository_binding: { provider: 'github', owner: 'o', repository: 'r', tag: 'v2.0.0', channel: 'all' },
-  })), '2.1.0')
+test('本地比较版本以扫描结果为准，明确未知时不回退清单', async () => {
+  const { localVersion } = await import('../src/modStatus.ts')
+  const binding = { provider: 'github', owner: 'Owner', repository: 'Repo', tag: 'v2.0.0', channel: 'all' }
+  const disk = mod({ version: '1.2.0', repository_binding: binding })
+  assert.equal(localVersion(disk), '1.2.0')
+  assert.equal(localVersion({ ...disk, update_version: 'v2.0.0' }), 'v2.0.0')
+  assert.equal(localVersion({ ...disk, update_version: null }), undefined)
 })
 
-test('手动降级不报可更新：清单 tag 就是线上最新版时显示最新版', () => {
+test('手动降级后，即使清单 tag 等于线上最新版，两页也显示可更新', () => {
   const downgraded = mod({
-    repository_id: 'repo-1', version: '1.2.0', update_available: false, labels: ['latest'],
+    repository_id: 'repo-1', version: '1.2.0', update_version: '1.2.0', update_available: false, labels: ['latest'],
     repository_binding: { provider: 'github', owner: 'Owner', repository: 'Repo', tag: 'v2.0.0', channel: 'all' },
   })
-  // repo() 缓存里的最新 Release 就是 v2.0.0，与清单 tag 相同
-  assert.equal(modUpdateAvailable(downgraded, [repo()]), false)
+  const upstream = repo()
+  const status = repositoryStatus(upstream, [downgraded])
+  assert.equal(status.key, 'update_available')
+  assert.equal(repositoryInstallAction(status, upstream), 'update')
+  assert.equal(modUpdateAvailable(downgraded, [upstream]), true)
+})
+
+test('附属 DLL 不参与选择核心版本；正常安装可用包的 tag 比较', () => {
+  const upstream = repo()
+  const binding = { provider: 'github', owner: 'Owner', repository: 'Repo', tag: 'v2.0.0', channel: 'all' }
+  const core = mod({ version: '1.2.0', update_version: '1.2.0', repository_binding: binding })
+  const companion = mod({ version: '8.0.0', update_version: '8.0.0', repository_binding: binding, release_companion: true })
+  assert.equal(repositoryStatus(upstream, [companion, core]).key, 'update_available')
+  assert.equal(repositoryStatus(upstream, [companion]).key, 'unknown')
+  const unchanged = { ...core, update_version: 'v2.0.0' }
+  assert.equal(repositoryStatus(upstream, [companion, unchanged]).key, 'latest')
+  assert.equal(modUpdateAvailable(unchanged, [upstream]), false)
 })
 
 test('手动升级到线上同一版本后不再提示更新', () => {

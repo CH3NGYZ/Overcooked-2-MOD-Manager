@@ -38,6 +38,7 @@ fn manifest_group_snapshot_survives_missing_repository_config() {
         relations: Vec::new(),
         installed_at: "2026-10-07T00:00:00Z".into(),
         files: vec!["BepInEx/plugins/Grouped.dll".into()],
+        installed_dll_versions: Default::default(),
     };
     let installed = super::inspect_dll_at(&path, &root, &config, std::slice::from_ref(&manifest));
     assert_eq!(installed.group_i18n, group_i18n);
@@ -81,6 +82,7 @@ fn manifest_prerelease_flag_reaches_installed_mod() {
         relations: Vec::new(),
         installed_at: "2026-10-07T00:00:00Z".into(),
         files: vec!["BepInEx/plugins/Pre.dll".into()],
+        installed_dll_versions: Default::default(),
     };
     let installed = super::inspect_dll_at(&path, &root, &config, std::slice::from_ref(&manifest));
     assert!(installed.prerelease);
@@ -136,6 +138,7 @@ fn legacy_manifest_without_snapshot_falls_back_to_repository_group() {
         relations: Vec::new(),
         installed_at: "2026-10-07T00:00:00Z".into(),
         files: vec!["BepInEx/plugins/Legacy.dll".into()],
+        installed_dll_versions: Default::default(),
     };
     let installed = super::inspect_dll_at(&path, &root, &config, std::slice::from_ref(&manifest));
     // 分组回退到仓库当前值

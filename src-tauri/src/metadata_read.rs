@@ -222,17 +222,32 @@ struct DllCacheEntry {
     details: DllDetails,
 }
 
-fn dll_details_cache() -> &'static Mutex<HashMap<(PathBuf, String), DllCacheEntry>> {
-    static CACHE: OnceLock<Mutex<HashMap<(PathBuf, String), DllCacheEntry>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+#[derive(Default)]
+struct DllDetailsCache {
+    entries: HashMap<(PathBuf, String), DllCacheEntry>,
+    revision: u64,
+}
+
+fn dll_details_cache() -> &'static Mutex<DllDetailsCache> {
+    static CACHE: OnceLock<Mutex<DllDetailsCache>> = OnceLock::new();
+    CACHE.get_or_init(Mutex::default)
+}
+
+/// A filesystem notification is stronger evidence than length and timestamp.
+/// The root is already canonical, including the Windows verbatim prefix.
+pub(crate) fn invalidate_dll_details_under(root: &Path) {
+    if let Ok(mut cache) = dll_details_cache().lock() {
+        cache.entries.retain(|(path, _), _| !path.starts_with(root));
+        // A parse that started before invalidation must not reinsert stale data.
+        cache.revision = cache.revision.wrapping_add(1);
+    }
 }
 
 /// 带进程内缓存的 [`read_dll_details`]。
 ///
 /// 缓存指纹与 `level_sets` 的 `info` 缓存同一套：`(长度, mtime)` —— 文件被
-/// 替换（安装、覆盖、手改）时 mtime 会变，指纹不同就不会命中。已知的边界与
-/// 那边一样：有工具在保留 mtime 的前提下替换内容时旧值会留着，重启管理器即
-/// 恢复（进程内缓存）。
+/// 替换（安装、覆盖、手改）时 mtime 通常会变；保留长度与 mtime 的覆盖由
+/// 插件目录通知失效。解析期间不持缓存锁。
 fn read_dll_details_cached(path: &Path, display_name: &str) -> DllDetails {
     let key = canonical_key(path);
     let fingerprint = fs::metadata(&key).ok().map(|metadata| {
@@ -245,23 +260,30 @@ fn read_dll_details_cached(path: &Path, display_name: &str) -> DllDetails {
         (metadata.len(), mtime_nanos)
     });
     let cache_key = (key.clone(), display_name.to_string());
-    if let Some((len, mtime_nanos)) = fingerprint {
-        if let Ok(cache) = dll_details_cache().lock() {
-            if let Some(entry) = cache.get(&cache_key) {
+    // Record the revision before reading bytes, with the same lock as lookup.
+    let revision = if let Ok(cache) = dll_details_cache().lock() {
+        if let Some((len, mtime_nanos)) = fingerprint {
+            if let Some(entry) = cache.entries.get(&cache_key) {
                 if entry.len == len && entry.mtime_nanos == mtime_nanos {
                     return entry.details.clone();
                 }
             }
         }
-    }
+        Some(cache.revision)
+    } else {
+        None
+    };
 
     let details = read_dll_details(&key, display_name);
     if let Some((len, mtime_nanos)) = fingerprint {
         if let Ok(mut cache) = dll_details_cache().lock() {
-            if cache.len() >= DLL_DETAILS_CACHE_LIMIT {
-                cache.clear();
+            if Some(cache.revision) != revision {
+                return details;
             }
-            cache.insert(
+            if cache.entries.len() >= DLL_DETAILS_CACHE_LIMIT {
+                cache.entries.clear();
+            }
+            cache.entries.insert(
                 cache_key,
                 DllCacheEntry {
                     len,

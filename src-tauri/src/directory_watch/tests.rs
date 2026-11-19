@@ -59,7 +59,7 @@ fn missing_root_falls_back_to_nearest_existing_ancestor() {
     fs::create_dir_all(&levels).expect("创建 levels");
     fs::create_dir_all(root.join("cache")).expect("创建 cache");
     assert_eq!(
-        watch_plan(&[levels.clone(), disabled]),
+        watch_plan(&[levels.clone(), disabled], &[]),
         vec![
             WatchTarget {
                 path: root.join("cache"),
@@ -80,7 +80,7 @@ fn appearing_target_upgrades_the_plan() {
     let levels = root.join("levels");
     // 还不存在：只能盯父目录的非递归变化
     assert_eq!(
-        watch_plan(std::slice::from_ref(&levels)),
+        watch_plan(std::slice::from_ref(&levels), &[]),
         vec![WatchTarget {
             path: root.clone(),
             recursive: false,
@@ -89,7 +89,7 @@ fn appearing_target_upgrades_the_plan() {
     fs::create_dir_all(&levels).expect("创建 levels");
     // 出现了：换成对目标本身的递归监听
     assert_eq!(
-        watch_plan(std::slice::from_ref(&levels)),
+        watch_plan(std::slice::from_ref(&levels), &[]),
         vec![WatchTarget {
             path: levels,
             recursive: true,
@@ -103,7 +103,7 @@ fn overlapping_targets_merge_into_one_recursive_watch() {
     let root = temp_root("overlap");
     // nested 缺失时祖先就是 root；root 自己也是根：递归优先，只注册一次
     assert_eq!(
-        watch_plan(&[root.clone(), root.join("levels")]),
+        watch_plan(&[root.clone(), root.join("levels")], &[]),
         vec![WatchTarget {
             path: root.clone(),
             recursive: true,
@@ -114,7 +114,7 @@ fn overlapping_targets_merge_into_one_recursive_watch() {
 
 #[test]
 fn no_roots_means_no_watch() {
-    assert!(watch_plan(&[]).is_empty());
+    assert!(watch_plan(&[], &[]).is_empty());
 }
 
 /// 没有事件时绝不能按窗口空转通知。
@@ -170,7 +170,7 @@ fn burst_of_events_emits_once_after_the_quiet_window() {
 #[test]
 fn real_watcher_reports_directory_creation() {
     let root = temp_root("notify");
-    let plan = watch_plan(std::slice::from_ref(&root));
+    let plan = watch_plan(std::slice::from_ref(&root), &[]);
     let hits = Arc::new(AtomicUsize::new(0));
     let counter = hits.clone();
     let state = build_watch_state(

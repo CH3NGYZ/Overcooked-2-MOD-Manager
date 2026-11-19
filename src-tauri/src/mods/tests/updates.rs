@@ -1,28 +1,18 @@
 use super::*;
 
-/*
- * 更新判定以安装清单的 tag 为准，DLL 自报版本只用来抑制误报。
- *
- * 用户手动把 DLL 降级到清单 tag 以下时，装的时候本来就是线上最新版，
- * 降级是用户自己的选择，不该被报成「可更新」；线上真的出了更高版本
- * 才照常提示。
- */
 #[test]
-fn manual_downgrade_keeps_latest_until_remote_moves_forward() {
+fn same_release_tag_does_not_hide_a_manually_downgraded_dll() {
     let mut repo = binding_repository();
     repo.cached_releases = vec![high_cached_release()];
     let binding = crate::models::ModRepositoryBinding::from_release(&repo, "v99.0.0").unwrap();
     // 清单 tag 就是线上最新版，DLL 被替换成更旧的 1.2.0
     assert_eq!(
         super::binding_update_state(Some(&repo), &binding, Some("1.2.0")),
-        (false, "latest")
-    );
-    // 线上出现更高版本之后才提示更新
-    repo.cached_releases[0].tag_name = "v100.0.0".into();
-    repo.cached_releases[0].version = Some("100.0.0".into());
-    assert_eq!(
-        super::binding_update_state(Some(&repo), &binding, Some("1.2.0")),
         (true, "update_available")
+    );
+    assert_eq!(
+        super::binding_update_state(Some(&repo), &binding, None),
+        (false, "unknown")
     );
 }
 
@@ -49,34 +39,40 @@ fn manual_upgrade_suppresses_update_without_hiding_real_one() {
     );
 }
 
-/// 本地有效版本 = max(清单 tag, DLL 版本)；不可比较的 DLL 版本退回清单 tag。
 #[test]
-fn effective_local_version_keeps_the_higher_side() {
-    assert_eq!(super::effective_local_version("v2.0.0", None), "v2.0.0");
-    assert_eq!(super::effective_local_version("v2.0.0", Some("")), "v2.0.0");
-    assert_eq!(
-        super::effective_local_version("v2.0.0", Some("1.2.0")),
-        "v2.0.0"
-    );
-    assert_eq!(
-        super::effective_local_version("v2.0.0", Some("2.1.0")),
-        "2.1.0"
-    );
-    assert_eq!(
-        super::effective_local_version("v2.0.0", Some("nightly")),
-        "v2.0.0"
-    );
+fn comparison_uses_the_install_baseline_but_does_not_invent_one_for_legacy_manifests() {
+    let installed = "1.5.0";
+    for (baseline, disk, expected) in [
+        (Some(installed), Some("1.5.0"), Some("v2.0.0")),
+        (Some(installed), Some("1.5"), Some("v2.0.0")),
+        (Some(installed), Some("1.2.0"), Some("1.2.0")),
+        (Some(installed), Some("2.1.0"), Some("2.1.0")),
+        (Some(installed), None, None),
+        (Some(""), None, Some("v2.0.0")),
+        (Some(""), Some("1.2.0"), Some("1.2.0")),
+        (None, Some("1.2.0"), Some("1.2.0")),
+        (None, Some("2.1.0"), Some("2.1.0")),
+        (None, Some("2.0"), Some("v2.0.0")),
+        (None, Some("nightly"), Some("v2.0.0")),
+        (None, None, Some("v2.0.0")),
+    ] {
+        assert_eq!(
+            super::effective_local_version("v2.0.0", disk, baseline),
+            expected,
+            "baseline={baseline:?}, disk={disk:?}"
+        );
+    }
 }
 
-/// 降级后的 DLL 仍然显示「最新版」而不是「可更新」。
 #[test]
-fn downgraded_dll_still_shows_latest_label() {
+fn downgraded_dll_shows_update_label_without_losing_its_binding() {
     let mut repo = binding_repository();
     repo.cached_releases = vec![high_cached_release()];
     let mut item: crate::models::InstalledMod = serde_json::from_value(serde_json::json!({
         "repository_id": "repo-1", "repository_ids": ["repo-1"],
         "name": "Example", "dll_file": "BepInEx/plugins/Example.dll",
         "enabled": true, "version": "1.2.0", "version_source": "BepInPlugin",
+        "guid": "com.example.guid", "repository_identity_match": "guid",
         "update_available": false, "duplicate_guid": false, "status": "latest",
         "repository_binding": {
             "provider": "gitee", "owner": "example", "repository": "mod",
@@ -84,24 +80,14 @@ fn downgraded_dll_still_shows_latest_label() {
         }
     }))
     .unwrap();
-    let (update, status) = super::binding_update_state(
-        Some(&repo),
-        item.repository_binding.as_ref().unwrap(),
-        item.version.as_deref(),
-    );
-    item.update_available = update;
-    item.status = status.into();
+    crate::mods::status::apply_mod_update_state(Some(&repo), &mut item);
     super::refresh_status_labels(std::slice::from_mut(&mut item));
-    assert!(!item.update_available);
-    assert_eq!(item.status, "latest");
-    assert!(
-        item.labels
-            .contains(&crate::models::InstalledModStatusLabel::Latest)
-    );
-    assert!(
-        !item
-            .labels
-            .contains(&crate::models::InstalledModStatusLabel::UpdateAvailable)
+    assert!(item.update_available);
+    assert_eq!(item.status, "update_available");
+    assert_eq!(item.repository_binding.as_ref().unwrap().tag, "v99.0.0");
+    assert_eq!(
+        item.labels,
+        [crate::models::InstalledModStatusLabel::UpdateAvailable]
     );
 }
 
@@ -179,7 +165,7 @@ fn unknown_version_is_not_update() {
 }
 
 #[test]
-fn explicit_repository_tags_override_dll_versions_for_every_source_type() {
+fn comparable_bound_versions_use_the_same_rules_for_every_source_type() {
     for source in [Some("official"), Some(crate::community::SOURCE_ID), None] {
         let mut repo = binding_repository();
         repo.source_id = source.map(str::to_string);
@@ -187,23 +173,23 @@ fn explicit_repository_tags_override_dll_versions_for_every_source_type() {
         repo.cached_releases = vec![high_cached_release()];
         let binding = crate::models::ModRepositoryBinding::from_release(&repo, "v98.0.0").unwrap();
         assert_eq!(
-            super::binding_update_state(Some(&repo), &binding, None),
+            super::binding_update_state(Some(&repo), &binding, Some(&binding.tag)),
             (true, "update_available")
         );
         let mut current = binding.clone();
         current.tag = "v99.0.0".into();
         assert_eq!(
-            super::binding_update_state(Some(&repo), &current, None),
+            super::binding_update_state(Some(&repo), &current, Some(&current.tag)),
             (false, "latest")
         );
         current.tag = "v100.0.0".into();
         assert_eq!(
-            super::binding_update_state(Some(&repo), &current, None),
+            super::binding_update_state(Some(&repo), &current, Some(&current.tag)),
             (false, "latest")
         );
         repo.last_error = Some("request failed".into());
         assert_eq!(
-            super::binding_update_state(Some(&repo), &binding, None),
+            super::binding_update_state(Some(&repo), &binding, Some(&binding.tag)),
             (false, "repository_unavailable")
         );
     }
@@ -226,13 +212,17 @@ fn opaque_tags_and_channel_provider_boundaries_are_preserved() {
         "new-nightly"
     );
     assert_eq!(
-        super::binding_update_state(Some(&repo), &binding, None),
+        super::binding_update_state(Some(&repo), &binding, Some(&binding.tag)),
         (true, "update_available")
+    );
+    assert_eq!(
+        super::binding_update_state(Some(&repo), &binding, Some("1.2.0")),
+        (false, "unknown")
     );
     let mut current = binding.clone();
     current.tag = "new-nightly".into();
     assert_eq!(
-        super::binding_update_state(Some(&repo), &current, None),
+        super::binding_update_state(Some(&repo), &current, Some(&current.tag)),
         (false, "latest")
     );
     repo.provider = crate::models::Provider::Github;

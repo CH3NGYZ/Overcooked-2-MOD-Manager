@@ -33,7 +33,8 @@ fn exact_api_false_promotes_numeric_beta_after_filter_and_reopen() {
     let mut local = vec![plain_mod(
         "missing.dll",
         serde_json::json!({
-            "version": "1.9.9.2", "prerelease": true, "repository_binding": binding
+            "version": "1.9.9.2", "update_version": tag,
+            "prerelease": true, "repository_binding": binding
         }),
     )];
     rebind_installed_mods(&config, &mut local);
@@ -178,7 +179,8 @@ fn explicit_beta_binding_stays_prerelease_after_platform_false_and_reopen() {
             let mut local = vec![plain_mod(
                 "missing.dll",
                 serde_json::json!({
-                    "version": dll_version, "prerelease": false, "repository_binding": binding
+                    "guid": "com.example.guid", "version": dll_version, "update_version": tag,
+                    "prerelease": false, "repository_binding": binding
                 }),
             )];
             rebind_installed_mods(&config, &mut local);

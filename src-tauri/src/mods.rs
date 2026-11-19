@@ -15,11 +15,12 @@ pub(crate) mod status;
 pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
+pub(crate) mod watch;
 
 pub(crate) use binding::{
     installed_prerelease, rebind_installed_mods, repository_matches_identity,
 };
-pub(crate) use file_state::{canonical_dll_name, disabled_dll_file};
+pub(crate) use file_state::{canonical_dll_name, disabled_dll_file, manifest_dll_key};
 pub(crate) use identity::{
     PluginIdentity, compare_mod_versions, is_newer_duplicate, is_safe_replacement_mod, note_key,
     same_plugin_identity, same_release_plugin_identity,
@@ -33,6 +34,6 @@ pub(crate) use relations::{
     effective_map_relations, effective_relations, select_release_relations,
 };
 pub(crate) use scan::scan_mods_with_manifests;
-pub(crate) use status::{local_update_version, mod_update_state, remote_update_version};
+pub(crate) use status::local_update_version;
 #[cfg(test)]
 pub(crate) use test_support::plugin_blob;

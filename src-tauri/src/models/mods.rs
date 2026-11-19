@@ -128,7 +128,14 @@ pub struct InstalledMod {
     pub copyright: Option<String>,
     pub dll_file: String,
     pub enabled: bool,
+    /// Version measured from disk, independent of the historical Release binding.
     pub version: Option<String>,
+    /// Local version for update/relation selection, projected while scanning the file.
+    #[serde(default)]
+    pub update_version: Option<String>,
+    /// A manifest sibling that must not represent the Release on its own.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub release_companion: bool,
     pub version_source: String,
     pub update_available: bool,
     #[serde(default)]

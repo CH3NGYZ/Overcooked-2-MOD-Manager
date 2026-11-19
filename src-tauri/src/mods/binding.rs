@@ -505,10 +505,15 @@ pub(crate) fn rebind_installed_mods(config: &crate::models::AppConfig, mods: &mu
             binding,
             item.package_id.as_deref().or(item.repository_id.as_deref()),
         );
-        let (update, status) =
-            super::status::installed_update_state(repository, binding, item.version.as_deref());
-        item.prerelease =
-            installed_prerelease(config, binding, item.prerelease, item.version.as_deref());
+        let tag_current = binding.filter(|binding| {
+            super::status::local_update_version(item) == Some(binding.tag.as_str())
+        });
+        item.prerelease = installed_prerelease(
+            config,
+            tag_current,
+            (binding.is_none() || tag_current.is_some()) && item.prerelease,
+            item.version.as_deref(),
+        );
         item.repository_id = repository.map(|repo| repo.id.clone());
         item.repository_ids = ids;
         item.repository_identity_match = repository_identity_match(
@@ -517,8 +522,7 @@ pub(crate) fn rebind_installed_mods(config: &crate::models::AppConfig, mods: &mu
             item.product_name.as_deref(),
             item.original_filename.as_deref(),
         );
-        item.update_available = update;
-        item.status = status.into();
+        super::status::apply_mod_update_state(repository, item);
         if let Some(repo) = repository {
             if item.group.is_empty() {
                 item.group = repo.group.clone();

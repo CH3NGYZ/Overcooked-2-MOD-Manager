@@ -36,25 +36,28 @@ impl<K: Eq> DirectoryWatcher<K> {
     /// Callbacks must not call `watch`/`stop` synchronously on this same instance.
     /// `accept` may retain only domain-relevant event paths; the debounced batch
     /// contains that projection, never the original unfiltered paths.
+    /// Returns whether the registration was rebuilt (regardless of OS success).
     pub(crate) fn watch(
         &self,
         key: K,
         roots: Vec<PathBuf>,
+        guards: &[PathBuf],
         accept: impl Fn(&mut Event) -> bool + Send + 'static,
         emit: impl FnMut(Vec<PathBuf>) + Send + 'static,
-    ) {
-        let plan = watch_plan(&roots);
+    ) -> bool {
+        let plan = watch_plan(&roots, guards);
         let mut guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if guard.as_ref().is_some_and(|current| {
             current.key == key && current.roots == roots && current.watch.plan == plan
         }) {
-            return;
+            return false;
         }
         // Drop joins the old worker before a replacement can emit a new key.
         drop(guard.take());
         if let Some(watch) = build_watch_state(plan, accept, emit) {
             *guard = Some(Registration { key, roots, watch });
         }
+        true
     }
 
     pub(crate) fn stop(&self) {
@@ -70,9 +73,14 @@ struct WatchTarget {
 }
 
 /// Missing roots use their nearest existing ancestor without creating folders.
-/// A later domain read re-registers the now-existing recursive target.
-fn watch_plan(roots: &[PathBuf]) -> Vec<WatchTarget> {
-    let mut targets: BTreeMap<PathBuf, bool> = BTreeMap::new();
+/// A later domain read re-registers the now-existing recursive target. Guards
+/// observe the names of watched directories even if the OS drops a deleted watch.
+fn watch_plan(roots: &[PathBuf], guards: &[PathBuf]) -> Vec<WatchTarget> {
+    let mut targets: BTreeMap<PathBuf, bool> = guards
+        .iter()
+        .filter(|path| path.is_dir())
+        .map(|path| (path.clone(), false))
+        .collect();
     for root in roots {
         let Some((path, recursive)) = watch_target_for(root) else {
             continue;

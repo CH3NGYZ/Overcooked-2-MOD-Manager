@@ -47,6 +47,7 @@ impl Workspace {
             relations: Vec::new(),
             installed_at: "2026-10-07T00:00:00Z".into(),
             files: files.iter().map(|file| (*file).into()).collect(),
+            installed_dll_versions: Default::default(),
         };
         archive::write_manifest(&self.manifests, &manifest).unwrap();
         manifest

@@ -137,6 +137,8 @@ export function runtimeModStatus(
     return [label, ...base] as InstalledMod['labels']
   }
 
+  if (mod.release_companion) return { issue, refreshing, mod: { ...mod, labels: withRelation(mod.labels) } }
+
   if (refreshing) {
     return {
       issue,
@@ -172,7 +174,7 @@ export function runtimeModStatus(
     }
   }
 
-  const verdict = modUpdateVerdict(mod, [...repositories])
+  const verdict = modUpdateVerdict(mod, repositories)
   if (verdict.known) {
     if (verdict.source === 'newer_copy') {
       // 不把旧副本重算成「最新版」或「可更新」，也不抹掉独立的仓库错误、RAW 或关系标签。

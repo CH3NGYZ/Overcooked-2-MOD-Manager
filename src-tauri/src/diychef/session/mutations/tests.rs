@@ -244,6 +244,7 @@ fn deleted_resource_directory_recycles_files_and_updates_owned_manifests() {
             relations: vec![],
             installed_at: "2026-11-16T00:00:00Z".into(),
             files: vec![file.into()],
+            installed_dll_versions: Default::default(),
         },
     )
     .unwrap();

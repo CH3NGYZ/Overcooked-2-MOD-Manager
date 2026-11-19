@@ -541,6 +541,10 @@ export interface InstalledMod {
   dll_file: string
   enabled: boolean
   version?: string
+  /** Comparison version projected by the disk scan; null explicitly means unknown. */
+  update_version?: string | null
+  /** Shares a manifest but cannot represent its Release. */
+  release_companion?: boolean
   version_source: string
   update_available: boolean
   labels?: InstalledModStatusLabel[]

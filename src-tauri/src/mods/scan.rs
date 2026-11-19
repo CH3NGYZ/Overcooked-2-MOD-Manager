@@ -1,18 +1,16 @@
 use super::binding::{bind_declared_package_members, inherit_repository_from_sibling};
 use super::file_state::PLUGINS_DIR;
 use super::file_state::canonical_dll_file;
-use super::file_state::canonical_dll_name;
 use super::file_state::is_disabled_mod_file;
 use super::file_state::is_map_plugin;
 use super::file_state::is_mod_file;
 use super::file_state::is_ordinary_plugin;
+use super::file_state::manifest_dll_key;
 use super::identity::mark_duplicate_guids;
 use super::identity::note_key_for_values;
 use super::metadata::choose_local_version;
 use super::metadata::placeholder_dll_details;
-use super::status::bound_release;
 use super::status::refresh_status_labels;
-use super::status::repository_remote_version;
 use crate::archive;
 use crate::archive::InstallManifest;
 use crate::models::AppConfig;
@@ -108,8 +106,6 @@ pub fn scan_mods_with_manifests(
     inherit_repository_from_sibling(&mut installed);
     bind_declared_package_members(config, &mut installed);
     mark_duplicate_guids(&mut installed, config);
-    // 更新判定只看「清单 tag vs 仓库 tag」；DLL 自报版本只参与抑制误报
-    // （见 effective_local_version），不再有「DLL 版本低于清单就标记可更新」的二次扫描。
     refresh_status_labels(&mut installed);
     let packages = installed
         .iter()
@@ -199,18 +195,37 @@ fn inspect_dll(
     let (installed_version, version_source) = choose_local_version(version);
     let guid = details.guid.clone();
     let dll_file = canonical_dll_file(path, game);
+    let manifest_key = manifest_dll_key(&dll_file);
     let manifest = manifests
         .iter()
         .filter(|manifest| {
             manifest
                 .files
                 .iter()
-                .any(|file| canonical_dll_name(file).eq_ignore_ascii_case(&dll_file))
+                .any(|file| manifest_dll_key(file) == manifest_key)
         })
         .max_by(|left, right| left.installed_at.cmp(&right.installed_at));
     let repository_binding = manifest
         .and_then(|manifest| manifest.repository_binding.as_ref())
         .filter(|binding| binding.is_valid());
+    let update_version = if let Some(binding) = repository_binding {
+        super::status::effective_local_version(
+            &binding.tag,
+            installed_version.as_deref(),
+            manifest.and_then(|manifest| {
+                manifest
+                    .installed_dll_versions
+                    .get(&manifest_key)
+                    .map(String::as_str)
+            }),
+        )
+        .map(str::to_owned)
+    } else {
+        installed_version.clone()
+    };
+    let current_release = repository_binding
+        .filter(|binding| update_version.as_deref() == Some(binding.tag.as_str()));
+    let changed_release = repository_binding.is_some() && current_release.is_none();
     let (repository, repository_ids) = super::binding::match_repository(
         config,
         guid.as_deref(),
@@ -238,38 +253,6 @@ fn inspect_dll(
         .clone()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "mods.unknownName".to_string());
-    /*
-     * 仓库文件（RAW）模式没有 Release 可比较，装的是一份固定文件。
-     *
-     * 这类仓库也可能在清单里留下 repository_binding（安装时按 release_tag
-     * 建的），但 RAW 从不抓 Release、cached_releases 永远为空。若照常走
-     * binding_update_state，bound_release 找不到 Release 就返回 unknown，
-     * MOD 管理页于是永远显示「版本未知」——即使刷新早已完成。
-     * 所以先按仓库模式分流：RAW 直接判「已安装」，不参与版本判断。
-     */
-    let (update_available, status) = super::status::installed_update_state(
-        repository,
-        repository_binding,
-        installed_version.as_deref(),
-    );
-    if update_available {
-        let remote = repository.and_then(|repo| {
-            if let Some(binding) = repository_binding {
-                bound_release(repo, binding).map(|release| release.tag_name.clone())
-            } else {
-                repository_remote_version(repo)
-            }
-        });
-        log::debug!(
-            "检测到 MOD 可更新：文件={}，本地版本={}，远程版本={}",
-            path.display(),
-            repository_binding
-                .map(|binding| binding.tag.as_str())
-                .or(installed_version.as_deref())
-                .unwrap_or("未知"),
-            remote.as_deref().unwrap_or("未知")
-        );
-    }
     let product_name = details.product_name.clone();
     let original_filename = details.original_filename.clone();
     let plugin_name = details.plugin_name.clone();
@@ -331,7 +314,7 @@ fn inspect_dll(
             let value = crate::archive::primary_translation(&note_i18n);
             (!value.is_empty()).then_some(value)
         });
-    InstalledMod {
+    let mut item = InstalledMod {
         repository_id: repository.map(|repo| repo.id.clone()),
         repository_identity_match: super::binding::repository_identity_match(
             repository,
@@ -379,8 +362,8 @@ fn inspect_dll(
         },
         prerelease: super::binding::installed_prerelease(
             config,
-            repository_binding,
-            manifest.is_some_and(|item| item.prerelease),
+            current_release,
+            !changed_release && manifest.is_some_and(|item| item.prerelease),
             installed_version.as_deref(),
         ),
         /*
@@ -388,6 +371,7 @@ fn inspect_dll(
          * 自定义源被删）才退回这份快照 —— 否则依赖表会凭空消失。
          */
         relations: manifest
+            .filter(|_| !changed_release)
             .map(|item| item.relations.clone())
             .unwrap_or_default(),
         name,
@@ -408,16 +392,20 @@ fn inspect_dll(
         dll_file,
         enabled,
         version: installed_version,
+        update_version,
+        release_companion: false,
         version_source: version_source.into(),
-        update_available,
+        update_available: false,
         labels: Vec::new(),
         duplicate_guid: false,
         duplicate_version: false,
         duplicate_cleanup_available: false,
         load_warning: None,
         note,
-        status: status.into(),
-    }
+        status: String::new(),
+    };
+    super::status::apply_mod_update_state(repository, &mut item);
+    item
 }
 
 fn annotate_package_counts(mods: &mut [InstalledMod]) {

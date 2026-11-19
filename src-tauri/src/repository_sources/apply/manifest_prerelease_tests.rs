@@ -62,6 +62,7 @@ fn manifest_sync_uses_exact_platform_verdict_and_preserves_unknown_history() {
             }
         }
         let manifest = archive::InstallManifest {
+            installed_dll_versions: Default::default(),
             repository_id: repo.id.clone(),
             release_tag: tag.into(),
             repository_binding: (case != "missing-binding").then_some(binding),

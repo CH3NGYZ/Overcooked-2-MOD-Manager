@@ -156,7 +156,7 @@ fn current_candidate(
     id: &str,
     config: &AppConfig,
 ) -> Candidate {
-    let tag = manifests
+    let installed_tag = manifests
         .first()
         .map(|m| m.release_tag.clone())
         .filter(|t| !t.is_empty())
@@ -167,10 +167,24 @@ fn current_candidate(
                 .as_ref()
                 .map(|b| b.tag.clone())
         });
-    let version = items
+    let primary = items
         .iter()
-        .find(|i| !i.is_dependency)
-        .and_then(|i| i.version.clone());
+        .filter(|item| !item.is_dependency && !item.release_companion)
+        .max_by_key(|item| match item.repository_identity_match {
+            Some(RepositoryIdentityMatch::Guid) => 2,
+            Some(RepositoryIdentityMatch::Metadata) => 1,
+            None => 0,
+        });
+    let version = primary.and_then(|item| item.version.clone());
+    let effective_version = primary.and_then(mods::local_update_version);
+    let changed_release = primary.is_some_and(|item| {
+        item.repository_binding
+            .as_ref()
+            .is_some_and(|binding| effective_version != Some(binding.tag.as_str()))
+    });
+    // An installed candidate's display/ordering tag is only valid while the
+    // DLL still represents that Release. The original tag stays in the manifest.
+    let tag = if changed_release { None } else { installed_tag };
     let mut relations = repo
         .map(|r| {
             owned(
@@ -179,6 +193,10 @@ fn current_candidate(
             )
         })
         .unwrap_or_else(|| {
+            if changed_release {
+                // The only snapshot here describes the pre-replacement Release.
+                return vec![];
+            }
             items
                 .iter()
                 .flat_map(|i| {
@@ -201,8 +219,8 @@ fn current_candidate(
         })
         .collect::<Vec<_>>();
     let mut relations_known = repo.is_some()
-        || !manifests.is_empty()
-        || items.iter().any(|item| !item.relations.is_empty());
+        || (!changed_release
+            && (!manifests.is_empty() || items.iter().any(|item| !item.relations.is_empty())));
     for member in &provides {
         if member.guid.is_empty()
             || repo.is_some_and(|repo| repo.plugin_guid.eq_ignore_ascii_case(&member.guid))
@@ -250,7 +268,9 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
     let installed_mods: Arc<[_]> = installed.clone().into();
     let mut manifest_claims = HashMap::<String, usize>::new();
     for path in manifests.iter().flat_map(|manifest| &manifest.files) {
-        *manifest_claims.entry(manifest_claim_key(path)).or_default() += 1;
+        *manifest_claims
+            .entry(mods::manifest_dll_key(path))
+            .or_default() += 1;
     }
     let mut grouped: BTreeMap<String, Vec<InstalledMod>> = BTreeMap::new();
     for item in installed {
@@ -378,12 +398,12 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
                 manifest
                     .files
                     .iter()
-                    .all(|file| manifest_claims.get(&manifest_claim_key(file)) == Some(&1))
+                    .all(|file| manifest_claims.get(&mods::manifest_dll_key(file)) == Some(&1))
             })
             && items.iter().all(|item| {
                 let expected = usize::from(item.package_id.is_some());
                 manifest_claims
-                    .get(&manifest_claim_key(&item.dll_file))
+                    .get(&mods::manifest_dll_key(&item.dll_file))
                     .copied()
                     .unwrap_or_default()
                     == expected
@@ -493,13 +513,6 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
         duplicate_release_safe_nodes,
         duplicate_release_retirements: BTreeMap::new(),
     })
-}
-
-fn manifest_claim_key(path: &str) -> String {
-    // Manifest scanning associates DLLs case-insensitively on either platform.
-    mods::canonical_dll_name(path)
-        .replace('\\', "/")
-        .to_lowercase()
 }
 
 /// Reuse one backend-owned scan until either source selection or physical facts change.

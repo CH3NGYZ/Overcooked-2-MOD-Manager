@@ -363,7 +363,7 @@ fn stage_asset(
                     .find(|plugin| !plugin.guid.is_empty())
             })
             .and_then(|plugin| plugin.version.clone());
-        let manifest = create_manifest(
+        let mut manifest = create_manifest(
             trusted,
             node_id,
             candidate,
@@ -374,6 +374,21 @@ fn stage_asset(
             relations,
             prerelease,
         );
+        if manifest.repository_binding.is_some() {
+            // Reuse the DLL metadata already read from the verified staging
+            // tree; recording this does not reopen the asset or the game files.
+            manifest.installed_dll_versions = actual
+                .provides
+                .iter()
+                .filter_map(|member| {
+                    let path = member.member_key.as_deref()?;
+                    Some((
+                        mods::manifest_dll_key(path),
+                        member.version.clone().unwrap_or_default(),
+                    ))
+                })
+                .collect();
+        }
         let (stage_fingerprint, release_files) = if is_zip && asset_digest_verified {
             let mut files = HashMap::new();
             // Disk enumeration may use a different spelling of a shared parent

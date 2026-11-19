@@ -2,21 +2,20 @@ use super::*;
 use crate::mods::test_support::{config, repository};
 
 #[test]
-fn update_summary_prefers_a_bound_tag_over_dll_metadata_and_supports_opaque_tags() {
-    for tag in ["v1.0.0", "old-nightly"] {
+fn update_summary_uses_the_reconciled_version_for_both_numeric_and_opaque_tags() {
+    for (tag, effective, remote) in [
+        ("v99.0.0", "0.9.0", "v99.0.0"),
+        ("old-nightly", "old-nightly", "new-nightly"),
+    ] {
         let mut repo = repository("release", ModDownloadMode::Release);
-        repo.cached_releases[0].tag_name = if tag == "old-nightly" {
-            "new-nightly".into()
-        } else {
-            "v99.0.0".into()
-        };
+        repo.cached_releases[0].tag_name = remote.into();
         let mut local = installed("release", "latest");
-        // DLL 元数据版本故意与清单 tag 不同、但低于线上版本：
-        // 更新结论按清单 tag 算，local_version 也显示清单 tag。
         local.version = Some("0.9.0".into());
+        local.update_version = Some(effective.into());
         local.repository_binding = ModRepositoryBinding::from_release(&repo, tag);
         let status = collect_update_status(&config(vec![repo]), &[local]);
-        assert_eq!(status[0].local_version.as_deref(), Some(tag));
+        assert_eq!(status[0].local_version.as_deref(), Some(effective));
+        assert_eq!(status[0].remote_version.as_deref(), Some(remote));
         assert_eq!(status[0].state, "update_available");
     }
 }

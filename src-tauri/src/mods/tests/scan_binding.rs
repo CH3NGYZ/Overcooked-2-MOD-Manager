@@ -62,7 +62,7 @@ fn real_manifest_scan_keeps_dll_metadata_but_selects_owner_repository_tag_first(
     assert!(installed.update_available);
     assert_eq!(
         super::local_update_version(installed).as_deref(),
-        Some("v98.0.0")
+        Some("98.5.0")
     );
 
     std::fs::rename(&path, root.join(format!("{relative}.disabled"))).unwrap();
@@ -193,6 +193,7 @@ fn scanning_real_raw_manifest_prevents_same_guid_release_update() {
             relations: Vec::new(),
             installed_at: "2026-10-07T00:00:00Z".into(),
             files: vec![relative.into()],
+            installed_dll_versions: Default::default(),
         };
         let installed =
             super::inspect_dll_at(&path, &root, &config, std::slice::from_ref(&manifest));

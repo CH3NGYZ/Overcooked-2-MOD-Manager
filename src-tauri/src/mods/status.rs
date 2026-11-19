@@ -1,6 +1,6 @@
 //! 本地版本、绑定 Release 与卡片标签；按仓库汇总沿用同一判定。
 use crate::models::*;
-use crate::mods;
+use std::cmp::Ordering;
 
 pub(crate) fn collect_update_status(
     config: &AppConfig,
@@ -12,15 +12,34 @@ pub(crate) fn collect_update_status(
         // 不可用的仓库不产生更新状态：它不刷新，缓存的 Release 也就不再可信
         .filter(|repo| crate::config::mod_repository_is_available(config, repo, &config.region))
         .map(|repo| {
-            let local_mod = installed.iter().find(|item| {
-                (repo.download_mode == ModDownloadMode::RepositoryFile
-                    || (item.status != "not_release_asset"
-                        && !item.duplicate_cleanup_available
-                        && item.status != "duplicate_lower_version"))
-                    && (item.repository_ids.iter().any(|id| id == &repo.id)
-                        || item.repository_id.as_deref() == Some(repo.id.as_str()))
-            });
-            let local = local_mod.and_then(mods::local_update_version);
+            let local_mod = installed
+                .iter()
+                .filter(|item| {
+                    (repo.download_mode == ModDownloadMode::RepositoryFile
+                        || (item.status != "not_release_asset"
+                            && !item.is_dependency
+                            && !item.release_companion
+                            && !item.duplicate_cleanup_available
+                            && item.status != "duplicate_lower_version"))
+                        && (item.repository_ids.iter().any(|id| id == &repo.id)
+                            || item.repository_id.as_deref() == Some(repo.id.as_str()))
+                })
+                .reduce(|best, item| {
+                    let compared = local_update_version(item)
+                        .zip(local_update_version(best))
+                        .and_then(|(item, best)| {
+                            crate::releases::compare_release_versions(item, best)
+                        });
+                    if compared == Some(Ordering::Greater)
+                        || (local_update_version(best).is_none()
+                            && local_update_version(item).is_some())
+                    {
+                        item
+                    } else {
+                        best
+                    }
+                });
+            let local = local_mod.and_then(local_update_version).map(str::to_owned);
             if repo.download_mode == ModDownloadMode::RepositoryFile {
                 return UpdateStatus {
                     repository_id: repo.id.clone(),
@@ -37,9 +56,9 @@ pub(crate) fn collect_update_status(
                     state: "repository_unavailable".into(),
                 };
             }
-            let remote = mods::remote_update_version(repo, local_mod);
+            let remote = remote_update_version(repo, local_mod);
             let state = local_mod
-                .map(|installed| mods::mod_update_state(repo, installed).1)
+                .map(|installed| mod_update_state(Some(repo), installed).1)
                 .unwrap_or("unknown");
             UpdateStatus {
                 repository_id: repo.id.clone(),
@@ -109,31 +128,36 @@ pub(super) fn bound_release<'a>(
     })
 }
 
-/// 版本比较用的本地版本：清单记录的安装 tag 与 DLL 自报版本取较高者。
-///
-/// 更新检测**以安装清单的 tag 为准**（它记录「这一包装的是哪个 Release」），
-/// DLL 自报的 BepInPlugin 版本只用来抑制误报：
-///   - 手动降级（DLL 低于清单 tag）：装的时候就是线上最新版，降级是用户自己
-///     的选择，不该被当成「待更新」；线上真的出了更高版本仍会照常提示；
-///   - 手动升级（DLL 高于清单 tag）：本地其实已经是线上那个版本，只按清单
-///     tag 比会一直提示更新。
-///
-/// 取较高者之后，DLL 版本只能**抑制**更新，绝不会凭空制造一条更新。
-/// 前端 `statusTags.ts` 的 `localCompareVersion` 是同一规则的镜像实现。
-pub(super) fn effective_local_version(binding_tag: &str, dll_version: Option<&str>) -> String {
-    let Some(dll) = dll_version.filter(|value| !value.trim().is_empty()) else {
-        return binding_tag.to_string();
+/// Preserve a Release's version for known unchanged DLL metadata. For legacy
+/// manifests, a comparable disk version takes precedence in either direction;
+/// there is no safe way to reconstruct what those packages originally contained.
+pub(super) fn effective_local_version<'a>(
+    binding_tag: &'a str,
+    dll_version: Option<&'a str>,
+    installed_dll_version: Option<&str>,
+) -> Option<&'a str> {
+    let same = |a: &str, b: &str| {
+        a == b || crate::releases::compare_release_versions(a, b) == Some(Ordering::Equal)
     };
-    match crate::releases::compare_release_versions(dll, binding_tag) {
-        Some(std::cmp::Ordering::Greater) => dll.to_string(),
-        _ => binding_tag.to_string(),
+    let keep_tag = if let Some(baseline) = installed_dll_version.map(str::trim) {
+        dll_version.map_or(baseline.is_empty(), |actual| same(baseline, actual))
+    } else {
+        dll_version.is_none_or(|dll| {
+            crate::releases::compare_release_versions(dll, binding_tag)
+                .is_none_or(|order| order == Ordering::Equal)
+        })
+    };
+    if keep_tag {
+        Some(binding_tag)
+    } else {
+        dll_version
     }
 }
 
 pub(super) fn binding_update_state(
     repo: Option<&ModRepositoryConfig>,
     binding: &ModRepositoryBinding,
-    dll_version: Option<&str>,
+    local: Option<&str>,
 ) -> (bool, &'static str) {
     let Some(repo) = repo else {
         return (false, "bound_repository_missing");
@@ -144,20 +168,19 @@ pub(super) fn binding_update_state(
     let Some(release) = bound_release(repo, binding) else {
         return (false, "unknown");
     };
-    if release.tag_name == binding.tag {
-        return (false, "latest");
-    }
-    // 本地有效版本：清单 tag 与 DLL 版本取较高者，DLL 只能抑制更新
-    let local = effective_local_version(&binding.tag, dll_version);
+    let Some(local) = local else {
+        return (false, "unknown");
+    };
     if release.tag_name == local {
         return (false, "latest");
     }
     // Exact tags also work for non-SemVer releases; comparable versions must
     // never turn an installed newer tag into a downgrade notification.
     // 沿用 Release 比较器：四段数字按 beta 序号处理，不套本地 DLL 的数字段排序。
-    let update = match crate::releases::compare_release_versions(&release.tag_name, &local) {
-        Some(ordering) => ordering == std::cmp::Ordering::Greater,
-        _ => true,
+    let update = match crate::releases::compare_release_versions(&release.tag_name, local) {
+        Some(ordering) => ordering == Ordering::Greater,
+        None if local == binding.tag => true,
+        None => return (false, "unknown"),
     };
     if update {
         (true, "update_available")
@@ -166,15 +189,14 @@ pub(super) fn binding_update_state(
     }
 }
 
-pub(crate) fn local_update_version(installed: &InstalledMod) -> Option<String> {
+pub(crate) fn local_update_version(installed: &InstalledMod) -> Option<&str> {
     installed
-        .repository_binding
-        .as_ref()
-        .map(|binding| binding.tag.clone())
-        .or_else(|| installed.version.clone())
+        .update_version
+        .as_deref()
+        .or(installed.version.as_deref())
 }
 
-pub(crate) fn remote_update_version(
+fn remote_update_version(
     repo: &ModRepositoryConfig,
     installed: Option<&InstalledMod>,
 ) -> Option<String> {
@@ -184,29 +206,43 @@ pub(crate) fn remote_update_version(
     }
 }
 
-pub(crate) fn mod_update_state(
-    repo: &ModRepositoryConfig,
-    installed: &InstalledMod,
-) -> (bool, &'static str) {
-    installed_update_state(
-        Some(repo),
-        installed.repository_binding.as_ref(),
-        installed.version.as_deref(),
-    )
-}
-
-pub(super) fn installed_update_state(
+pub(super) fn mod_update_state(
     repo: Option<&ModRepositoryConfig>,
-    binding: Option<&ModRepositoryBinding>,
-    version: Option<&str>,
+    installed: &InstalledMod,
 ) -> (bool, &'static str) {
     if repo.is_some_and(|repo| repo.download_mode == ModDownloadMode::RepositoryFile) {
         return (false, "not_release_asset");
     }
-    match binding {
-        Some(binding) => binding_update_state(repo, binding, version),
-        None => repository_update_state(repo, version),
+    if installed.release_companion {
+        return (false, "installed");
     }
+    let local = local_update_version(installed);
+    match installed
+        .repository_binding
+        .as_ref()
+        .filter(|binding| binding.is_valid())
+    {
+        Some(binding) => binding_update_state(repo, binding, local),
+        None => repository_update_state(repo, local),
+    }
+}
+
+pub(super) fn apply_mod_update_state(repo: Option<&ModRepositoryConfig>, item: &mut InstalledMod) {
+    // Manifest coordinates cover every file in the package. When the source
+    // identifies a primary plugin, a different GUID cannot stand in for it.
+    item.release_companion = item.repository_binding.is_some()
+        && repo.is_some_and(|repo| {
+            if !repo.plugin_guid.trim().is_empty() && item.guid.is_some() {
+                item.repository_identity_match != Some(RepositoryIdentityMatch::Guid)
+            } else {
+                (!repo.local_product_name.trim().is_empty()
+                    || !repo.local_original_filename.trim().is_empty())
+                    && item.repository_identity_match.is_none()
+            }
+        });
+    let (update, status) = mod_update_state(repo, item);
+    item.update_available = update;
+    item.status = status.into();
 }
 
 pub(super) fn refresh_status_labels(mods: &mut [InstalledMod]) {

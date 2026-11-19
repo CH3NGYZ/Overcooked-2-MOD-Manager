@@ -6,11 +6,11 @@ fn package(secondary_enabled: bool) -> Fixture {
     let mut primary = repository(
         "a",
         "fixture-a",
-        &["1.0.0", "2.0.0"],
+        &["2.0.0", "1.0.0"],
         vec![requires("fixture-d", ">=99.0.0")],
     );
     primary.release_relations = vec![ReleaseRelationOverride {
-        version: "<3.0.0".into(),
+        version: ">=1.0.0,<3.0.0".into(),
         relations: vec![requires("fixture-d", ">=1.0.0")],
     }];
     primary.asset_rules[0].value = "a.zip".into();
@@ -55,6 +55,17 @@ fn package(secondary_enabled: bool) -> Fixture {
     manifest.relations = mods::effective_relations(&config.repositories[0], Some("v1.0.0"));
     archive::write_manifest(&f.state.config.manifests_dir(), &manifest).unwrap();
     f
+}
+
+fn core(inventory: &Inventory) -> &Candidate {
+    inventory
+        .nodes
+        .iter()
+        .find(|node| node.id == "mod:a")
+        .unwrap()
+        .current
+        .as_ref()
+        .unwrap()
 }
 
 fn assert_relations(inventory: &Inventory, secondary_enabled: bool) {
@@ -151,6 +162,9 @@ fn installed_secondary_declarations_survive_actual_prepare_commit_and_rescan() {
             zip.write_all(&mods::plugin_blob(guid, file, version))
                 .unwrap();
         }
+        zip.start_file("library.dll", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"no BepInPlugin version").unwrap();
         zip.finish().unwrap();
         write(
             &directory.join(crate::mod_preview::staging::ORIGIN_FILE),
@@ -202,15 +216,7 @@ fn installed_secondary_declarations_survive_actual_prepare_commit_and_rescan() {
         super::super::execution::commit(&f.state, &mut session, |_| {}).unwrap();
         let actual = inventory::build(&f.state).unwrap();
         assert_relations(&actual.inventory, secondary_enabled);
-        let current = actual
-            .inventory
-            .nodes
-            .iter()
-            .find(|node| node.id == "mod:a")
-            .unwrap()
-            .current
-            .as_ref()
-            .unwrap();
+        let current = core(&actual.inventory);
         assert_eq!(current.tag.as_deref(), Some("v2.0.0"));
         assert_eq!(
             current
@@ -221,6 +227,61 @@ fn installed_secondary_declarations_survive_actual_prepare_commit_and_rescan() {
                 .version
                 .as_deref(),
             Some("9.0.0")
+        );
+        let manifest_dir = f.state.config.manifests_dir();
+        let manifest = archive::read_manifest(&manifest_dir, "a").unwrap();
+        let installed_versions = BTreeMap::from([
+            ("bepinex/plugins/a/a.dll".into(), "9.0.0".into()),
+            ("bepinex/plugins/a/b.dll".into(), "1.5.0".into()),
+            ("bepinex/plugins/a/library.dll".into(), String::new()),
+        ]);
+        assert_eq!(manifest.installed_dll_versions, installed_versions);
+        let local = |inventory: &inventory::TrustedInventory| {
+            inventory
+                .installed_mods
+                .iter()
+                .find(|item| item.guid.as_deref() == Some("fixture-a"))
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(local(&actual).status, "latest");
+        assert_eq!(mods::local_update_version(&local(&actual)), Some("v2.0.0"));
+
+        // Same path and unchanged manifest; the lower core DLL is now the
+        // actual relation provider, regardless of the companion's Release tag.
+        let core_path = f.game.join(&local(&actual).dll_file);
+        write(
+            &core_path,
+            &mods::plugin_blob("fixture-a", "a.dll", "0.5.0"),
+        );
+        crate::metadata_read::invalidate_dll_details_under(&f.game.join("BepInEx/plugins"));
+        let actual = inventory::build(&f.state).unwrap();
+        let installed_core = local(&actual);
+        assert_eq!(installed_core.version.as_deref(), Some("0.5.0"));
+        assert_eq!(mods::local_update_version(&installed_core), Some("0.5.0"));
+        assert_eq!(installed_core.status, "update_available");
+        let summary = mods::status::collect_update_status(&actual.config, &actual.installed_mods);
+        let primary = summary
+            .iter()
+            .find(|item| item.repository_id == "a")
+            .unwrap();
+        assert_eq!(primary.local_version.as_deref(), Some("0.5.0"));
+        assert_eq!(primary.state, "update_available");
+        assert!(actual.installed_mods.iter().any(|item| {
+            item.guid.as_deref() == Some("fixture-b")
+                && item.release_companion
+                && !item.update_available
+        }));
+        let candidate = core(&actual.inventory);
+        assert_eq!(candidate.tag, None);
+        assert!(candidate.relations.iter().any(|item| {
+            item.relation.guid == "fixture-d" && item.relation.version == ">=99.0.0"
+        }));
+        assert_eq!(
+            archive::read_manifest(&manifest_dir, "a")
+                .unwrap()
+                .release_tag,
+            "v2.0.0"
         );
     }
 }

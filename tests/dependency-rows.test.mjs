@@ -215,6 +215,19 @@ test('绑定仓库不在配置里时退回安装清单快照', () => {
   assert.deepEqual(installedModRelations(installed, []).map((relation) => relation.guid), ['dev.snapshot'])
 })
 
+test('用扫描确认的 Release / 磁盘版本选择关系，不把核心的声明加给附属 DLL', () => {
+  const online = repo({
+    id: 'cursor', plugin_guid: 'dev.cursor',
+    relations: [{ kind: 'requires', guid: 'dev.default' }],
+    release_relations: [{ version: '<3.0', relations: [{ kind: 'requires', guid: 'dev.release' }] }],
+  })
+  const core = mod({ repository_id: 'cursor', version: '9.0.0', update_version: 'v2.0.0' })
+  const replaced = { ...core, version: '3.0.0', update_version: '3.0.0' }
+  assert.deepEqual(installedModRelations(core, [online]).map(relation => relation.guid), ['dev.release'])
+  assert.deepEqual(installedModRelations(replaced, [online]).map(relation => relation.guid), ['dev.default'])
+  assert.deepEqual(installedModRelations({ ...core, release_companion: true }, [online]), [])
+})
+
 test('地图关系：在线条目在就按在线，不在才用本地快照', () => {
   const online = mapInfo({ relations: [{ kind: 'requires', guid: 'dev.diy', version: '>=19.0' }] })
   assert.deepEqual(

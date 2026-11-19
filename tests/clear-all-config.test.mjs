@@ -27,7 +27,7 @@ registerHooks({
   load(url, context, next) {
     const fake = source => ({ format: 'module', shortCircuit: true, source })
     if (url === 'clear-config-test:naive') return fake(`
-      export const NButton={},NLog={},NSelect={},NTag={}
+      export const NAlert={},NButton={},NLog={},NSelect={},NTag={}
       const show=options=>{
         globalThis.__clearAllConfigBoundary.dialogs.push(options);return options
       }
@@ -69,6 +69,8 @@ const renderer = createRenderer({
   createComment: () => ({}), setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null,
 })
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no }); return { promise, resolve, reject } }
+const confirmationBody = confirmation => confirmation.content().children.find(node => node?.props?.class === 'manager-data-confirm-body')
+const confirmationError = confirmation => confirmation.content().children.find(node => node?.props?.role === 'alert')
 function mounted(t, overrides = {}, lifecycle = {}) {
   boundary.calls.length = boundary.dialogs.length = boundary.notices.length = 0
   boundary.directory = async () => 'D:\\Redirected Documents\\OC2ModManager'
@@ -121,8 +123,8 @@ test('opening only reads the actual directory once and cancellation does not cle
   const confirmation = boundary.dialogs[0]
   assert.equal(confirmation.maskClosable, false)
   assert.equal(confirmation.positiveButtonProps.type, 'error')
-  assert.deepEqual(confirmation.content().props.style, { maxHeight: 'calc(100vh - 250px)', overflowY: 'auto' })
-  const lines = confirmation.content().children.map(child => child.children)
+  assert.equal(confirmationBody(confirmation).props.style.overflowY, 'auto')
+  const lines = confirmationBody(confirmation).children.map(child => child.children)
   assert.deepEqual(lines, ['tools.clearAllConfigConfirm', 'tools.managerDataDirectory',
     'Z:\\User Documents\\OC2ModManager', 'tools.clearAllConfigPreservesGame', 'tools.clearAllConfigExit'])
   confirmation.onAfterLeave()
@@ -172,9 +174,11 @@ test('cleanup preparation failure restores cancellation and permits explicit ret
   assert.equal(confirmation.closable, true)
   assert.equal(confirmation.closeOnEsc, true)
   assert.equal(confirmation.negativeButtonProps.disabled, false)
-  assert.deepEqual(boundary.notices, ['translated:tools.clearAllConfigFailed?reason=blocked'])
+  assert.equal(confirmationError(confirmation).children.default(), 'translated:tools.clearAllConfigFailed?reason=blocked')
+  assert.deepEqual(boundary.notices, [])
   boundary.clear = async () => {}
   await confirmation.onPositiveClick()
+  assert.equal(confirmationError(confirmation), undefined)
   assert.deepEqual(boundary.calls, [['directory'], ['clear'], ['clear']])
 })
 
@@ -210,9 +214,8 @@ test('directory selection, confirmation and execution share a gate with clear co
   assert.equal(confirmation.title, 'tools.migrateData')
   assert.equal(confirmation.positiveText, 'tools.migrateDataAndExit')
   assert.equal(confirmation.positiveButtonProps.type, 'warning')
-  assert.deepEqual(confirmation.content().props.style, { maxHeight: 'calc(100vh - 250px)', overflowY: 'auto' })
   assert.equal(confirmation.maskClosable, false)
-  assert.deepEqual(confirmation.content().children.map(child => child.children), [
+  assert.deepEqual(confirmationBody(confirmation).children.map(child => child.children), [
     'tools.migrateDataConfirm', 'tools.migrateDataSource', 'D:\\Redirected Documents\\OC2ModManager',
     'tools.migrateDataTarget', 'E:\\Manager Data\\OC2ModManager',
     'tools.migrateDataPreservesGame', 'tools.migrateDataExit',
@@ -254,7 +257,7 @@ test('cancelling migration confirmation releases the gate and invalidates its ol
   const state = mounted(t, { choose: async () => '/Users/example/Data/' })
   await state.confirmMigrateManagerData()
   const confirmation = boundary.dialogs[0]
-  assert.equal(confirmation.content().children[4].children, '/Users/example/Data/OC2ModManager')
+  assert.equal(confirmationBody(confirmation).children[4].children, '/Users/example/Data/OC2ModManager')
   confirmation.onAfterLeave()
   assert.equal(state.managerDataBusy, false)
   assert.equal(await confirmation.onPositiveClick(), false)
@@ -266,11 +269,11 @@ test('cancelling migration confirmation releases the gate and invalidates its ol
 test('filesystem root selection and forward-slash Windows paths show the fixed child folder', async t => {
   const state = mounted(t, { choose: async () => '/' })
   await state.confirmMigrateManagerData()
-  assert.equal(boundary.dialogs[0].content().children[4].children, '/OC2ModManager')
+  assert.equal(confirmationBody(boundary.dialogs[0]).children[4].children, '/OC2ModManager')
   boundary.dialogs[0].onAfterLeave()
   boundary.choose = async () => 'E:/'
   await state.confirmMigrateManagerData()
-  assert.equal(boundary.dialogs[1].content().children[4].children, 'E:/OC2ModManager')
+  assert.equal(confirmationBody(boundary.dialogs[1]).children[4].children, 'E:/OC2ModManager')
 })
 
 test('native picker errors are translated and release both operation gates', async t => {
@@ -300,7 +303,7 @@ test('unsafe, busy and preparation errors keep migration confirmation cancellabl
   const state = mounted(t, { choose: async () => 'E:\\Data' })
   await state.confirmMigrateManagerData()
   const confirmation = boundary.dialogs[0]
-  for (const error of ['tools.migrateDataUnsafe', 'tools.clearAllConfigBusy', 'tools.migrateDataFailed?reason=exists']) {
+  for (const error of ['tools.migrateDataUnsafe', 'tools.clearAllConfigBusy', 'tools.migrateDataTargetExists?path=E:\\Data\\OC2ModManager']) {
     boundary.migrate = async () => { throw error }
     assert.equal(await confirmation.onPositiveClick(), false)
     assert.equal(state.migratingData, false)
@@ -309,11 +312,13 @@ test('unsafe, busy and preparation errors keep migration confirmation cancellabl
     assert.equal(confirmation.closable, true)
     assert.equal(confirmation.closeOnEsc, true)
     assert.equal(confirmation.negativeButtonProps.disabled, false)
-    assert.equal(boundary.notices.at(-1), `translated:${error}`)
+    assert.equal(confirmationError(confirmation).children.default(), `translated:${error}`)
+    assert.deepEqual(boundary.notices, [])
     await state.confirmClearAllConfig()
   }
   boundary.migrate = async () => {}
   await confirmation.onPositiveClick()
+  assert.equal(confirmationError(confirmation), undefined)
   assert.equal(state.migratingData, true)
   assert.equal(boundary.calls.filter(([name]) => name === 'migrate').length, 4)
   assert.equal(boundary.calls.filter(([name]) => name === 'clear').length, 0)

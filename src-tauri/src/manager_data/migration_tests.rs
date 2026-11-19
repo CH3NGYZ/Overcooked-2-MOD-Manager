@@ -85,13 +85,51 @@ fn copies_all_data_verifies_then_publishes_pointer_and_removes_old_root() {
 }
 
 #[test]
+fn preparation_reports_existing_child_but_allows_a_nonempty_parent() {
+    let f = fixture();
+    let state = crate::app_state::AppState::with_config(crate::config::ConfigService::for_test(
+        f.source.clone(),
+    ));
+    let executable = f._temp.path().join("program/app.exe");
+    fs::create_dir(executable.parent().unwrap()).unwrap();
+    let parent = f.target.parent().unwrap();
+    let sibling = parent.join("other notes.txt");
+    fs::write(&sibling, b"keep").unwrap();
+    fs::create_dir(&f.target).unwrap();
+    assert_eq!(
+        prepare(&f.paths, parent, &state, &executable),
+        Err(existing_target_error(&f.target)),
+    );
+    assert!(f.paths.record().unwrap().is_none());
+    assert!(f.target.is_dir());
+    fs::remove_dir(&f.target).unwrap();
+    assert_eq!(prepare(&f.paths, parent, &state, &executable), Ok(f.target));
+    assert_eq!(fs::read(sibling).unwrap(), b"keep");
+}
+
+fn existing_target_error(target: &Path) -> String {
+    let path = crate::display_path::display_path(target);
+    format!(
+        "tools.migrateDataTargetExists?path={}",
+        crate::locale_tag::encode(&path)
+    )
+}
+
+#[test]
 fn existing_destination_is_never_overwritten_even_when_empty() {
     let f = fixture();
     fs::create_dir(&f.target).unwrap();
-    assert!(finish_at(&f.paths, f.record, &f.source, &f.target, &f.pointer).is_err());
+    let error = existing_target_error(&f.target);
+    assert_eq!(
+        finish_at(&f.paths, f.record, &f.source, &f.target, &f.pointer),
+        Err(error.clone()),
+    );
     assert!(f.source.join("config.toml").exists());
+    assert_eq!(fs::read_dir(&f.target).unwrap().count(), 0);
     assert!(!f.pointer.exists());
-    assert_eq!(f.paths.record().unwrap().unwrap().phase, ResetPhase::Failed);
+    let record = f.paths.record().unwrap().unwrap();
+    assert_eq!(record.phase, ResetPhase::Failed);
+    assert_eq!(record.error, Some(error));
 }
 
 #[test]

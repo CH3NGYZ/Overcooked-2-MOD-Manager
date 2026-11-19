@@ -1,5 +1,5 @@
 import { computed, h, onBeforeUnmount, onMounted, shallowRef } from 'vue'
-import { useDialog } from 'naive-ui'
+import { NAlert, useDialog } from 'naive-ui'
 import { t } from '../i18n'
 import { backendMessageOf } from '../locale/backend'
 import { api } from '../services/tauri'
@@ -51,17 +51,22 @@ export function useManagerDataOperations() {
     const path = (value: string) => h('code', {
       style: { display: 'block', overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' },
     }, value)
+    const actionError = shallowRef('')
     let active = true
     const confirmation = dialog[migrating ? 'warning' : 'error']({
       title: t(migrating ? 'tools.migrateData' : 'tools.clearAllConfig'),
       content: () => h('div', { class: 'manager-data-confirm',
-        style: { maxHeight: 'calc(100vh - 250px)', overflowY: 'auto' } }, [
-        h('p', t(migrating ? 'tools.migrateDataConfirm' : 'tools.clearAllConfigConfirm')),
-        h('p', t(migrating ? 'tools.migrateDataSource' : 'tools.managerDataDirectory')),
-        path(directory),
-        ...(migrating ? [h('p', t('tools.migrateDataTarget')), path(target)] : []),
-        h('p', t(migrating ? 'tools.migrateDataPreservesGame' : 'tools.clearAllConfigPreservesGame')),
-        h('p', { style: { fontWeight: '600' } }, t(migrating ? 'tools.migrateDataExit' : 'tools.clearAllConfigExit')),
+        style: { maxHeight: 'calc(100vh - 250px)', display: 'flex', flexDirection: 'column' } }, [
+        actionError.value ? h(NAlert, { type: 'error', 'data-testid': 'manager-data-action-error', role: 'alert',
+          style: { flexShrink: '0', overflowWrap: 'anywhere' } }, { default: () => actionError.value }) : null,
+        h('div', { class: 'manager-data-confirm-body', style: { overflowY: 'auto', minHeight: '0' } }, [
+          h('p', t(migrating ? 'tools.migrateDataConfirm' : 'tools.clearAllConfigConfirm')),
+          h('p', t(migrating ? 'tools.migrateDataSource' : 'tools.managerDataDirectory')),
+          path(directory),
+          ...(migrating ? [h('p', t('tools.migrateDataTarget')), path(target)] : []),
+          h('p', t(migrating ? 'tools.migrateDataPreservesGame' : 'tools.clearAllConfigPreservesGame')),
+          h('p', { style: { fontWeight: '600' } }, t(migrating ? 'tools.migrateDataExit' : 'tools.clearAllConfigExit')),
+        ]),
       ]),
       positiveText: t(migrating ? 'tools.migrateDataAndExit' : 'tools.clearAllConfigAndExit'),
       negativeText: t('recycle.cancel'),
@@ -71,6 +76,7 @@ export function useManagerDataOperations() {
       onPositiveClick: async () => {
         if (!active || disposed || clearingConfig.value || migratingData.value) return false
         const executing = migrating ? migratingData : clearingConfig
+        actionError.value = ''
         executing.value = true
         confirmation.loading = true
         confirmation.closable = false
@@ -81,7 +87,7 @@ export function useManagerDataOperations() {
           if (migrating && parentDirectory !== undefined) await api.migrateManagerData(parentDirectory)
           else await api.clearAllConfig()
         } catch (reason) {
-          if (!disposed) message.error(backendMessageOf(reason))
+          if (active && !disposed) actionError.value = backendMessageOf(reason)
           executing.value = false
           confirmation.loading = false
           confirmation.closable = true

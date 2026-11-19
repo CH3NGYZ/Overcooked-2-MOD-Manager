@@ -54,6 +54,19 @@ fn validate_pair(paths: &ResetPaths, source: &Path, target: &Path) -> Result<(),
     Ok(())
 }
 
+fn require_new_target(target: &Path) -> Result<(), String> {
+    // Reject even an empty existing directory: it was not created by this request.
+    if target.try_exists().map_err(failed)? {
+        let path = crate::display_path::display_path(target);
+        log::warn!("取消配置迁移：目标已存在，地址={path}");
+        return Err(crate::locale_tag::with_params(
+            "tools.migrateDataTargetExists",
+            &[("path", &path)],
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn prepare(
     paths: &ResetPaths,
     parent: &Path,
@@ -66,10 +79,7 @@ pub(super) fn prepare(
     }
     let target = parent.join("OC2ModManager");
     validate_pair(paths, &paths.root, &target)?;
-    // Reject even an empty existing directory: it was not created by this request.
-    if target.try_exists().map_err(failed)? {
-        return Err(UNSAFE.into());
-    }
+    require_new_target(&target)?;
     let destination = ResetPaths::with_control(&target, &paths.parent)?;
     destination
         .protect(executable.parent().ok_or(UNSAFE)?)
@@ -137,12 +147,12 @@ fn finish_at(
         let retired = retired(source, record.token);
         if record.phase == ResetPhase::Pending {
             if normalized(&current) != normalized(source)
-                || target.try_exists().map_err(failed)?
                 || stage.try_exists().map_err(failed)?
                 || retired.try_exists().map_err(failed)?
             {
                 return Err(UNSAFE.into());
             }
+            require_new_target(target)?;
             let fingerprint = Fingerprint::capture(source).map_err(failed)?;
             if !matches!(fingerprint, Fingerprint::Directory { .. }) {
                 return Err(UNSAFE.into());
@@ -153,9 +163,10 @@ fn finish_at(
         }
         let fingerprint = record.fingerprint.as_ref().ok_or(UNSAFE)?.clone();
         if record.phase == ResetPhase::Copying {
-            if normalized(&current) != normalized(source) || target.try_exists().map_err(failed)? {
+            if normalized(&current) != normalized(source) {
                 return Err(UNSAFE.into());
             }
+            require_new_target(target)?;
             if stage.try_exists().map_err(failed)? {
                 // This private UUID tree is the only incomplete copy we may discard.
                 transaction::remove_private_tree(&stage).map_err(failed)?;

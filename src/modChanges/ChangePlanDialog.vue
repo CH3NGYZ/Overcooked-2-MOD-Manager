@@ -68,8 +68,13 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
   <AppModal v-else :show="!!state && !state.silent" :title="t('modChanges.title')" :z-index="2599" max-width="min(760px, 94%)"
     :closable="canCancel" :mask-closable="false" card-class="mod-changes-modal"
     @update:show="(show: boolean) => { if (!show) void changes.cancel() }">
+    <template #header-extra>
+      <div ref="statusElement" class="plan-phase" role="status" tabindex="-1" data-plan-status>
+        <NSpin v-if="waiting" size="small" class="plan-phase-spinner" aria-hidden="true" />
+        <span>{{ phase }}</span>
+      </div>
+    </template>
     <div class="change-plan" data-mod-changes-plan>
-      <p ref="statusElement" class="plan-phase" role="status" tabindex="-1" data-plan-status><NSpin v-if="waiting" size="small" />{{ phase }}</p>
       <NAlert v-if="state?.phase === 'reconfirming'" type="warning" :bordered="false">
         {{ t('modChanges.changed') }}
       </NAlert>
@@ -89,7 +94,6 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
       </div>
       <p v-else-if="plan?.status === 'ready'" class="plan-empty">{{ t('modChanges.noChanges') }}</p>
       <ChangePlanDetails v-if="detailsPlan" :plan="detailsPlan" />
-      <p v-if="plan?.status === 'ready'" class="plan-footer-note">{{ t('modChanges.atomicNotice') }}</p>
     </div>
     <template #footer>
       <div class="plan-bottom">
@@ -121,10 +125,11 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
 .plan-progress p { margin: 8px 0 0; color: var(--oc2-text-3); font-size: 12px; }
 .plan-bottom { width: 100%; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
 .plan-buttons { display: flex; justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap; }
-.plan-phase { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0; }
+:global(.mod-changes-modal .n-card-header__extra) { min-width: 0; max-width: min(60%, 360px); margin-inline-start: 12px; }
+.plan-phase { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; line-height: 1.4; color: var(--oc2-text-2); text-align: end; overflow-wrap: anywhere; }
+.plan-phase-spinner { flex: none; }
 .progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--oc2-text-3); margin-bottom: 8px; font-variant-numeric: tabular-nums; }
 .plan-actions { display: flex; flex-direction: column; gap: 10px; }
-.plan-footer-note { margin: 0; color: var(--oc2-text-3); font-size: 12px; line-height: 1.6; }
 .plan-notes { margin: 0; padding-left: 20px; overflow-wrap: anywhere; }
 .plan-empty { margin: 0; }
 </style>

@@ -1,6 +1,7 @@
 use crate::models::Channel;
 use crate::models::InstalledMod;
 use crate::models::ModDownloadMode;
+use crate::models::ModRepositoryBinding;
 use crate::models::ModRepositoryConfig;
 use crate::models::RepositoryIdentityMatch;
 use std::collections::{HashMap, HashSet};
@@ -274,6 +275,82 @@ pub(super) fn repository_identity_match(
     .into_iter()
     .any(|(actual, configured)| matches(actual, configured))
     .then_some(RepositoryIdentityMatch::Metadata)
+}
+
+/// Resolve strong DLL evidence to one upstream before comparing changed GUIDs.
+/// Unlike display binding, product-name matches and preferred source IDs cannot
+/// choose between upstreams; several entries for the same remote are allowed.
+pub(super) fn unique_release_upstream<'a>(
+    config: &'a crate::models::AppConfig,
+    guid: Option<&str>,
+    original_filename: Option<&str>,
+    version: &str,
+    source_id: Option<&str>,
+    channel: Channel,
+) -> Option<ModRepositoryBindingRef<'a>> {
+    let is_candidate = |repo: &&ModRepositoryConfig| {
+        crate::config::mod_repository_is_available(config, repo, &config.region)
+            && repository_matches_mod(repo, guid, None, original_filename, Some(version))
+    };
+    let mut candidates = config.repositories.iter().filter(is_candidate);
+    let remote = ModRepositoryBindingRef::from_repository(candidates.next()?)?;
+    // An additional real match may be a mirror or a Raw source. Neither can
+    // prove which publishing upstream actually owns an unbound DLL.
+    if !candidates.all(|repo| remote.matches(repo)) {
+        return None;
+    }
+    let on_line =
+        |repo: &&ModRepositoryConfig| repo.channel == channel || repo.channel == Channel::All;
+    let mut candidates = config
+        .repositories
+        .iter()
+        .filter(is_candidate)
+        .filter(on_line);
+    match source_id {
+        Some(id) => candidates.find(|repo| repo.id == id),
+        None => candidates.next(),
+    }?;
+    Some(remote)
+}
+
+/// Coordinates proven from a Release definition or the installed manifest.
+pub(super) struct ModRepositoryBindingRef<'a> {
+    pub provider: &'a crate::models::Provider,
+    pub owner: &'a str,
+    pub repository: &'a str,
+}
+
+impl<'a> ModRepositoryBindingRef<'a> {
+    pub(super) fn from_binding(binding: &'a ModRepositoryBinding) -> Option<Self> {
+        binding.is_valid().then(|| Self {
+            provider: &binding.provider,
+            owner: binding.owner.trim(),
+            repository: binding.repository.trim(),
+        })
+    }
+
+    fn from_repository(repo: &'a ModRepositoryConfig) -> Option<Self> {
+        if repo.download_mode != ModDownloadMode::Release
+            || crate::releases::repository_coordinates(&repo.username, &repo.repository).is_err()
+        {
+            return None;
+        }
+        Some(Self {
+            provider: &repo.provider,
+            owner: repo.username.trim(),
+            repository: repo.repository.trim(),
+        })
+    }
+
+    pub(super) fn matches(&self, repo: &'a ModRepositoryConfig) -> bool {
+        Self::from_repository(repo).is_some_and(|remote| self.same_remote(&remote))
+    }
+
+    pub(super) fn same_remote(&self, other: &Self) -> bool {
+        self.provider == other.provider
+            && self.owner.eq_ignore_ascii_case(other.owner)
+            && self.repository.eq_ignore_ascii_case(other.repository)
+    }
 }
 
 /// Match either a scan result or an existing local snapshot against the current

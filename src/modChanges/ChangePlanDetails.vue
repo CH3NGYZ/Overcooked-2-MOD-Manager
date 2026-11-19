@@ -58,11 +58,11 @@ function describeCondition(reason: Reason) {
       </tr>
     </thead>
     <tbody>
-      <tr v-for="row in rows" :key="row.key" :class="{ 'is-child': row.bundled }"
-        :data-change-node="row.bundled ? undefined : row.nodeId"
-        :data-change-parent="row.bundled ? row.nodeId : undefined">
+      <tr v-for="row in rows" :key="row.key" :class="{ 'is-child': row.bundled || row.retired }"
+        :data-change-node="row.bundled || row.retired ? undefined : row.nodeId"
+        :data-change-parent="row.bundled || row.retired ? row.nodeId : undefined" :data-change-retired="row.retired">
         <td class="details-operation">
-          <NTag v-if="row.kind" size="small" :type="row.kind === 'disable' ? 'warning' : 'info'">{{ t(`modChanges.action.${row.kind}`) }}</NTag>
+          <NTag v-if="row.kind" size="small" :type="row.kind === 'retire' ? 'error' : row.kind === 'disable' ? 'warning' : 'info'">{{ t(`modChanges.action.${row.kind}`) }}</NTag>
         </td>
         <td class="plan-row-status">
           <span v-if="row.status" class="row-status-icon" role="img" :aria-label="row.status.label"
@@ -73,7 +73,8 @@ function describeCondition(reason: Reason) {
           </span>
         </td>
         <th scope="row" class="details-item">
-          <strong v-if="!row.bundled">{{ row.label || t('modChanges.unnamedItem') }}</strong>
+          <span v-if="row.retired" class="details-member" :title="row.member?.path">{{ row.label || t('modChanges.unnamedItem') }}</span>
+          <strong v-else-if="!row.bundled">{{ row.label || t('modChanges.unnamedItem') }}</strong>
           <span v-if="row.memberOnly || row.bundled" class="details-member" :title="row.member?.path">{{ row.member?.name || t('modChanges.unnamedPlugin') }}</span>
         </th>
         <td class="details-version">{{ row.version ? `${row.version.from ? `${row.version.from} → ` : ''}${row.version.to || '—'}` : '' }}</td>
@@ -84,6 +85,7 @@ function describeCondition(reason: Reason) {
               <span v-if="reason.requirement || reason.prerelease != null" class="reason-condition"> · {{ describeCondition(reason) }}</span>
             </li>
           </ul>
+          <span v-else-if="row.retired">{{ t('modChanges.retireReason') }}</span>
           <span v-else-if="row.bundleReason">{{ t(`modChanges.bundle.${row.bundleReason}`) }}</span>
           <span v-else-if="row.selected">{{ t('modChanges.detailsSelection') }}</span>
           <template v-else>

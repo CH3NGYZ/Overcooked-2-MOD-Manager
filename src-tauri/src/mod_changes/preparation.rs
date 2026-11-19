@@ -359,6 +359,7 @@ pub(super) fn approval_signature(session: &PlanSession) -> Result<Vec<u8>, Strin
         &result.blockers,
         &result.impacts,
         members,
+        &session.plan.retired_mod_copies,
         &session.plan.install_notes,
     ))
     .map_err(|e| e.to_string())

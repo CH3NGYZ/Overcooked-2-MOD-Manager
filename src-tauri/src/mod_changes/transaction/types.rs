@@ -56,7 +56,7 @@ pub(crate) struct FileChange {
     /// A validated, fully downloaded/unpacked file. None removes the target.
     pub source: Option<StagedFile>,
     pub expected: Fingerprint,
-    /// Adopting an untracked file must not change permissions through another link.
+    /// Adoption or retirement must not change permissions through another link.
     pub require_single_link: bool,
 }
 

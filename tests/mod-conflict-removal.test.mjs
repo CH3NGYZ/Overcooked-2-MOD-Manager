@@ -38,7 +38,7 @@ const { isDependencyTag } = await import('../src/tagTargets.ts')
 const { descriptor } = parse(readFileSync(new URL('../src/views/ModsLocalView.vue', import.meta.url), 'utf8'))
 const script = descriptor.scriptSetup.content
 const ast = ts.createSourceFile('ModsLocalView.ts', script, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-const names = ['actionContext', 'cardAction', 'relationOwnerMod', 'packageAction', 'runCardAction', 'runPackageAction']
+const names = ['actionContext', 'cardAction', 'relationOwnerMod', 'packageAction', 'runCardAction', 'removeOlderCopy', 'runPackageAction']
 const functions = names.map(name => {
   const statement = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name)
   assert.ok(statement, `production handler ${name} must exist`)
@@ -48,7 +48,7 @@ const removal = ast.statements.find(node => ts.isVariableStatement(node) && node
   ts.isCallExpression(declaration.initializer) && declaration.initializer.expression.getText(ast) === 'useModRemoval'))
 assert.ok(removal, 'page must configure its removal through the shared composable')
 const createActions = new Function('environment', `${stripTypeScriptTypes(`
-  const { useModRemoval, blockModOperation, deleteConfirm, modTitle, busy, load,
+  const { t, useModRemoval, blockModOperation, deleteConfirm, modTitle, busy, load,
     statusActionFor, repositoryForMod, isDependencyTag, repositories, relationIssueByDll,
     previewModRepository, linkToModRepository, refreshModRepository } = environment
   ${removal.getText(ast)}
@@ -75,7 +75,7 @@ function setup({ responses = [{ ok: true, message: '' }], blocked = false } = {}
   const issues = Object.fromEntries([[a, b], [b, a]].map(([source, target]) => [source.dll_file,
     { relation: { kind: 'conflicts', guid: target.guid }, state: 'conflict', installedMod: target, installedVersion: target.version }]))
   const actions = createActions({
-    useModRemoval, statusActionFor, repositoryForMod, isDependencyTag, busy,
+    t: key => key, useModRemoval, statusActionFor, repositoryForMod, isDependencyTag, busy,
     blockModOperation: () => state.blocked,
     deleteConfirm: { value: { body: name => `Remove ${name}?`, action: 'Move to recycle bin', done: 'Moved to recycle bin' } },
     modTitle: target => target.name, load: async () => { state.refreshes++ },
@@ -87,6 +87,38 @@ function setup({ responses = [{ ok: true, message: '' }], blocked = false } = {}
   return { ...actions, a, b, dialogs, calls, notices, events, busy, state, issues }
 }
 const packageFor = source => ({ mods: [mod('unrelated'), source], statuses: [{ key: 'dependency_conflict' }] })
+
+const olderFastInit = guid => ({ ...mod('FastInit'), version: '1.3', guid,
+  dll_file: 'BepInEx/plugins/FastInit 1.3/DIYLevelFastInit.dll', duplicate_cleanup_available: true,
+  labels: ['duplicate_lower_version', 'duplicate', 'update_available'], status: 'duplicate_lower_version' })
+
+test('older duplicate shortcuts preserve the clicked physical DLL through both confirmations', async () => {
+  for (const guid of ['oc2.diylevel.fastinit', 'yang.oc2.diylevel.fastinit']) {
+    const f = setup({ responses: [{ ok: false, requires_confirmation: true, message: 'Confirm unmanaged DLL' }, { ok: true }] })
+    const old = olderFastInit(guid)
+    f.runCardAction(old)
+    assert.equal(f.dialogs[0].title, 'modsLocal.uninstallOlderCopy')
+    assert.equal(f.dialogs[0].content, `Remove FastInit 1.3? modsLocal.keepNewerCopy\n${old.dll_file}`)
+    assert.deepEqual(f.calls, [])
+    await f.dialogs[0].onPositiveClick()
+    assert.deepEqual(f.calls, [[old.dll_file, false, true]])
+    assert.equal(f.dialogs[1].content, 'Confirm unmanaged DLL')
+    await f.dialogs[1].onPositiveClick()
+    assert.deepEqual(f.calls, [[old.dll_file, false, true], [old.dll_file, true, true]])
+  }
+})
+
+test('duplicate cleanup never turns an aggregated label or a package warning into package deletion', async () => {
+  const f = setup({ responses: [{ ok: false, requires_package_confirmation: true, message: 'Package warning' }] })
+  const old = olderFastInit('oc2.diylevel.fastinit')
+  f.runPackageAction({ mods: [old, f.a], statuses: [{ key: 'duplicate_lower_version' }] })
+  assert.deepEqual(f.dialogs, [])
+  f.runCardAction(old)
+  await f.dialogs[0].onPositiveClick()
+  assert.deepEqual(f.calls, [[old.dll_file, false, true]])
+  assert.equal(f.dialogs.length, 1)
+  assert.deepEqual(f.notices, [['error', 'Package warning']])
+})
 
 for (const entry of ['card', 'package']) test(`${entry} conflict removes the opposite InstalledMod through the ordinary confirmation and refresh`, async () => {
   for (const direction of ['A', 'B']) {

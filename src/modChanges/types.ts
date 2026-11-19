@@ -61,6 +61,7 @@ export interface ChangeInstallNote {
   note: string
   note_i18n: Record<string, string>
 }
+export interface RetiredModCopy { member_key: string; label: string; version: string; dll_file: string }
 export interface ChangePlan {
   plan_id: string
   status: 'ready' | 'unsatisfiable' | 'incomplete'
@@ -72,6 +73,8 @@ export interface ChangePlan {
   nodes: ChangeNode[]
   /** Effectively enabled members before a whole-node disable. */
   previous_enabled_members?: Record<string, string[]>
+  /** Independently installed older copies removed as part of an approved upgrade. */
+  retired_mod_copies?: Record<string, RetiredModCopy[]>
   install_notes: ChangeInstallNote[]
   prepared: boolean
 }

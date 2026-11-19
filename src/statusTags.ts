@@ -517,13 +517,16 @@ export function repositoryStatus(repo: ModRepository, installedMods: InstalledMo
  */
 export type ModUpdateVerdict =
   /** 能按当前缓存判定。 */
-  | { known: true; updateAvailable: boolean }
+  | { known: true; updateAvailable: boolean; source: 'release' }
+  /** 已有可保留的较新本地副本；不为当前文件重新判定线上版本。 */
+  | { known: true; updateAvailable: false; source: 'newer_copy' }
   /** 无法判定（未绑定 / 仓库报错 / RAW / 版本不可比较），调用方保留后端快照。 */
   | { known: false }
 
 export function modUpdateVerdict(mod: InstalledMod, repositories: ModRepository[]): ModUpdateVerdict {
   // 纯依赖不是 MOD，不参与更新判定
   if (mod.is_dependency) return { known: false }
+  if (mod.duplicate_cleanup_available) return { known: true, updateAvailable: false, source: 'newer_copy' }
   const repo = repositoryForMod(repositories, mod)
   if (!repo || repo.last_error) return { known: false }
   // 仓库文件模式没有版本比较的意义
@@ -533,7 +536,7 @@ export function modUpdateVerdict(mod: InstalledMod, repositories: ModRepository[
   // 本地有效版本 = max(清单 tag, DLL 版本)，规则见 localCompareVersion
   const compared = compareVersions(release.version || release.tag_name, localCompareVersion(mod))
   if (compared === null) return { known: false }
-  return { known: true, updateAvailable: compared > 0 }
+  return { known: true, updateAvailable: compared > 0, source: 'release' }
 }
 
 /**

@@ -32,7 +32,7 @@ impl Workspace {
     fn dll(&self, path: &str, guid: &str, version: &str) {
         let target = self.game.join(path);
         fs::create_dir_all(target.parent().unwrap()).unwrap();
-        fs::write(target, plugin_blob(guid, "DIYLevel Fast Init", version)).unwrap();
+        fs::write(target, fast_init_dll(guid, version)).unwrap();
     }
 
     fn manifest(&self, repo: &ModRepositoryConfig, tag: &str, files: &[&str]) {
@@ -58,11 +58,7 @@ impl Workspace {
             )
             .unwrap();
         writer
-            .write_all(&plugin_blob(
-                "oc2.diylevel.fastinit",
-                "DIYLevel Fast Init",
-                "1.9.2",
-            ))
+            .write_all(&fast_init_dll("oc2.diylevel.fastinit", "1.9.2"))
             .unwrap();
         writer.finish().unwrap();
         path
@@ -112,6 +108,22 @@ fn fast_init_repo(id: &str, guid: &str) -> ModRepositoryConfig {
 const OLD: &str = "BepInEx/plugins/legacy/DIYLevelFastInit.dll";
 const NEW: &str = "BepInEx/plugins/current/DIYLevelFastInit.dll";
 
+fn fast_init_dll(guid: &str, version: &str) -> Vec<u8> {
+    // A metadata-only PE with no executable entry point. Scan and ZIP preview
+    // must both read the original filename and product from the real resource.
+    let mut bytes = include_bytes!(
+        "../../mod_changes/orchestration_tests/duplicate_release_target/fastinit_version.pe"
+    )
+    .to_vec();
+    let name = if guid == "oc2.diylevel.fastinit" {
+        "DIYLevel Fast Init"
+    } else {
+        "Legacy Fast Init"
+    };
+    bytes.extend(plugin_blob(guid, name, version));
+    bytes
+}
+
 #[test]
 fn changed_guid_same_package_scan_zip_preview_and_update_recycles_both_versions() {
     let workspace = Workspace::new();
@@ -124,15 +136,16 @@ fn changed_guid_same_package_scan_zip_preview_and_update_recycles_both_versions(
     let installed =
         mods::scan_mods_with_manifests(&workspace.game, &config, Some(&workspace.manifests));
     assert_eq!(installed.len(), 2);
-    assert!(installed.iter().all(|item| item.duplicate_guid));
-    assert_eq!(
+    assert!(
         installed
             .iter()
-            .find(|item| item.version.as_deref() == Some("1.3"))
-            .unwrap()
-            .status,
-        "duplicate_lower_version"
+            .all(|item| item.duplicate_guid == cfg!(windows))
     );
+    let legacy = installed.iter().find(|item| item.dll_file == OLD).unwrap();
+    // macOS does not read the Windows version resource. A shared manifest
+    // without the PE evidence must not mark a different GUID for cleanup.
+    assert_eq!(legacy.duplicate_cleanup_available, cfg!(windows));
+    assert_eq!(legacy.status == "duplicate_lower_version", cfg!(windows));
 
     let asset = workspace.zip();
     let preview = super::super::analysis::analyze_zip(&asset, "DIYLevelFastInit.zip", 1).unwrap();
@@ -192,9 +205,20 @@ fn manual_zip_preview_uses_existing_repository_matcher_for_changed_guids() {
     let asset = workspace.zip();
     let preview = super::super::analysis::analyze_zip(&asset, "DIYLevelFastInit.zip", 1).unwrap();
     let conflicts = super::find_install_conflicts(&installed, &preview.entries, None, &config);
-    assert_eq!(conflicts.len(), 1);
-    assert_eq!(conflicts[0].handle, OLD);
-    assert!(!conflicts[0].same_version);
+    if cfg!(windows) {
+        assert_eq!(
+            preview.entries[0].original_filename.as_deref(),
+            Some("FastInit.dll")
+        );
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].handle, OLD);
+        assert!(!conflicts[0].same_version);
+    } else {
+        assert!(
+            conflicts.is_empty(),
+            "the portable reader has no PE identity strings"
+        );
+    }
 }
 
 #[test]
@@ -225,10 +249,21 @@ fn inherited_repository_grouping_cannot_create_a_plugin_identity() {
         "real install binding wins over inherited grouping and download origin"
     );
     installed[0].repository_binding = Some(binding.clone());
+    let (original_filename, product_name) = (
+        installed[0].original_filename.take(),
+        installed[0].product_name.take(),
+    );
+    assert!(
+        super::find_install_conflicts(&installed, &preview.entries, Some(&binding), &config)
+            .is_empty(),
+        "matching repository without physical identity evidence is insufficient"
+    );
+    installed[0].original_filename = original_filename;
+    installed[0].product_name = product_name;
     assert_eq!(
         super::find_install_conflicts(&installed, &preview.entries, Some(&binding), &config).len(),
-        1,
-        "matching real binding proves the source even when the GUID changed"
+        usize::from(cfg!(windows)),
+        "matching real binding and PE identity prove the source even when the GUID changed"
     );
 }
 

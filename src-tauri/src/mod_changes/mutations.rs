@@ -15,6 +15,7 @@ use std::{
 
 mod physical;
 mod release_ownership;
+mod retirements;
 mod roots;
 pub(super) use roots::{final_framework_package, final_package};
 
@@ -55,6 +56,10 @@ pub(super) fn assemble(
     transaction_roots: TransactionRoots,
 ) -> Result<Vec<OwnedMutation>, String> {
     let solved = session.solved.as_ref().ok_or("modChanges.notPrepared")?;
+    if session.plan.retired_mod_copies != session.trusted.duplicate_release_retirements {
+        // The generic replacement must never remove a copy absent from the confirmed list.
+        return Err("modChanges.multipleInstalledCopies".into());
+    }
     let mut builder = Builder {
         roots: transaction_roots,
         session,
@@ -285,14 +290,14 @@ impl Builder<'_> {
         &mut self,
         owner: &str,
         items: impl IntoIterator<Item = ItemKey>,
-        change: FileChange,
+        mut change: FileChange,
     ) -> Result<(), String> {
         let FileChange {
             target,
             source,
             expected,
-            ..
-        } = &change;
+            require_single_link,
+        } = &mut change;
         let id = format!("{:?}:{}", target.root, inventory::key(&target.relative));
         if matches!(expected, Fingerprint::Directory { .. }) {
             log::warn!(
@@ -325,6 +330,9 @@ impl Builder<'_> {
                 return Err("modChanges.ambiguousOwnership".into());
             }
             if let Mutation::File(previous_file) = &mut previous.mutation {
+                if previous_file.expected != *expected {
+                    return Err("modChanges.targetChanged".into());
+                }
                 if previous_file.source.is_some() && source.is_some() {
                     log::warn!(
                         "整链写入路径冲突：节点={owner}，路径={}，原因=同一目标重复写入",
@@ -333,9 +341,13 @@ impl Builder<'_> {
                     return Err("modChanges.pathCollision".into());
                 }
                 if previous_file.source.is_some() {
+                    previous_file.require_single_link |= *require_single_link;
                     previous.items.append(&mut items);
                     return Ok(());
                 }
+                // Reusing a retired DLL's path must keep its frozen fingerprint,
+                // single-link check, and progress row on the replacement record.
+                *require_single_link |= previous_file.require_single_link;
                 items.append(&mut previous.items);
             }
         }
@@ -385,6 +397,16 @@ impl Builder<'_> {
         }
         let mut manifest = payload.manifest.clone().ok_or("modChanges.notPrepared")?;
         let bundled_levels = super::level_trees::bundled_level_root(self.session, &node.id)?;
+        let copies = self
+            .session
+            .plan
+            .retired_mod_copies
+            .get(&node.id)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        for copy in copies {
+            self.retire_copy(&node.id, copy, migration)?;
+        }
         let old_files = self.session.trusted.files.get(&node.id);
         if let Some(old) = old_files {
             let old = old.clone();
@@ -401,13 +423,19 @@ impl Builder<'_> {
                     .map(|member| member.dll_file.clone()),
             );
             for relative in files {
+                let canonical = mods::canonical_dll_name(&relative);
+                if copies
+                    .iter()
+                    .any(|copy| copy.member_key == inventory::key(&canonical))
+                {
+                    continue;
+                }
                 if migration.is_some_and(|migration| within(&relative, &migration.from))
                     || self.protected_maps.iter().any(|map| within(&relative, map))
                 {
                     continue;
                 }
                 self.ensure_owner(&relative, &node.id)?;
-                let canonical = mods::canonical_dll_name(&relative);
                 for candidate in if canonical.to_ascii_lowercase().ends_with(".dll") {
                     vec![canonical.clone(), mods::disabled_dll_file(&canonical)]
                 } else {
@@ -417,6 +445,12 @@ impl Builder<'_> {
                 }
             }
             for old in old.manifests {
+                if copies
+                    .iter()
+                    .any(|copy| copy.manifest_id.as_ref() == Some(&old.repository_id))
+                {
+                    continue;
+                }
                 self.remove(
                     &node.id,
                     data(&format!("manifests/{}.toml", old.repository_id)),

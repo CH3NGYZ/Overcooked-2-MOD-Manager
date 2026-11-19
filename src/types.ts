@@ -545,6 +545,8 @@ export interface InstalledMod {
   update_available: boolean
   labels?: InstalledModStatusLabel[]
   duplicate_guid: boolean
+  /** An enabled equivalent DLL is newer; the backend rechecks before removal. */
+  duplicate_cleanup_available?: boolean
   duplicate_version?: boolean
   load_warning?: string
   note?: string

@@ -1,4 +1,44 @@
+use super::super::evaluate::dependent_after_member_removal;
 use super::*;
+
+#[test]
+fn duplicate_cleanup_checks_active_required_guid_and_version_for_mods_and_maps() {
+    for kind in [NodeKind::Mod, NodeKind::Map] {
+        for (owner_enabled, peer_guid, peer_requirement, should_block) in [
+            (true, "new-guid", ">=1", true),
+            (true, "old-guid", "<2", true),
+            (true, "old-guid", ">=1", false),
+            (false, "new-guid", ">=1", false),
+        ] {
+            let owner = candidate(
+                "owner",
+                "1.0",
+                vec![relation(
+                    RelationKind::Requires,
+                    "old-guid",
+                    peer_requirement,
+                )],
+            );
+            let old = candidate("old-guid", "1.0", vec![]);
+            let mut newer = candidate(peer_guid, "2.0", vec![]);
+            newer.provides[0].member_key = Some("new.dll".into());
+            let mut owner = node("owner", Some(owner), vec![]);
+            owner.kind = kind.clone();
+            owner.enabled = owner_enabled;
+            let mut inventory = Inventory {
+                nodes: vec![
+                    owner,
+                    node("old", Some(old), vec![]),
+                    node("new", Some(newer), vec![]),
+                ],
+            };
+            assert_eq!(
+                dependent_after_member_removal(&mut inventory, "old-guid.dll", "old-guid").unwrap(),
+                should_block.then(|| "owner".into())
+            );
+        }
+    }
+}
 
 #[test]
 fn disabled_dependency_is_unsatisfied_and_disabled_conflict_is_safe() {

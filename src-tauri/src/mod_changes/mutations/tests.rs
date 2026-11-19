@@ -64,6 +64,9 @@ fn fixture() -> Fixture {
         config: crate::config::default_config(),
         managed_mods: Default::default(),
         toggle_unbound_nodes: Default::default(),
+        installed_mods: Default::default(),
+        duplicate_release_retirements: Default::default(),
+        duplicate_release_safe_nodes: Default::default(),
     };
     let session = PlanSession {
         trusted,
@@ -81,6 +84,7 @@ fn fixture() -> Fixture {
             roots: vec![],
             nodes: vec![],
             previous_enabled_members: Default::default(),
+            retired_mod_copies: Default::default(),
             install_notes: vec![],
             prepared: true,
         },

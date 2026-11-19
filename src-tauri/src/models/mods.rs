@@ -136,6 +136,9 @@ pub struct InstalledMod {
     pub duplicate_guid: bool,
     #[serde(default)]
     pub duplicate_version: bool,
+    /// A strictly newer enabled equivalent exists; cleanup is rechecked on use.
+    #[serde(default)]
+    pub duplicate_cleanup_available: bool,
     pub load_warning: Option<String>,
     pub note: Option<String>,
     pub status: String,

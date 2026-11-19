@@ -182,6 +182,8 @@ export const modsLocal: DomainMessages = {
     ko: 'MOD 삭제',
     ja: 'MOD を削除',
   },
+  uninstallOlderCopy: { 'zh-CN': '卸载旧版本', 'zh-TW': '解除安裝舊版本', en: 'Uninstall older copy', ko: '이전 버전 제거', ja: '旧バージョンをアンインストール' },
+  keepNewerCopy: { 'zh-CN': '已启用的较新版本会保留。', 'zh-TW': '已啟用的較新版本會保留。', en: 'The newer enabled copy will be kept.', ko: '활성화된 최신 버전은 유지됩니다.', ja: '有効な新しいバージョンは保持されます。' },
   // 「{name}」将被移入回收站，可在回收站中恢复。继续？
   willBeMovedToTheRecycleBinAndCanBeRestoredContinue: {
     'zh-CN': '「{name}」将被移入回收站，可在回收站中恢复。继续？',

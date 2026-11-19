@@ -211,7 +211,7 @@ impl PreparedTransaction {
                     make_writable(&target, before)?;
                     durable::rename(&temporary, &target, true)?;
                 } else {
-                    durable::remove_file_checked(&target, before)?;
+                    durable::remove_file_checked(&target, before, *require_single_link)?;
                 }
             }
             RecordedMutation::Move { from, to, .. } => {

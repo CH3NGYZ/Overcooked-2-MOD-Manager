@@ -121,6 +121,56 @@ pub(crate) fn owned_targets<'a>(
         .collect()
 }
 
+/// See whether deactivating one physical DLL would remove a required provider.
+/// The normal evaluator reports multiple enabled providers as ambiguous. For
+/// cleanup, a remaining compatible provider is enough to show no edge was lost.
+pub(crate) fn dependent_after_member_removal(
+    inventory: &mut Inventory,
+    member_key: &str,
+    guid: &str,
+) -> Result<Option<String>, String> {
+    let removed = inventory
+        .nodes
+        .iter_mut()
+        .find_map(|node| {
+            if !node.enabled {
+                return None;
+            }
+            let current = node.current.as_mut()?;
+            let plugin = current.provides.iter_mut().find(|plugin| {
+                plugin.enabled
+                    && plugin.member_key.as_deref() == Some(member_key)
+                    && same_guid(&plugin.guid, guid)
+            })?;
+            plugin.enabled = false;
+            Some(plugin.clone())
+        })
+        .ok_or("modChanges.targetChanged")?;
+    let remaining = targets(inventory, guid, true);
+    Ok(inventory
+        .nodes
+        .iter()
+        .filter(|node| node.enabled)
+        .find_map(|node| {
+            let current = node.current.as_ref()?;
+            current
+                .relations
+                .iter()
+                .any(|owned| {
+                    let edge = &owned.relation;
+                    edge.kind == RelationKind::Requires
+                        && !edge.optional
+                        && same_guid(&edge.guid, guid)
+                        && relation_active(current, owned, false)
+                        && matches(edge, &removed) != Some(false)
+                        && !remaining
+                            .iter()
+                            .any(|(_, peer)| matches(edge, peer) == Some(true))
+                })
+                .then(|| node.id.clone())
+        }))
+}
+
 fn evaluate_relation(
     inventory: &Inventory,
     owner: &ChangeNode,

@@ -39,11 +39,12 @@ interface ChangePlanDetailRow {
   key: string
   nodeId: string
   statusKey?: string
-  kind?: ChangeActionKind
+  kind?: ChangeActionKind | 'retire'
   label?: string
   member?: ReturnType<typeof namedPlugin>
   memberOnly?: boolean
   bundled?: boolean
+  retired?: string
   bundleReason?: 'enabled' | 'disabled' | 'included'
   selected?: boolean
   reason?: string
@@ -102,6 +103,15 @@ export function changePlanDetails(plan: DeepReadonly<ChangePlan>, progress?: Dee
     const row = actionRow(action)
     rows.push(row)
     if (action !== parent) continue
+
+    if (kind === 'upgrade') {
+      for (const copy of plan.retired_mod_copies?.[nodeId] ?? []) {
+        const statusKey = changeStatusKey(nodeId, copy.member_key)
+        const file = namedPlugin(copy.dll_file)
+        rows.push({ key: `retire:${statusKey}`, nodeId, statusKey, kind: 'retire', retired: copy.member_key,
+          label: copy.label.trim() || file?.name, member: file, version: versionPair(undefined, copy.version) })
+      }
+    }
 
     // Only the node's true internal members follow a package operation. In
     // particular, a separately registered map DLL is its own plan node.

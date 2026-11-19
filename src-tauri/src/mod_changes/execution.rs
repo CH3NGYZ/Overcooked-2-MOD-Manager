@@ -106,9 +106,18 @@ pub(super) fn commit(
             .actions
             .iter()
             .map(|action| ItemKey::new(&action.node_id, action.member_key.as_deref()));
+        let retired_items = session
+            .plan
+            .retired_mod_copies
+            .iter()
+            .flat_map(|(id, copies)| {
+                copies
+                    .iter()
+                    .map(|copy| ItemKey::new(id, Some(&copy.member_key)))
+            });
         let mut progress = Recorder::new(
             &session.plan.plan_id,
-            action_items,
+            action_items.chain(retired_items),
             records,
             report,
         );

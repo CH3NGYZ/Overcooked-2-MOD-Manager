@@ -7,7 +7,9 @@ use super::{
 };
 use crate::{app_state::AppState, archive, game, releases};
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, collections::HashMap, fs};
+use std::{borrow::Cow, collections::HashMap, fs, path::Path};
+
+mod duplicate_release;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub(crate) struct EvaluationSubject {
@@ -212,9 +214,17 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
             }
         }
         // Manual previews already changed session.trusted. Merge exact remote roots there too.
+        let allow_duplicate_upgrade = session.wire_request.roots.len() == 1
+            && session.wire_request.map_import.is_none()
+            && session.wire_request.toggle_scope.is_none()
+            && !session.wire_request.bulk_toggle;
         for root in &session.wire_request.roots {
             if !root.intent.node_id.starts_with("preview:") {
-                attach_exact_root(&mut session.trusted, root)?;
+                attach_exact_root(
+                    &mut session.trusted,
+                    root,
+                    allow_duplicate_upgrade.then_some(data.as_path()),
+                )?;
             }
         }
         if session.wire_request.map_import.is_some() {
@@ -284,13 +294,26 @@ fn ensure_toggle_scope(
     Ok(())
 }
 
-fn attach_exact_root(trusted: &mut TrustedInventory, root: &RootRequest) -> Result<(), String> {
-    let node = trusted
+fn attach_exact_root(
+    trusted: &mut TrustedInventory,
+    root: &RootRequest,
+    duplicate_upgrade_data_root: Option<&Path>,
+) -> Result<(), String> {
+    if let Some(data_root) = duplicate_upgrade_data_root
+        && !trusted.files.contains_key(&root.intent.node_id)
+        && duplicate_release::attach(trusted, root, data_root)?
+    {
+        return Ok(());
+    }
+    let Some(index) = trusted
         .inventory
         .nodes
-        .iter_mut()
-        .find(|node| node.id == root.intent.node_id)
-        .ok_or("modChanges.targetChanged")?;
+        .iter()
+        .position(|node| node.id == root.intent.node_id)
+    else {
+        return Err(missing_root_error(trusted, root).into());
+    };
+    let node = &mut trusted.inventory.nodes[index];
     let Some(candidate_id) = &root.intent.candidate_id else {
         return Ok(());
     };
@@ -344,6 +367,39 @@ fn attach_exact_root(trusted: &mut TrustedInventory, root: &RootRequest) -> Resu
     node.candidates.retain(|c| &c.id != candidate_id);
     node.candidates.push(candidate);
     Ok(())
+}
+
+fn missing_root_error(trusted: &TrustedInventory, root: &RootRequest) -> &'static str {
+    // Multiple installed groups intentionally have physical IDs, with no repository
+    // alias. Diagnose only an otherwise valid repository request; never pick a copy.
+    if let (Some(repo_id), Some(id)) = (
+        root.intent.node_id.strip_prefix("mod:"),
+        root.intent.candidate_id.as_deref(),
+    ) && trusted
+        .files
+        .values()
+        .filter(|files| {
+            files.summary.kind == NodeKind::Mod
+                && files.summary.repository_id.as_deref() == Some(repo_id)
+                && !files.summary.dll_files.is_empty()
+        })
+        .nth(1)
+        .is_some()
+        && trusted.config.repositories.iter().any(|repo| {
+            repo.id == repo_id
+                && candidates::for_root_asset(
+                    repo,
+                    None,
+                    &trusted.config,
+                    root.asset_name.as_deref(),
+                )
+                .iter()
+                .any(|candidate| candidate.id == id && candidate.installable)
+        })
+    {
+        return "modChanges.multipleInstalledCopies";
+    }
+    "modChanges.targetChanged"
 }
 
 fn attach_preview(

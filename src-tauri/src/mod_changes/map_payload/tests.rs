@@ -178,6 +178,9 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
         config,
         managed_mods: Default::default(),
         toggle_unbound_nodes: Default::default(),
+        installed_mods: Default::default(),
+        duplicate_release_retirements: Default::default(),
+        duplicate_release_safe_nodes: Default::default(),
     };
     let zip_path = staging.join("map.zip");
     let mut writer = zip::ZipWriter::new(fs::File::create(&zip_path).unwrap());
@@ -255,6 +258,7 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
         roots: vec![],
         nodes: vec![],
         previous_enabled_members: Default::default(),
+        retired_mod_copies: Default::default(),
         install_notes: vec![],
         prepared: false,
     };

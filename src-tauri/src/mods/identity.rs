@@ -1,7 +1,6 @@
+use super::binding::{ModRepositoryBindingRef, unique_release_upstream};
 use super::file_state::canonical_dll_name;
-use crate::models::{
-    AppConfig, Channel, InstalledMod, ModDownloadMode, ModRepositoryBinding, Provider,
-};
+use crate::models::{AppConfig, Channel, InstalledMod, ModRepositoryBinding};
 use std::cmp::Ordering;
 
 /// Borrowed plugin identity shared by local scanning and install previews. A
@@ -18,10 +17,10 @@ pub(crate) struct PluginIdentity<'a> {
 }
 
 struct PluginRepository<'a> {
-    provider: &'a Provider,
-    owner: &'a str,
-    repository: &'a str,
+    remote: ModRepositoryBindingRef<'a>,
     channel: Channel,
+    declared_core: bool,
+    declared_bundled: bool,
 }
 
 impl<'a> PluginIdentity<'a> {
@@ -70,65 +69,58 @@ impl<'a> PluginIdentity<'a> {
         source_id: Option<&str>,
         version: Option<&str>,
     ) -> Self {
-        let (provider, owner, repository, channel, version) = if let Some(binding) = binding {
-            if !binding.is_valid() {
+        let Some(version) = nonempty(binding.map(|binding| binding.tag.as_str()).or(version))
+        else {
+            return self;
+        };
+        if crate::releases::compare_release_versions(version, version).is_none() {
+            return self;
+        }
+        let channel = if super::binding::installed_prerelease(config, binding, false, Some(version))
+        {
+            Channel::Beta
+        } else {
+            Channel::Stable
+        };
+        let remote = if let Some(binding) = binding {
+            if binding.channel != Channel::All && binding.channel != channel {
                 return self;
             }
-            (
-                &binding.provider,
-                binding.owner.as_str(),
-                binding.repository.as_str(),
-                binding.channel,
-                Some(binding.tag.as_str()),
-            )
+            let Some(remote) = ModRepositoryBindingRef::from_binding(binding) else {
+                return self;
+            };
+            remote
         } else {
-            // Display grouping may inherit a sibling's repository ID. Treat
-            // that ID only as a preference among actual metadata matches.
-            let Some(repo) = super::binding::match_repository(
+            let Some(upstream) = unique_release_upstream(
                 config,
                 self.guid,
-                self.product_name,
                 self.original_filename,
                 version,
-                None,
                 source_id,
-            )
-            .0
-            else {
+                channel,
+            ) else {
                 return self;
             };
-            if repo.download_mode != ModDownloadMode::Release
-                || crate::releases::repository_coordinates(&repo.username, &repo.repository)
-                    .is_err()
-            {
-                return self;
-            }
-            (
-                &repo.provider,
-                repo.username.as_str(),
-                repo.repository.as_str(),
-                repo.channel,
-                version,
-            )
+            upstream
         };
-        // `all` is a source filter, not a concrete installed release line.
-        let channel = if channel == Channel::All {
-            let Some(version) = nonempty(version) else {
-                return self;
-            };
-            if crate::releases::is_prerelease_version(version) {
-                Channel::Beta
-            } else {
-                Channel::Stable
-            }
-        } else {
-            channel
-        };
+        let mut declared_core = false;
+        let mut declared_bundled = false;
+        for repo in config.repositories.iter().filter(|repo| {
+            crate::config::mod_repository_is_available(config, repo, &config.region)
+                && remote.matches(repo)
+                && (repo.channel == channel || repo.channel == Channel::All)
+        }) {
+            declared_core |= equal_nonempty(self.guid, Some(&repo.plugin_guid));
+            declared_bundled |= repo
+                .bundled_plugin_guids
+                .iter()
+                .any(|guid| equal_nonempty(self.guid, Some(guid)));
+        }
         self.repository = Some(PluginRepository {
-            provider,
-            owner: owner.trim(),
-            repository: repository.trim(),
+            remote,
             channel,
+            declared_core,
+            declared_bundled,
         });
         self
     }
@@ -145,6 +137,16 @@ pub(crate) fn same_plugin_identity(left: &PluginIdentity<'_>, right: &PluginIden
     } else {
         return equal_nonempty(left.name, right.name);
     }
+    same_release_plugin_identity(left, right)
+}
+
+/// Match physical plugin evidence on the same upstream Release line even
+/// when the GUID changed. A batch upgrade uses this in addition to its own
+/// version, file ownership and candidate checks, including for same GUIDs.
+pub(crate) fn same_release_plugin_identity(
+    left: &PluginIdentity<'_>,
+    right: &PluginIdentity<'_>,
+) -> bool {
     // A package ID is a source entry ID, not a unique physical installation:
     // old/new copies in separate directories can legitimately have the same ID.
     // Distinct bundled plugins are separated by their DLL/metadata below.
@@ -155,30 +157,45 @@ pub(crate) fn same_plugin_identity(left: &PluginIdentity<'_>, right: &PluginIden
     else {
         return false;
     };
-    if left_repo.provider != right_repo.provider
-        || left_repo.channel != right_repo.channel
-        || !left_repo.owner.eq_ignore_ascii_case(right_repo.owner)
-        || !left_repo
-            .repository
-            .eq_ignore_ascii_case(right_repo.repository)
-        || normalized_dll_filename(left.dll_file) != normalized_dll_filename(right.dll_file)
+    if left_repo.channel != right_repo.channel || !left_repo.remote.same_remote(&right_repo.remote)
     {
         return false;
     }
-    let mut matched = false;
     for (left, right) in [
-        (left.name, right.name),
         (left.product_name, right.product_name),
         (left.original_filename, right.original_filename),
     ] {
-        if let (Some(left), Some(right)) = (nonempty(left), nonempty(right)) {
-            if !left.eq_ignore_ascii_case(right) {
-                return false;
-            }
-            matched = true;
+        if matches!((nonempty(left), nonempty(right)), (Some(l), Some(r)) if !l.eq_ignore_ascii_case(r))
+        {
+            return false;
         }
     }
-    matched
+    let left_file = normalized_dll_filename(left.dll_file);
+    let right_file = normalized_dll_filename(right.dll_file);
+    let same_disk_name = !left_file.is_empty() && left_file == right_file;
+    // A shared GUID is already strong DLL evidence for the exact same release
+    // line and filename. Not every assembly ships native PE version resources.
+    if same_disk_name && equal_nonempty(left.guid, right.guid) {
+        return true;
+    }
+    if left_repo.declared_bundled || right_repo.declared_bundled {
+        return false;
+    }
+    let same_original = nonempty(left.original_filename).is_some_and(|original| {
+        normalized_dll_filename(original) == original.to_ascii_lowercase()
+            && original.to_ascii_lowercase().ends_with(".dll")
+            && equal_nonempty(Some(original), right.original_filename)
+    });
+    let same_product = equal_nonempty(left.product_name, right.product_name);
+    if left_repo.declared_core || right_repo.declared_core {
+        // The defined core GUID and strong PE evidence distinguish a moved or
+        // renamed legacy DLL from another plugin carrying the same package ID.
+        if (same_original && (same_disk_name || same_product)) || (same_disk_name && same_product) {
+            return true;
+        }
+    }
+    // Keep the strict legacy path for old manifests without a configured core.
+    same_disk_name && (same_original || same_product) && equal_nonempty(left.name, right.name)
 }
 
 fn normalized_dll_filename(path: &str) -> String {
@@ -200,6 +217,33 @@ fn equal_nonempty(left: Option<&str>, right: Option<&str>) -> bool {
     nonempty(left)
         .zip(nonempty(right))
         .is_some_and(|(left, right)| left.eq_ignore_ascii_case(right))
+}
+
+/// Cleanup requires a distinct, enabled physical DLL with a real GUID and a
+/// strictly newer equivalent version. Name-only matches are for labels only.
+pub(crate) fn is_newer_duplicate(
+    target: &InstalledMod,
+    peer: &InstalledMod,
+    config: &AppConfig,
+) -> bool {
+    is_higher_physical_copy(target, peer)
+        && same_plugin_identity(
+            &PluginIdentity::from_installed(target, config),
+            &PluginIdentity::from_installed(peer, config),
+        )
+}
+
+fn is_higher_physical_copy(target: &InstalledMod, peer: &InstalledMod) -> bool {
+    peer.enabled
+        && !canonical_dll_name(&peer.dll_file)
+            .eq_ignore_ascii_case(&canonical_dll_name(&target.dll_file))
+        && nonempty(target.guid.as_deref()).is_some()
+        && nonempty(peer.guid.as_deref()).is_some()
+        && peer
+            .version
+            .as_deref()
+            .zip(target.version.as_deref())
+            .is_some_and(|(newer, old)| compare_mod_versions(newer, old) == Some(Ordering::Greater))
 }
 
 pub(super) fn note_key_for_values(
@@ -230,6 +274,7 @@ pub(super) fn mark_duplicate_guids(mods: &mut [InstalledMod], config: &AppConfig
     for item in mods.iter_mut() {
         item.duplicate_guid = false;
         item.duplicate_version = false;
+        item.duplicate_cleanup_available = false;
         if item.load_warning.as_deref() == Some("mods.higherVersionPresent") {
             item.load_warning = None;
         }
@@ -239,8 +284,13 @@ pub(super) fn mark_duplicate_guids(mods: &mut [InstalledMod], config: &AppConfig
             item.status = "unknown".into();
         }
     }
-    for index in 0..mods.len() {
-        if !mods[index].enabled {
+    let identities: Vec<_> = mods
+        .iter()
+        .map(|item| PluginIdentity::from_installed(item, config))
+        .collect();
+    let mut matches = vec![(false, false, Vec::new()); mods.len()];
+    for (index, item) in mods.iter().enumerate() {
+        if !item.enabled {
             continue;
         }
         let peers = mods
@@ -249,10 +299,7 @@ pub(super) fn mark_duplicate_guids(mods: &mut [InstalledMod], config: &AppConfig
             .filter(|(peer_index, item)| {
                 *peer_index != index
                     && item.enabled
-                    && same_plugin_identity(
-                        &PluginIdentity::from_installed(&mods[index], config),
-                        &PluginIdentity::from_installed(item, config),
-                    )
+                    && same_plugin_identity(&identities[index], &identities[*peer_index])
             })
             .map(|(peer_index, _)| peer_index)
             .collect::<Vec<_>>();
@@ -265,33 +312,42 @@ pub(super) fn mark_duplicate_guids(mods: &mut [InstalledMod], config: &AppConfig
             mods[index].guid.as_deref().unwrap_or("未知"),
             peers.len()
         );
-        mods[index].duplicate_guid = true;
         let duplicate_version = peers
             .iter()
-            .any(|peer| mods_share_guid_and_version(&mods[index], &mods[*peer]));
-        mods[index].duplicate_version = duplicate_version;
-        let Some(current) = mods[index].version.as_deref() else {
-            continue;
-        };
-        let has_higher = peers.iter().any(|peer| {
-            mods[*peer]
-                .version
-                .as_deref()
-                .and_then(|higher| compare_mod_versions(higher, current))
-                == Some(Ordering::Greater)
-        });
-        if has_higher {
+            .any(|peer| mods_share_guid_and_version(item, &mods[*peer]));
+        let higher: Vec<usize> = peers
+            .into_iter()
+            .filter(|peer| {
+                mods[*peer].load_warning.is_none() && is_higher_physical_copy(item, &mods[*peer])
+            })
+            .collect();
+        matches[index] = (true, duplicate_version, higher);
+    }
+    for (item, (duplicate, duplicate_version, higher)) in mods.iter_mut().zip(&matches) {
+        item.duplicate_guid = *duplicate;
+        item.duplicate_version = *duplicate_version;
+        if let Some(current) = item.version.as_deref()
+            && higher.iter().any(|&peer| matches[peer].2.is_empty())
+        {
             log::warn!(
                 "重复 MOD 中存在更高版本：名称={}，当前版本={}",
-                mods[index].name,
+                item.name,
                 current
             );
-            mods[index].load_warning = Some("mods.higherVersionPresent".into());
+            let had_other_warning = item.load_warning.is_some();
+            item.load_warning
+                .get_or_insert_with(|| "mods.higherVersionPresent".into());
+            item.duplicate_cleanup_available = true;
             // The older equivalent copy is a cleanup candidate, including a
             // predecessor GUID that BepInEx would otherwise load separately.
-            mods[index].update_available = false;
-            if mods[index].status != "not_release_asset" {
-                mods[index].status = "duplicate_lower_version".into();
+            item.update_available = false;
+            if !had_other_warning
+                && !matches!(
+                    item.status.as_str(),
+                    "not_release_asset" | "bound_repository_missing" | "repository_unavailable"
+                )
+            {
+                item.status = "duplicate_lower_version".into();
             }
         }
     }

@@ -21,6 +21,8 @@ use std::{
     sync::Arc,
 };
 
+mod retired_copies;
+
 pub(crate) fn from_preview(
     state: &AppState,
     trusted: &TrustedInventory,
@@ -191,6 +193,7 @@ pub(crate) fn from_preview(
         if provides.is_empty() {
             return Err("archive.noInstallableContent".into());
         }
+        retired_copies::verify(trusted, node_id, repo, &provides)?;
         if let Some(primary) = repo
             .map(|repo| repo.plugin_guid.trim())
             .filter(|guid| !guid.is_empty())
@@ -366,12 +369,26 @@ fn read_members(
         crate::concurrency::workers_from(trusted.config.mod_metadata_concurrency),
         &|_, _| {},
     );
+    let retiring = trusted.duplicate_release_retirements.get(node_id);
+    let primary = retiring.and_then(|_| {
+        let repo_id = trusted.files.get(node_id)?.summary.repository_id.as_ref()?;
+        trusted
+            .config
+            .repositories
+            .iter()
+            .find(|repo| &repo.id == repo_id)
+            .map(|repo| repo.plugin_guid.as_str())
+    });
     let previous = trusted
         .inventory
         .nodes
         .iter()
         .find(|node| node.id == node_id)
-        .and_then(|node| node.current.as_ref());
+        .and_then(|node| node.current.as_ref())
+        .into_iter()
+        .flat_map(|candidate| &candidate.provides)
+        .filter(|plugin| !retired_copies::contains(retiring, plugin))
+        .collect::<Vec<_>>();
     let mut keys = HashSet::new();
     let mut provides = Vec::new();
     for ((&index, request), outcome) in indices.iter().zip(&requests).zip(outcomes) {
@@ -382,28 +399,27 @@ fn read_members(
             return Err("modChanges.targetChanged".into());
         }
         let guid = details.guid.clone().unwrap_or_default();
-        let exact = previous.and_then(|previous| {
-            previous
-                .provides
+        let enabled = if primary.is_some_and(|primary| super::evaluate::same_guid(primary, &guid)) {
+            // A confirmed upgrade explicitly keeps its current core enabled.
+            true
+        } else {
+            let exact = previous
                 .iter()
-                .find(|plugin| plugin.member_key.as_deref() == Some(&member_key))
-        });
-        let by_guid = previous
-            .map(|previous| {
-                previous
-                    .provides
-                    .iter()
-                    .filter(|plugin| !guid.is_empty() && plugin.guid.eq_ignore_ascii_case(&guid))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        if exact.is_none() && by_guid.len() > 1 {
-            return Err("modChanges.targetChanged".into());
-        }
-        let enabled = exact
-            .or_else(|| by_guid.first().copied())
-            .map(|plugin| plugin.enabled)
-            .unwrap_or_else(|| !files[index].to_ascii_lowercase().ends_with(".disabled"));
+                .copied()
+                .find(|plugin| plugin.member_key.as_deref() == Some(&member_key));
+            let mut by_guid = previous
+                .iter()
+                .copied()
+                .filter(|plugin| !guid.is_empty() && plugin.guid.eq_ignore_ascii_case(&guid));
+            let first = by_guid.next();
+            if exact.is_none() && by_guid.next().is_some() {
+                return Err("modChanges.targetChanged".into());
+            }
+            exact
+                .or(first)
+                .map(|plugin| plugin.enabled)
+                .unwrap_or_else(|| !files[index].to_ascii_lowercase().ends_with(".disabled"))
+        };
         let destination = if enabled {
             canonical
         } else {

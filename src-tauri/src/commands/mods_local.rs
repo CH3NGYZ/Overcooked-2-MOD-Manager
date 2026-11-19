@@ -94,11 +94,17 @@ pub async fn uninstall_local_mod(
     state: State<'_, AppState>,
     dll_file: String,
     allow_unmanaged: bool,
+    duplicate_only: Option<bool>,
 ) -> Result<UninstallLocalModResult, String> {
     // 判定「要不要整包确认」要先全量扫描已安装 MOD，再加上回收站的移动：重活
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        uninstall_local_mod_blocking(&state, &dll_file, allow_unmanaged)
+        uninstall_local_mod_blocking(
+            &state,
+            &dll_file,
+            allow_unmanaged,
+            duplicate_only.unwrap_or_default(),
+        )
     })
     .await
     .map_err(|error| error.to_string())?
@@ -109,6 +115,7 @@ fn uninstall_local_mod_blocking(
     state: &AppState,
     dll_file: &str,
     allow_unmanaged: bool,
+    duplicate_only: bool,
 ) -> Result<UninstallLocalModResult, String> {
     log::info!(
         "开始卸载本地 MOD：文件={}，允许非管理器文件={}",
@@ -128,17 +135,40 @@ fn uninstall_local_mod_blocking(
     let manifests = archive::read_manifests(&manifest_dir);
     let relative = Path::new(&dll_file);
     let safe_relative = mods::canonical_dll_name(&relative.to_string_lossy().replace('\\', "/"));
-    let manifest = manifests
-        .into_iter()
-        .filter(|manifest| {
-            manifest
-                .files
-                .iter()
-                .any(|file| mods::canonical_dll_name(file).eq_ignore_ascii_case(&safe_relative))
-        })
-        .max_by(|left, right| left.installed_at.cmp(&right.installed_at));
+    let duplicate_claim_key = duplicate_only.then(|| safe_relative.to_lowercase());
+    let mut claims = manifests.into_iter().filter(|manifest| {
+        manifest
+            .files
+            .iter()
+            .any(|file| match &duplicate_claim_key {
+                // Match the aliases the recycler treats as one file. The shortcut
+                // only confirms removal of this copy, not changes to other packages.
+                Some(key) => {
+                    mods::canonical_dll_name(&file.replace('\\', "/")).to_lowercase() == *key
+                }
+                None => mods::canonical_dll_name(file).eq_ignore_ascii_case(&safe_relative),
+            })
+    });
+    let manifest = if duplicate_only {
+        let sole_owner = claims.next();
+        if claims.next().is_some() {
+            return Err("modChanges.ambiguousOwnership".into());
+        }
+        sole_owner
+    } else {
+        claims.max_by(|left, right| left.installed_at.cmp(&right.installed_at))
+    };
+    // Recheck the surviving copy under the same operation lock as the removal.
+    // This shortcut must never fall back to removing an entire package.
+    let duplicate_inventory = duplicate_only
+        .then(|| mods::scan_mods_with_manifests(&game_root, &config, Some(&manifest_dir)));
+    if let Some(installed) = &duplicate_inventory {
+        ensure_newer_duplicate_remains(state, &game_root, installed, &config, &safe_relative)?;
+    }
     if let Some(manifest) = manifest {
-        let installed = mods::scan_mods_with_manifests(&game_root, &config, Some(&manifest_dir));
+        let installed = duplicate_inventory.unwrap_or_else(|| {
+            mods::scan_mods_with_manifests(&game_root, &config, Some(&manifest_dir))
+        });
         let target_mod = installed.iter().find(|item| {
             mods::canonical_dll_name(&item.dll_file).eq_ignore_ascii_case(&safe_relative)
         });
@@ -169,11 +199,13 @@ fn uninstall_local_mod_blocking(
          * requires_package_confirmation 只会让包标题上的「删除」按钮
          * 又弹一遍「当前 MOD 与其他 MOD 一并安装」——真实 bug。
          */
-        if needs_package_confirmation(
-            &package_mod_names,
-            has_other_enabled_same_guid,
-            allow_unmanaged,
-        ) {
+        if !duplicate_only
+            && needs_package_confirmation(
+                &package_mod_names,
+                has_other_enabled_same_guid,
+                allow_unmanaged,
+            )
+        {
             log::warn!(
                 "卸载本地 MOD 需要确认整个 MOD 包：文件={}，包={}，同包项目数={}",
                 safe_relative,
@@ -189,7 +221,9 @@ fn uninstall_local_mod_blocking(
                 package_mod_names,
             });
         }
-        if should_remove_only_selected_dll(has_other_enabled_same_guid, allow_unmanaged) {
+        if duplicate_only
+            || should_remove_only_selected_dll(has_other_enabled_same_guid, allow_unmanaged)
+        {
             /*
              * 用户关闭「删除 MOD 时优先放入回收站」后走 purge_* 系列：
              * 同一套定位与共享文件保护逻辑，待迁移旧暖暖模型仍保留记录。
@@ -316,6 +350,55 @@ fn uninstall_local_mod_blocking(
         package_id: None,
         package_mod_names: Vec::new(),
     })
+}
+
+fn ensure_newer_duplicate_remains(
+    state: &AppState,
+    game_root: &Path,
+    installed: &[crate::models::InstalledMod],
+    config: &crate::models::AppConfig,
+    path: &str,
+) -> Result<(), String> {
+    let same_path = |item: &crate::models::InstalledMod| {
+        mods::canonical_dll_name(&item.dll_file).eq_ignore_ascii_case(path)
+    };
+    let Some(target) = installed.iter().find(|item| same_path(item)) else {
+        return Err("mods.dllNotFound".into());
+    };
+    let Some(guid) = target.guid.as_deref() else {
+        return Err("modChanges.newerCopyNotFound".into());
+    };
+    // The scanner coalesces enabled/disabled variants, while recycling selects
+    // both. Inspect disk before allowing this explicitly single-copy operation.
+    let active = game::safe_game_path(game_root, path)?;
+    let disabled = game::safe_game_path(game_root, &mods::disabled_dll_file(path))?;
+    if (active.is_file() && disabled.is_file())
+        || !installed.iter().any(|peer| {
+            peer.load_warning.is_none() && mods::is_newer_duplicate(target, peer, config)
+        })
+    {
+        return Err("modChanges.newerCopyNotFound".into());
+    }
+    if target.enabled {
+        // The operation lock is already held. build() reads the same trusted
+        // installed MOD/map graph without trying to acquire that lock again.
+        use crate::mod_changes::{evaluate, inventory};
+        let mut snapshot = inventory::build(state)?;
+        let key = inventory::key(&target.dll_file);
+        if let Some(owner) =
+            evaluate::dependent_after_member_removal(&mut snapshot.inventory, &key, guid)?
+        {
+            let label = snapshot
+                .files
+                .get(&owner)
+                .map_or(owner.as_str(), |entry| entry.summary.label.as_str());
+            return Err(crate::locale_tag::with_params(
+                "modChanges.olderCopyStillRequired",
+                &[("name", label)],
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]

@@ -52,6 +52,9 @@ pub(crate) struct ChangePlan {
     /// The solved node summaries describe the final state, so cannot show these.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub previous_enabled_members: BTreeMap<String, Vec<String>>,
+    /// Physical older copies consumed by a package replacement, grouped by its action's node.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub retired_mod_copies: BTreeMap<String, Vec<RetiredModCopy>>,
     pub install_notes: Vec<InstallNote>,
     pub prepared: bool,
 }
@@ -231,6 +234,18 @@ pub(crate) fn presentation(
             (node.id.clone(), enabled_keys)
         })
         .collect();
+    let retired_mod_copies = trusted
+        .duplicate_release_retirements
+        .iter()
+        .filter(|(id, _)| {
+            result.actions.iter().any(|action| {
+                &action.node_id == *id
+                    && action.member_key.is_none()
+                    && action.kind == ActionKind::Upgrade
+            })
+        })
+        .map(|(id, copies)| (id.clone(), copies.clone()))
+        .collect();
     ChangePlan {
         plan_id: id,
         result,
@@ -261,6 +276,7 @@ pub(crate) fn presentation(
             .collect(),
         nodes: trusted.files.values().map(|f| f.summary.clone()).collect(),
         previous_enabled_members,
+        retired_mod_copies,
         install_notes: Vec::new(),
     }
 }

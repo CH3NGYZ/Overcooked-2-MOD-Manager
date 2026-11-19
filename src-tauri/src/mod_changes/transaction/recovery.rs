@@ -167,11 +167,13 @@ impl PreparedTransaction {
                 // are removable, while live targets always require an exact fingerprint.
                 remove_temporary(&temporary)?;
                 if *require_single_link {
-                    // A newly linked resource can be left alone if this record never changed it.
+                    // A newly linked file can be left alone if this record never changed it.
                     if actual == *before {
                         return Ok(());
                     }
-                    paths::guard_single_link(&target)?;
+                    if actual != Fingerprint::Missing {
+                        paths::guard_single_link(&target)?;
+                    }
                 }
                 if engine::matches_writable(&actual, before) {
                     if let Some(permissions) = before.permissions() {
@@ -193,7 +195,7 @@ impl PreparedTransaction {
                     if Fingerprint::capture(&target)? != actual {
                         return Err(paths::MODIFIED.into());
                     }
-                    if *require_single_link {
+                    if *require_single_link && actual != Fingerprint::Missing {
                         paths::guard_single_link(&target)?;
                     }
                     if actual != Fingerprint::Missing {
@@ -207,7 +209,7 @@ impl PreparedTransaction {
                     }
                     durable::rename(&temporary, &target, true)?;
                 } else {
-                    durable::remove_file_checked(&target, &actual)?;
+                    durable::remove_file_checked(&target, &actual, *require_single_link)?;
                 }
                 if Fingerprint::capture(&target)? != *before {
                     return Err(paths::MODIFIED.into());
@@ -281,7 +283,7 @@ fn remove_temporary(path: &Path) -> Result<(), String> {
     let fingerprint = Fingerprint::capture(path)?;
     match fingerprint {
         Fingerprint::Missing => Ok(()),
-        Fingerprint::File { .. } => durable::remove_file_checked(path, &fingerprint),
+        Fingerprint::File { .. } => durable::remove_file_checked(path, &fingerprint, false),
         _ => Err(paths::UNSAFE.into()),
     }
 }
@@ -315,6 +317,6 @@ pub(crate) fn remove_private_tree(path: &Path) -> Result<(), String> {
         durable::sync_parent(path)
     } else {
         let fingerprint = Fingerprint::capture(path)?;
-        durable::remove_file_checked(path, &fingerprint)
+        durable::remove_file_checked(path, &fingerprint, false)
     }
 }

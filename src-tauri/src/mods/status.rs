@@ -15,6 +15,7 @@ pub(crate) fn collect_update_status(
             let local_mod = installed.iter().find(|item| {
                 (repo.download_mode == ModDownloadMode::RepositoryFile
                     || (item.status != "not_release_asset"
+                        && !item.duplicate_cleanup_available
                         && item.status != "duplicate_lower_version"))
                     && (item.repository_ids.iter().any(|id| id == &repo.id)
                         || item.repository_id.as_deref() == Some(repo.id.as_str()))
@@ -226,9 +227,7 @@ pub(super) fn refresh_status_labels(mods: &mut [InstalledMod]) {
             item.labels = labels;
             continue;
         }
-        if item.status == "duplicate_lower_version" {
-            labels.push(InstalledModStatusLabel::DuplicateLowerVersion);
-        } else if item.update_available {
+        if item.update_available {
             labels.push(InstalledModStatusLabel::UpdateAvailable);
         } else {
             match item.status.as_str() {
@@ -250,7 +249,12 @@ pub(super) fn refresh_status_labels(mods: &mut [InstalledMod]) {
         if item.duplicate_guid {
             labels.push(InstalledModStatusLabel::Duplicate);
         }
-        if item.load_warning.is_some() && item.status != "duplicate_lower_version" {
+        if item.duplicate_cleanup_available || item.status == "duplicate_lower_version" {
+            labels.push(InstalledModStatusLabel::DuplicateLowerVersion);
+        }
+        if item.load_warning.as_deref().is_some_and(|warning| {
+            warning != "mods.higherVersionPresent" || !item.duplicate_cleanup_available
+        }) {
             labels.push(InstalledModStatusLabel::LoadWarning);
         }
         if !item.enabled {

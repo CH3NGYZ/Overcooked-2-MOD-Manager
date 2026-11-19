@@ -230,6 +230,34 @@ test('execution icons follow exact member writes, and a rolled-back write loses 
   assert.deepEqual(fixture.calls, [])
 })
 
+test('a release upgrade shows each old copy before approval and gives it independent execution status', async t => {
+  const root = mounted(t)
+  const id = 'mod:fastinit'
+  const first = { member_key: 'old/a.dll', label: 'FastInit', version: '1.3', dll_file: 'Old/A.dll' }
+  const second = { member_key: 'old/b.dll', label: 'FastInit', version: '1.4', dll_file: 'Old/B.dll.disabled' }
+  const activePlan = { ...plan, nodes: [{ ...plan.nodes[0], node_id: id, label: 'FastInit' }],
+    actions: [action(id, 'upgrade', { from_tag: 'v1.9.5', to_tag: 'v1.9.6' })],
+    retired_mod_copies: { [id]: [first, second] } }
+  fixture.state.value = { phase: 'confirming', plan: activePlan, error: null }
+  await nextTick()
+  const rows = bodyRows(root)
+  assert.deepEqual(rows.map(row => [text(cells(row)[0]), text(cells(row)[3]), row.props['data-change-parent']]), [
+    ['升级', 'v1.9.5 → v1.9.6', undefined], ['卸载', '1.3', id], ['卸载', '1.4', id],
+  ])
+  assert.equal(find(cells(rows[2])[2], node => node.props?.title === second.dll_file).length, 1)
+  assert.match(text(cells(rows[1])[4]), /同一 MOD 的旧副本/)
+  assert.deepEqual(fixture.calls, [])
+  fixture.execution.set(changeStatusKey(id), 'applying')
+  fixture.execution.set(changeStatusKey(id, first.member_key), 'processed')
+  fixture.state.value = { phase: 'executing', plan: { ...activePlan, prepared: true }, error: null }
+  await nextTick()
+  assert.deepEqual(bodyRows(root).map(stage), ['applying', 'processed', undefined])
+  fixture.execution.set(changeStatusKey(id), 'failed')
+  fixture.execution.set(changeStatusKey(id, first.member_key), 'failed')
+  await nextTick()
+  assert.deepEqual(bodyRows(root).map(stage), ['failed', 'failed', undefined])
+})
+
 test('the rows for a bundled DLL stay with its map and show the map transaction status', async t => {
   const root = mounted(t)
   const activePlan = { ...plan, prepared: true, nodes: [

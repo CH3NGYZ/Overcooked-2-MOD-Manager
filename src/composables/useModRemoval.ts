@@ -29,6 +29,8 @@ export interface RemovalCopy {
   title: string
   /** 确认框正文；参数是该 MOD 的显示名。 */
   body: (name: string) => string
+  /** Only remove the clicked older DLL; never escalate to deleting its package. */
+  duplicateOnly?: boolean
 }
 
 export interface ModRemovalOptions {
@@ -72,20 +74,29 @@ export function useModRemoval(options: ModRemovalOptions) {
         markDialogBusy(instance)
         options.onBusy?.(mod, true)
         try {
-          const result = await api.uninstallLocalMod(mod.dll_file)
+          const result = copy?.duplicateOnly
+            ? await api.uninstallLocalMod(mod.dll_file, false, true)
+            : await api.uninstallLocalMod(mod.dll_file)
+          if (copy?.duplicateOnly && result.requires_package_confirmation) {
+            message.error(translateBackendMessage(result.message))
+            await options.onDone()
+            return
+          }
           if (result.requires_package_confirmation || result.requires_confirmation) {
             // 后端此时还没删任何东西（ok=false），确认后才带 allow_unmanaged 重试
             const packageInstance = dialog.warning({
-              title: t('modsLocal.thisModBelongsToAPackage'),
-              content: t('modsLocal.itSharesAPackageWithModsDeleteThemTogether', {
+              title: copy?.duplicateOnly ? copy.title : t('modsLocal.thisModBelongsToAPackage'),
+              content: copy?.duplicateOnly ? translateBackendMessage(result.message) : t('modsLocal.itSharesAPackageWithModsDeleteThemTogether', {
                 count: result.package_mod_names?.length ?? 0,
               }),
-              positiveText: t('modsLocal.deletePackage'),
+              positiveText: copy?.duplicateOnly ? fallback.action : t('modsLocal.deletePackage'),
               negativeText: t('recycle.cancel'),
               async onPositiveClick() {
                 if (options.gameBlocked?.()) return false
                 markDialogBusy(packageInstance)
-                const packageResult = await api.uninstallLocalMod(mod.dll_file, true)
+                const packageResult = copy?.duplicateOnly
+                  ? await api.uninstallLocalMod(mod.dll_file, true, true)
+                  : await api.uninstallLocalMod(mod.dll_file, true)
                 packageResult.ok
                   ? message.success(translateBackendMessage(packageResult.message) || fallback.done)
                   : message.error(translateBackendMessage(packageResult.message))

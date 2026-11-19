@@ -108,12 +108,19 @@ pub(super) fn copy_verified(
     Ok(actual)
 }
 
-pub(super) fn remove_file_checked(path: &Path, expected: &Fingerprint) -> Result<(), String> {
+pub(super) fn remove_file_checked(
+    path: &Path,
+    expected: &Fingerprint,
+    require_single_link: bool,
+) -> Result<(), String> {
     if Fingerprint::capture(path)? != *expected {
         return Err(MODIFIED.into());
     }
     if expected == &Fingerprint::Missing {
         return Ok(());
+    }
+    if require_single_link {
+        super::paths::guard_single_link(path)?;
     }
     // The write-ahead record retains the original permissions if clearing readonly crashes.
     let mut permissions = fs::metadata(path).map_err(io_error)?.permissions();

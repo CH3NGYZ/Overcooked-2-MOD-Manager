@@ -81,11 +81,11 @@ const packages = computed(
             <!-- 配色跟随触发它的状态档位，来自 theme.ts 的统一色阶 -->
             <n-button size="tiny" :style="buttonColorFor(ctx.actionByDll[mod.dll_file].tone, 'soft')"
               :title="t(ctx.actionByDll[mod.dll_file].label)"
-              :loading="!!ctx.previewing[ctx.bindingRepositoryId(mod) ?? ''] || !!ctx.refreshing[ctx.bindingRepositoryId(mod) ?? '']"
+              :loading="!!ctx.busy[mod.dll_file] || !!ctx.previewing[ctx.bindingRepositoryId(mod) ?? ''] || !!ctx.refreshing[ctx.bindingRepositoryId(mod) ?? '']"
               @click.stop="ctx.runCardAction(mod)">
               <ArrowUpCircleOutline v-if="ctx.actionByDll[mod.dll_file].kind === 'update'" width="14" height="14" />
               <DownloadOutline v-else-if="ctx.actionByDll[mod.dll_file].kind === 'install-dependency'" width="14" height="14" />
-              <TrashOutline v-else-if="ctx.actionByDll[mod.dll_file].kind === 'uninstall-conflict'" width="14" height="14" />
+              <TrashOutline v-else-if="ctx.actionByDll[mod.dll_file].kind.startsWith('uninstall-')" width="14" height="14" />
               <RefreshOutline v-else width="14" height="14" />
               {{ t(ctx.actionByDll[mod.dll_file].label) }}
             </n-button>

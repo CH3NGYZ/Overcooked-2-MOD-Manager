@@ -11,6 +11,8 @@ import test from 'node:test'
  * 都还挂着「最新版」—— 用户点完「检查更新」看不到任何反应。
  */
 const { runtimeModStatus, repositoryRefreshing } = await import('../src/modRuntimeStatus.ts')
+const { statusActionFor } = await import('../src/statusActions.ts')
+const { modUpdateAvailable } = await import('../src/statusTags.ts')
 
 const release = (version) => ({
   tag_name: `v${version}`, version, name: '', body: '',
@@ -35,6 +37,64 @@ function mod(overrides = {}) {
 }
 
 const idle = { refreshing: {}, queued: {}, sourceRefreshing: {}, entryStateUnavailable: false }
+
+const fastInitRepo = (overrides = {}) => repo({
+  id: 'fastinit', username: 'kfyangc', repository: 'Overcooked2-DIYLevelFastInit', ...overrides,
+})
+
+function fastInitCopies() {
+  return ['1.9.5', '1.3', '1.4', '1.5', '1.6.4'].map((version, index) => {
+    const filename = version === '1.5' ? 'DIYLevelFastInit 1.5.0（优化存档加载速度）.dll' : 'DIYLevelFastInit.dll'
+    return mod({
+      name: 'DIYLevel FastInit', version, dll_file: `BepInEx/plugins/${version}/${filename}`,
+      guid: version === '1.3' ? 'yang.oc2.diylevel.fastinit' : 'oc2.diylevel.fastinit',
+      repository_id: 'fastinit', duplicate_guid: true, duplicate_cleanup_available: index !== 0,
+      // 模拟旧版本结论仍在快照中；按仓库重算不能给这些副本重新加上更新按钮。
+      status: index === 0 ? 'latest' : 'update_available', update_available: index !== 0,
+      labels: index === 0 ? ['latest', 'duplicate'] : ['update_available', 'duplicate', 'duplicate_lower_version'],
+    })
+  })
+}
+
+for (const [remote, expectedUpdates] of [['1.9.5', []], ['1.9.6', ['1.9.5']]]) {
+  test(`FastInit 五张卡共用 v${remote}：只有本机最高版本可参与 Release 比较`, () => {
+    const copies = fastInitCopies()
+    const repositories = [fastInitRepo({ cached_releases: [release(remote)] })]
+    const cards = copies.map(copy => runtimeModStatus(copy, copies, repositories, idle).mod)
+    assert.deepEqual(cards.filter(card => card.update_available).map(card => card.version), expectedUpdates)
+    assert.deepEqual(cards.filter(card => statusActionFor(card.labels)?.kind === 'update').map(card => card.version), expectedUpdates)
+    assert.deepEqual(copies.filter(copy => modUpdateAvailable(copy, repositories)).map(copy => copy.version), expectedUpdates)
+    assert.deepEqual(cards[0].labels, [expectedUpdates.length ? 'update_available' : 'latest', 'duplicate'])
+    for (const card of cards.slice(1)) {
+      assert.deepEqual(card.labels, ['duplicate', 'duplicate_lower_version'])
+      assert.equal(statusActionFor(card.labels)?.kind, 'uninstall-duplicate')
+    }
+  })
+}
+
+test('FastInit 旧副本保留 RAW 状态，RAW 刷新不覆盖清理标签', () => {
+  const copies = fastInitCopies()
+  const rawCopy = { ...copies[1], labels: [...copies[1].labels, 'not_release_asset'], status: 'not_release_asset' }
+  const raw = fastInitRepo({ download_mode: 'repository_file', cached_releases: [] })
+  const result = runtimeModStatus(rawCopy, [copies[0], rawCopy], [raw], {
+    ...idle, refreshing: { fastinit: true },
+  })
+  assert.equal(result.refreshing, false)
+  assert.equal(result.mod.update_available, false)
+  assert.deepEqual(result.mod.labels, ['duplicate', 'duplicate_lower_version', 'not_release_asset'])
+})
+
+test('FastInit 仓库刷新失败时，五张卡都保留错误状态且旧副本仍可清理', () => {
+  const copies = fastInitCopies()
+  const failed = fastInitRepo({ last_error: 'request failed', cached_releases: [release('1.9.6')] })
+  const cards = copies.map(copy => runtimeModStatus(copy, copies, [failed], idle).mod)
+  assert.ok(cards.every(card => !card.update_available))
+  assert.deepEqual(cards[0].labels, ['repository_unavailable', 'duplicate'])
+  for (const card of cards.slice(1)) {
+    assert.deepEqual(card.labels, ['repository_unavailable', 'duplicate', 'duplicate_lower_version'])
+    assert.equal(statusActionFor(card.labels)?.kind, 'uninstall-duplicate')
+  }
+})
 
 test('没有刷新时按缓存 Release 出结论', () => {
   const cold = runtimeModStatus(mod(), [mod()], [repo()], idle)

@@ -60,6 +60,9 @@ fn trusted(game: &Path, provides: Vec<ProvidedPlugin>) -> TrustedInventory {
         config,
         managed_mods: Default::default(),
         toggle_unbound_nodes: Default::default(),
+        installed_mods: Default::default(),
+        duplicate_release_retirements: Default::default(),
+        duplicate_release_safe_nodes: Default::default(),
     }
 }
 

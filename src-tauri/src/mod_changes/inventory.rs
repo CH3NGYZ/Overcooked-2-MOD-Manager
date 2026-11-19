@@ -6,6 +6,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -14,6 +15,20 @@ pub(crate) struct MemberSummary {
     pub dll_file: String,
     pub enabled: bool,
     pub guid: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct RetiredModCopy {
+    pub member_key: String,
+    pub label: String,
+    pub version: String,
+    pub dll_file: String,
+    #[serde(skip)]
+    pub(super) manifest_id: Option<String>,
+    #[serde(skip)]
+    pub(super) fingerprint: super::transaction::Fingerprint,
+    #[serde(skip)]
+    pub(super) manifest_fingerprint: Option<super::transaction::Fingerprint>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,6 +73,11 @@ pub(crate) struct TrustedInventory {
     pub managed_mods: ManagedMods,
     /// Installed nodes with no current, filtered or historical binding evidence.
     pub toggle_unbound_nodes: BTreeSet<String>,
+    pub(super) installed_mods: Arc<[InstalledMod]>,
+    /// Physical ownership checks separate from the missing repository alias.
+    pub(super) duplicate_release_safe_nodes: BTreeSet<String>,
+    /// Filled only on the plan's private inventory, never in the scan cache.
+    pub duplicate_release_retirements: BTreeMap<String, Vec<RetiredModCopy>>,
 }
 
 pub(crate) fn relative(root: &Path, path: &Path) -> Result<String, String> {
@@ -227,6 +247,11 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
         .map(|i| mods::plugin_target::directory(&game_root, &i.dll_file, i.enabled))
         .transpose()?;
     let level_roots = level_sets::LevelSetRoots::new(game_root.clone(), package);
+    let installed_mods: Arc<[_]> = installed.clone().into();
+    let mut manifest_claims = HashMap::<String, usize>::new();
+    for path in manifests.iter().flat_map(|manifest| &manifest.files) {
+        *manifest_claims.entry(manifest_claim_key(path)).or_default() += 1;
+    }
     let mut grouped: BTreeMap<String, Vec<InstalledMod>> = BTreeMap::new();
     for item in installed {
         let group = item
@@ -251,6 +276,7 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
     let mut inventory = Inventory::default();
     let mut files = BTreeMap::new();
     let mut toggle_unbound_nodes = BTreeSet::new();
+    let mut duplicate_release_safe_nodes = BTreeSet::new();
     for (fallback, items) in grouped {
         let ids = items
             .iter()
@@ -327,7 +353,7 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
         } else {
             Vec::new()
         };
-        let mut safe = repo.is_none() || unique;
+        let mut safe = true;
         for item in &items {
             let owners = manifests
                 .iter()
@@ -345,12 +371,32 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
                 safe = false;
             }
         }
+        if safe
+            && repo.is_some()
+            && !unique
+            && owned_manifests.iter().all(|manifest| {
+                manifest
+                    .files
+                    .iter()
+                    .all(|file| manifest_claims.get(&manifest_claim_key(file)) == Some(&1))
+            })
+            && items.iter().all(|item| {
+                let expected = usize::from(item.package_id.is_some());
+                manifest_claims
+                    .get(&manifest_claim_key(&item.dll_file))
+                    .copied()
+                    .unwrap_or_default()
+                    == expected
+            })
+        {
+            duplicate_release_safe_nodes.insert(id.clone());
+        }
         inventory.nodes.push(ChangeNode {
             id: id.clone(),
             kind: NodeKind::Mod,
             current: Some(current),
             enabled,
-            mutable: safe,
+            mutable: safe && (repo.is_none() || unique),
             candidates,
             candidates_complete: repo.is_none_or(|r| {
                 r.cached_releases_complete
@@ -443,7 +489,17 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
         config,
         managed_mods,
         toggle_unbound_nodes,
+        installed_mods,
+        duplicate_release_safe_nodes,
+        duplicate_release_retirements: BTreeMap::new(),
     })
+}
+
+fn manifest_claim_key(path: &str) -> String {
+    // Manifest scanning associates DLLs case-insensitively on either platform.
+    mods::canonical_dll_name(path)
+        .replace('\\', "/")
+        .to_lowercase()
 }
 
 /// Reuse one backend-owned scan until either source selection or physical facts change.

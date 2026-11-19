@@ -83,6 +83,33 @@ fn disabled_higher_copy_does_not_hide_the_loaded_mod_update() {
 }
 
 #[test]
+fn newer_duplicate_cleanup_action_is_only_offered_with_a_trustworthy_survivor() {
+    let config = crate::mods::test_support::config(Vec::new());
+    for untrustworthy_guid in [false, true] {
+        let mut installed = vec![
+            duplicate_configuration_manager("1.3", "2.0"),
+            duplicate_configuration_manager("1.9.5", "2.0"),
+        ];
+        if untrustworthy_guid {
+            installed[1].guid = None;
+        } else {
+            installed[1].load_warning = Some("fixture warning".into());
+        }
+        mark_duplicate_guids(&mut installed, &config);
+        assert!(installed[0].duplicate_guid);
+        assert_ne!(installed[0].status, "duplicate_lower_version");
+        assert!(installed[0].update_available);
+    }
+    // All older copies may be cleaned if the newest copy itself stays enabled.
+    let mut installed =
+        ["1.4", "1.9.5", "1.3"].map(|version| duplicate_configuration_manager(version, "2.0"));
+    mark_duplicate_guids(&mut installed, &config);
+    assert_eq!(installed[0].status, "duplicate_lower_version");
+    assert_eq!(installed[2].status, "duplicate_lower_version");
+    assert!(installed[1].load_warning.is_none());
+}
+
+#[test]
 fn same_version_duplicates_keep_updates_and_raw_keeps_its_source_status() {
     let mut same_version = vec![
         duplicate_configuration_manager("19.0", "20.0"),
@@ -105,8 +132,21 @@ fn same_version_duplicates_keep_updates_and_raw_keeps_its_source_status() {
         &mut raw_and_release,
         &crate::mods::test_support::config(Vec::new()),
     );
+    refresh_status_labels(&mut raw_and_release);
     assert_eq!(raw_and_release[0].status, "not_release_asset");
     assert!(!raw_and_release[0].update_available);
+    assert!(raw_and_release[0].duplicate_cleanup_available);
+    assert!(!raw_and_release[1].duplicate_cleanup_available);
+    assert!(
+        raw_and_release[0]
+            .labels
+            .contains(&crate::models::InstalledModStatusLabel::NotReleaseAsset)
+    );
+    assert!(
+        raw_and_release[0]
+            .labels
+            .contains(&crate::models::InstalledModStatusLabel::DuplicateLowerVersion)
+    );
 }
 
 #[test]
@@ -182,6 +222,7 @@ fn lower_duplicate_guid_is_marked_as_not_loaded() {
             labels: Vec::new(),
             duplicate_guid: false,
             duplicate_version: false,
+            duplicate_cleanup_available: false,
             load_warning: None,
             note: None,
             status: "installed".into(),
@@ -221,6 +262,7 @@ fn lower_duplicate_guid_is_marked_as_not_loaded() {
             labels: Vec::new(),
             duplicate_guid: false,
             duplicate_version: false,
+            duplicate_cleanup_available: false,
             load_warning: None,
             note: None,
             status: "installed".into(),
@@ -443,3 +485,5 @@ fn same_name_without_repository_cannot_merge_differing_guids() {
     mark_duplicate_guids(&mut mods, &crate::mods::test_support::config(Vec::new()));
     assert!(mods.iter().all(|item| item.duplicate_guid));
 }
+
+mod cleanup;

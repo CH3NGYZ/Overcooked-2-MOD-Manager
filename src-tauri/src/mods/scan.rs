@@ -413,6 +413,7 @@ fn inspect_dll(
         labels: Vec::new(),
         duplicate_guid: false,
         duplicate_version: false,
+        duplicate_cleanup_available: false,
         load_warning: None,
         note,
         status: status.into(),

@@ -60,7 +60,8 @@ const pkg = computed(() => ctx.groups.find(group => group.key === props.groupKey
           <FolderOpenOutline width="14" height="14" />
         </n-button>
         <n-button size="tiny" quaternary type="error"
-          :title="t('modsLocal.delete')" @click.stop="ctx.remove(mod)">
+          :title="t(mod.duplicate_cleanup_available ? 'modsLocal.uninstallOlderCopy' : 'modsLocal.delete')"
+          @click.stop="ctx.remove(mod)">
           <TrashOutline width="14" height="14" />
         </n-button>
       </template>

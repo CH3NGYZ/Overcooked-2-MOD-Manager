@@ -609,6 +609,9 @@ function actionContext(labels: readonly string[] | undefined, mod: InstalledMod)
 
   const repository = repositoryForMod(repositories.value, mod)
   switch (action.kind) {
+    case 'uninstall-duplicate':
+      // A package's aggregated label must not target a different member.
+      return mod.duplicate_cleanup_available ? { action } : undefined
     case 'update':
       // 没有仓库或 RAW 仓库：点下去只会下载一份和本地一样的文件
       if (!repository || repository.download_mode === 'repository_file') return undefined
@@ -683,7 +686,8 @@ function packageAction(pkg: ModPackageNode) {
   if (!base) return undefined
   // 依赖类动作按「真正部署了关系的那一个成员」解析
   const needsRelation = keys.some((key) => isDependencyTag(key))
-  return actionContext(keys, (needsRelation ? relationOwnerMod(pkg) : undefined) ?? base)
+  // Only member cards can unambiguously identify the duplicate DLL to remove.
+  return actionContext(keys.filter((key) => key !== 'duplicate_lower_version'), (needsRelation ? relationOwnerMod(pkg) : undefined) ?? base)
 }
 
 /**
@@ -699,7 +703,9 @@ function runCardAction(mod: InstalledMod) {
   const context = cardAction(mod)
   if (!context) return
   if (context.action.kind === 'update' && blockModOperation()) return
-  if (context.action.kind === 'update' && context.repository) {
+  if (context.action.kind === 'uninstall-duplicate') {
+    removeOlderCopy(mod)
+  } else if (context.action.kind === 'update' && context.repository) {
     void previewModRepository(context.repository)
   } else if (context.action.kind === 'install-dependency' && context.dependency) {
     // 缺依赖：跳到 MOD 安装页并定位到该仓库卡片，由那边给出「安装依赖」
@@ -713,6 +719,19 @@ function runCardAction(mod: InstalledMod) {
   } else if (context.repository) {
     void refreshModRepository(context.repository)
   }
+}
+
+function removeOlderCopy(mod: InstalledMod) {
+  remove(mod, {
+    title: t('modsLocal.uninstallOlderCopy'),
+    body: (name) => `${deleteConfirm.value.body(mod.version ? `${name} ${mod.version}` : name)} ${t('modsLocal.keepNewerCopy')}\n${mod.dll_file}`,
+    duplicateOnly: true,
+  })
+}
+
+function removeCardMod(mod: InstalledMod) {
+  if (mod.duplicate_cleanup_available) removeOlderCopy(mod)
+  else remove(mod)
 }
 
 function runPackageAction(pkg: ModPackageNode) {
@@ -1094,7 +1113,7 @@ provide(
     openLogs,
     editConfig,
     openLocation,
-    remove,
+    remove: removeCardMod,
     bindingText,
     statusSummary,
     packageCountText,

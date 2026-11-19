@@ -139,7 +139,7 @@ export const api = {
   readBepInExConfig: () => invoke<ModConfigDocument>('read_bepinex_config'),
   saveBepInExConfig: (revision: string, content: string) =>
     invoke<ModConfigDocument>('save_bepinex_config', { revision, content }),
-  uninstallLocalMod: (dllFile: string, allowUnmanaged = false) => invoke<UninstallLocalModResult>('uninstall_local_mod', { dllFile, allowUnmanaged }),
+  uninstallLocalMod: (dllFile: string, allowUnmanaged = false, duplicateOnly?: boolean) => invoke<UninstallLocalModResult>('uninstall_local_mod', { dllFile, allowUnmanaged, duplicateOnly }),
   uninstallModDll: (dllFile: string, packageId: string) => invoke<OperationResult>('uninstall_mod_dll', { dllFile, packageId }),
   getModRecycleBin: () => invoke<ModRecycleEntry[]>('get_mod_recycle_bin'),
   restoreRecycledMod: (id: string) => invoke<OperationResult>('restore_recycled_mod', { id }),

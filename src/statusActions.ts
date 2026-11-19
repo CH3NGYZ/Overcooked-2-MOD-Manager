@@ -19,6 +19,7 @@ export type StatusActionKind =
   | 'refresh'
   | 'install-dependency'
   | 'uninstall-conflict'
+  | 'uninstall-duplicate'
 
 export interface StatusActionSpec {
   kind: StatusActionKind
@@ -47,6 +48,7 @@ export interface StatusActionSpec {
  *   - `disabled` / `prerelease` / `latest`：无需动作。
  */
 const STATUS_ACTIONS: Record<string, StatusActionSpec> = {
+  duplicate_lower_version: { kind: 'uninstall-duplicate', label: 'modsLocal.uninstallOlderCopy', tone: 'critical' },
   update_available: { kind: 'update', label: 'common.action.update', tone: 'moderate' },
   repository_unavailable: { kind: 'refresh', label: 'common.action.refresh', tone: 'moderate' },
   refresh_failed: { kind: 'refresh', label: 'common.action.refresh', tone: 'moderate' },
@@ -84,6 +86,7 @@ const STATUS_ACTIONS: Record<string, StatusActionSpec> = {
  */
 const ACTION_PRIORITY: StatusActionKind[] = [
   'uninstall-conflict',
+  'uninstall-duplicate',
   'update',
   'install-dependency',
   'refresh',

@@ -21,7 +21,8 @@ pub(crate) use binding::{
 };
 pub(crate) use file_state::{canonical_dll_name, disabled_dll_file};
 pub(crate) use identity::{
-    PluginIdentity, compare_mod_versions, is_safe_replacement_mod, note_key, same_plugin_identity,
+    PluginIdentity, compare_mod_versions, is_newer_duplicate, is_safe_replacement_mod, note_key,
+    same_plugin_identity, same_release_plugin_identity,
 };
 #[cfg(test)]
 pub(crate) use metadata::parse_bepin_plugin_metadata;

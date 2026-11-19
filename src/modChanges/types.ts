@@ -10,6 +10,15 @@ export interface ChangeRequest {
   bulk_toggle?: boolean
 }
 export type ChangeActionKind = 'install' | 'upgrade' | 'downgrade' | 'replace' | 'enable' | 'disable'
+export interface ChangeActionReason {
+  kind: 'requested' | 'required_by' | 'compatible_upgrade' | 'dependency_version' | 'dependency_disabled' | 'dependency_missing'
+    | 'dependency_unconfirmed' | 'compatibility_unconfirmed' | 'conflicts_with' | 'incompatible_with'
+  related_node_ids: string[]
+  target_guid?: string | null
+  requirement?: string | null
+  prerelease?: boolean | null
+  condition_on_related?: boolean
+}
 export interface ChangeAction {
   node_id: string
   member_key?: string | null
@@ -20,6 +29,7 @@ export interface ChangeAction {
   to_tag?: string | null
   reason: string
   caused_by: string[]
+  reason_details?: ChangeActionReason[]
 }
 export interface RelationEvaluation {
   owner_id: string

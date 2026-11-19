@@ -126,6 +126,22 @@ fn installed_manifest_suppresses_notice_until_its_real_dll_is_removed() {
 }
 
 #[test]
+fn approval_covers_actions_but_not_their_explanatory_details() {
+    let f = fixture(vec![noted("approved", "fixture-approved")]);
+    let plan = planning::create(&f.state, request("approved", Some("v2.0.0"), true)).unwrap();
+    assert_eq!(plan.result.status, SolveStatus::Ready);
+    let mut session = take(&f, &plan);
+    let before = preparation::approval_signature(&session).unwrap();
+
+    session.plan.result.actions[0].reason_details[0].requirement = Some(">=1.0".into());
+    session.plan.result.actions[0].caused_by = vec!["fixture-related-item".into()];
+    assert_eq!(preparation::approval_signature(&session).unwrap(), before);
+
+    session.plan.result.actions[0].to_tag = Some("v1.0.0".into());
+    assert_ne!(preparation::approval_signature(&session).unwrap(), before);
+}
+
+#[test]
 fn bare_installed_dll_with_repository_match_still_needs_the_first_notice() {
     let guid = "fixture-unmanaged";
     let f = fixture(vec![noted("unmanaged", guid)]);
@@ -159,6 +175,7 @@ fn manual_actual_members_use_visible_unique_sources() {
     .unwrap();
     assert_eq!(single.result.status, SolveStatus::Ready);
     assert_eq!(ids(&single), ["only"]);
+    assert_eq!(single.roots[0].label, "unrelated");
     let zip = planning::create(
         &f.state,
         manual_preview(
@@ -174,6 +191,7 @@ fn manual_actual_members_use_visible_unique_sources() {
     .unwrap();
     assert_eq!(zip.result.status, SolveStatus::Ready, "{:?}", zip.result);
     assert_eq!(ids(&zip), ["only", "another"]);
+    assert_eq!(zip.roots[0].label, "arbitrary-name");
 }
 
 #[test]

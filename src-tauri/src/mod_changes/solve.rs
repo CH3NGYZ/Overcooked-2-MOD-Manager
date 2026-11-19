@@ -1,8 +1,10 @@
+use super::actions::ActionReasons;
 use super::evaluate::{evaluate, matches, owned_targets, relation_active, same_guid, targets};
 use super::model::*;
 use crate::models::{RelationKind, RepositoryRelation};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 const MAX_SEARCH_STATES: usize = 30_000;
 
@@ -15,7 +17,7 @@ struct SearchState {
     disabled_guids: BTreeSet<String>,
     /// Dependency fallback cascades search compatible owner versions before disabling.
     fallback_disabled_guids: BTreeSet<String>,
-    causes: BTreeMap<usize, BTreeSet<String>>,
+    reasons: ActionReasons,
 }
 
 #[derive(Clone, Copy)]
@@ -46,6 +48,7 @@ struct Search<'a> {
     preference_pruned: bool,
 }
 
+mod reasons;
 mod visit;
 
 fn relation_key(owner: &str, relation: &RepositoryRelation) -> String {
@@ -305,7 +308,7 @@ impl Search<'_> {
         index: usize,
         mut candidate: Candidate,
         relation: Option<&RepositoryRelation>,
-        cause: usize,
+        reason: Option<&Arc<ChangeReason>>,
     ) -> Option<SearchState> {
         let mut replaced_installed = state.replaced_installed;
         if let SearchPass::LimitReplacements(limit) = self.pass {
@@ -354,10 +357,14 @@ impl Search<'_> {
         next.inventory.nodes[index].current = Some(candidate);
         next.inventory.nodes[index].enabled = true;
         next.decided.insert(index);
-        next.causes
-            .entry(index)
-            .or_default()
-            .insert(state.inventory.nodes[cause].id.clone());
+        if let Some(reason) = reason {
+            next.reasons.record(
+                index,
+                &state.inventory.nodes[index],
+                &next.inventory.nodes[index],
+                reason,
+            );
+        }
         Some(next)
     }
 
@@ -365,7 +372,7 @@ impl Search<'_> {
         &mut self,
         state: &SearchState,
         index: usize,
-        cause: usize,
+        reason: &Arc<ChangeReason>,
     ) -> Vec<SearchState> {
         let node = &state.inventory.nodes[index];
         if self.fixed.contains(&index)
@@ -382,7 +389,9 @@ impl Search<'_> {
                     candidate.id != current.id && preserves_package_identity(current, candidate)
                 })
             })
-            .filter_map(|candidate| self.with_candidate(state, index, candidate, None, cause))
+            .filter_map(|candidate| {
+                self.with_candidate(state, index, candidate, None, Some(reason))
+            })
             .collect()
     }
 
@@ -391,7 +400,7 @@ impl Search<'_> {
         state: &SearchState,
         index: usize,
         guid: Option<&str>,
-        cause: usize,
+        reason: &Arc<ChangeReason>,
         protected: &BTreeSet<usize>,
         source: DisableSource,
     ) -> Option<SearchState> {
@@ -452,10 +461,8 @@ impl Search<'_> {
                 }
             }
         }
-        next.causes
-            .entry(index)
-            .or_default()
-            .insert(state.inventory.nodes[cause].id.clone());
+        next.reasons
+            .record(index, node, &next.inventory.nodes[index], reason);
         Some(next)
     }
 
@@ -468,10 +475,12 @@ impl Search<'_> {
     ) -> (Vec<SearchState>, Option<SearchState>) {
         let relation = &issue.relation;
         let mut branches = Vec::new();
-        if matches!(
+        let is_conflict_edge = matches!(
             relation.kind,
             RelationKind::Conflicts | RelationKind::Compatible
-        ) {
+        );
+        let mut incompatible_nodes = Vec::new();
+        if is_conflict_edge {
             let owner_node = &state.inventory.nodes[owner];
             let active_targets = owner_node
                 .current
@@ -489,11 +498,12 @@ impl Search<'_> {
                     _ => false,
                 };
                 if incompatible {
+                    incompatible_nodes.push(state.inventory.nodes[index].id.clone());
                     if let Some(next) = self.disable(
                         state,
                         index,
                         Some(&relation.guid),
-                        owner,
+                        &reasons::provider_change(&state.inventory, index, issue),
                         protected,
                         DisableSource::Immediate,
                     ) {
@@ -501,33 +511,31 @@ impl Search<'_> {
                     }
                 }
             }
-            // A fixed target can instead force its conflicting, nonrequired owner off.
-            if let Some(next) = self.disable(
-                state,
-                owner,
-                None,
-                owner,
-                protected,
-                DisableSource::Immediate,
-            ) {
-                branches.push(next)
-            }
         }
-        if relation.kind == RelationKind::Requires
-            && state
-                .disabled_guids
-                .contains(&relation.guid.trim().to_lowercase())
-        {
-            if let Some(next) = self.disable(
+        let owner_reason = reasons::owner_change(
+            self.original,
+            &state.inventory,
+            owner,
+            issue,
+            &incompatible_nodes,
+        );
+        // A fixed target can force its conflicting owner off; an explicit
+        // disable of a provider can also cascade to its nonrequired owners.
+        if (is_conflict_edge
+            || relation.kind == RelationKind::Requires
+                && state
+                    .disabled_guids
+                    .contains(&relation.guid.trim().to_lowercase()))
+            && let Some(next) = self.disable(
                 state,
                 owner,
                 None,
-                owner,
+                &owner_reason,
                 protected,
                 DisableSource::Immediate,
-            ) {
-                branches.push(next)
-            }
+            )
+        {
+            branches.push(next);
         }
         // A reverse dependent first explores its own newer compatible historical versions
         // when the changed dependency is fixed by a root choice.
@@ -538,7 +546,7 @@ impl Search<'_> {
                 .is_some_and(|candidate| provides(candidate, &relation.guid))
         });
         if fixed_target {
-            branches.extend(self.replacements(state, owner, owner))
+            branches.extend(self.replacements(state, owner, &owner_reason))
         }
         let mut indices = (0..state.inventory.nodes.len()).collect::<Vec<_>>();
         let distances = self.order(state);
@@ -580,10 +588,12 @@ impl Search<'_> {
                         }
                     }
                     if switched {
-                        next.causes
-                            .entry(index)
-                            .or_default()
-                            .insert(state.inventory.nodes[owner].id.clone());
+                        next.reasons.record(
+                            index,
+                            node,
+                            &next.inventory.nodes[index],
+                            &reasons::provider_change(&state.inventory, index, issue),
+                        );
                         branches.push(next);
                     }
                 }
@@ -599,6 +609,7 @@ impl Search<'_> {
             // A switch or installed repair should re-enable a suitable installed
             // provider before downloading a replacement. Mismatches still try
             // compatible releases from newest to oldest.
+            let mut reason = None;
             for candidate in ordered_candidates(node, !self.prefer_newest) {
                 if node
                     .current
@@ -621,12 +632,14 @@ impl Search<'_> {
                     index,
                     candidate,
                     (relation.kind == RelationKind::Requires).then_some(relation),
-                    owner,
+                    Some(reason.get_or_insert_with(|| {
+                        reasons::provider_change(&state.inventory, index, issue)
+                    })),
                 ));
             }
         }
         if !fixed_target {
-            branches.extend(self.replacements(state, owner, owner))
+            branches.extend(self.replacements(state, owner, &owner_reason))
         }
         let mut fallback = None;
         // Only a complete version-only search may unlock this second-pass fallback.
@@ -643,7 +656,7 @@ impl Search<'_> {
                 &installed,
                 owner,
                 None,
-                owner,
+                &owner_reason,
                 protected,
                 DisableSource::DependencyFallback,
             ) {
@@ -703,10 +716,11 @@ fn solve_inner(
         replaced_installed: 0,
         disabled_guids: BTreeSet::new(),
         fallback_disabled_guids: BTreeSet::new(),
-        causes: BTreeMap::new(),
+        reasons: ActionReasons::default(),
     };
     let mut roots = BTreeSet::new();
     let mut seen_roots = BTreeMap::new();
+    let requested = reasons::requested();
     for root in &request.roots {
         let Some(index) = state
             .inventory
@@ -728,6 +742,7 @@ fn solve_inner(
             ));
         }
         let node = &mut state.inventory.nodes[index];
+        let before = node.clone();
         if !node.mutable
             && (root.candidate_id.is_some()
                 || node.enabled != root.enabled
@@ -793,6 +808,7 @@ fn solve_inner(
         }
         state.decided.insert(index);
         roots.insert(index);
+        state.reasons.record(index, &before, node, &requested);
     }
     // Whole-package and member intents can overlap. Check their combined state
     // instead of letting the order of the user's batch silently decide the root.
@@ -872,7 +888,7 @@ fn solve_inner(
             return Err(blocker);
         }
     };
-    let actions = super::actions::build_actions(inventory, &solution.inventory, &solution.causes);
+    let actions = super::actions::build_actions(inventory, &solution.inventory, &solution.reasons);
     let mut impacts = solution
         .inventory
         .nodes

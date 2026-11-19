@@ -202,6 +202,7 @@ impl Search<'_> {
                 return self.visit(next);
             }
             let mut incomplete = false;
+            let reason = reasons::compatible_upgrade(&state.inventory, index, &protected);
             for candidate in ordered_candidates(node, false) {
                 if node
                     .current
@@ -210,7 +211,9 @@ impl Search<'_> {
                 {
                     continue;
                 }
-                if let Some(next) = self.with_candidate(&state, index, candidate, None, index) {
+                if let Some(next) =
+                    self.with_candidate(&state, index, candidate, None, reason.as_ref())
+                {
                     match self.visit(next) {
                         Ok(solution) => return Ok(solution),
                         Err(unknown) => incomplete |= unknown,

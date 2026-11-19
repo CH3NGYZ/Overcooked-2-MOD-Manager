@@ -86,6 +86,7 @@ pub(super) fn stage_zip_payload(
         id,
         &selected,
         None,
+        None,
         &f.session.staging.join(format!("verified-{id}")),
     )
     .unwrap();

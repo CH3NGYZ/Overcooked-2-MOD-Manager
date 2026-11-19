@@ -1,104 +1,143 @@
 use super::model::*;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum ChangeKey {
+    Package,
+    Switch(bool, Option<String>),
+}
+
+/// Record each branch's actual changes, not a reason shared by every action on
+/// a package. In particular two DLL switches can have different causes.
+#[derive(Clone, Default)]
+pub(super) struct ActionReasons(BTreeMap<usize, BTreeMap<ChangeKey, Arc<ChangeReason>>>);
+
+impl ActionReasons {
+    pub(super) fn record(
+        &mut self,
+        index: usize,
+        before: &ChangeNode,
+        after: &ChangeNode,
+        reason: &Arc<ChangeReason>,
+    ) {
+        for_each_change(before, after, |change| {
+            self.0
+                .entry(index)
+                .or_default()
+                .insert(change, Arc::clone(reason));
+        });
+    }
+}
+
+fn for_each_change(before: &ChangeNode, after: &ChangeNode, mut visit: impl FnMut(ChangeKey)) {
+    let from = before.current.as_ref();
+    let to = after.current.as_ref();
+    let package_changed = from.map(|candidate| &candidate.id) != to.map(|candidate| &candidate.id);
+    if package_changed {
+        visit(ChangeKey::Package);
+    }
+    let singleton = before.kind == NodeKind::Mod
+        && from.is_some_and(|c| c.provides.len() == 1)
+        && to.is_some_and(|c| c.provides.len() == 1);
+    let enabled = |node: &ChangeNode, candidate: Option<&Candidate>| {
+        node.enabled && (!singleton || candidate.unwrap().provides[0].enabled)
+    };
+    let after_enabled = enabled(after, to);
+    if enabled(before, from) != after_enabled {
+        visit(ChangeKey::Switch(after_enabled, None));
+    } else if !singleton
+        && !package_changed
+        && let (Some(from), Some(to)) = (from, to)
+    {
+        for member in &to.provides {
+            let previous = from.provides.iter().find(|plugin| {
+                if member.member_key.is_some() {
+                    plugin.member_key == member.member_key
+                } else {
+                    plugin.guid.eq_ignore_ascii_case(&member.guid)
+                }
+            });
+            if previous.is_some_and(|previous| previous.enabled != member.enabled) {
+                visit(ChangeKey::Switch(member.enabled, member.member_key.clone()));
+            }
+        }
+    }
+}
+
+fn display_version(candidate: &Candidate) -> Option<&str> {
+    candidate
+        .tag
+        .as_deref()
+        .filter(|tag| !tag.trim().is_empty())
+        .or(candidate.version.as_deref())
+}
+
+fn version_action(from: Option<&Candidate>, to: Option<&Candidate>) -> ActionKind {
+    if from.is_none() {
+        return ActionKind::Install;
+    }
+    match from.zip(to).and_then(|(from, to)| {
+        crate::releases::compare_release_versions(
+            display_version(to).unwrap_or(""),
+            display_version(from).unwrap_or(""),
+        )
+    }) {
+        Some(Ordering::Greater) => ActionKind::Upgrade,
+        Some(Ordering::Less) => ActionKind::Downgrade,
+        _ => ActionKind::Replace,
+    }
+}
 
 pub(super) fn build_actions(
     original: &Inventory,
     solved: &Inventory,
-    causes: &BTreeMap<usize, BTreeSet<String>>,
+    reasons: &ActionReasons,
 ) -> Vec<ChangeAction> {
     let mut actions = Vec::new();
     for (index, (before, after)) in original.nodes.iter().zip(&solved.nodes).enumerate() {
         let from = before.current.as_ref();
         let to = after.current.as_ref();
-        let mut push = |kind, member_key, reason: &str| {
+        for_each_change(before, after, |change| {
+            let traced = reasons
+                .0
+                .get(&index)
+                .and_then(|entries| entries.get(&change))
+                .map(Arc::as_ref);
+            let (kind, member_key, reason) = match change {
+                ChangeKey::Package => (version_action(from, to), None, "version_required_by_plan"),
+                ChangeKey::Switch(enabled, member) => {
+                    let kind = if enabled {
+                        ActionKind::Enable
+                    } else {
+                        ActionKind::Disable
+                    };
+                    let reason = if member.is_some() {
+                        "member_state_required_by_plan"
+                    } else if enabled {
+                        "enable_required_plugin"
+                    } else {
+                        "disable_conflict_or_dependent"
+                    };
+                    (kind, member, reason)
+                }
+            };
             actions.push(ChangeAction {
                 node_id: after.id.clone(),
                 member_key,
                 kind,
                 from_candidate_id: from.map(|candidate| candidate.id.clone()),
                 to_candidate_id: to.map(|candidate| candidate.id.clone()),
-                from_tag: from.and_then(|candidate| candidate.tag.clone()),
-                to_tag: to.and_then(|candidate| candidate.tag.clone()),
+                from_tag: from.and_then(display_version).map(str::to_owned),
+                to_tag: to.and_then(display_version).map(str::to_owned),
                 reason: reason.into(),
-                caused_by: causes
-                    .get(&index)
-                    .map(|causes| causes.iter().cloned().collect())
+                caused_by: traced
+                    .map(|reason| reason.related_node_ids.clone())
                     .unwrap_or_default(),
+                reason_details: traced.cloned().into_iter().collect(),
             });
-        };
-        if from.map(|candidate| &candidate.id) != to.map(|candidate| &candidate.id) {
-            let kind = if from.is_none() {
-                ActionKind::Install
-            } else {
-                match from.zip(to).and_then(|(from, to)| {
-                    crate::releases::compare_release_versions(
-                        to.tag.as_deref().or(to.version.as_deref()).unwrap_or(""),
-                        from.tag
-                            .as_deref()
-                            .or(from.version.as_deref())
-                            .unwrap_or(""),
-                    )
-                }) {
-                    Some(Ordering::Greater) => ActionKind::Upgrade,
-                    Some(Ordering::Less) => ActionKind::Downgrade,
-                    _ => ActionKind::Replace,
-                }
-            };
-            push(kind, None, "version_required_by_plan");
-        }
-        let singleton = before.kind == NodeKind::Mod
-            && from.is_some_and(|c| c.provides.len() == 1)
-            && to.is_some_and(|c| c.provides.len() == 1);
-        let before_enabled = if singleton {
-            before.enabled && from.unwrap().provides[0].enabled
-        } else {
-            before.enabled
-        };
-        let after_enabled = if singleton {
-            after.enabled && to.unwrap().provides[0].enabled
-        } else {
-            after.enabled
-        };
-        if before_enabled != after_enabled {
-            push(
-                if after_enabled {
-                    ActionKind::Enable
-                } else {
-                    ActionKind::Disable
-                },
-                None,
-                if after_enabled {
-                    "enable_required_plugin"
-                } else {
-                    "disable_conflict_or_dependent"
-                },
-            );
-        } else if let (Some(from), Some(to)) = (from, to) {
-            if from.id == to.id {
-                for member in &to.provides {
-                    if let Some(previous) = from.provides.iter().find(|plugin| {
-                        if member.member_key.is_some() {
-                            plugin.member_key == member.member_key
-                        } else {
-                            plugin.guid.eq_ignore_ascii_case(&member.guid)
-                        }
-                    }) {
-                        if !singleton && previous.enabled != member.enabled {
-                            push(
-                                if member.enabled {
-                                    ActionKind::Enable
-                                } else {
-                                    ActionKind::Disable
-                                },
-                                member.member_key.clone(),
-                                "member_state_required_by_plan",
-                            );
-                        }
-                    }
-                }
-            }
-        }
+        });
     }
     // Disablements are explicit and must be reviewed before version/new-file actions.
     actions.sort_by_key(|action| {

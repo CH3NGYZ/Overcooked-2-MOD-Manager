@@ -30,12 +30,13 @@ fn user_save_fix_downgrades_framework_and_reverse_web_dependency() {
     };
     let result = solve(&inventory, &intent("fix", Some(fix.id), true));
     assert_eq!(result.status, SolveStatus::Ready, "{result:?}");
-    assert_eq!(
-        action_for(&result, "diy", ActionKind::Downgrade)
-            .to_tag
-            .as_deref(),
-        Some("v0.10.0")
-    );
+    let framework = action_for(&result, "diy", ActionKind::Downgrade);
+    assert_eq!(framework.to_tag.as_deref(), Some("v0.10.0"));
+    let cause = &framework.reason_details[0];
+    assert_eq!(cause.kind, ReasonKind::RequiredBy);
+    assert_eq!(cause.related_node_ids, ["fix"]);
+    assert_eq!(cause.requirement.as_deref(), Some("==0.10.0"));
+    assert!(!cause.condition_on_related);
     assert_eq!(
         action_for(&result, "web", ActionKind::Downgrade)
             .to_tag

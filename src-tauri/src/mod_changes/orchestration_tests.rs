@@ -217,6 +217,7 @@ fn verify_selected(f: &Fixture, session: &mut PlanSession) {
             &node_id,
             &candidate,
             None,
+            None,
             &session.staging.join(format!("verified-{preview_id}")),
         )
         .unwrap();

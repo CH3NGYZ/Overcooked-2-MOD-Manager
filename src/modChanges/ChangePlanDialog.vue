@@ -3,18 +3,16 @@ import { computed, nextTick, useTemplateRef, watch } from 'vue'
 import { NAlert, NButton, NProgress, NSpin } from 'naive-ui'
 import AppModal from '../components/AppModal.vue'
 import { t } from '../i18n'
-import { backendMessageOf, translateBackendMessage } from '../locale/backend'
+import { backendMessageOf } from '../locale/backend'
 import { useModChanges } from './store'
 import { useModChangesLifecycle } from './useModChangesLifecycle'
-import { changeReasonKeys } from './messages'
+import { changeReasonText } from './messages'
 import ChangePlanDetails from './ChangePlanDetails.vue'
 import ChangePlanItem from './ChangePlanItem.vue'
 import ModInstallNoteDialog from './ModInstallNoteDialog.vue'
 import { changePlanRows, preparationCompletion } from './presentation'
 import { activeDownloadProgress } from '../downloadTask'
 import { appUpdateState } from '../appUpdateState'
-function reasonText(reason: string) { return changeReasonKeys[reason] ? t(changeReasonKeys[reason]!) : translateBackendMessage(reason) }
-
 const changes = useModChanges()
 useModChangesLifecycle()
 const state = changes.state
@@ -24,7 +22,6 @@ const preparation = changes.preparation
 const currentProgress = computed(() => (state.value?.phase === 'preparing'
   || state.value?.phase === 'failed' && !plan.value?.prepared) ? preparation.value : null)
 const rows = computed(() => changePlanRows(plan.value, currentProgress.value))
-const detailsPlan = computed(() => plan.value && currentProgress.value ? { ...plan.value, actions: currentProgress.value.actions } : plan.value)
 const completion = computed(() => preparationCompletion(preparation.value))
 const waiting = computed(() => ['planning', 'preparing', 'executing'].includes(state.value?.phase ?? ''))
 const canCancel = computed(() => !['preparing', 'executing'].includes(state.value?.phase ?? ''))
@@ -84,16 +81,17 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
       <NAlert v-if="error" type="error" :bordered="false">{{ error }}</NAlert>
       <ul v-if="plan?.blockers.length" class="plan-notes">
         <li v-for="(blocker, index) in plan.blockers" :key="index">
-          {{ reasonText(blocker.message || blocker.code) }}
+          {{ changeReasonText(blocker.message || blocker.code) }}
           <span v-if="blocker.owner_id && labels.get(blocker.owner_id)"> · {{ labels.get(blocker.owner_id) }}</span>
           <span v-if="blocker.target_guid"> · {{ blocker.target_guid }}</span>
         </li>
       </ul>
-      <div v-if="rows.length" class="plan-actions">
-        <ChangePlanItem v-for="row in rows" :key="row.nodeId" :row="row" :processing="state?.phase === 'preparing'" />
-      </div>
-      <p v-else-if="plan?.status === 'ready'" class="plan-empty">{{ t('modChanges.noChanges') }}</p>
-      <ChangePlanDetails v-if="detailsPlan" :plan="detailsPlan" />
+      <ChangePlanDetails v-if="plan" :plan="plan" :progress="currentProgress" :processing="state?.phase === 'preparing'">
+        <div v-if="rows.length" class="plan-actions">
+          <ChangePlanItem v-for="row in rows" :key="row.nodeId" :row="row" :processing="state?.phase === 'preparing'" />
+        </div>
+        <p v-else-if="plan.status === 'ready'" class="plan-empty">{{ t('modChanges.noChanges') }}</p>
+      </ChangePlanDetails>
     </div>
     <template #footer>
       <div class="plan-bottom">

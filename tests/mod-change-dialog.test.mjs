@@ -8,10 +8,13 @@ test('App owns the only shared plan modal and all pages use its store',()=>{
  for(const name of ['ModsLocalView','ModsOnlineView','LevelsView','MapsOnlineView'])assert.doesNotMatch(read(`src/views/${name}.vue`),/<(?:ChangePlanDialog|InstallCheckDialog|InstallPlanDialog|ModInstallNoteDialog)/)
  for(const path of ['components/InstallCheckDialog.vue','components/InstallPlanDialog.vue','components/ModInstallDialog.vue','components/ModInstallNoteDialog.vue','composables/useInstallPlanGate.ts'])assert.equal(existsSync(new URL(`../src/${path}`,import.meta.url)),false,path)
 })
-test('confirmation shows a compact item list and preserves full reasons and package states inside collapsed details',()=>{
- for(const pattern of [/root\.tag/,/in plan\.actions/,/action\.caused_by/,/in node\.members/,/member\.enabled/,/member\.dll_file/])assert.match(details,pattern)
+test('confirmation switches from the compact list to a table with a reason per action and optional named plugins',()=>{
+ for(const pattern of [/<table v-if="details\.rows\.length"/,/v-for="row in details\.rows"/,/column\.reason/,/describeReason\(reason\)/,/v-for="pkg in details\.packages"/,/plugin\.enabled/,/:title="plugin\.path"/])assert.match(details,pattern)
  for(const pattern of [/v-if="row\.version" class="item-version"/,/row\.version\.from/,/row\.version\.to/])assert.match(item,pattern)
- assert.match(details,/<details class="plan-details">/);assert.doesNotMatch(details,/<details[^>]+open/)
+ assert.match(details,/<details v-if="hasDetails" class="plan-details" :open="expanded" @toggle=/)
+ assert.match(details,/<div v-if="expanded" class="details-content">/)
+ assert.match(details,/<slot v-if="!expanded \|\| !hasDetails"/)
+ assert.doesNotMatch(details,/plan\.impacts|\{\{ plugin\.path \}\}/)
  assert.match(dialog,/in plan\.blockers/);assert.match(dialog,/blocker\.owner_id/);assert.match(dialog,/v-for="row in rows"/)
  assert.doesNotMatch(dialog,/api\.(?:install|toggle|uninstall)|execute\(action|done\.value|failures\.value/)
 })

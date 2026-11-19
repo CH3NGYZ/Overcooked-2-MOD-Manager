@@ -37,7 +37,7 @@ registerHooks({
     if (url.endsWith('/src/components/AppModal.vue')) return fake(`import{h}from'vue';export default{props:['show','cardClass'],setup:(p,{slots})=>()=>p.show?h('modal',{class:p.cardClass},[slots.default?.(),h('footer',{},slots.footer?.())]):null}`)
     if (url.endsWith('/src/markdown.ts')) return fake('export const renderReadme=String')
     if (url.endsWith('/src/locale/backend.ts')) return fake('export const backendMessageOf=String;export const translateBackendMessage=String')
-    if (url.endsWith('/src/i18n.ts')) return fake(`export const pickI18n=(_,fallback)=>fallback;
+    if (url.endsWith('/src/i18n.ts')) return fake(`export const pickI18n=(_,fallback)=>fallback; export const locale={value:'zh-CN'};
       export const t=(key,args={})=>{let text=globalThis.__changeRender.messages[key.replace(/^modChanges\\./,'')]?.['zh-CN']??key;for(const[k,v]of Object.entries(args))text=text.replaceAll('{'+k+'}',String(v));return text}`)
     return next(url, context)
   },
@@ -124,9 +124,35 @@ test('final confirmation uses the returned plan actions, keeps details collapsed
   const rows = find(root, n => n.tag === 'article' && n.props['data-change-node'])
   assert.equal(rows.length, 1); assert.match(text(rows[0]), /降级.*DIYLevel 框架.*v0\.11.*v0\.10/)
   assert.doesNotMatch(text(rows[0]), /升级|v5|Web 前置/)
-  assert.equal(find(root, n => n.tag === 'details')[0].props.open, undefined)
+  assert.equal(find(root, n => n.tag === 'details')[0].props.open, false)
   assert.deepEqual(fixture.calls, [])
   assert.match(text(find(root, n => n.tag === 'footer')[0]), /确认更新后的方案/)
+})
+
+test('expanded details replace the summary and expose actual dependency and conflict reasons in separate rows', async t => {
+  const root = mounted(t)
+  fixture.state.value = { phase: 'confirming', plan: { ...plan, impacts: ['mod:opaque'], actions: [
+    action('web', 'disable', { from_tag: 'v4.0.0', to_tag: 'v4.0.0', reason: 'disable_conflict_or_dependent',
+      reason_details: [{ kind: 'conflicts_with', related_node_ids: ['web', 'level'], requirement: '>=0.11', prerelease: true }] }),
+    action('web', 'upgrade', { from_tag: 'v3.10.2', to_tag: 'v4.0.0',
+      reason_details: [{ kind: 'required_by', related_node_ids: ['level'], requirement: '>=4' }] }),
+  ] }, error: null }
+  await nextTick()
+  const details = find(root, n => n.tag === 'details')[0]
+  details.props.onToggle({ currentTarget: { open: true } })
+  await nextTick()
+  assert.equal(find(root, n => n.tag === 'article').length, 0)
+  const rows = find(root, n => n.tag === 'tbody')[0].children.filter(n => n.tag === 'tr')
+  assert.equal(rows.length, 2)
+  assert.equal(text(rows[0].children[2]), '')
+  assert.match(text(rows[0].children[3]), /与 DIYLevel 框架 冲突.*冲突版本 >=0\.11.*仅预发布版/)
+  assert.equal(text(rows[1].children[2]), 'v3.10.2 → v4.0.0')
+  assert.match(text(rows[1].children[3]), /DIYLevel 框架 依赖此项.*要求 >=4/)
+  assert.doesNotMatch(text(root), /disable_conflict_or_dependent|mod:opaque/)
+  details.props.onToggle({ currentTarget: { open: false } })
+  await nextTick()
+  assert.equal(find(root, n => n.tag === 'table').length, 0)
+  assert.equal(find(root, n => n.tag === 'article').length, 1)
 })
 
 test('prepared switches show a check and honest preparation status inside the same heading', async t => {

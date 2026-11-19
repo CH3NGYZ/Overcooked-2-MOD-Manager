@@ -5,7 +5,7 @@ use super::{
     model::*,
     session::*,
 };
-use crate::{app_state::AppState, game, releases};
+use crate::{app_state::AppState, archive, game, releases};
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashMap, fs};
 
@@ -412,6 +412,11 @@ fn attach_preview(
             session.trusted.files.insert(id.clone(), files);
         }
     } else {
+        let label = payload
+            .manifest
+            .as_ref()
+            .map(|manifest| archive::primary_translation(&manifest.package_name_i18n))
+            .unwrap_or_default();
         session.trusted.inventory.nodes.push(ChangeNode {
             id: id.clone(),
             kind: NodeKind::Mod,
@@ -426,7 +431,7 @@ fn attach_preview(
             NodeFiles {
                 summary: NodeSummary {
                     node_id: id.clone(),
-                    label: preview.into(),
+                    label,
                     kind: NodeKind::Mod,
                     enabled: false,
                     repository_id: None,

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { changePlanRows, preparationCompletion } from '../src/modChanges/presentation.ts'
+import { changePlanDetails, changePlanRows, preparationCompletion } from '../src/modChanges/presentation.ts'
 
 const action = (node, kind = 'downgrade', extra = {}) => ({ node_id: node, kind, reason: '', caused_by: [], ...extra })
 const node = (id, label) => ({ node_id: id, label, members: [], dll_files: [], candidates: [] })
@@ -48,4 +48,45 @@ test('measures only verified packages and does not treat downloaded bytes as val
   const items = [{ stage: 'ready' }, { stage: 'verifying', download: { downloaded: 100, total: 100, finished: true } }, { stage: 'failed' }]
   assert.deepEqual(preparationCompletion({ items }), { completed: 1, total: 3, percentage: 33 })
   assert.deepEqual(preparationCompletion({ items: [items[0]] }), { completed: 1, total: 1, percentage: 100 })
+})
+
+test('details keep individual actions and explain them with names and ranges instead of repeating opaque impacts', () => {
+  const requirement = { kind: 'required_by', related_node_ids: ['level', 'web', 'unknown'], requirement: '>=3.10.2' }
+  const model = changePlanDetails({ ...plan, impacts: ['mod:uuid', 'map:uuid'], actions: [
+    action('web', 'disable', { from_tag: 'v4.0.0', to_tag: 'v4.0.0', reason_details: [
+      { kind: 'conflicts_with', related_node_ids: ['level'], requirement: '<0.11', prerelease: false },
+    ] }),
+    action('web', 'downgrade', { from_tag: 'v4.0.0', to_tag: 'v3.10.2', reason_details: [requirement, requirement], caused_by: ['ignored'] }),
+    action('level', 'enable', { caused_by: ['level', 'unknown', 'web'] }),
+  ] })
+  assert.deepEqual(model.rows.map(row => [row.kind, row.label, row.version]), [
+    ['disable', 'DIYLevel Web 前置', undefined],
+    ['downgrade', 'DIYLevel Web 前置', { from: 'v4.0.0', to: 'v3.10.2' }],
+    ['enable', 'DIYLevel - 自定义关卡', undefined],
+  ])
+  assert.deepEqual(model.rows[0].reasons.map(({ kind, related, requirement, prerelease }) => [kind, related, requirement, prerelease]),
+    [['conflicts_with', ['DIYLevel - 自定义关卡'], '<0.11', false]])
+  assert.deepEqual(model.rows[1].reasons.map(({ kind, related, requirement }) => [kind, related, requirement]),
+    [['required_by', ['DIYLevel - 自定义关卡'], '>=3.10.2']])
+  assert.deepEqual(model.rows[1].causes, [])
+  assert.deepEqual(model.rows[2].causes, ['DIYLevel Web 前置'])
+  assert.doesNotMatch(JSON.stringify(model), /mod:uuid|map:uuid|unknown|ignored/)
+})
+
+test('details keep a selected version when not represented by an action and list only named package DLLs', () => {
+  const dllFile = 'BepInEx\\plugins\\Package\\Level.dll.disabled'
+  const model = changePlanDetails({ ...plan,
+    roots: [{ node_id: 'level', label: 'Chosen Level', tag: 'v0.10' },
+      { node_id: 'web', label: 'Chosen Web', tag: 'v3.10.2' },
+      { node_id: 'missing', label: 'Chosen local map', tag: 'v1' }],
+    nodes: [{ ...plan.nodes[0], members: [{ key: '', dll_file: '', enabled: true }] },
+      { ...plan.nodes[1], members: [{ key: 'level-key', dll_file: dllFile, enabled: false }] }],
+  }, { actions: [action('web', 'downgrade', { to_tag: 'v3.10.2' }), action('level', 'disable', { member_key: 'level-key' })],
+    items: [{ node_id: 'web', stage: 'ready', label: 'Prepared Web' }, { node_id: 'new', stage: 'queued', label: 'Discovered' }] })
+  assert.deepEqual(model.roots.map(({ label, tag }) => [label, tag]), [['Chosen Level', 'v0.10'], ['Chosen local map', 'v1']])
+  assert.deepEqual(model.packages, [{ nodeId: 'level', label: 'DIYLevel - 自定义关卡', plugins: [{ name: 'Level.dll.disabled', path: dllFile, enabled: false }] }])
+  assert.deepEqual(model.rows[1].member, { name: 'Level.dll.disabled', path: dllFile })
+  assert.equal(model.rows[0].label, 'Prepared Web')
+  assert.equal(model.rows[0].stage, 'ready')
+  assert.deepEqual(model.pending.map(({ label }) => label), ['Discovered'])
 })

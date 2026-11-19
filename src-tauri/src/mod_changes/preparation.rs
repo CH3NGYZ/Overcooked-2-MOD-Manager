@@ -306,16 +306,30 @@ pub(crate) fn verify_fingerprints(
 }
 
 /// Approval is bound to effective actions, roots, relations and actual provisions.
-/// Provisional member keys alone need not force a second confirmation.
+/// Explanations may become more precise after verification without changing the plan.
 pub(super) fn approval_signature(session: &PlanSession) -> Result<Vec<u8>, String> {
+    let result = &session.plan.result;
+    let actions = result
+        .actions
+        .iter()
+        .map(|action| {
+            (
+                &action.node_id,
+                &action.member_key,
+                &action.kind,
+                &action.from_candidate_id,
+                &action.to_candidate_id,
+                &action.from_tag,
+                &action.to_tag,
+            )
+        })
+        .collect::<Vec<_>>();
     let members = session.solved.as_ref().map(|inventory| {
         inventory
             .nodes
             .iter()
             .filter(|node| {
-                session
-                    .plan
-                    .result
+                result
                     .actions
                     .iter()
                     .any(|action| action.node_id == node.id)
@@ -339,7 +353,11 @@ pub(super) fn approval_signature(session: &PlanSession) -> Result<Vec<u8>, Strin
     });
     serde_json::to_vec(&(
         &session.request,
-        &session.plan.result,
+        &result.status,
+        actions,
+        &result.evaluations,
+        &result.blockers,
+        &result.impacts,
         members,
         &session.plan.install_notes,
     ))

@@ -168,6 +168,7 @@ fn installed_secondary_declarations_survive_actual_prepare_commit_and_rescan() {
             "mod:a",
             &candidate,
             None,
+            None,
             &session.staging.join("verified-a"),
         )
         .unwrap();

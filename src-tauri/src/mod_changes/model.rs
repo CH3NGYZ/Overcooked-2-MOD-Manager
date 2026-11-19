@@ -140,6 +140,38 @@ pub enum ActionKind {
     Disable,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasonKind {
+    Requested,
+    RequiredBy,
+    DependencyMissing,
+    DependencyDisabled,
+    DependencyVersion,
+    DependencyUnconfirmed,
+    CompatibilityUnconfirmed,
+    ConflictsWith,
+    IncompatibleWith,
+    CompatibleUpgrade,
+}
+
+/// The edge that made the solver select this operation. If present, the
+/// version and prerelease predicates describe the edge, not the chosen tag.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChangeReason {
+    pub kind: ReasonKind,
+    pub related_node_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_guid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requirement: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prerelease: Option<bool>,
+    /// The version condition applies to the related item rather than this row.
+    #[serde(default)]
+    pub condition_on_related: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChangeAction {
     pub node_id: String,
@@ -151,6 +183,8 @@ pub struct ChangeAction {
     pub to_tag: Option<String>,
     pub reason: String,
     pub caused_by: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reason_details: Vec<ChangeReason>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

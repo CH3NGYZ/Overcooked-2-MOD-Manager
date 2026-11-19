@@ -114,9 +114,8 @@ test('地图 ZIP 的导入只有一份实现，两个地图页共用', () => {
   }
   assert.match(modInstallFlow, /changes\.run\(\{ roots:/, 'MOD 拖放预览进入统一整链方案')
   assert.match(planDialog, /import ChangePlanDetails from '\.\/ChangePlanDetails\.vue'/, '统一弹窗必须接入根身份详情组件')
-  assert.match(planDialog, /const detailsPlan = computed\(\(\) => plan\.value && currentProgress\.value \? \{ \.\.\.plan\.value, actions: currentProgress\.value\.actions \} : plan\.value\)/, '准备进度只能替换动作快照，必须保留根身份')
-  assert.match(planDialog, /<ChangePlanDetails v-if="detailsPlan" :plan="detailsPlan"\s*\/>/, '统一弹窗必须向详情组件传递完整方案')
-  assert.match(planDetails, /v-for="root in plan\.roots"[^>]*:key="root\.node_id"/, '根身份必须由真实详情组件逐项展示')
+  assert.match(planDialog, /<ChangePlanDetails v-if="plan" :plan="plan" :progress="currentProgress"/, '完整方案与准备进度分别传入详情')
+  assert.match(planDetails, /v-for="root in details\.roots"[^>]*:key="root\.node_id"/, '动作未覆盖时，真实详情组件仍须逐项展示根身份')
   assert.match(planDetails, /<strong>\{\{ root\.label \}\}<\/strong>/, '详情必须展示用户选择的根名称')
   assert.match(planDetails, /<NTag v-if="root\.tag"[^>]*>\{\{ root\.tag \}\}<\/NTag>/, '详情必须保留所选根版本')
   assert.doesNotMatch(modInstallFlow, /confirmModInstall|uninstallLocalMod/, '拖放不能绕过批次执行')

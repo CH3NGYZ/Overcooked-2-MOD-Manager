@@ -118,6 +118,7 @@ fn session(candidate_id: &str) -> PlanSession {
                     to_tag: Some(candidate_id.into()),
                     reason: "version".into(),
                     caused_by: vec![],
+                    reason_details: vec![],
                 }],
             },
         },

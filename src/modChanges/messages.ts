@@ -1,5 +1,8 @@
+import { t } from '../i18n'
+import { translateBackendMessage } from '../locale/backend'
+
 /** Stable domain diagnostics are translated here, never displayed as internal codes. */
-export const changeReasonKeys: Record<string, string> = {
+const changeReasonKeys: Readonly<Record<string, string>> = {
   version_required_by_plan: 'modChanges.reason.version',
   enable_required_plugin: 'modChanges.reason.enable',
   disable_conflict_or_dependent: 'modChanges.reason.disable',
@@ -13,4 +16,9 @@ export const changeReasonKeys: Record<string, string> = {
   candidate_relations_unknown: 'modChanges.reason.metadata',
   relation_has_no_solution: 'modChanges.reason.noSolution',
   search_exhausted: 'modChanges.reason.searchLimit',
+}
+
+export function changeReasonText(reason: string) {
+  const key = changeReasonKeys[reason]
+  return key ? t(key) : translateBackendMessage(reason)
 }

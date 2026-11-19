@@ -24,8 +24,16 @@ fn conflict_disables_target_and_reverse_dependents_without_uninstall() {
     };
     let result = solve(&inventory, &intent("blocker", Some(blocker.id), true));
     assert_eq!(result.status, SolveStatus::Ready, "{result:?}");
-    action_for(&result, "target", ActionKind::Disable);
-    action_for(&result, "dependent", ActionKind::Disable);
+    let target = action_for(&result, "target", ActionKind::Disable);
+    assert_eq!(target.reason_details[0].kind, ReasonKind::ConflictsWith);
+    assert_eq!(target.reason_details[0].related_node_ids, ["blocker"]);
+    assert!(!target.reason_details[0].condition_on_related);
+    let dependent = action_for(&result, "dependent", ActionKind::Disable);
+    assert_eq!(
+        dependent.reason_details[0].kind,
+        ReasonKind::DependencyDisabled
+    );
+    assert_eq!(dependent.reason_details[0].related_node_ids, ["target"]);
 }
 
 #[test]

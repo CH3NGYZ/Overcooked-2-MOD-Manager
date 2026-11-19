@@ -83,6 +83,48 @@ fn enabling_map_with_real_version_mismatch_still_resolves_the_required_chain() {
 }
 
 #[test]
+fn explicit_framework_update_explains_each_link_of_an_upgrade_and_map_disable_plan() {
+    let mut inventory = kitchen_inventory(">=3.10.2,<4.0");
+    // An older local install may only have the info/DLL version, not a Release tag.
+    inventory.nodes[0].current.as_mut().unwrap().tag = None;
+    inventory.nodes[2].enabled = true;
+    let mut second_map = node(
+        "other-kitchen",
+        Some(candidate(
+            "other-kitchen",
+            "1.0",
+            vec![relation(RelationKind::Requires, "diy", ">=0.10,<0.11")],
+        )),
+        vec![],
+    );
+    second_map.kind = NodeKind::Map;
+    inventory.nodes.push(second_map);
+
+    let new_framework = inventory.nodes[0].candidates[0].id.clone();
+    let result = solve(&inventory, &intent("diy", Some(new_framework), true));
+    assert_eq!(result.status, SolveStatus::Ready, "{result:?}");
+    assert_eq!(result.actions.len(), 4);
+    let framework = action_for(&result, "diy", ActionKind::Upgrade);
+    assert_eq!(framework.from_tag.as_deref(), Some("0.10"));
+    assert_eq!(framework.to_tag.as_deref(), Some("v0.11.1"));
+    assert_eq!(framework.reason_details[0].kind, ReasonKind::Requested);
+    for (item, action, dependency, old_requirement) in [
+        ("web", ActionKind::Upgrade, "diy", ">=0.10,<0.11"),
+        ("dmm-kitchen", ActionKind::Disable, "web", ">=3.10.2,<4.0"),
+        ("other-kitchen", ActionKind::Disable, "diy", ">=0.10,<0.11"),
+    ] {
+        let action = action_for(&result, item, action);
+        let [cause] = action.reason_details.as_slice() else {
+            panic!("expected one cause for {action:?}");
+        };
+        assert_eq!(cause.kind, ReasonKind::DependencyVersion);
+        assert_eq!(cause.related_node_ids, [dependency]);
+        assert_eq!(cause.requirement.as_deref(), Some(old_requirement));
+        assert!(cause.condition_on_related);
+    }
+}
+
+#[test]
 fn enabling_map_can_choose_older_missing_dependency_to_keep_compatible_installed_versions() {
     let mut inventory = kitchen_inventory(">=3.10.2");
     let helper1 = candidate(

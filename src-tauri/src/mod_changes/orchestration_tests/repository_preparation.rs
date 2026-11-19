@@ -5,7 +5,7 @@ use std::io::{Cursor, Write};
 
 const TAG: &str = "v2.0.0";
 const REPO: &str = "FixtureMod";
-const GUID: &str = "fixture.preparation";
+const GUID: &str = "com.example.preparation";
 const DLL: &str = "Fixture.dll";
 const PE: &[u8] = include_bytes!("duplicate_release_target/fastinit_version.pe");
 
@@ -129,7 +129,8 @@ async fn exact_release_and_asset_prepare_directly_then_reuse_and_commit() {
 async fn split_release_proof_reaches_private_staging_on_download_and_cache_hit() {
     let dll = mod_dll();
     let padding = vec![b'x'; 150_000];
-    let parts = split_zip_parts(&[(DLL, &dll), ("resource.bin", &padding)]);
+    let resource = "payload-data.bin";
+    let parts = split_zip_parts(&[(DLL, &dll), (resource, &padding)]);
     let server = Server::new(parts.clone(), false);
     let mut repo = repository(REPO, GUID, &["2.0.0"], vec![]);
     repo.cached_releases[0].assets = ["Split.z01", "Split.z02", "Split.zip"]
@@ -159,7 +160,7 @@ async fn split_release_proof_reaches_private_staging_on_download_and_cache_hit()
             fs::read(
                 payload
                     .stage_root
-                    .join(format!("BepInEx/plugins/{REPO}/Split/resource.bin"))
+                    .join(format!("BepInEx/plugins/{REPO}/Split/{resource}"))
             )
             .unwrap(),
             padding

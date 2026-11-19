@@ -54,6 +54,7 @@ pub(super) fn binding_repository() -> crate::models::ModRepositoryConfig {
         plugin_guid: "com.example.guid".into(),
         local_product_name: "Example Product".into(),
         local_original_filename: "Example.dll".into(),
+        bundled_plugin_guids: Vec::new(),
         relations: Vec::new(),
         release_relations: Vec::new(),
         version_regex: String::new(),

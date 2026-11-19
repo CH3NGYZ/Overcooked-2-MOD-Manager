@@ -14,7 +14,7 @@ const owners = {
   levels: ['LevelSetFlattenCandidate', 'LevelSetFlattenReport', 'LevelSetImportResult', 'LevelSetInfo', 'LevelSetLayout', 'LevelSetPlugin', 'LevelSetScanProgress', 'LevelSetZipProgress', 'MapInstallOrigin', 'StagedMapSource', 'ZipLevelSet', 'ZipLevelSetPlugin'],
   maps: ['AssetVersionEntry', 'MapInfo', 'MapRelationSnapshot', 'MapRelationSnapshots', 'MapRepositoryConfig', 'RequiredFramework'],
   mod_repositories: ['ModDownloadMode', 'ModRepositoryBinding', 'ModRepositoryConfig', 'ModRepositoryExport', 'ModRepositoryBundle', 'ModRepositoryPatch'],
-  mods: ['DllPluginInfo', 'DllRole', 'InstalledMod', 'InstalledModStatusLabel', 'ModNote', 'ModRecycleEntry', 'UninstallLocalModResult'],
+  mods: ['DllPluginInfo', 'DllRole', 'InstalledMod', 'InstalledModStatusLabel', 'ModNote', 'ModRecycleEntry', 'RepositoryIdentityMatch', 'UninstallLocalModResult'],
   network: ['GitHubProxy', 'GitHubProxyConfig', 'GitHubProxyManifest', 'NetworkConfig', 'ProxyMode'],
   network_plan: ['NetworkPlanSelection', 'PlanOverride', 'PlanReference', 'PlanStep', 'RepositoryKind', 'RouteOverride'],
   operations: ['BepInExInstallResult', 'InstallConflict', 'OperationResult'],

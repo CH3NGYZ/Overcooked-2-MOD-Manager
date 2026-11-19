@@ -314,6 +314,15 @@ local_original_filename = "MyMod.dll"
 
 如果插件没有 BepInEx GUID，保留 `plugin_guid = ""`，并至少填写 DLL 的产品名称或原始文件名。`plugin_guid` 负责识别本地插件，`asset_rules` 负责选择 Release 下载文件；仓库文件模式用 `file_path` 指定文件，不能用识别字段替代文件路径。
 
+如果同一个 MOD 包还包含其他带有 BepInEx GUID 的 DLL，可以在对应的 `[[repositories]]` 中声明：
+
+```toml
+plugin_guid = "com.example.my-mod"
+bundled_plugin_guids = ["com.example.my-mod.helper", "com.example.my-mod.debug-log"]
+```
+
+管理器找到唯一匹配的主插件后，可把手动放入游戏目录的随包插件显示在同一张 MOD 包卡片中。匹配忽略首尾空白和 ASCII 大小写；列表必须填写有效且不重复的随包插件 GUID，不要把主插件的 GUID 或不带 GUID 的普通依赖 DLL 放进去。已有安装清单或独立仓库归属的插件保留原有身份；多个包同时认领同一个插件时保持独立。该声明不写入安装清单，也不会让更新或卸载自动覆盖、删除这些手动文件。
+
 本地绑定不等于可以检测更新。只有 Release 模式会比较已安装版本与 Release 版本；仓库文件模式可以显示来源和识别信息，但不会请求 Release，也不会据此显示“最新版”或“有更新”。
 
 ### 6. 按当前 MOD 下载渠道展示仓库
@@ -555,7 +564,8 @@ Mermaid 也可用于 README 和 Release 日志中的流程图、时序图、饼�
 | `note_i18n` | 是 | 多语言 Markdown 简介表，必须存在；`note_i18n.zh-CN` 可为空字符串。 |
 | `relations` | 否 | 与其它插件的关系表（依赖 / 冲突 / 兼容），见下一节。 |
 | `release_relations` | 否 | 按 Release 版本区间覆盖 `relations` 的规则，见下一节。 |
-| `plugin_guid` | 否 | 两种下载模式均支持的本地 BepInPlugin GUID；省略或未知时可填写空字符串，并用产品名称或原始文件名识别。 |
+| `plugin_guid` | 声明随包插件时必填 | 主插件的 BepInPlugin GUID。未声明随包插件且 GUID 未知时，可以使用产品名称或原始文件名识别。 |
+| `bundled_plugin_guids` | 否 | 随包插件的 BepInPlugin GUID 字符串数组；仅用于归组，不改变安装清单归属，缺省为空。 |
 | `local_product_name` | 否 | DLL 的 ProductName，用于本地绑定。 |
 | `local_original_filename` | 否 | DLL 的 OriginalFilename，用于本地绑定。 |
 | `version_regex` | 否 | 本地 MOD 版本正则；填写后只有版本匹配时才会绑定，留空则忽略版本条件。 |
@@ -767,6 +777,7 @@ zh-CN = "仅在需要时下载或更新。"
 - [ ] Release 模式仓库至少有一条有效的 `asset_rules`；仓库文件模式已填写有效的 `branch` 和 `file_path`。
 - [ ] Release 模式的资产规则能匹配 Release 中真实存在的文件名；仓库文件模式的 `file_path` 指向分支中真实存在的文件。
 - [ ] `plugin_guid`、`local_product_name`、`local_original_filename` 与 DLL 实际信息一致。
+- [ ] 如有 `bundled_plugin_guids`，逐个核对包内 DLL 的实际 GUID，不包含主插件或无 GUID 的依赖 DLL。
 - [ ] 用 tag 模式的地图条目：版本正则写成 `^…$` 整串锚定并带捕获组，同一 tag 内不出现两个相同版本号。
 - [ ] `install_target` 是相对路径，没有绝对路径和 `..`。
 - [ ] `[[repository_sources]]` 的 `id` 不重复，子源没有循环引用。

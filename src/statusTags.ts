@@ -374,7 +374,7 @@ export function packageStatuses(mods: readonly InstalledMod[]): PackageStatus[] 
   const present = new Set<string>()
   for (const mod of real) {
     for (const label of (mod.labels as string[] | undefined) ?? []) {
-      if (STATUS_META[label]) present.add(label)
+      if (STATUS_META[label] && (!mod.bundled_with_dll || !isVersionConclusion(label))) present.add(label)
     }
   }
 
@@ -383,7 +383,7 @@ export function packageStatuses(mods: readonly InstalledMod[]): PackageStatus[] 
    * 预发布与单个 MOD 一致：取「元数据标记」或「版本号带 - 后缀」的或关系，
    * 放在结论前面。整包共用一个 tag，所以只看是否存在，不数个数。
    */
-  const prerelease = real.some((mod) => isPrereleaseVersion(localVersion(mod), mod.prerelease))
+  const prerelease = real.some((mod) => !mod.bundled_with_dll && isPrereleaseVersion(localVersion(mod), mod.prerelease))
   if (prerelease) {
     const meta = STATUS_META.prerelease
     result.push({ key: 'prerelease', text: meta.text, tone: meta.tone })

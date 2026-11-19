@@ -4,6 +4,7 @@ use super::ConfigError;
 use super::availability::validate_repository_platform;
 use super::availability::validate_repository_region;
 use crate::models::*;
+use std::collections::HashSet;
 use std::path::Path;
 
 pub(crate) fn validate_mod_repository(repo: &ModRepositoryExport) -> Result<(), ConfigError> {
@@ -68,6 +69,7 @@ pub(crate) fn validate_mod_repository(repo: &ModRepositoryExport) -> Result<(), 
             &[("repo", &repo.name.to_string())],
         )));
     }
+    validate_bundled_plugin_guids(&repo.name, &repo.plugin_guid, &repo.bundled_plugin_guids)?;
     /*
      * 关系声明校验。
      *
@@ -89,6 +91,35 @@ pub(crate) fn validate_mod_repository(repo: &ModRepositoryExport) -> Result<(), 
         validate_release_override(&override_entry.version, &repo.name)?;
         for relation in &override_entry.relations {
             validate_relation(relation, &repo.name, &repo.plugin_guid)?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_bundled_plugin_guids(
+    repo: &str,
+    primary: &str,
+    bundled: &[String],
+) -> Result<(), ConfigError> {
+    if bundled.is_empty() {
+        return Ok(());
+    }
+    let valid = |guid: &str| {
+        !guid.trim().is_empty() && guid.trim().len() <= 256 && !guid.chars().any(char::is_control)
+    };
+    if !valid(primary) {
+        return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+            "config.bundledPluginPrimaryRequired",
+            &[("repo", repo)],
+        )));
+    }
+    let mut seen = HashSet::from([primary.trim().to_ascii_lowercase()]);
+    for (index, guid) in bundled.iter().enumerate() {
+        if !valid(guid) || !seen.insert(guid.trim().to_ascii_lowercase()) {
+            return Err(ConfigError::Invalid(crate::locale_tag::with_params(
+                "config.bundledPluginGuidInvalid",
+                &[("repo", repo), ("index", &(index + 1).to_string())],
+            )));
         }
     }
     Ok(())

@@ -33,6 +33,46 @@ value = "Example.dll"
 }
 
 #[test]
+fn source_rejects_invalid_bundled_plugin_guids() {
+    let location = crate::repository_sources::SourceLocation::parse("source.toml").unwrap();
+    for (primary, bundled, error) in [
+        (
+            "",
+            r#"["com.example.helper"]"#,
+            "config.bundledPluginPrimaryRequired",
+        ),
+        (
+            "com.example.mod",
+            r#"[" "]"#,
+            "config.bundledPluginGuidInvalid",
+        ),
+        (
+            "com.example.mod",
+            r#"["control\tcharacter"]"#,
+            "config.bundledPluginGuidInvalid",
+        ),
+        (
+            "com.example.mod",
+            r#"[" COM.EXAMPLE.MOD "]"#,
+            "config.bundledPluginGuidInvalid",
+        ),
+        (
+            "com.example.mod",
+            r#"[" COM.EXAMPLE.HELPER ", "com.example.helper"]"#,
+            "config.bundledPluginGuidInvalid",
+        ),
+    ] {
+        let text = super::REGION_REPOSITORY.replace(
+            "plugin_guid = \"com.example.regional-mod\"",
+            &format!("plugin_guid = \"{primary}\"\nbundled_plugin_guids = {bundled}"),
+        );
+        let result =
+            crate::repository_sources::parse_document(&text, &location, &Default::default());
+        assert!(result.unwrap_err().to_string().contains(error), "{text}");
+    }
+}
+
+#[test]
 fn repository_source_can_declare_child_sources() {
     let text = r#"
 [[repository_sources]]
@@ -79,6 +119,7 @@ fn unsafe_install_target_is_rejected() {
         plugin_guid: String::new(),
         local_product_name: String::new(),
         local_original_filename: String::new(),
+        bundled_plugin_guids: Vec::new(),
         relations: Vec::new(),
         release_relations: Vec::new(),
         version_regex: String::new(),

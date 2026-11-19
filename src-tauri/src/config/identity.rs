@@ -46,6 +46,7 @@ pub(crate) fn repo_key(repo: &ModRepositoryConfig) -> String {
         note: repo.note.clone(),
         note_i18n: repo.note_i18n.clone(),
         plugin_guid: repo.plugin_guid.clone(),
+        bundled_plugin_guids: repo.bundled_plugin_guids.clone(),
         local_product_name: repo.local_product_name.clone(),
         local_original_filename: repo.local_original_filename.clone(),
         relations: repo.relations.clone(),
@@ -129,6 +130,7 @@ pub(crate) fn mod_repository_from_export(
             .clone()
             .filter(|id| !crate::community::is_source(id)),
         plugin_guid: repo.plugin_guid.clone(),
+        bundled_plugin_guids: repo.bundled_plugin_guids.clone(),
         local_product_name: repo.local_product_name.clone(),
         local_original_filename: repo.local_original_filename.clone(),
         relations: repo.relations.clone(),

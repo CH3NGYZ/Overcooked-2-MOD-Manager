@@ -351,6 +351,20 @@ export const config: DomainMessages = {
     ko: '{repo}의 release_relations 버전 범위가 올바르지 않습니다(하한이 상한보다 큼): {value}',
     ja: '{repo} の release_relations バージョン範囲が無効です（下限が上限より大きい）: {value}',
   },
+  bundledPluginPrimaryRequired: {
+    'zh-CN': '{repo} 声明了随包插件，请先填写有效的主插件 GUID（plugin_guid）',
+    'zh-TW': '{repo} 宣告了隨包外掛，請先填寫有效的主外掛 GUID（plugin_guid）',
+    en: '{repo} declares bundled plugins and needs a valid primary plugin GUID (plugin_guid)',
+    ko: '{repo}에 번들 플러그인이 선언되어 있습니다. 올바른 주 플러그인 GUID(plugin_guid)를 입력하세요.',
+    ja: '{repo} に同梱プラグインが指定されています。有効なメインプラグインの GUID（plugin_guid）を指定してください。',
+  },
+  bundledPluginGuidInvalid: {
+    'zh-CN': '{repo} 的第 {index} 个随包插件 GUID 无效：请填写有效且不重复的 GUID，并且不要填写主插件 GUID',
+    'zh-TW': '{repo} 的第 {index} 個隨包外掛 GUID 無效：請填寫有效且不重複的 GUID，並且不要填寫主外掛 GUID',
+    en: 'Bundled plugin GUID #{index} in {repo} is invalid. Use a valid, unique GUID other than the primary plugin GUID.',
+    ko: '{repo}의 {index}번째 번들 플러그인 GUID가 올바르지 않습니다. 주 플러그인과 다르고 중복되지 않는 GUID를 입력하세요.',
+    ja: '{repo} の {index} 番目の同梱プラグイン GUID が無効です。メインプラグインとは異なる有効で重複のない GUID を指定してください。',
+  },
   relationMissingGuid: {
     'zh-CN': '{repo} 的 {kind} 关系缺少 GUID',
     'zh-TW': '{repo} 的 {kind} 關係缺少 GUID',

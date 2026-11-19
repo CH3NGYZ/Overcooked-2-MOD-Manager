@@ -163,7 +163,7 @@ const packages = computed(
         }">
         <header class="package-head"
           @click="ctx.togglePackage(pkg, $event)">
-          <!-- 左：开关 + 包名 + 子 MOD 数量（数量紧跟包名；「N 个」已表明这是包） -->
+          <!-- 左：开关 + 包名 + 子 MOD 数量 + 包版本 -->
           <div class="package-left">
             <!--
               包级开关三态：全开 / 全关 / 部分。
@@ -181,6 +181,7 @@ const packages = computed(
             <n-tag size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('muted')">
               {{ t('rename.text', { count: pkg.mods.length }) }}
             </n-tag>
+            <span v-if="pkg.version" class="card-version mono">{{ formatVersion(pkg.version) }}</span>
           </div>
 
           <!-- 右：状态标签 + 分割线 + 工具列（与单 MOD 卡片同一套列宽预留） -->
@@ -231,7 +232,7 @@ const packages = computed(
               这样删除按钮落在同一竖线；只有一个按钮时其余位置留空。
             -->
             <span class="package-tool-group" :style="ctx.toolGroupStyle" @click.stop>
-              <n-button size="tiny" quaternary type="error" :title="t('modsLocal.deletePackage')"
+              <n-button v-if="pkg.canRemovePackage" size="tiny" quaternary type="error" :title="t('modsLocal.deletePackage')"
                 @click="ctx.removePackage(pkg)">
                 <TrashOutline width="14" height="14" />
               </n-button>

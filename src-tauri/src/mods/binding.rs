@@ -2,7 +2,8 @@ use crate::models::Channel;
 use crate::models::InstalledMod;
 use crate::models::ModDownloadMode;
 use crate::models::ModRepositoryConfig;
-use std::collections::HashMap;
+use crate::models::RepositoryIdentityMatch;
+use std::collections::{HashMap, HashSet};
 
 /// An exact installed Release identity supplies its tag and platform verdict
 /// before DLL metadata. Never infer this from the latest tag, GUID or another source.
@@ -175,8 +176,15 @@ pub(super) fn inherit_repository_from_sibling(mods: &mut [InstalledMod]) {
     }
 
     for item in mods.iter_mut() {
-        // 只补「自己完全没有仓库身份」的项，不覆盖已知归属
-        if !item.repository_ids.is_empty() || item.repository_binding.is_some() {
+        // A DLL with its own plugin GUID is not a GUID-less library. Same-directory
+        // placement cannot substitute for an explicit package declaration.
+        if item
+            .guid
+            .as_deref()
+            .is_some_and(|guid| !guid.trim().is_empty())
+            || !item.repository_ids.is_empty()
+            || item.repository_binding.is_some()
+        {
             continue;
         }
         let Some(dir) = parent_dir(&item.dll_file) else {
@@ -230,17 +238,42 @@ pub(crate) fn repository_matches_identity(
     product_name: Option<&str>,
     original_filename: Option<&str>,
 ) -> bool {
+    repository_identity_match(Some(repo), guid, product_name, original_filename).is_some()
+}
+
+/// The matching fields are the same as repository binding, but a GUID names a
+/// single plugin more precisely than PE metadata common to package members.
+pub(super) fn repository_identity_match(
+    repo: Option<&ModRepositoryConfig>,
+    guid: Option<&str>,
+    product_name: Option<&str>,
+    original_filename: Option<&str>,
+) -> Option<RepositoryIdentityMatch> {
+    let repo = repo?;
+    let matches = |actual: Option<&str>, configured: &str| {
+        let configured = configured.trim();
+        !configured.is_empty()
+            && actual.is_some_and(|value| value.trim().eq_ignore_ascii_case(configured))
+    };
+    if matches(guid, &repo.plugin_guid) {
+        return Some(RepositoryIdentityMatch::Guid);
+    }
+    // A declared helper may share PE metadata with the core. That evidence
+    // must not bind the helper as the repository's primary installed plugin.
+    if repo
+        .bundled_plugin_guids
+        .iter()
+        .any(|member| matches(guid, member))
+    {
+        return None;
+    }
     [
-        (guid, repo.plugin_guid.as_str()),
         (product_name, repo.local_product_name.as_str()),
         (original_filename, repo.local_original_filename.as_str()),
     ]
     .into_iter()
-    .any(|(actual, configured)| {
-        let configured = configured.trim();
-        !configured.is_empty()
-            && actual.is_some_and(|value| value.trim().eq_ignore_ascii_case(configured))
-    })
+    .any(|(actual, configured)| matches(actual, configured))
+    .then_some(RepositoryIdentityMatch::Metadata)
 }
 
 /// Match either a scan result or an existing local snapshot against the current
@@ -301,6 +334,83 @@ pub(super) fn match_repository<'a>(
     (repository, ids)
 }
 
+/// Associate loose DLLs for display and package switches, without changing
+/// their repository binding, installed versions, or manifest ownership.
+pub(super) fn bind_declared_package_members(
+    config: &crate::models::AppConfig,
+    mods: &mut [InstalledMod],
+) {
+    for item in mods.iter_mut() {
+        item.bundled_with_dll = None;
+    }
+    if !config
+        .repositories
+        .iter()
+        .any(|repo| !repo.bundled_plugin_guids.is_empty())
+    {
+        return;
+    }
+    let guid_key = |guid: &str| (!guid.trim().is_empty()).then(|| guid.trim().to_ascii_lowercase());
+    let local_guid = |item: &InstalledMod| item.guid.as_deref().and_then(guid_key);
+    let mut counts = HashMap::new();
+    for guid in mods.iter().filter_map(local_guid) {
+        *counts.entry(guid).or_insert(0usize) += 1;
+    }
+    let repositories = config
+        .repositories
+        .iter()
+        .map(|repo| (repo.id.as_str(), repo))
+        .collect::<HashMap<_, _>>();
+    // A separately published plugin keeps its own identity, even if its source
+    // is unavailable for this region/platform or its version cannot bind today.
+    let primary_guids = config
+        .repositories
+        .iter()
+        .filter_map(|repo| guid_key(&repo.plugin_guid))
+        .collect::<HashSet<_>>();
+    let mut claims = HashMap::<String, Option<String>>::new();
+    for core in mods
+        .iter()
+        .filter(|item| item.repository_identity_match == Some(RepositoryIdentityMatch::Guid))
+    {
+        let Some((guid, repo)) = local_guid(core).zip(
+            core.repository_id
+                .as_deref()
+                .and_then(|id| repositories.get(id)),
+        ) else {
+            continue;
+        };
+        if !crate::config::mod_repository_is_available(config, repo, &config.region) {
+            continue;
+        }
+        let anchor = (counts.get(&guid) == Some(&1)).then(|| core.dll_file.clone());
+        for guid in repo
+            .bundled_plugin_guids
+            .iter()
+            .filter_map(|guid| guid_key(guid))
+        {
+            // Distinct installed cores claiming the same GUID are ambiguous.
+            claims
+                .entry(guid)
+                .and_modify(|claim| *claim = None)
+                .or_insert_with(|| anchor.clone());
+        }
+    }
+    for item in mods.iter_mut().filter(|item| {
+        item.package_id.is_none()
+            && item.repository_binding.is_none()
+            && item.repository_id.is_none()
+            && item.repository_ids.is_empty()
+    }) {
+        let Some(guid) = local_guid(item) else {
+            continue;
+        };
+        if counts.get(&guid) == Some(&1) && !primary_guids.contains(&guid) {
+            item.bundled_with_dll = claims.get(&guid).cloned().flatten();
+        }
+    }
+}
+
 /// Rebind already parsed DLL facts; no filesystem scan, metadata read or network.
 /// Source arrival and local scan completion both call this same implementation.
 pub(crate) fn rebind_installed_mods(config: &crate::models::AppConfig, mods: &mut [InstalledMod]) {
@@ -324,6 +434,12 @@ pub(crate) fn rebind_installed_mods(config: &crate::models::AppConfig, mods: &mu
             installed_prerelease(config, binding, item.prerelease, item.version.as_deref());
         item.repository_id = repository.map(|repo| repo.id.clone());
         item.repository_ids = ids;
+        item.repository_identity_match = repository_identity_match(
+            repository,
+            item.guid.as_deref(),
+            item.product_name.as_deref(),
+            item.original_filename.as_deref(),
+        );
         item.update_available = update;
         item.status = status.into();
         if let Some(repo) = repository {
@@ -336,6 +452,7 @@ pub(crate) fn rebind_installed_mods(config: &crate::models::AppConfig, mods: &mu
         }
     }
     inherit_repository_from_sibling(mods);
+    bind_declared_package_members(config, mods);
     super::identity::mark_duplicate_guids(mods, config);
     super::status::refresh_status_labels(mods);
 }

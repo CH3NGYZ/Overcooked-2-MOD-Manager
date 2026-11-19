@@ -150,6 +150,7 @@ export interface ModRepository {
   note_i18n?: Record<string, string>
   source_id?: string
   plugin_guid: string
+  bundled_plugin_guids?: string[]
   local_product_name: string
   local_original_filename: string
   /** 这个 MOD 与其它插件的关系（依赖 / 排斥 / 兼容，按 GUID 声明）。 */
@@ -512,8 +513,12 @@ export type InstalledModStatusLabel = 'update_available' | 'latest' | 'not_relea
 export interface InstalledMod {
   repository_id?: string
   repository_ids?: string[]
+  /** Direct repository identity of this DLL (not the shared install binding). */
+  repository_identity_match?: 'guid' | 'metadata'
   repository_binding?: ModRepositoryBinding | null
   package_id?: string
+  /** Display affiliation of a loose plugin; never an installation record. */
+  bundled_with_dll?: string
   package_name?: string
   package_name_i18n?: Record<string, string>
   package_mod_count?: number
@@ -709,6 +714,7 @@ export interface ModRepositoryPatch {
   note: string
   note_i18n?: Record<string, string>
   plugin_guid: string
+  bundled_plugin_guids?: string[]
   local_product_name: string
   local_original_filename: string
   /** 这个 MOD 与其它插件的关系（依赖 / 排斥 / 兼容，按 GUID 声明）。 */

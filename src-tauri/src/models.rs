@@ -46,7 +46,7 @@ pub use maps::{
 };
 pub use mods::{
     DllPluginInfo, DllRole, InstalledMod, InstalledModStatusLabel, ModNote, ModRecycleEntry,
-    UninstallLocalModResult,
+    RepositoryIdentityMatch, UninstallLocalModResult,
 };
 #[cfg(test)]
 pub use network::GitHubProxyManifest;

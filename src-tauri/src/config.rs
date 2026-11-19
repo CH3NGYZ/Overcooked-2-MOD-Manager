@@ -40,6 +40,7 @@ pub(crate) use metadata::localized_mod_repository_name;
 pub(crate) use metadata::normalize_repository_i18n;
 pub(crate) use sources::synchronize_builtin_repository_sources;
 pub(crate) use validation::check_version_spec;
+pub(crate) use validation::validate_bundled_plugin_guids;
 pub(crate) use validation::validate_mod_repository;
 
 /// 配置读写失败。

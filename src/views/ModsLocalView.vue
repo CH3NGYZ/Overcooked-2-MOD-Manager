@@ -1005,9 +1005,7 @@ const { previewModRepository } = useModRepositoryPreview({
 
 /** 包级开关：提交整包根到共享计划，一次确认切换整包。 */
 async function togglePackageEnabled(node: ModPackageNode, enabled: boolean) {
-  if (blockModOperation()) return
-  const packageId = node.mods[0]?.package_id
-  if (!packageId) return
+  if (!node.grouped || blockModOperation()) return
   for (const mod of node.mods) busy.value[mod.dll_file] = true
   try {
     const result = await requestToggleChanges({ dllFiles: node.mods.map(mod => mod.dll_file), enabled, wholeNodes: true })
@@ -1035,7 +1033,7 @@ async function togglePackageEnabled(node: ModPackageNode, enabled: boolean) {
 
 /** 包级删除：整包删除（文案随「是否经过回收站」切换）。 */
 function removePackage(node: ModPackageNode) {
-  if (blockModOperation()) return
+  if (!node.canRemovePackage || blockModOperation()) return
   const first = node.mods[0]
   if (!first) return
   const confirm = deletePackageConfirm.value

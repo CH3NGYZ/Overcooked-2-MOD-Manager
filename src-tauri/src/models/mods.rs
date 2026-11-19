@@ -62,6 +62,9 @@ pub struct InstalledMod {
     pub repository_id: Option<String>,
     #[serde(default)]
     pub repository_ids: Vec<String>,
+    /// Direct source identity evidence for this DLL, never inherited from the install package.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_identity_match: Option<RepositoryIdentityMatch>,
     /// 该 MOD 的安装清单是否由手动安装（本地文件 / 在线直链）创建。
     ///
     /// 手动安装的清单 id 是 `manual-<uuid>`，没有仓库也没有 Release 绑定。
@@ -79,6 +82,10 @@ pub struct InstalledMod {
     pub repository_binding: Option<ModRepositoryBinding>,
     #[serde(default)]
     pub package_id: Option<String>,
+    /// Display-only association with the canonical path of an installed core DLL.
+    /// A source declaration does not make this file part of an install manifest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundled_with_dll: Option<String>,
     #[serde(default)]
     pub package_name: Option<String>,
     /// 包名的多语言快照（与安装清单里的同名，供前端按语言现选）。
@@ -132,6 +139,13 @@ pub struct InstalledMod {
     pub load_warning: Option<String>,
     pub note: Option<String>,
     pub status: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RepositoryIdentityMatch {
+    Guid,
+    Metadata,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -51,13 +51,7 @@ const props = withDefaults(defineProps<{
   title: string
   /** 标题的悬停提示，缺省用 title 自己。 */
   titleTooltip?: string
-  /**
-   * 标题后面的版本号。
-   *
-   * 取值走安装清单的 `version`：后端 `effective_local_version` 已经在清单 tag
-   * 与本地 DLL 自报版本之间取较高者，所以本地 DLL 版本更高时界面会直接显示
-   * 它，前端不用再读一次 DLL。
-   */
+  /** 标题后面的版本号，由调用方传入已经格式化的显示值。 */
   version?: string
   /**
    * 标题后面的灰色标签：说明这张卡是「依赖」还是「随包插件」。
@@ -356,10 +350,6 @@ function onToggle(value: boolean) {
   align-items: center;
   gap: 6px;
   flex: 0 0 auto;
-}
-.card-version {
-  font-size: 12px;
-  color: var(--oc2-text-3);
 }
 .card-title {
   font-size: 13.5px;

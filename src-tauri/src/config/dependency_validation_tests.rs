@@ -29,6 +29,7 @@ fn base_export(relations: Vec<RepositoryRelation>) -> ModRepositoryExport {
         plugin_guid: String::new(),
         local_product_name: String::new(),
         local_original_filename: String::new(),
+        bundled_plugin_guids: Vec::new(),
         relations,
         release_relations: Vec::new(),
         version_regex: String::new(),

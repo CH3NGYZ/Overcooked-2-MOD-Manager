@@ -133,6 +133,13 @@ fn serialize_repository_bundle(bundle: &ModRepositoryBundle) -> Result<String, C
         }
         text.push_str("\n# 本地 MOD 识别绑定\n");
         append_toml_field(&mut text, "plugin_guid", &repo.plugin_guid)?;
+        if !repo.bundled_plugin_guids.is_empty() {
+            append_toml_field(
+                &mut text,
+                "bundled_plugin_guids",
+                &repo.bundled_plugin_guids,
+            )?;
+        }
         append_toml_field(&mut text, "local_product_name", &repo.local_product_name)?;
         append_toml_field(
             &mut text,
@@ -207,6 +214,7 @@ impl ConfigService {
                 note: repo.note.clone(),
                 note_i18n: repo.note_i18n.clone(),
                 plugin_guid: repo.plugin_guid.clone(),
+                bundled_plugin_guids: repo.bundled_plugin_guids.clone(),
                 local_product_name: repo.local_product_name.clone(),
                 local_original_filename: repo.local_original_filename.clone(),
                 relations: repo.relations.clone(),

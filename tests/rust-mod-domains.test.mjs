@@ -8,7 +8,7 @@ const read = path => readText(resolve(root, path))
 const owners = {
   metadata: ['read_dll_details', 'parse_bepin_plugin_metadata', 'read_serialized_string', 'placeholder_dll_details', 'choose_local_version'],
   scan: ['scan_mods_with_manifests', 'inspect_dll', 'annotate_package_counts'],
-  binding: ['repository_matches_mod', 'select_repository', 'inherit_repository_from_sibling'],
+  binding: ['repository_matches_mod', 'select_repository', 'inherit_repository_from_sibling', 'bind_declared_package_members'],
   status: ['collect_update_status', 'bound_release', 'effective_local_version', 'binding_update_state', 'repository_update_state', 'refresh_status_labels'],
   identity: ['compare_mod_versions', 'mark_duplicate_guids', 'is_safe_replacement_mod', 'note_key', 'same_plugin_identity'],
   relations: ['select_release_relations', 'effective_relations', 'effective_map_relations'],
@@ -39,7 +39,7 @@ test('MOD scan keeps the shared metadata batch and distinct local versus Release
   assert.match(scan, /read_metadata_batch\(&requests, workers,/)
   assert.match(assembly, /MetadataValue::version/)
   assert.doesNotMatch(assembly, /read_dll_details\(|parse_bepin_plugin_metadata\(/)
-  const order = ['annotate_package_counts(&mut installed)', 'inherit_repository_from_sibling(&mut installed)', 'mark_duplicate_guids(&mut installed, config)', 'refresh_status_labels(&mut installed)']
+  const order = ['annotate_package_counts(&mut installed)', 'inherit_repository_from_sibling(&mut installed)', 'bind_declared_package_members(config, &mut installed)', 'mark_duplicate_guids(&mut installed, config)', 'refresh_status_labels(&mut installed)']
   const positions = order.map(call => scan.indexOf(call))
   assert.ok(positions.every((position, i) => position >= 0 && (i === 0 || position > positions[i - 1])))
   for (const path of ['scan.rs', 'file_state.rs']) {

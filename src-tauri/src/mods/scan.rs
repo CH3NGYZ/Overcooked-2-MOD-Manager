@@ -1,4 +1,4 @@
-use super::binding::inherit_repository_from_sibling;
+use super::binding::{bind_declared_package_members, inherit_repository_from_sibling};
 use super::file_state::PLUGINS_DIR;
 use super::file_state::canonical_dll_file;
 use super::file_state::canonical_dll_name;
@@ -106,6 +106,7 @@ pub fn scan_mods_with_manifests(
         .collect::<Vec<_>>();
     annotate_package_counts(&mut installed);
     inherit_repository_from_sibling(&mut installed);
+    bind_declared_package_members(config, &mut installed);
     mark_duplicate_guids(&mut installed, config);
     // 更新判定只看「清单 tag vs 仓库 tag」；DLL 自报版本只参与抑制误报
     // （见 effective_local_version），不再有「DLL 版本低于清单就标记可更新」的二次扫描。
@@ -332,6 +333,12 @@ fn inspect_dll(
         });
     InstalledMod {
         repository_id: repository.map(|repo| repo.id.clone()),
+        repository_identity_match: super::binding::repository_identity_match(
+            repository,
+            guid.as_deref(),
+            product_name.as_deref(),
+            original_filename.as_deref(),
+        ),
         // 安装清单 id 以 manual- 开头 → 手动安装（本地文件 / 在线直链）。
         // 即使它成功绑定了在线仓库（repository_id 已变成仓库 id），
         // 这个标记仍保留原始安装来源，供前端在未匹配到仓库时归类。
@@ -344,6 +351,7 @@ fn inspect_dll(
         repository_ids,
         repository_binding: repository_binding.cloned(),
         package_id,
+        bundled_with_dll: None,
         package_name,
         package_name_i18n,
         package_mod_count: 0,

@@ -111,6 +111,9 @@ pub struct ModRepositoryConfig {
     pub source_id: Option<String>,
     #[serde(default)]
     pub plugin_guid: String,
+    /// BepInEx GUIDs of optional package members; this does not grant file ownership.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bundled_plugin_guids: Vec<String>,
     #[serde(default)]
     pub local_product_name: String,
     #[serde(default)]
@@ -228,6 +231,8 @@ pub struct ModRepositoryExport {
     pub file_path: String,
     #[serde(default)]
     pub plugin_guid: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bundled_plugin_guids: Vec<String>,
     #[serde(default)]
     pub local_product_name: String,
     #[serde(default)]
@@ -306,6 +311,9 @@ pub struct ModRepositoryPatch {
     #[serde(default)]
     pub note_i18n: Option<BTreeMap<String, String>>,
     pub plugin_guid: String,
+    /// Omission preserves the existing declaration; an explicit empty list clears it.
+    #[serde(default)]
+    pub bundled_plugin_guids: Option<Vec<String>>,
     #[serde(default)]
     pub local_product_name: String,
     #[serde(default)]

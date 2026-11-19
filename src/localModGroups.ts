@@ -1,4 +1,4 @@
-import { repositoryForMod } from './modStatus.ts'
+import { compareVersions, repositoryForMod } from './modStatus.ts'
 import {
   installedModTags,
   packageStatuses,
@@ -16,6 +16,8 @@ export interface ModPackageNode {
   mods: InstalledMod[]
   visibleMods: InstalledMod[]
   grouped: boolean
+  canRemovePackage: boolean
+  version?: string
   enabled: boolean
   partial: boolean
   statuses: PackageStatus[]
@@ -65,6 +67,22 @@ const TOGGLE_STATUS_KEYS = ['enabled', 'disabled'] as const
 const TOGGLE_STATUS_KEY_SET: ReadonlySet<string> = new Set(TOGGLE_STATUS_KEYS)
 const TAIL_GROUPS = new Set(['__unbound__', '__ungrouped__'])
 
+/** Show the installed release when it agrees with the identified core DLL. */
+function localPackageVersion(members: readonly InstalledMod[]): string | undefined {
+  const installedPackage = members.filter((mod) => !mod.bundled_with_dll)
+  const plugins = installedPackage.filter((mod) => !mod.is_dependency)
+  const guidMatches = plugins.filter((mod) => mod.repository_identity_match === 'guid')
+  const metadataMatches = plugins.filter((mod) => mod.repository_identity_match === 'metadata')
+  // Every DLL in a manifest shares the tag. A missing identity isn't evidence
+  // that its remaining member is the core (the real core may be missing).
+  const tags = new Set(installedPackage.map((mod) => mod.repository_binding?.tag.trim()).filter(Boolean))
+  const release = tags.size === 1 ? tags.values().next().value : undefined
+  const candidates = guidMatches.length ? guidMatches : metadataMatches.length ? metadataMatches : tags.size ? [] : plugins
+  const actual = candidates.length === 1 ? candidates[0].version?.trim() : undefined
+  if (!actual) return release
+  return release && compareVersions(release, actual) === 0 ? release : actual
+}
+
 /** Package identity is stable when search or status filtering changes. */
 export function packageKeyOf(mod: InstalledMod): string {
   return mod.package_id ? `pkg:${mod.package_id}` : `dll:${mod.dll_file}`
@@ -104,16 +122,22 @@ export function localModCategory(
  */
 export function buildLocalModGroups(options: LocalModGroupOptions): ModGroupNode[] {
   const { mods, repositories, matchedDllFiles, categoryTexts, pickI18n, displayTitle, actionFor } = options
+  const byDll = new Map(mods.map((mod) => [mod.dll_file, mod]))
+  const anchors = new Set<string>()
   const packagesByKey = new Map<string, InstalledMod[]>()
   for (const mod of mods) {
-    const key = packageKeyOf(mod)
+    const candidate = !mod.package_id && mod.bundled_with_dll ? byDll.get(mod.bundled_with_dll) : undefined
+    const core = candidate && candidate !== mod && !candidate.bundled_with_dll ? candidate : undefined
+    if (core) anchors.add(core.dll_file)
+    const key = packageKeyOf(core ?? mod)
     const members = packagesByKey.get(key)
     if (members) members.push(mod)
     else packagesByKey.set(key, [mod])
   }
 
   const representative = (members: readonly InstalledMod[]): InstalledMod =>
-    members.find((mod) => repositoryForMod(repositories, mod))
+    members.find((mod) => anchors.has(mod.dll_file))
+      ?? members.find((mod) => repositoryForMod(repositories, mod))
       ?? members.find((mod) => !mod.is_dependency)
       ?? members[0]
 
@@ -135,7 +159,8 @@ export function buildLocalModGroups(options: LocalModGroupOptions): ModGroupNode
 
   const toPackage = (key: string, members: InstalledMod[]): ModPackageNode => {
     const ordered = [...members].sort(
-      (left, right) => Number(!!left.is_dependency) - Number(!!right.is_dependency),
+      (left, right) => Number(anchors.has(right.dll_file)) - Number(anchors.has(left.dll_file))
+        || Number(!!left.is_dependency) - Number(!!right.is_dependency),
     )
     const enabledCount = ordered.filter((mod) => mod.enabled).length
     const statuses = packageStatuses(ordered)
@@ -147,6 +172,8 @@ export function buildLocalModGroups(options: LocalModGroupOptions): ModGroupNode
       mods: ordered,
       visibleMods: ordered.filter((mod) => matchedDllFiles === null || matchedDllFiles.has(mod.dll_file)),
       grouped: ordered.length >= 2,
+      canRemovePackage: ordered.every((mod) => !!mod.package_id && mod.package_id === ordered[0]?.package_id),
+      version: ordered.length >= 2 ? localPackageVersion(ordered) : undefined,
       enabled: enabledCount === ordered.length,
       partial: enabledCount > 0 && enabledCount < ordered.length,
       statuses,

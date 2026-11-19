@@ -1,5 +1,7 @@
 use super::*;
 
+mod declared_package;
+
 #[test]
 fn real_manifest_scan_keeps_dll_metadata_but_selects_owner_repository_tag_first() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -287,4 +289,79 @@ fn late_sources_rebind_scanned_dll_facts_without_reading_files_and_preserve_mani
         Some("arrived-source")
     );
     std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn shared_install_binding_does_not_identify_every_bundled_dll_as_core() {
+    use crate::models::RepositoryIdentityMatch;
+
+    let root = std::env::temp_dir().join(format!("oc2-package-core-{}", uuid::Uuid::new_v4()));
+    let files = [
+        (
+            "BepInEx/plugins/Web/Loader.dll",
+            "com.example.guid",
+            "3.10.2",
+        ),
+        (
+            "BepInEx/plugins/Web/DebugLog.dll",
+            "com.example.debuglog",
+            "99.0.0",
+        ),
+    ];
+    for (relative, guid, version) in files {
+        let path = root.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, plugin_blob(guid, guid, version)).unwrap();
+    }
+    let repo = binding_repository();
+    let mut manifest = crate::archive::new_manifest(
+        &repo.id,
+        "v4.0.0",
+        Default::default(),
+        Default::default(),
+        files.iter().map(|(name, _, _)| (*name).into()).collect(),
+        vec![],
+    );
+    manifest.repository_binding =
+        crate::models::ModRepositoryBinding::from_release(&repo, "v4.0.0");
+    let manifests = root.join("manifests");
+    crate::archive::write_manifest(&manifests, &manifest).unwrap();
+    let mut config = crate::mods::test_support::config(vec![repo]);
+    let mut installed = scan_mods_with_manifests(&root, &config, Some(&manifests));
+    let evidence = |installed: &[crate::models::InstalledMod]| {
+        installed
+            .iter()
+            .map(|mod_| (mod_.guid.clone().unwrap(), mod_.repository_identity_match))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    assert_eq!(installed.len(), 2);
+    for mod_ in &installed {
+        assert_eq!(
+            mod_.package_id.as_deref(),
+            Some(manifest.repository_id.as_str())
+        );
+        assert_eq!(mod_.repository_binding, manifest.repository_binding);
+        assert_eq!(mod_.repository_id, mod_.package_id);
+    }
+    let expected = [
+        ("com.example.debuglog".into(), None),
+        (
+            "com.example.guid".into(),
+            Some(RepositoryIdentityMatch::Guid),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(evidence(&installed), expected);
+    let repos = std::mem::take(&mut config.repositories);
+    super::super::binding::rebind_installed_mods(&config, &mut installed);
+    assert!(
+        installed
+            .iter()
+            .all(|mod_| mod_.repository_identity_match.is_none())
+    );
+    config.repositories = repos;
+    super::super::binding::rebind_installed_mods(&config, &mut installed);
+    assert_eq!(evidence(&installed), expected);
+    std::fs::remove_dir_all(root).unwrap();
 }

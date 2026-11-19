@@ -180,47 +180,20 @@ pub fn save_mod_repository(
         return Err("config.versionRegexInvalid".into());
     }
     let id = patch.id.unwrap_or_else(|| Uuid::new_v4().to_string());
-    let existing_translations = config
-        .repositories
-        .iter()
-        .find(|repo| repo.id == id)
-        .map(|repo| {
-            (
-                repo.name_i18n.clone(),
-                repo.note_i18n.clone(),
-                repo.source_id.clone(),
-                repo.group_i18n.clone(),
-            )
-        });
-    // 关系表单独取：上面的元组只装字符串映射，而 relations 是结构体列表
-    let existing_relations = config
-        .repositories
-        .iter()
-        .find(|repo| repo.id == id)
-        .map(|repo| repo.relations.clone())
-        .unwrap_or_default();
-    let existing_release_relations = config
-        .repositories
-        .iter()
-        .find(|repo| repo.id == id)
-        .map(|repo| repo.release_relations.clone())
-        .unwrap_or_default();
+    let existing = config.repositories.iter().find(|repo| repo.id == id);
     let mut name_i18n = patch.name_i18n.unwrap_or_else(|| {
-        existing_translations
-            .as_ref()
-            .map(|(name_i18n, _, _, _)| name_i18n.clone())
+        existing
+            .map(|repo| repo.name_i18n.clone())
             .unwrap_or_default()
     });
     let mut group_i18n = patch.group_i18n.unwrap_or_else(|| {
-        existing_translations
-            .as_ref()
-            .map(|(_, _, _, group_i18n)| group_i18n.clone())
+        existing
+            .map(|repo| repo.group_i18n.clone())
             .unwrap_or_default()
     });
     let mut note_i18n = patch.note_i18n.unwrap_or_else(|| {
-        existing_translations
-            .as_ref()
-            .map(|(_, note_i18n, _, _)| note_i18n.clone())
+        existing
+            .map(|repo| repo.note_i18n.clone())
             .unwrap_or_default()
     });
     if name_i18n
@@ -242,17 +215,21 @@ pub fn save_mod_repository(
         .ok_or_else(|| "config.repositoryNameEmpty".to_string())?;
     let group = group_i18n["zh-CN"].clone();
     let note = note_i18n["zh-CN"].clone();
+    let bundled_plugin_guids = patch.bundled_plugin_guids.unwrap_or_else(|| {
+        existing
+            .map(|repo| repo.bundled_plugin_guids.clone())
+            .unwrap_or_default()
+    });
+    crate::config::validate_bundled_plugin_guids(&name, &patch.plugin_guid, &bundled_plugin_guids)
+        .map_err(|error| error.to_string())?;
     let asset_rules = if patch.download_mode == ModDownloadMode::RepositoryFile {
         Vec::new()
     } else {
         patch.asset_rules
     };
     let mut item = ModRepositoryConfig {
-        network_plan: patch.network_plan.clone().unwrap_or_else(|| {
-            config
-                .repositories
-                .iter()
-                .find(|repo| repo.id == id)
+        network_plan: patch.network_plan.unwrap_or_else(|| {
+            existing
                 .map(|repo| repo.network_plan.clone())
                 .unwrap_or_default()
         }),
@@ -275,17 +252,22 @@ pub fn save_mod_repository(
         install_target: patch.install_target,
         note,
         note_i18n,
-        source_id: existing_translations
-            .as_ref()
-            .and_then(|(_, _, source_id, _)| source_id.clone()),
+        source_id: existing.and_then(|repo| repo.source_id.clone()),
         plugin_guid: patch.plugin_guid,
+        bundled_plugin_guids,
         local_product_name: patch.local_product_name,
         local_original_filename: patch.local_original_filename,
         // None = 本次编辑没提交关系表，保留原值
-        relations: patch.relations.unwrap_or(existing_relations),
-        release_relations: patch
-            .release_relations
-            .unwrap_or(existing_release_relations),
+        relations: patch.relations.unwrap_or_else(|| {
+            existing
+                .map(|repo| repo.relations.clone())
+                .unwrap_or_default()
+        }),
+        release_relations: patch.release_relations.unwrap_or_else(|| {
+            existing
+                .map(|repo| repo.release_relations.clone())
+                .unwrap_or_default()
+        }),
         version_regex: patch.version_regex,
         max_release_count: patch.max_release_count.clamp(1, 100),
         download_threads: patch.download_threads,

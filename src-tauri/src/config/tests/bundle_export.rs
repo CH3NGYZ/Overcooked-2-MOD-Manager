@@ -19,6 +19,62 @@ fn bundle_round_trip_is_toml() {
 }
 
 #[test]
+fn bundled_plugin_guids_roundtrip_and_refresh_without_changing_repository_identity() {
+    let service = ConfigService::for_test(std::env::temp_dir());
+    let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();
+    let parse_source = |text| {
+        crate::repository_sources::parse_document(text, &location, &Default::default())
+            .unwrap()
+            .repositories
+            .remove(0)
+    };
+    let original = parse_source(REGION_REPOSITORY);
+    assert!(original.bundled_plugin_guids.is_empty());
+    let updated = parse_source(&REGION_REPOSITORY.replace(
+        "enabled = true",
+        "enabled = true\nbundled_plugin_guids = [\"com.example.debug-log\", \"com.example.helper\"]",
+    ));
+    assert_eq!(
+        crate::config::export_key(&original),
+        crate::config::export_key(&updated)
+    );
+    let mut config = default_config();
+    let mut repository = mod_repository_from_export(&updated, "existing-id".into(), false);
+    repository.releases_cached_at = Some(123);
+    config.repositories.push(repository);
+
+    let exported = service.export_bundle(&config, None).unwrap();
+    let bundle = service.validate_bundle(&exported).unwrap();
+    assert_eq!(
+        bundle.repositories[0].bundled_plugin_guids,
+        ["com.example.debug-log", "com.example.helper"]
+    );
+    let mut restored = default_config();
+    service.import_bundle(&mut restored, &bundle, "overwrite");
+    assert_eq!(
+        restored.repositories[0].bundled_plugin_guids,
+        updated.bundled_plugin_guids
+    );
+
+    let mut old_declaration = bundle.clone();
+    old_declaration.repositories[0] = original;
+    service.import_bundle(&mut config, &old_declaration, "overwrite");
+    assert_eq!(config.repositories.len(), 1);
+    assert_eq!(config.repositories[0].id, "existing-id");
+    assert_eq!(config.repositories[0].releases_cached_at, Some(123));
+    assert!(config.repositories[0].bundled_plugin_guids.is_empty());
+    let exported_without_list = service.export_bundle(&config, None).unwrap();
+    assert!(!exported_without_list.contains("bundled_plugin_guids"));
+    service.import_bundle(&mut config, &bundle, "overwrite");
+    assert_eq!(config.repositories[0].id, "existing-id");
+    assert_eq!(config.repositories[0].releases_cached_at, Some(123));
+    assert_eq!(
+        config.repositories[0].bundled_plugin_guids,
+        updated.bundled_plugin_guids
+    );
+}
+
+#[test]
 fn platform_prerelease_verdicts_roundtrip_without_changing_repository_identity() {
     let service = ConfigService::for_test(std::env::temp_dir());
     let location = crate::repository_sources::SourceLocation::parse("index.toml").unwrap();

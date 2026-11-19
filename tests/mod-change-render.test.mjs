@@ -183,32 +183,38 @@ test('a manual map selection remains visible by name and version when no action 
 
 test('blocked plans show tried versions and actual failures without exposing any plan action or runtime check', async t => {
   const root = mounted(t)
-  const prerequisite = { node_id: 'level', version: '0.11.1', enabled: true }
-  const web = { owner_id: 'web', owner_version: 'v4.0.0', relation: { guid: 'dev.gua.overcooked.diylevel', version: '>=0.11,<0.12' },
-    targets: [prerequisite], state: 'satisfied', reason: 'relation_satisfied' }
-  const fix = { owner_id: 'level', owner_version: 'v0.11.1', relation: { guid: 'com.example.multipart', version: '>=0.2.3', prerelease: false }, targets: [],
+  const web = version => ({ owner_id: 'web', owner_version: 'v4.0.0', relation: { guid: 'dev.gua.overcooked.diylevel', version: '>=0.11,<0.12' },
+    targets: [{ node_id: 'level', version, enabled: true }], state: 'satisfied', reason: 'relation_satisfied' })
+  const fix = { owner_id: 'level', owner_version: '0.11.1', relation: { guid: 'com.example.fastinit', version: '>=1.9.6', prerelease: false }, targets: [],
     state: 'missing', reason: 'required_plugin_missing' }
+  const versionMismatch = { ...fix, owner_version: '0.11.0', targets: [{ node_id: 'old-fix-id', version: '1.6.4', enabled: true }],
+    state: 'version_mismatch', reason: 'required_version_mismatch' }
+  const ownership = { ...versionMismatch, targets: [...versionMismatch.targets, { node_id: 'older-fix-id', version: '1.3.0', enabled: true }],
+    reason: 'modChanges.multipleInstalledCopies' }
   fixture.execution.set(changeStatusKey('level'), 'applied')
   fixture.state.value = { phase: 'reconfirming', plan: { ...plan, status: 'incomplete',
     roots: [{ node_id: 'web', label: 'Web 前置', tag: 'v4.0.0' }], blockers: [
-      { code: 'relation_has_no_solution', traces: [[web, fix], [web, { ...fix, targets: [{ node_id: 'old-fix-id', version: '0.2.2', enabled: true }],
-        state: 'version_mismatch', reason: 'required_version_mismatch' }],
-      [{ ...fix, owner_id: 'web', owner_version: 'v4.0.0', relation: undefined, state: 'unknown', reason: 'candidate_relations_unknown' }]], traces_truncated: true },
+      { code: 'relation_has_no_solution', traces: [[web('0.11.1'), fix], [web('0.11.0'), versionMismatch], [web('0.11.0'), ownership],
+      [{ ...fix, owner_id: 'independent', owner_version: '2.0', relation: undefined, state: 'unknown', reason: 'candidate_relations_unknown' }]], traces_truncated: true },
       { code: 'search_exhausted', owner_id: 'web' },
     ] }, error: null }
   await nextTick()
   const rows = bodyRows(root)
   assert.deepEqual(rows.map(row => [text(cells(row)[0]), text(cells(row)[2]), text(cells(row)[3]), stage(row)]), [
-    ['', 'Web 前置', 'v4.0.0', undefined], ['', 'DIYLevel 框架', '0.11.1', undefined], ['', 'com.example.multipart', '—', 'blocked'],
-    ['', 'Web 前置', 'v4.0.0', undefined], ['', 'DIYLevel 框架', '0.11.1', undefined], ['', 'com.example.multipart', '0.2.2', 'blocked'],
-    ['', 'Web 前置', 'v4.0.0', 'blocked'],
+    ['', 'Web 前置', 'v4.0.0', undefined], ['', 'DIYLevel 框架', '0.11.1', undefined], ['', 'com.example.fastinit', '—', 'blocked'],
+    ['', 'DIYLevel 框架', '0.11.0', undefined], ['', 'com.example.fastinit', '1.6.4', 'blocked'], ['', 'com.example.fastinit', '', 'blocked'],
+    ['', '未命名项目', '2.0', 'blocked'],
   ])
   assert.match(text(rows[0]), /路径 1.*所选目标/)
-  assert.match(text(rows[1]), /Web 前置 \(v4\.0\.0\) 依赖此项.*要求 >=0\.11,<0\.12/)
-  assert.match(text(rows[2]), /DIYLevel 框架 \(v0\.11\.1\) 依赖此项.*要求 >=0\.2\.3.*仅正式版.*缺少依赖/)
-  assert.deepEqual(rows.flatMap(statuses).map(status => [status.props.role, status.props['aria-label']]), [
-    ['img', '无法继续：缺少依赖'], ['img', '无法继续：版本不符'], ['img', '无法继续：缺少确认所需的版本或关系元数据。'],
-  ])
+  assert.match(text(rows[1]), /路径 1\.1.*Web 前置 \(v4\.0\.0\) 依赖此项.*要求 >=0\.11,<0\.12/)
+  assert.match(text(rows[2]), /DIYLevel 框架 \(0\.11\.1\) 依赖此项.*要求 >=1\.9\.6.*仅正式版.*缺少依赖/)
+  assert.match(text(rows[3]), /路径 1\.2/)
+  assert.match(text(rows[5]), /路径 1\.2\.2.*1\.6\.4.*1\.3\.0.*对应多个已安装副本/)
+  assert.deepEqual(rows.map(row => row.props['data-diagnostic-depth']), [undefined, 1, 2, 1, 2, 2, undefined])
+  const failures = rows.flatMap(statuses)
+  assert.ok(failures.every(status => status.props.role === 'img'))
+  assert.match(failures.map(status => status.props['aria-label']).join('\n'),
+    /^无法继续：缺少依赖\n无法继续：版本不符\n无法继续：这个仓库对应多个已安装副本[^\n]+\n无法继续：缺少确认所需的版本或关系元数据。$/)
   assert.match(text(root), /不会执行任何操作.*还有未展示的依赖路径/)
   assert.match(text(root), /安全搜索范围/)
   assert.doesNotMatch(text(root), /relation_has_no_solution|请确认完整变更列表|请重新确认完整列表|old-fix-id/)

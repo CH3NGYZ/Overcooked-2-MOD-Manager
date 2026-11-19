@@ -53,48 +53,94 @@ interface ChangePlanDetailRow {
   version?: ReturnType<typeof versionPair>
   preparationStage?: ChangePreparationItem['stage']
   diagnostic?: {
-    path?: number
+    start?: boolean
+    path?: string
+    depth?: number
     edge?: { step: DeepReadonly<DiagnosticStep>; ownerLabel?: string }
     terminal?: DeepReadonly<DiagnosticStep>
     providers?: { label: string; version?: string | null; enabled: boolean }[]
   }
 }
 
+type FailureStep = DeepReadonly<DiagnosticStep>
+interface DiagnosticBranch {
+  step: FailureStep
+  terminal: boolean
+  children: Map<string, DiagnosticBranch>
+}
+
+function diagnosticEdgeKey({ owner_id, owner_version, relation, targets, state, reason }: FailureStep) {
+  return JSON.stringify([owner_id, owner_version ?? null, state, reason,
+    relation ? [relation.kind, relation.guid, relation.version, relation.prerelease, relation.optional] : null,
+    targets.map(({ node_id, version, enabled }) => [node_id, version ?? null, enabled]),
+  ])
+}
+
 function diagnosticDetails(plan: DeepReadonly<ChangePlan>, labels: ReadonlyMap<string, string>) {
-  const paths = plan.blockers.flatMap(blocker => blocker.traces?.filter(trace => trace.length) ?? [])
-  const selected = new Set<string>()
-  const diagnosticRows = paths.flatMap((path, index) => {
-    const first = path[0]!
-    const root = plan.roots.find(root => root.node_id === first.owner_id)
-    const ownerVersion = first.owner_version || root?.tag
-    // The exact Release can declare a different DLL version. Keep the user's
-    // selected tag as its own row when the path evaluated a different version.
-    const sameVersion = root && (!root.tag || root.tag === ownerVersion)
-    if (sameVersion) selected.add(first.owner_id)
-    const start: ChangePlanDetailRow = {
-      key: `path:${index}`, nodeId: first.owner_id, label: labels.get(first.owner_id), selected: !!sameVersion,
-      version: versionPair(undefined, ownerVersion), diagnostic: { path: index + 1 },
+  const starts = new Map<string, { step: FailureStep; children: Map<string, DiagnosticBranch> }>()
+  let witness = 0
+  for (const blocker of plan.blockers) {
+    for (const trace of blocker.traces ?? []) {
+      const first = trace[0]
+      if (!first) continue
+      const key = JSON.stringify([first.owner_id, first.owner_version ?? null])
+      let start = starts.get(key)
+      if (!start) starts.set(key, start = { step: first, children: new Map() })
+      let siblings = start.children
+      trace.forEach((step, index) => {
+        const terminal = index === trace.length - 1
+        // Merge evidence only inside the same prefix. A terminal witness must
+        // still get its own cross, even if another witness continues here.
+        const edgeKey = terminal ? `terminal:${witness}` : diagnosticEdgeKey(step)
+        let branch = siblings.get(edgeKey)
+        if (!branch) siblings.set(edgeKey, branch = { step, terminal, children: new Map() })
+        siblings = branch.children
+      })
+      witness++
     }
-    const rows = first.relation ? [start] : []
-    path.forEach((step, stepIndex) => {
-      const terminal = stepIndex === path.length - 1 ? step : undefined
-      const key = `path:${index}:${stepIndex}`
+  }
+
+  const selected = new Set<DeepReadonly<ChangePlan['roots'][number]>>()
+  const diagnosticRows: ChangePlanDetailRow[] = []
+  function appendBranches(children: Map<string, DiagnosticBranch>, parentKey: string, path: string, depth: number) {
+    let position = 0
+    for (const branch of children.values()) {
+      const { step } = branch
+      const terminal = branch.terminal ? step : undefined
+      const key = `${parentKey}:${++position}`
+      const branchPath = children.size > 1 ? `${path}.${position}` : path
+      const diagnostic = { depth, path: children.size > 1 ? branchPath : undefined, terminal }
       if (!step.relation) {
-        rows.push({ ...start, key, nodeId: step.owner_id, label: labels.get(step.owner_id), selected: stepIndex === 0 && !!sameVersion,
-          version: versionPair(undefined, step.owner_version || (stepIndex === 0 ? ownerVersion : undefined)),
-          diagnostic: { path: stepIndex === 0 ? index + 1 : undefined, terminal } })
-        return
+        diagnosticRows.push({ key, nodeId: step.owner_id, label: labels.get(step.owner_id),
+          version: versionPair(undefined, step.owner_version), diagnostic })
+      } else {
+        const { guid } = step.relation
+        const providers = step.targets.map(target => ({ label: labels.get(target.node_id) ?? guid, version: target.version, enabled: target.enabled }))
+        const only = providers.length === 1 ? providers[0] : undefined
+        diagnosticRows.push({ key, nodeId: only ? step.targets[0]!.node_id : step.owner_id, label: only?.label ?? guid,
+          version: versionPair(undefined, only?.version), diagnostic: { ...diagnostic, edge: { step, ownerLabel: labels.get(step.owner_id) }, providers } })
       }
-      const { guid } = step.relation
-      const providers = step.targets.map(target => ({ label: labels.get(target.node_id) ?? guid, version: target.version, enabled: target.enabled }))
-      const only = providers.length === 1 ? providers[0] : undefined
-      rows.push({ key, nodeId: only ? step.targets[0]!.node_id : step.owner_id, label: only?.label ?? guid,
-        version: versionPair(undefined, only?.version), diagnostic: { edge: { step, ownerLabel: labels.get(step.owner_id) }, terminal, providers } })
-    })
-    return rows
-  })
-  const roots: ChangePlanDetailRow[] = plan.roots.filter(root => !selected.has(root.node_id)).map(root => ({
-    key: `selected:${root.node_id}`, nodeId: root.node_id, label: root.label, version: versionPair(undefined, root.tag), selected: true,
+      appendBranches(branch.children, key, branchPath, depth + 1)
+    }
+  }
+
+  let startNumber = 0
+  for (const { step: first, children } of starts.values()) {
+    const matchingRoots = plan.roots.filter(root => root.node_id === first.owner_id)
+    const ownerVersion = first.owner_version || matchingRoots[0]?.tag
+    // The exact Release can declare a different DLL version. Keep its selected
+    // tag visible as a separate row when no evaluated start has that version.
+    const coveredRoots = matchingRoots.filter(root => !root.tag || root.tag === ownerVersion)
+    coveredRoots.forEach(root => selected.add(root))
+    const path = String(++startNumber)
+    const key = `path:${path}`
+    const standalone = children.size === 1 && !first.relation && [...children.values()][0]?.terminal
+    diagnosticRows.push({ key, nodeId: first.owner_id, label: labels.get(first.owner_id), selected: !!coveredRoots.length,
+      version: versionPair(undefined, ownerVersion), diagnostic: { start: true, path, terminal: standalone ? first : undefined } })
+    if (!standalone) appendBranches(children, key, path, 1)
+  }
+  const roots: ChangePlanDetailRow[] = plan.roots.flatMap((root, index) => selected.has(root) ? [] : ({
+    key: `selected:${index}`, nodeId: root.node_id, label: root.label, version: versionPair(undefined, root.tag), selected: true,
   }))
   return { rows: [...roots, ...diagnosticRows] }
 }

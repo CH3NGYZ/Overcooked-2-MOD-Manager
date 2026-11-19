@@ -91,7 +91,55 @@ test('a rejected Release keeps the selected tag distinct from the DLL version ac
       state: 'missing', reason: 'required_plugin_missing' }]] }],
   })
   assert.deepEqual(rows.map(row => [row.version?.to, row.selected, row.diagnostic?.path]), [
-    ['v4.0.0', true, undefined], ['3.10.2', false, 1], [undefined, undefined, undefined],
+    ['v4.0.0', true, undefined], ['3.10.2', false, '1'], [undefined, undefined, undefined],
+  ])
+})
+
+const diagnosticEdge = (owner_id, owner_version, guid, version, targets, state = 'satisfied') => ({
+  owner_id, owner_version, relation: { kind: 'requires', guid, version }, targets, state, reason: state,
+})
+const provider = (node_id, version, enabled = true) => ({ node_id, version, enabled })
+
+test('failed paths share their exact common prefix but retain both DIYLevel versions and distinct starts', () => {
+  const entry = diagnosticEdge('web', 'v4.0.0', 'runtime', '>=4', [provider('runtime', '4.1')])
+  const level = version => diagnosticEdge('runtime', '4.1', 'diylevel', '>=0.11', [provider('level', version)])
+  const fast = version => diagnosticEdge('level', version, 'fastinit', '>=1.9', [provider('old', '1.6.4')], 'version_mismatch')
+  const reverse = diagnosticEdge('guard', '1.0', 'web', '<4', [provider('web', 'v4.0.0')], 'conflict')
+  const missing = diagnosticEdge('level', '0.11.0', 'missing', '>=2', [], 'missing')
+  const { rows } = changePlanDetails({ ...plan, status: 'unsatisfiable',
+    roots: [{ node_id: 'web', label: 'Web', tag: 'v4.0.0' }], blockers: [
+      { traces: [[entry, level('0.11.0'), fast('0.11.0')], [reverse]] },
+      { traces: [[{ ...entry, relation: { ...entry.relation } }, level('0.11.1'), fast('0.11.1')],
+        [entry, level('0.11.0'), missing], [{ ...entry, owner_version: 'v3.10.2' }, level('0.11.0'), fast('0.11.0')]] },
+    ] })
+  assert.deepEqual(rows.map(row => [row.nodeId, row.version?.to, row.diagnostic?.path, row.diagnostic?.depth, row.diagnostic?.terminal?.state]), [
+    ['web', 'v4.0.0', '1', undefined, undefined],
+    ['runtime', '4.1', undefined, 1, undefined],
+    ['level', '0.11.0', '1.1', 2, undefined],
+    ['old', '1.6.4', '1.1.1', 3, 'version_mismatch'], ['level', undefined, '1.1.2', 3, 'missing'],
+    ['level', '0.11.1', '1.2', 2, undefined],
+    ['old', '1.6.4', undefined, 3, 'version_mismatch'],
+    ['guard', '1.0', '2', undefined, undefined],
+    ['web', 'v4.0.0', undefined, 1, 'conflict'],
+    ['web', 'v3.10.2', '3', undefined, undefined],
+    ['runtime', '4.1', undefined, 1, undefined],
+    ['level', '0.11.0', undefined, 2, undefined],
+    ['old', '1.6.4', undefined, 3, 'version_mismatch'],
+  ])
+  assert.deepEqual(rows.filter(row => row.selected).map(row => row.version?.to), ['v4.0.0'])
+})
+
+test('a terminal and a continuing prefix stay separate even when their evidence is otherwise identical', () => {
+  const edge = diagnosticEdge('web', 'v4.0.0', 'diylevel', '>=0.11', [provider('level', '0.11.0')])
+  const unknown = { owner_id: 'level', owner_version: '0.11.0', targets: [], state: 'unknown', reason: 'candidate_relations_unknown' }
+  const differentRange = { ...edge, relation: { ...edge.relation, version: '>=0.11.0,<0.12' } }
+  const { rows } = changePlanDetails({ ...plan, status: 'incomplete', blockers: [
+    { traces: [[edge], [edge, unknown], [differentRange, unknown]] },
+  ] })
+  assert.deepEqual(rows.map(row => [row.diagnostic?.path, row.diagnostic?.edge?.step.relation.version, row.diagnostic?.terminal?.reason]), [
+    ['1', undefined, undefined], ['1.1', '>=0.11', 'satisfied'],
+    ['1.2', '>=0.11', undefined], [undefined, undefined, 'candidate_relations_unknown'],
+    ['1.3', '>=0.11.0,<0.12', undefined], [undefined, undefined, 'candidate_relations_unknown'],
   ])
 })
 

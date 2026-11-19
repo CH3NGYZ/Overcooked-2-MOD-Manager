@@ -42,6 +42,7 @@ const rows = computed(() => details.value.rows.map(row => {
 function diagnosticReason({ state, reason, relation }: DeepReadonly<DiagnosticStep>) {
   if (reason === 'candidate_relations_unknown') return changeReasonText(reason)
   if (reason === 'duplicate_enabled_providers') return t('modChanges.diagnostic.duplicateProviders')
+  if (reason === 'modChanges.multipleInstalledCopies') return t('modChanges.multipleInstalledCopies')
   switch (state) {
     case 'missing': return t('modsOnline.missingDependency')
     case 'disabled': return t('modChanges.relation.disabled')
@@ -94,8 +95,8 @@ function describeCondition(reason: Reason) {
       </tr>
     </thead>
     <tbody>
-      <tr v-for="row in rows" :key="row.key" :class="{ 'is-child': row.bundled || row.retired, 'diagnostic-start': row.diagnostic?.path }"
-        :data-diagnostic-path="row.diagnostic?.path"
+      <tr v-for="row in rows" :key="row.key" :class="{ 'is-child': row.bundled || row.retired, 'diagnostic-start': row.diagnostic?.start }"
+        :data-diagnostic-path="row.diagnostic?.path" :data-diagnostic-depth="row.diagnostic?.depth"
         :data-change-node="row.bundled || row.retired ? undefined : row.nodeId"
         :data-change-parent="row.bundled || row.retired ? row.nodeId : undefined" :data-change-retired="row.retired">
         <td class="details-operation">
@@ -109,7 +110,7 @@ function describeCondition(reason: Reason) {
             <CheckmarkOutline v-else width="16" height="16" aria-hidden="true" />
           </span>
         </td>
-        <th scope="row" class="details-item">
+        <th scope="row" class="details-item" :style="row.diagnostic?.depth ? { '--diagnostic-indent': `${Math.min(row.diagnostic.depth, 4) * 9}px` } : undefined">
           <span v-if="row.retired" class="details-member" :title="row.member?.path">{{ row.label || t('modChanges.unnamedItem') }}</span>
           <strong v-else-if="!row.bundled">{{ row.label || t('modChanges.unnamedItem') }}</strong>
           <span v-if="row.memberOnly || row.bundled" class="details-member" :title="row.member?.path">{{ row.member?.name || t('modChanges.unnamedPlugin') }}</span>
@@ -117,7 +118,7 @@ function describeCondition(reason: Reason) {
         <td class="details-version">{{ row.version ? `${row.version.from ? `${row.version.from} → ` : ''}${row.version.to || '—'}` : row.diagnostic?.edge && !row.diagnostic.providers?.length ? '—' : '' }}</td>
         <td class="details-reason">
           <template v-if="row.diagnostic">
-            <strong v-if="row.diagnostic.path">{{ t('modChanges.diagnostic.path', { number: row.diagnostic.path }) }}<template v-if="row.selected"> · {{ t('modChanges.detailsSelection') }}</template></strong>
+            <strong v-if="row.diagnostic.path" class="diagnostic-path">{{ t('modChanges.diagnostic.path', { number: row.diagnostic.path }) }}<template v-if="row.selected"> · {{ t('modChanges.detailsSelection') }}</template></strong>
             <template v-if="row.diagnostic.edge">
               {{ diagnosticRelation(row.diagnostic.edge) }}
               <span v-if="diagnosticCondition(row.diagnostic.edge)" class="reason-condition"> · {{ diagnosticCondition(row.diagnostic.edge) }}</span>
@@ -170,7 +171,9 @@ function describeCondition(reason: Reason) {
 .row-status-icon:is([data-change-stage='failed'], [data-change-stage='preparationFailed'], [data-change-stage='blocked']), .diagnostic-blocked { color: var(--oc2-danger, #e5484d); }
 .diagnostic-blocked { display: block; margin-top: 3px; }
 .diagnostic-start th, .diagnostic-start td { background: var(--oc2-sunken); }
+.diagnostic-path { display: block; }
 .details-table:has(.diagnostic-start) :is(th, td) { padding-block: 5px; }
+.details-table [data-diagnostic-depth] .details-item { padding-inline-start: calc(12px + var(--diagnostic-indent)); }
 .details-table:has(.diagnostic-start) .details-version { width: 12%; }
 .details-table:has(.diagnostic-start) .details-reason { width: 44%; }
 .details-secondary, .reason-condition { color: var(--oc2-text-2); }

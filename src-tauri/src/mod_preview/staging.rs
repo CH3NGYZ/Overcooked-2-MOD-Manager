@@ -65,13 +65,7 @@ fn stage_file(
     place: impl FnOnce(&Path, &Path) -> Result<(), String>,
 ) -> Result<(), String> {
     let name = &preview.file_name;
-    if name.trim().is_empty()
-        || name == "."
-        || name == ".."
-        || name.contains(['/', '\\', ':', '\0'])
-    {
-        return Err("source.fileNameUnsafe".into());
-    }
+    crate::archive::validate_asset_file_name(name)?;
     let root = preview_root(state);
     fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     let dir = tempfile::Builder::new()
@@ -110,7 +104,7 @@ fn write_origin_record(dir: &Path, record: &PreviewOriginRecord) -> Result<(), S
 ///
 /// 仓库安装流程的下载段包含代理选择与多源竞速，不适合在预览里重写一遍，
 /// 所以由 `install_mod_repository` 在 `preview_only` 模式下先完成下载，
-/// 再把临时文件交给这里解析。链式计划按同一预览 id 校验、准备与提交。
+/// 再把临时文件交给这里解析。整链准备直接使用下载产物，不创建展示预览。
 pub(crate) fn stage_downloaded_file(
     state: &AppState,
     source: DownloadedRelease,

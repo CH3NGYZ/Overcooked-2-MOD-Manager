@@ -221,6 +221,10 @@ impl Server {
             thread: Some(thread),
         }
     }
+
+    pub(crate) fn request_count(&self) -> usize {
+        self.calls.load(Ordering::Relaxed)
+    }
 }
 impl Drop for Server {
     fn drop(&mut self) {

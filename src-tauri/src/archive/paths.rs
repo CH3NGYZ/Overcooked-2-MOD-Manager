@@ -1,6 +1,18 @@
 use std::fs;
 use std::path::Path;
 
+/// Asset names are leaf names, even when the download is still a UUID temp file.
+pub(crate) fn validate_asset_file_name(name: &str) -> Result<(), String> {
+    if name.trim().is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains(['/', '\\', ':', '\0'])
+    {
+        return Err("source.fileNameUnsafe".into());
+    }
+    Ok(())
+}
+
 pub fn prune_empty_parent_dirs(game_root: &Path, path: &Path) -> Result<(), String> {
     log::trace!("清理空 MOD 目录：起点={}", path.display());
     let root = fs::canonicalize(game_root).unwrap_or_else(|_| game_root.to_path_buf());

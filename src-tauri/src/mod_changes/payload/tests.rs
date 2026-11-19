@@ -160,7 +160,7 @@ fn manifest_keeps_original_package_identity_and_real_disabled_paths() {
         "fixture",
         &candidate(vec![]),
         None,
-        "preview",
+        &SourceOrigin::Manual("preview"),
         "Primary.dll",
         files.clone(),
         vec![],

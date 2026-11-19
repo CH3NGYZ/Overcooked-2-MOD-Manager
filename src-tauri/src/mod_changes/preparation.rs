@@ -3,23 +3,24 @@ use super::progress::{
     ChangePreparationProgress, PreparationOutcome, PreparationReporter, PreparationStage,
 };
 use super::{inventory, model::*, planning, session::*, transaction::*};
-use crate::{app_state::AppState, archive, game};
+use crate::{
+    app_state::AppState,
+    archive, game,
+    mods::repository_download::{RepositoryDownloadRequest, download_repository_asset},
+};
 use std::collections::HashMap;
-use tauri::AppHandle;
 
 pub(crate) async fn prepare(
-    app: AppHandle,
     state: AppState,
     id: String,
     report: impl Fn(ChangePreparationProgress) + Send + Sync + 'static,
 ) -> PreparationOutcome {
     let progress = PreparationReporter::new(id.clone(), report);
-    let outcome = prepare_inner(app, state, id, &progress).await;
+    let outcome = prepare_inner(state, id, &progress).await;
     progress.finish(outcome)
 }
 
 async fn prepare_inner(
-    app: AppHandle,
     state: AppState,
     id: String,
     progress: &PreparationReporter,
@@ -118,7 +119,7 @@ async fn prepare_inner(
         }
         let repository_id = candidate
             .source_id
-            .clone()
+            .as_deref()
             .ok_or("modChanges.missingMetadata")?;
         let asset_name = session
             .wire_request
@@ -130,25 +131,21 @@ async fn prepare_inner(
         let reporter = progress.clone();
         let download_node = node_id.clone();
         let download_candidate = candidate.id.clone();
-        let outcome = archive::observe_download_progress(
+        let download = archive::observe_download_progress(
             move |download| reporter.download(&download_node, &download_candidate, download),
-            crate::mods::repository_download::run_repository_install(
-                app.clone(),
-                state.clone(),
-                repository_id,
-                candidate.tag.clone(),
-                asset_name.clone(),
+            download_repository_asset(
                 None,
-                None,
-                Some(true),
-                None,
-                false,
+                &state,
+                RepositoryDownloadRequest {
+                    repository_id,
+                    tag: candidate.tag.as_deref(),
+                    asset_name: asset_name.as_deref(),
+                    ..Default::default()
+                },
             ),
         )
         .await?;
         progress.stage(PreparationStage::Verifying, Some(&node_id));
-        let preview = outcome.preview.ok_or("archive.noInstallableContent")?;
-        let split_proof = outcome.split_proof;
         let extract_state = state.clone();
         let trusted = session.trusted.clone();
         let target = session
@@ -156,14 +153,13 @@ async fn prepare_inner(
             .join(format!("asset-{}", uuid::Uuid::new_v4()));
         let extract_node = node_id.clone();
         let payload = tauri::async_runtime::spawn_blocking(move || {
-            super::payload::from_preview(
+            super::payload::from_downloaded(
                 &extract_state,
                 &trusted,
-                &preview.preview_id,
+                download,
                 &extract_node,
                 &candidate,
                 asset_name.as_deref(),
-                split_proof.as_ref(),
                 &target,
             )
         })

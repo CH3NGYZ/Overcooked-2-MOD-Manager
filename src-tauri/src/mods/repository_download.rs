@@ -1,8 +1,9 @@
-//! Repository asset download and preview staging shared by plan preparation.
+//! Repository asset downloads shared by whole-chain preparation and the legacy preview IPC.
 use crate::{
     app_state::AppState,
-    archive, game,
-    models::{ModDownloadMode, ProxyMode},
+    archive::{self, release_download::DownloadedRelease},
+    game,
+    models::{ModDownloadMode, ProxyMode, ReleaseAsset},
     releases,
 };
 use std::path::PathBuf;
@@ -17,27 +18,81 @@ pub struct ModRepositoryInstallOutcome {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview: Option<crate::mod_preview::ModPreview>,
-    #[serde(skip)]
-    pub(crate) split_proof: Option<archive::release_download::SplitZipProof>,
 }
 
-/// Existing transport and preview path, shared by single downloads and whole-chain preparation.
-/// A batch resets cancellation once, never between its individual downloads.
+#[derive(Default)]
+pub(crate) struct RepositoryDownloadRequest<'a> {
+    pub(crate) repository_id: &'a str,
+    pub(crate) tag: Option<&'a str>,
+    pub(crate) asset_name: Option<&'a str>,
+    pub(crate) asset_proxy_mode: Option<ProxyMode>,
+    pub(crate) asset_proxy_id: Option<&'a str>,
+    pub(crate) locale: Option<&'a str>,
+}
+
+pub(crate) struct RepositoryAssetDownload {
+    pub(crate) file: DownloadedRelease,
+    pub(crate) file_name: String,
+    pub(crate) repository_id: String,
+    pub(crate) release_tag: String,
+    pub(crate) prerelease: bool,
+    repository_name: String,
+    display_name: String,
+    release_body: String,
+}
+
 pub(crate) async fn run_repository_install(
     app: AppHandle,
     state: AppState,
-    repository_id: String,
-    tag: Option<String>,
-    asset_name: Option<String>,
-    asset_proxy_mode: Option<ProxyMode>,
-    asset_proxy_id: Option<String>,
+    request: RepositoryDownloadRequest<'_>,
     preview_only: Option<bool>,
-    locale: Option<String>,
-    reset_download: bool,
 ) -> Result<ModRepositoryInstallOutcome, String> {
     if preview_only != Some(true) {
         return crate::mod_changes::guard::require_shared_plan();
     }
+    archive::start_download();
+    let download = download_repository_asset(Some(&app), &state, request).await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let preview = crate::mod_preview::stage_downloaded_file(
+            &state,
+            download.file,
+            &download.file_name,
+            &download.repository_id,
+            &download.display_name,
+            &download.release_tag,
+            &download.release_body,
+            download.prerelease,
+        )?;
+        let name = &download.repository_name;
+        log::info!(
+            "仓库资产已下载并解析（预览模式）：仓库={name}，DLL 数={}",
+            preview.total_dlls
+        );
+        Ok(ModRepositoryInstallOutcome {
+            ok: true,
+            message: crate::locale_tag::with_params("mods.ready", &[("name", name)]),
+            preview: Some(preview),
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Select from the current repository snapshot and return the owned artifact.
+/// The caller controls cancellation reset; this never creates a display preview.
+pub(crate) async fn download_repository_asset(
+    app: Option<&AppHandle>,
+    state: &AppState,
+    request: RepositoryDownloadRequest<'_>,
+) -> Result<RepositoryAssetDownload, String> {
+    let RepositoryDownloadRequest {
+        repository_id,
+        tag,
+        asset_name,
+        asset_proxy_mode,
+        asset_proxy_id,
+        locale,
+    } = request;
     let snapshot = state.config.load_or_default();
     let policy = snapshot
         .network_policy
@@ -45,16 +100,11 @@ pub(crate) async fn run_repository_install(
         .map(Ok)
         .unwrap_or_else(|| crate::network_policy::NetworkPolicy::active())?;
     crate::network_policy::NetworkPolicy::in_snapshot(policy, async {
-        // The UI can cancel while we prepare metadata. Reset once at command
-        // entry, never after that wait or while switching download candidates.
-        if reset_download {
-            archive::start_download();
-        }
         log::info!(
             "开始安装在线 MOD：仓库={}，指定版本={}，指定资产={}，代理模式={:?}",
             repository_id,
-            tag.as_deref().unwrap_or("自动选择"),
-            asset_name.as_deref().unwrap_or("自动匹配"),
+            tag.unwrap_or("自动选择"),
+            asset_name.unwrap_or("自动匹配"),
             asset_proxy_mode
         );
         // Keep region, credentials and network policy from the same entry snapshot.
@@ -69,10 +119,9 @@ pub(crate) async fn run_repository_install(
             .repositories
             .iter()
             .find(|repo| repo.id == repository_id)
-            .ok_or("source.repositoryMissing")?
-            .clone();
+            .ok_or("source.repositoryMissing")?;
         // 安装要求仓库在当前地区可用；隐藏/地区不匹配的仓库不能作为安装入口
-        if !crate::config::mod_repository_is_available(&config, &repo, &config.region) {
+        if !crate::config::mod_repository_is_available(&config, repo, &config.region) {
             return Err("source.repositoryUnavailableForInstall".into());
         }
         /*
@@ -81,16 +130,9 @@ pub(crate) async fn run_repository_install(
          * 必须在下载开始前算好：进度事件在下载过程中持续发出，label 是其中
          * 一个字段；等下载完再改就晚了。跟随界面语言，而不是固定用中文原名。
          */
-        let display_name = crate::config::localized_mod_repository_name(&repo, locale.as_deref());
-        let (
-            download_url,
-            download_name,
-            release_tag,
-            release_body,
-            release_prerelease,
-            download_assets,
-            is_raw_file,
-        ) = match repo.download_mode {
+        let display_name = crate::config::localized_mod_repository_name(repo, locale);
+        let is_raw_file = repo.download_mode == ModDownloadMode::RepositoryFile;
+        let (assets, release_tag, release_body, prerelease) = match repo.download_mode {
             ModDownloadMode::RepositoryFile => {
                 log::debug!(
                     "按仓库文件模式安装：仓库={}，分支={}，文件={}",
@@ -109,13 +151,16 @@ pub(crate) async fn run_repository_install(
                 let download_name = releases::repository_file_name(&repo.file_path)
                     .map_err(|error| error.to_string())?;
                 (
-                    download_url,
-                    download_name,
-                    String::new(),
-                    String::new(),
+                    vec![ReleaseAsset {
+                        name: download_name,
+                        size: 0,
+                        download_count: None,
+                        download_url,
+                        digest: None,
+                    }],
+                    "",
+                    "",
                     false,
-                    Vec::new(),
-                    true,
                 )
             }
             ModDownloadMode::Release => {
@@ -126,15 +171,15 @@ pub(crate) async fn run_repository_install(
                 );
                 let release = releases::select_cached_release(
                     &repo.cached_releases,
-                    tag.as_deref(),
+                    tag,
                     repo.pinned_version.as_deref(),
                 )
                 .ok_or("source.noInstallableRelease")?;
                 let asset = releases::select_install_asset(
-                    &crate::releases::RepositoryRequest::from(&repo),
+                    &releases::RepositoryRequest::from(repo),
                     &repo.asset_rules,
                     release,
-                    asset_name.as_deref(),
+                    asset_name,
                 )
                 .ok_or("source.noMatchingAsset")?;
                 log::info!(
@@ -144,50 +189,38 @@ pub(crate) async fn run_repository_install(
                     asset.name
                 );
                 (
-                    asset.download_url.clone(),
-                    asset.name.clone(),
-                    release.tag_name.clone(),
-                    release.body.clone(),
+                    archive::release_download::asset_set(asset, &release.assets)?,
+                    release.tag_name.as_str(),
+                    release.body.as_str(),
                     releases::resolve_prerelease(
                         release.api_prerelease,
                         release.prerelease,
                         Some(&release.tag_name),
                     ),
-                    archive::release_download::asset_set(asset, &release.assets)?,
-                    false,
                 )
             }
         };
+        // For split ZIPs the selected main asset is the last volume.
+        let file_name = assets.last().ok_or("source.noMatchingAsset")?.name.clone();
         let client = releases::build_download_client(config.network.first_byte_timeout())
             .map_err(|e| e.to_string())?;
         let cache_dir = state.config.cache_dir();
-        let assets = if is_raw_file {
-            vec![crate::models::ReleaseAsset {
-                name: download_name.clone(),
-                size: 0,
-                download_count: None,
-                download_url,
-                digest: None,
-            }]
-        } else {
-            download_assets
-        };
         let cache_scope = (!is_raw_file).then(|| {
             archive::release_download::ReleaseCacheScope::new(
                 repo.provider.clone(),
                 &repo.username,
                 &repo.repository,
                 None,
-                &release_tag,
+                release_tag,
             )
         });
-        let temp = archive::release_download::download(
+        let file = archive::release_download::download(
             &client,
             assets,
             &cache_dir,
             cache_scope.as_ref(),
             &display_name,
-            Some(&app),
+            app,
             &config.network,
             |url| {
                 crate::download::planning::plan_repository_download(
@@ -201,7 +234,7 @@ pub(crate) async fn run_repository_install(
                         file_path: &repo.file_path,
                     }),
                     asset_proxy_mode,
-                    asset_proxy_id.as_deref(),
+                    asset_proxy_id,
                 )
             },
         )
@@ -210,48 +243,17 @@ pub(crate) async fn run_repository_install(
             log::error!("在线 MOD 资产下载失败：仓库={}，原因={}", repo.name, error);
             error
         })?;
-        log::info!(
-            "仓库文件下载完成：仓库={}，文件名={}",
-            repo.name,
-            download_name
-        );
-        /*
-         * 预览模式：只下载并解析，不写入游戏目录。
-         *
-         * 复用这里已经完成的下载（含代理与竞速），把临时文件移进预览暂存，
-         * 后续仅由已确认链式计划消费暂存资产并统一提交。
-         */
-        let repository = repo.id;
-        let (preview, split_proof) = tauri::async_runtime::spawn_blocking(move || {
-            let proof = temp.split_proof()?;
-            let preview = crate::mod_preview::stage_downloaded_file(
-                &state,
-                temp,
-                &download_name,
-                &repository,
-                &display_name,
-                &release_tag,
-                &release_body,
-                release_prerelease,
-            )?;
-            Ok::<_, String>((preview, proof))
+        log::info!("仓库文件下载完成：仓库={}，文件名={}", repo.name, file_name);
+        Ok(RepositoryAssetDownload {
+            file,
+            file_name,
+            repository_id: repo.id.clone(),
+            repository_name: repo.name.clone(),
+            display_name,
+            release_tag: release_tag.into(),
+            release_body: release_body.into(),
+            prerelease,
         })
-        .await
-        .map_err(|error| error.to_string())??;
-        log::info!(
-            "仓库资产已下载并解析（预览模式）：仓库={}，DLL 数={}",
-            repo.name,
-            preview.total_dlls
-        );
-        return Ok(ModRepositoryInstallOutcome {
-            ok: true,
-            message: crate::locale_tag::with_params(
-                "mods.ready",
-                &[("name", &repo.name.to_string())],
-            ),
-            preview: Some(preview),
-            split_proof,
-        });
     })
     .await
 }

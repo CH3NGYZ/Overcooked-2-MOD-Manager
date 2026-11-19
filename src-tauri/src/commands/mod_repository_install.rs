@@ -8,7 +8,9 @@ use std::path::PathBuf;
 use tauri::AppHandle;
 use tauri::State;
 
-use crate::mods::repository_download::{ModRepositoryInstallOutcome, run_repository_install};
+use crate::mods::repository_download::{
+    ModRepositoryInstallOutcome, RepositoryDownloadRequest, run_repository_install,
+};
 
 #[tauri::command]
 pub async fn install_mod_repository(
@@ -27,14 +29,15 @@ pub async fn install_mod_repository(
     run_repository_install(
         app,
         state.inner().clone(),
-        repository_id,
-        tag,
-        asset_name,
-        asset_proxy_mode,
-        asset_proxy_id,
+        RepositoryDownloadRequest {
+            repository_id: &repository_id,
+            tag: tag.as_deref(),
+            asset_name: asset_name.as_deref(),
+            asset_proxy_mode,
+            asset_proxy_id: asset_proxy_id.as_deref(),
+            locale: locale.as_deref(),
+        },
         preview_only,
-        locale,
-        true,
     )
     .await
 }

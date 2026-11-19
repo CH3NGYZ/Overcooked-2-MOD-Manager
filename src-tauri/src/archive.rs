@@ -34,7 +34,7 @@ pub(crate) use manifests::{
     read_manifests, single_language, write_manifest,
 };
 pub(crate) use map_snapshots::{read_map_relation_snapshots, write_map_relation_snapshots};
-pub(crate) use paths::{clear_readonly, prune_empty_parent_dirs};
+pub(crate) use paths::{clear_readonly, prune_empty_parent_dirs, validate_asset_file_name};
 pub(crate) use progress::{
     DownloadPhase, DownloadProgress, DownloadReporter, DownloadRoute, emit_progress,
     emit_progress_event, observe_download_progress,

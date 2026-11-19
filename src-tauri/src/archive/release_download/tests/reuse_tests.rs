@@ -11,7 +11,7 @@ fn zip(payload: &[u8]) -> Vec<u8> {
     writer.finish().unwrap().into_inner()
 }
 
-fn served(server: &Server, index: usize, name: &str, bytes: &[u8]) -> ReleaseAsset {
+pub(crate) fn served(server: &Server, index: usize, name: &str, bytes: &[u8]) -> ReleaseAsset {
     ReleaseAsset {
         name: name.into(),
         size: bytes.len() as u64,

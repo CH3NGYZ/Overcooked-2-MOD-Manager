@@ -14,6 +14,8 @@ mod install_notes;
 mod installed_relations;
 #[path = "orchestration_tests/map_runtime_duplicate.rs"]
 mod map_runtime_duplicate;
+#[path = "orchestration_tests/repository_preparation.rs"]
+mod repository_preparation;
 #[path = "orchestration_tests/retired_members.rs"]
 mod retired_members;
 #[path = "orchestration_tests/toggle_scope.rs"]
@@ -160,8 +162,8 @@ fn take(f: &Fixture, plan: &ChangePlan) -> PlanSession {
         .unwrap()
 }
 
-/// Use the same staged preview format as the existing downloader, with real PE
-/// metadata and the selected exact source/tag. No HTTP request is needed here.
+/// Stage repository previews directly to exercise subsequent solving and commit
+/// with exact source/tag fixtures. Actual downloads are covered separately.
 fn verify_selected(f: &Fixture, session: &mut PlanSession) {
     for _ in 0..16 {
         planning::resolve(&f.state, session).unwrap();

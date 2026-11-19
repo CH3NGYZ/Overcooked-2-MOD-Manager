@@ -26,7 +26,16 @@ test('legacy install and switch IPCs block before any live filesystem helper', (
   assert.match(read('mods/repository_download.rs'), /preview_only != Some\(true\)\s*\{\s*return crate::mod_changes::guard::require_shared_plan\(\);\s*\}/)
   assert.doesNotMatch(read('mods/repository_download.rs'), /install_downloaded_mod_repository|mod_repository_install_identity|files_result/)
   assert.match(read('commands/mod_repository_install.rs'), /run_repository_install\(/)
-  assert.match(read('mod_changes/preparation.rs'), /mods::repository_download::run_repository_install/)
+})
+
+test('chain preparation consumes the same repository download without creating a UI preview', () => {
+  const preparation = read('mod_changes/preparation.rs')
+  assert.match(preparation, /download_repository_asset\(/)
+  assert.match(preparation, /payload::from_downloaded\(/)
+  assert.doesNotMatch(preparation, /run_repository_install|mod_preview|from_preview/)
+  const preview = read('mods/repository_download.rs').match(/fn run_repository_install\([\s\S]*?\n\}/)?.[0]
+  assert.match(preview, /download_repository_asset\(/)
+  assert.match(preview, /stage_downloaded_file\(/)
 })
 
 test('recovery gate protects write and game handoff commands while holding their existing locks', () => {

@@ -1,4 +1,4 @@
-//! Validate a downloaded preview and unpack it into a private simulated game root.
+//! Validate an asset and unpack it into a private simulated game root.
 //! All returned paths are game-relative; this module never installs into the live game.
 use super::{
     inventory::{self, TrustedInventory},
@@ -8,11 +8,12 @@ use super::{
 };
 use crate::{
     app_state::AppState,
-    archive,
+    archive::{self, release_download::SplitZipProof},
     metadata_read::{self, MetadataKind, MetadataRequest},
     mod_preview::staging,
     models::*,
-    mods, releases,
+    mods::{self, repository_download::RepositoryAssetDownload},
+    releases,
 };
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -23,6 +24,54 @@ use std::{
 
 mod retired_copies;
 
+enum SourceOrigin<'a> {
+    Manual(&'a str),
+    Repository {
+        id: &'a str,
+        tag: &'a str,
+        prerelease: bool,
+        split_proof: Option<&'a SplitZipProof>,
+    },
+}
+
+struct PayloadSource<'a> {
+    path: &'a Path,
+    file_name: &'a str,
+    origin: SourceOrigin<'a>,
+}
+
+pub(super) fn from_downloaded(
+    state: &AppState,
+    trusted: &TrustedInventory,
+    download: RepositoryAssetDownload,
+    node_id: &str,
+    candidate: &Candidate,
+    asset_name: Option<&str>,
+    stage_root: &Path,
+) -> Result<Payload, String> {
+    // The transport owns this temporary file until validation and extraction finish.
+    // Its random disk name is never used to determine the type or layout.
+    let proof = download.file.split_proof()?;
+    stage_asset(
+        state,
+        trusted,
+        PayloadSource {
+            path: download.file.path(),
+            file_name: &download.file_name,
+            origin: SourceOrigin::Repository {
+                id: &download.repository_id,
+                tag: &download.release_tag,
+                prerelease: download.prerelease,
+                split_proof: proof.as_ref(),
+            },
+        },
+        node_id,
+        candidate,
+        asset_name,
+        stage_root,
+    )
+}
+
 pub(crate) fn from_preview(
     state: &AppState,
     trusted: &TrustedInventory,
@@ -30,7 +79,7 @@ pub(crate) fn from_preview(
     node_id: &str,
     candidate: &Candidate,
     asset_name: Option<&str>,
-    split_proof: Option<&archive::release_download::SplitZipProof>,
+    split_proof: Option<&SplitZipProof>,
     stage_root: &Path,
 ) -> Result<Payload, String> {
     let id = uuid::Uuid::parse_str(preview_id).map_err(|_| "modPreview.invalidId")?;
@@ -56,10 +105,6 @@ pub(crate) fn from_preview(
         return Err("modPreview.expired".into());
     }
     let source = sources.remove(0);
-    let source_fingerprint = Fingerprint::capture(&source)?;
-    let Fingerprint::File { size, sha256, .. } = &source_fingerprint else {
-        return Err("archive.pathEscape".into());
-    };
     let file_name = source
         .file_name()
         .and_then(|name| name.to_str())
@@ -79,6 +124,50 @@ pub(crate) fn from_preview(
             .map_err(|_| "modPreview.expired")?,
         )
     };
+    let origin = match &origin {
+        Some(record) => SourceOrigin::Repository {
+            id: &record.repository_id,
+            tag: &record.release_tag,
+            prerelease: record.prerelease,
+            split_proof,
+        },
+        None if split_proof.is_none() => SourceOrigin::Manual(preview_id),
+        None => return Err("modChanges.targetChanged".into()),
+    };
+    stage_asset(
+        state,
+        trusted,
+        PayloadSource {
+            path: &source,
+            file_name,
+            origin,
+        },
+        node_id,
+        candidate,
+        asset_name,
+        stage_root,
+    )
+}
+
+fn stage_asset(
+    state: &AppState,
+    trusted: &TrustedInventory,
+    input: PayloadSource<'_>,
+    node_id: &str,
+    candidate: &Candidate,
+    asset_name: Option<&str>,
+    stage_root: &Path,
+) -> Result<Payload, String> {
+    let PayloadSource {
+        path: source,
+        file_name,
+        origin,
+    } = input;
+    archive::validate_asset_file_name(file_name)?;
+    let source_fingerprint = Fingerprint::capture(source)?;
+    let Fingerprint::File { size, sha256, .. } = &source_fingerprint else {
+        return Err("archive.pathEscape".into());
+    };
     let repo = candidate
         .source_id
         .as_ref()
@@ -91,17 +180,21 @@ pub(crate) fn from_preview(
                 .ok_or("source.repositoryMissing")
         })
         .transpose()?;
-    match (&origin, repo) {
-        (Some(origin), Some(repo))
-            if origin.repository_id == repo.id
-                && candidate.tag.as_deref().unwrap_or_default() == origin.release_tag =>
-        {
-            ()
+    let (prerelease, split_proof) = match (&origin, repo) {
+        (
+            SourceOrigin::Repository {
+                id,
+                tag,
+                prerelease,
+                split_proof,
+            },
+            Some(repo),
+        ) if *id == repo.id && candidate.tag.as_deref().unwrap_or_default() == *tag => {
+            (*prerelease, *split_proof)
         }
-        (None, None) => (),
+        (SourceOrigin::Manual(_), None) => (false, None),
         _ => return Err("modChanges.targetChanged".into()),
-    }
-    let prerelease = origin.as_ref().is_some_and(|value| value.prerelease);
+    };
     let mut asset_digest_verified = false;
     let mut release_asset = None;
     if let Some(repo) = repo {
@@ -160,25 +253,25 @@ pub(crate) fn from_preview(
         archive::validate_download_size(*size, None)?;
     }
     if is_zip {
-        archive::validate_zip(&source)?;
+        archive::validate_zip(source)?;
     }
     create_sandbox(state, trusted, stage_root)?;
     let result = (|| {
         let pending = if is_zip {
             if let Some(repo) = repo {
                 let plan = archive::prepare_repository_mod_zip(
-                    &source,
+                    source,
                     stage_root,
                     &repo.install_target,
                     file_name,
                 )?;
-                archive::extract_prepared_mod_zip(&source, stage_root, &plan)?
+                archive::extract_prepared_mod_zip(source, stage_root, &plan)?
             } else {
-                archive::extract_local_mod_zip_pending(&source, stage_root, file_name)?
+                archive::extract_local_mod_zip_pending(source, stage_root, file_name)?
             }
         } else {
             archive::copy_asset_pending(
-                &source,
+                source,
                 stage_root,
                 repo.map(|repo| repo.install_target.as_str())
                     .unwrap_or("BepInEx/plugins"),
@@ -186,7 +279,7 @@ pub(crate) fn from_preview(
             )?
         };
         let mut files = pending.commit();
-        if Fingerprint::capture(&source)? != source_fingerprint {
+        if Fingerprint::capture(source)? != source_fingerprint {
             return Err("modChanges.targetChanged".into());
         }
         let mut provides = read_members(trusted, node_id, stage_root, &mut files, prerelease)?;
@@ -275,7 +368,7 @@ pub(crate) fn from_preview(
             node_id,
             candidate,
             repo,
-            preview_id,
+            &origin,
             file_name,
             files.clone(),
             relations,
@@ -453,7 +546,7 @@ fn create_manifest(
     node_id: &str,
     candidate: &Candidate,
     repo: Option<&ModRepositoryConfig>,
-    preview_id: &str,
+    origin: &SourceOrigin<'_>,
     file_name: &str,
     files: Vec<String>,
     relations: Vec<RepositoryRelation>,
@@ -463,10 +556,12 @@ fn create_manifest(
         .files
         .get(node_id)
         .and_then(|files| files.summary.package_id.as_deref());
-    let generated = format!("manual-{preview_id}");
     let id = package_id
-        .or_else(|| repo.map(|repo| repo.id.as_str()))
-        .unwrap_or(&generated);
+        .map(str::to_owned)
+        .unwrap_or_else(|| match origin {
+            SourceOrigin::Manual(preview_id) => format!("manual-{preview_id}"),
+            SourceOrigin::Repository { id, .. } => (*id).to_owned(),
+        });
     let names = repo
         .map(|repo| {
             repo.name_i18n
@@ -483,7 +578,7 @@ fn create_manifest(
         .unwrap_or_else(|| BTreeMap::from([("zh-CN".into(), mods::file_stem_name(file_name))]));
     let notes = repo.map(|repo| repo.note_i18n.clone()).unwrap_or_default();
     let mut manifest = archive::new_manifest(
-        id,
+        &id,
         candidate.tag.as_deref().unwrap_or_default(),
         names,
         notes,

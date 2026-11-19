@@ -5,7 +5,7 @@ use std::{fs::File, io::Read, path::Path};
 
 /// A backend-only receipt for verified volumes and the exact resulting bytes.
 /// The merged ZIP has no Release digest of its own; its digest is captured
-/// after verified reassembly and compared again when consuming the preview.
+/// after verified reassembly and compared again when staging the payload.
 #[derive(Debug)]
 pub(crate) struct SplitZipProof {
     assets: Vec<ReleaseAsset>,

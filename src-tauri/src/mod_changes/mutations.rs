@@ -12,6 +12,11 @@ mod release_ownership;
 mod roots;
 pub(crate) use roots::final_package;
 
+pub(super) fn file_conflict(owner: &str, relative: &str) -> String {
+    log::warn!("整链安装无法确认文件归属：节点={owner}，路径={relative}");
+    crate::locale_tag::with_params("modChanges.fileOwnershipConflict", &[("path", relative)])
+}
+
 pub(crate) struct Builder<'a> {
     pub roots: TransactionRoots,
     pub session: &'a PlanSession,
@@ -429,7 +434,7 @@ impl Builder<'_> {
             let ownership_key = inventory::key(&mods::canonical_dll_name(&destination));
             let owners = self.ownership.get(&ownership_key);
             if owners.is_some_and(|owners| owners.len() != 1 || !owners.contains(&node.id)) {
-                return Err(release_ownership::file_conflict(&node.id, &destination));
+                return Err(file_conflict(&node.id, &destination));
             }
             if is_dll {
                 let canonical = mods::canonical_dll_name(&destination);
@@ -438,7 +443,7 @@ impl Builder<'_> {
                         != Fingerprint::Missing
                         && owners.is_none()
                     {
-                        return Err(release_ownership::file_conflict(&node.id, variant));
+                        return Err(file_conflict(&node.id, variant));
                     }
                 }
             }
@@ -469,7 +474,7 @@ impl Builder<'_> {
                             self.release_path_unclaimed(&destination, &target_path, directory)
                         });
                 if !identical_resource {
-                    return Err(release_ownership::file_conflict(&node.id, &destination));
+                    return Err(file_conflict(&node.id, &destination));
                 }
                 log::info!(
                     "整链安装将一致的 Release 资源补入清单：节点={}，路径={destination}",

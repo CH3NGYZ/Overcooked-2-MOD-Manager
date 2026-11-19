@@ -1,6 +1,8 @@
 //! Map ZIPs use the existing installer inside a private game-shaped sandbox.
 //! Only the resulting verified model and explicit transaction endpoints leave it.
-use super::{inventory::*, model::*, session::PlanSession, transaction::*};
+use super::{
+    inventory::*, model::*, mutations::file_conflict, session::PlanSession, transaction::*,
+};
 use crate::{app_state::AppState, archive, level_sets, models::MapInstallOrigin};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -99,10 +101,8 @@ pub(crate) fn attach(state: &AppState, session: &mut PlanSession) -> Result<(), 
         // An old caller did not send an ID; resolve it only if the source was unique.
         origin.repository_id = Some(map.id.clone());
     }
-    let stage_root = session.staging.join("map-game");
-    let manifests_root = session.staging.join("map-manifests");
-    create_sandbox(state, session, &stage_root)?;
-    create_sandbox(state, session, &manifests_root)?;
+    let stage_root = create_sandbox(state, session, &session.staging.join("map-game"))?;
+    let manifests_root = create_sandbox(state, session, &session.staging.join("map-manifests"))?;
     copy_metadata(&state.config.manifests_dir(), &manifests_root)?;
     projection::seed_snapshots(config, &metadata, primary, &manifests_root)?;
     let roots = level_sets::LevelSetRoots::new(
@@ -159,7 +159,7 @@ pub(crate) fn mutations(state: &AppState, session: &PlanSession) -> Result<Vec<M
     output::build(state, session)
 }
 
-fn create_sandbox(state: &AppState, session: &PlanSession, path: &Path) -> Result<(), String> {
+fn create_sandbox(state: &AppState, session: &PlanSession, path: &Path) -> Result<PathBuf, String> {
     let data = state
         .config
         .config_path()
@@ -174,7 +174,25 @@ fn create_sandbox(state: &AppState, session: &PlanSession, path: &Path) -> Resul
     {
         return Err("archive.pathEscape".into());
     }
-    fs::create_dir(path).map_err(|error| error.to_string())
+    // The scanner returns canonical paths, including the Windows verbatim
+    // prefix. Normalize the approved sandbox before using it as a scan root.
+    // Check physical scope too: the same path can have different spellings.
+    let resolve = crate::game::resolve_existing_ancestor;
+    let data = resolve(&data)?;
+    let staging = resolve(&session.staging)?;
+    let game = resolve(&session.trusted.game_root)?;
+    let sandbox = resolve(path)?;
+    if staging == data
+        || !staging.starts_with(&data)
+        || sandbox == staging
+        || !sandbox.starts_with(&staging)
+        || sandbox.starts_with(&game)
+        || game.starts_with(&sandbox)
+    {
+        return Err("archive.pathEscape".into());
+    }
+    fs::create_dir(&sandbox).map_err(|error| error.to_string())?;
+    Ok(sandbox)
 }
 
 fn copy_metadata(from: &Path, to: &Path) -> Result<(), String> {

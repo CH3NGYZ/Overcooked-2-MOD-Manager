@@ -159,8 +159,3 @@ impl Builder<'_> {
             .then(|| directory.to_path_buf())
     }
 }
-
-pub(super) fn file_conflict(owner: &str, relative: &str) -> String {
-    log::warn!("整链安装无法确认文件归属：节点={owner}，路径={relative}");
-    crate::locale_tag::with_params("modChanges.fileOwnershipConflict", &[("path", relative)])
-}

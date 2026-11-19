@@ -127,7 +127,7 @@ pub(super) fn build_at(data_root: &Path, session: &PlanSession) -> Result<Vec<Mu
                 })
             });
         if (has_active || has_inactive) && !owns_existing {
-            return Err("modChanges.ambiguousOwnership".into());
+            return Err(file_conflict(&external.node_id, &canonical));
         }
         let target = if node.enabled && member.enabled {
             canonical.clone()

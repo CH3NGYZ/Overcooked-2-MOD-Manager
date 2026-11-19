@@ -249,7 +249,7 @@ pub(super) fn merge(
                 .first()
                 .is_some_and(|(id, _)| !id.starts_with("map-dll:"))
         {
-            return Err("modChanges.ambiguousOwnership".into());
+            return Err(file_conflict(&node.id, &canonical));
         }
         let id = owners
             .first()

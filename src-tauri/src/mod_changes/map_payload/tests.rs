@@ -4,6 +4,9 @@ use std::{collections::HashMap, io::Write, time::Instant};
 
 #[path = "bundled_tests.rs"]
 mod bundled_tests;
+#[cfg(windows)]
+#[path = "path_tests.rs"]
+mod path_tests;
 
 #[test]
 fn metadata_copy_preserves_unrelated_snapshots_and_rejects_future_registry() {
@@ -518,6 +521,27 @@ fn map_tree_endpoint_collisions_and_external_active_disabled_duplicates_block() 
         )
         .is_err()
     );
+}
+
+#[test]
+fn external_map_dll_collision_during_preparation_reports_path_without_writing_live_files() {
+    let mut f = fixture();
+    let external = &f.session.map_payload.as_ref().unwrap().external[0];
+    let path = &external.target;
+    let active = f.roots.game_root.join(path);
+    let disabled = f.roots.game_root.join(crate::mods::disabled_dll_file(path));
+    let original = fs::read(&disabled).unwrap();
+    f.session.trusted.files.remove(&external.node_id).unwrap();
+
+    let error = output::build_at(&f.roots.data_root, &f.session)
+        .err()
+        .expect("an existing unowned file must block preparation");
+    assert_eq!(
+        error,
+        format!("modChanges.fileOwnershipConflict?path={path}")
+    );
+    assert_eq!(fs::read(disabled).unwrap(), original);
+    assert!(!active.exists());
 }
 
 #[test]

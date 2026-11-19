@@ -16,6 +16,7 @@ pub(crate) mod view;
 pub(crate) use context::MapSourceContext;
 #[cfg(test)]
 pub(crate) use document::parse_document;
+pub(crate) use identity::{map_identity, map_tag};
 pub(crate) use releases::{fetch_map_release_data, select_map_stage_asset};
 pub(crate) use state::{
     available_maps, map_is_available, replace_maps_keeping_runtime_state, same_release_binding,

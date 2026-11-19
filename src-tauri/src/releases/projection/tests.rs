@@ -163,17 +163,43 @@ fn release_asset_download_counts_preserve_zero_and_missing_metadata() {
 
 #[test]
 fn gitcode_filters_only_generated_archives_and_keeps_optional_metadata() {
+    let digest = "sha256:adc004bf74c98b5dd60d3001c3316c5a732c7df5ea4daad1cbae97c22e017c22";
     let input = serde_json::json!([{"tag_name":"map", "assets":[
         {"name":"map.zip", "type":"source", "browser_download_url":"https://raw.atomgit.com/a/b/archive/refs/heads/map.zip"},
         {"name":"fixture_map.tar.gz", "browser_download_url":"https://raw.atomgit.com/a/b/archive/refs/tags/map.tar.gz"},
-        {"name":"archive-map.zip", "type":"attach", "size":123, "digest":"sha256:abc", "browser_download_url":"https://atomgit.com/a/b/releases/download/map/archive-map.zip"},
+        {"name":"archive-map.zip", "type":"attach", "size":123, "digest":digest, "browser_download_url":"https://atomgit.com/a/b/releases/download/map/archive-map.zip"},
         {"name":"unknown.zip", "type":"attach", "browser_download_url":"https://atomgit.com/a/b/releases/download/map/unknown.zip"}
     ]}]);
     let result = parse_release_json(&input, &Provider::Gitcode).unwrap();
     assert_eq!(result[0].assets.len(), 2);
     assert_eq!(result[0].assets[0].name, "archive-map.zip");
     assert_eq!(result[0].assets[0].size, 123);
-    assert_eq!(result[0].assets[0].digest.as_deref(), Some("sha256:abc"));
+    assert_eq!(result[0].assets[0].digest.as_deref(), Some(digest));
     assert_eq!(result[0].assets[1].size, 0);
     assert!(result[0].assets[1].digest.is_none());
+}
+
+#[test]
+fn asset_digest_uses_only_explicit_nonempty_api_fields() {
+    let tagged = "sha256:fb34009065a5e12919e6d0b088e6bf550e6c36d30651a24b04862444b8fe6f18";
+    let raw = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+    for (digest, sha256, expected) in [
+        (Some(tagged), Some(raw), Some(tagged)),
+        (Some(" "), Some(raw), Some(raw)),
+        (None, Some(raw), Some(raw)),
+        (None, Some(" "), None),
+        (None, None, None),
+    ] {
+        let release = serde_json::json!({"tag_name":"v1.2.3", "assets":[{
+            "name":"map.zip", "size":123, "id":456, "etag":raw, "hash":raw,
+            "digest":digest, "sha256":sha256,
+            "browser_download_url":"https://github.com/u/r/releases/download/v1.2.3/map.zip"
+        }]});
+        let loaded = parse_release_json(&release, &Provider::Github).unwrap();
+        let asset = &loaded[0].assets[0];
+        assert_eq!(asset.digest.as_deref(), expected);
+        let roundtrip: ReleaseAsset =
+            serde_json::from_value(serde_json::to_value(asset).unwrap()).unwrap();
+        assert_eq!(roundtrip.digest.as_deref(), expected);
+    }
 }

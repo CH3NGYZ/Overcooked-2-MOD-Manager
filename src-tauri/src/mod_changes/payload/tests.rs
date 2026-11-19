@@ -241,6 +241,7 @@ fn repository_payload(primary_guid: &str, members: &[(&str, &str)]) -> Result<Pa
         "fixture",
         &selected,
         None,
+        None,
         &stage,
     );
     if result.is_err() {
@@ -249,6 +250,155 @@ fn repository_payload(primary_guid: &str, members: &[(&str, &str)]) -> Result<Pa
     assert!(preview.join("fixture.zip").is_file());
     assert!(fs::read_dir(&game).unwrap().next().is_none());
     result
+}
+
+#[tokio::test]
+async fn split_repository_payload_binds_verified_volumes_to_the_exact_staged_zip() {
+    use archive::release_download::{self, tests::*};
+    use sha2::{Digest, Sha256};
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let game = root.join("game");
+    fs::create_dir_all(&game).unwrap();
+    let state = AppState::with_config(crate::config::ConfigService::for_test(root.join("data")));
+    let mut trusted = trusted(&game, vec![]);
+    let plugin = mods::plugin_blob("test-primary", "Primary", "2.0.0");
+    let volumes = split_zip_parts(&[
+        ("padding.txt", &vec![1u8; 150_000]),
+        ("Primary.dll", &plugin),
+    ]);
+    let names = [
+        "FixturePayload.z01",
+        "FixturePayload.z02",
+        "FixturePayload.zip",
+    ];
+    let digests: Vec<_> = volumes
+        .iter()
+        .map(|bytes| format!("sha256:{:x}", Sha256::digest(bytes)))
+        .collect();
+    let server = Server::new(volumes.clone(), false);
+    let mut repo = crate::community::repository_from_coordinates(
+        &Provider::Github,
+        "Fixture",
+        "fixture-repository",
+        "",
+        "",
+    )
+    .unwrap();
+    repo.plugin_guid = "test-primary".into();
+    repo.asset_rules = vec![AssetRule {
+        rule_type: AssetRuleType::Exact,
+        value: names[2].into(),
+    }];
+    let tag = "v2.0.0";
+    let assets: Vec<_> = volumes
+        .iter()
+        .enumerate()
+        .map(|(i, bytes)| ReleaseAsset {
+            name: names[i].into(),
+            size: bytes.len() as u64,
+            download_count: None,
+            download_url: format!("{}/{i}", server.url),
+            digest: Some(digests[i].clone()),
+        })
+        .collect();
+    repo.cached_releases.push(ReleaseInfo {
+        release_id: None,
+        tag_name: tag.into(),
+        version: Some("2.0.0".into()),
+        name: "Fixture".into(),
+        body: String::new(),
+        published_at: None,
+        api_prerelease: Some(false),
+        prerelease: false,
+        draft: false,
+        assets: assets.clone(),
+    });
+    let mut selected = candidate(vec![]);
+    selected.source_id = Some(repo.id.clone());
+    selected.tag = Some(tag.into());
+    selected.verification_pending = true;
+    trusted.config.repositories = vec![repo.clone()];
+
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let cache = state.config.cache_dir();
+    let scope = release_download::ReleaseCacheScope::new(
+        Provider::Github,
+        &repo.username,
+        &repo.repository,
+        None,
+        tag,
+    );
+    for hit in [false, true] {
+        let download = release_download::download(
+            &client,
+            release_download::asset_set(&assets[2], &assets).unwrap(),
+            &cache,
+            Some(&scope),
+            "split MOD",
+            None,
+            &NetworkConfig::default(),
+            |url| {
+                assert!(!hit, "verified split ZIP should reuse every local volume");
+                reuse_tests::direct(url)
+            },
+        )
+        .await
+        .unwrap();
+        let split_proof = download.split_proof().unwrap().unwrap();
+        assert!(fs::metadata(download.path()).unwrap().len() > assets[2].size);
+        let temporary_path = download.path().to_owned();
+        let preview = staging::stage_downloaded_file(
+            &state, download, names[2], &repo.id, "Fixture", tag, "", false,
+        )
+        .unwrap();
+        assert!(!temporary_path.exists());
+        let id = &preview.preview_id;
+        let stage = root.join(format!("data/stage/{id}"));
+        let prepare = |trusted: &TrustedInventory, proof| {
+            from_preview(
+                &state, trusted, id, "fixture", &selected, None, proof, &stage,
+            )
+        };
+
+        assert_eq!(
+            prepare(&trusted, None).err().unwrap(),
+            "modChanges.targetChanged"
+        );
+        let mut stale = trusted.clone();
+        stale.config.repositories[0].cached_releases[0].assets[0].digest = None;
+        assert_eq!(
+            prepare(&stale, Some(&split_proof)).err().unwrap(),
+            "modChanges.targetChanged"
+        );
+        assert!(!stage.exists());
+
+        let payload = prepare(&trusted, Some(&split_proof)).unwrap();
+        assert!(payload.release_files.is_some());
+        assert_eq!(payload.candidate.version.as_deref(), Some("2.0.0"));
+        assert!(
+            payload
+                .candidate
+                .provides
+                .iter()
+                .any(|plugin| plugin.guid == "test-primary")
+        );
+
+        // A copied stage must still contain the exact bytes that were formed
+        // by the verified download, even if changes leave the length intact.
+        let source = staging::preview_root(&state).join(id).join(names[2]);
+        let mut replacement = fs::read(&source).unwrap();
+        replacement[100] ^= 1;
+        fs::write(source, replacement).unwrap();
+        assert!(
+            prepare(&trusted, Some(&split_proof))
+                .err()
+                .unwrap()
+                .starts_with("download.checksumMismatch")
+        );
+    }
+    assert!(fs::read_dir(&game).unwrap().next().is_none());
 }
 
 #[test]

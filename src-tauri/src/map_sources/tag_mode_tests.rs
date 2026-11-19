@@ -74,16 +74,17 @@ fn tag_names(releases: &[ReleaseInfo]) -> Vec<&str> {
 #[test]
 fn synthetic_versions_retain_only_their_own_split_companions_primary_first() {
     let map = tag_entry("tag = \"maps\"");
-    let releases = synthesize_releases(
-        &map,
-        "maps",
-        &[release(
-            "maps",
-            &["rw_v1.0.z02", "rw_v2.0.zip", "rw_v1.0.zip", "rw_v1.0.z01"],
-        )],
-    )
-    .unwrap();
+    let api = serde_json::json!({"tag_name":"maps", "assets":[
+        {"name":"rw_v1.0.z02", "type":"attach", "digest":"sha256:adc004bf74c98b5dd60d3001c3316c5a732c7df5ea4daad1cbae97c22e017c22", "browser_download_url":"https://atomgit.com/u/r/releases/download/maps/rw_v1.0.z02"},
+        {"name":"rw_v2.0.zip", "type":"attach", "browser_download_url":"https://atomgit.com/u/r/releases/download/maps/rw_v2.0.zip"},
+        {"name":"rw_v1.0.zip", "type":"attach", "digest":"sha256:fb34009065a5e12919e6d0b088e6bf550e6c36d30651a24b04862444b8fe6f18", "browser_download_url":"https://atomgit.com/u/r/releases/download/maps/rw_v1.0.zip"},
+        {"name":"rw_v1.0.z01", "type":"attach", "sha256":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", "browser_download_url":"https://atomgit.com/u/r/releases/download/maps/rw_v1.0.z01"}
+    ]});
+    let source = crate::releases::parse_release_json(&api, &Provider::Gitcode).unwrap();
+    let releases = synthesize_releases(&map, "maps", &source).unwrap();
+    assert_eq!(tag_names(&releases), ["2.0", "1.0"]);
     assert_eq!(releases[0].assets.len(), 1);
+    assert!(releases[0].assets[0].digest.is_none());
     assert_eq!(
         releases[1]
             .assets
@@ -91,6 +92,14 @@ fn synthetic_versions_retain_only_their_own_split_companions_primary_first() {
             .map(|a| a.name.as_str())
             .collect::<Vec<_>>(),
         ["rw_v1.0.zip", "rw_v1.0.z01", "rw_v1.0.z02"]
+    );
+    assert_eq!(
+        releases[1]
+            .assets
+            .iter()
+            .map(|asset| asset.digest.as_deref())
+            .collect::<Vec<_>>(),
+        [2, 3, 0].map(|index| source[0].assets[index].digest.as_deref())
     );
     assert_eq!(
         select_map_stage_asset(&map, &releases[1], None)

@@ -30,6 +30,10 @@ fn cache_reset_preserves_all_compression_materials_and_resets_release_completene
     fs::create_dir_all(cache.join("ordinary/nested")).unwrap();
     fs::write(cache.join("ordinary/nested/stale"), b"stale").unwrap();
     fs::write(cache.join("stale-download"), b"stale").unwrap();
+    let release_assets = cache.join("release-assets");
+    let release_version = release_assets.join("repository/version");
+    fs::create_dir_all(&release_version).unwrap();
+    fs::write(release_version.join("Download.asset"), b"cached release").unwrap();
 
     assert!(reset_ui_in(&state).unwrap().ok);
 
@@ -38,6 +42,7 @@ fn cache_reset_preserves_all_compression_materials_and_resets_release_completene
     }
     assert!(!cache.join("ordinary").exists());
     assert!(!cache.join("stale-download").exists());
+    assert!(!release_assets.exists());
     let config = state.config.load_or_default();
     assert_eq!(config.ui_zoom, crate::config::default_ui_zoom());
     let repository = &config.repositories[0];

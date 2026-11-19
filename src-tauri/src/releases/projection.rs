@@ -136,16 +136,11 @@ pub fn parse_release_json(
                 .filter_map(|key| asset.get(*key).and_then(Value::as_str))
                 .find(|url| !url.trim().is_empty())?
                 .to_string();
-                let digest = asset
-                    .get("digest")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-                    .or_else(|| {
-                        asset
-                            .get("sha256")
-                            .and_then(Value::as_str)
-                            .map(str::to_string)
-                    });
+                let digest = ["digest", "sha256"]
+                    .iter()
+                    .filter_map(|key| asset.get(*key).and_then(Value::as_str))
+                    .find(|value| !value.trim().is_empty())
+                    .map(str::to_string);
                 Some(ReleaseAsset {
                     name,
                     size: asset

@@ -148,6 +148,7 @@ async fn prepare_inner(
         .await?;
         progress.stage(PreparationStage::Verifying, Some(&node_id));
         let preview = outcome.preview.ok_or("archive.noInstallableContent")?;
+        let split_proof = outcome.split_proof;
         let extract_state = state.clone();
         let trusted = session.trusted.clone();
         let target = session
@@ -162,6 +163,7 @@ async fn prepare_inner(
                 &extract_node,
                 &candidate,
                 asset_name.as_deref(),
+                split_proof.as_ref(),
                 &target,
             )
         })

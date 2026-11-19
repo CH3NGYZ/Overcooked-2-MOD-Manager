@@ -154,5 +154,5 @@ pub(super) fn reassemble(paths: &[impl AsRef<Path>], output: &Path) -> Result<()
     file.write_all(&eocd).map_err(|e| e.to_string())?;
     file.sync_all().map_err(|e| e.to_string())?;
     drop(file);
-    super::validate_zip(output)
+    super::integrity::validate_zip_with_cancel(output, super::is_download_cancelled)
 }

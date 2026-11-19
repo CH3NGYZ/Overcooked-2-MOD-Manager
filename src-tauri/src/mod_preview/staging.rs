@@ -4,6 +4,7 @@ use super::analysis::{
 use super::conflicts::attach_install_conflicts;
 use super::model::ModPreview;
 use crate::app_state::AppState;
+use crate::archive::release_download::DownloadedRelease;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -45,17 +46,43 @@ pub(crate) fn cleanup_stale_previews(state: &AppState) {
         log::info!("清理过期的 MOD 安装预览暂存：数量={removed}");
     }
 }
-/// 把源文件复制/下载到暂存目录，返回暂存里的文件路径。
+/// 把用户选择的源文件复制到暂存目录，保持原件不变。
 pub(super) fn stage_local(
     state: &AppState,
     preview: &ModPreview,
     source: &Path,
-) -> Result<PathBuf, String> {
-    let dir = preview_root(state).join(&preview.preview_id);
-    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-    let target = dir.join(&preview.file_name);
-    fs::copy(source, &target).map_err(|error| error.to_string())?;
-    Ok(target)
+) -> Result<(), String> {
+    stage_file(state, preview, |_, target| {
+        fs::copy(source, target)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    })
+}
+
+fn stage_file(
+    state: &AppState,
+    preview: &ModPreview,
+    place: impl FnOnce(&Path, &Path) -> Result<(), String>,
+) -> Result<(), String> {
+    let name = &preview.file_name;
+    if name.trim().is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains(['/', '\\', ':', '\0'])
+    {
+        return Err("source.fileNameUnsafe".into());
+    }
+    let root = preview_root(state);
+    fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    let dir = tempfile::Builder::new()
+        .prefix(&preview.preview_id)
+        .rand_bytes(0)
+        .tempdir_in(root)
+        .map_err(|error| error.to_string())?;
+    // Keep only complete previews. On failure this guard removes this new directory.
+    place(dir.path(), &dir.path().join(name))?;
+    let _ = dir.keep();
+    Ok(())
 }
 
 /// 预览暂存目录里的来源元数据文件名。
@@ -74,13 +101,7 @@ pub(crate) struct PreviewOriginRecord {
     pub(crate) prerelease: bool,
 }
 
-fn write_origin_record(
-    state: &AppState,
-    preview_id: &str,
-    record: &PreviewOriginRecord,
-) -> Result<(), String> {
-    let dir = preview_root(state).join(preview_id);
-    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+fn write_origin_record(dir: &Path, record: &PreviewOriginRecord) -> Result<(), String> {
     let text = serde_json::to_string_pretty(record).map_err(|error| error.to_string())?;
     fs::write(dir.join(ORIGIN_FILE), text).map_err(|error| error.to_string())
 }
@@ -92,7 +113,7 @@ fn write_origin_record(
 /// 再把临时文件交给这里解析。链式计划按同一预览 id 校验、准备与提交。
 pub(crate) fn stage_downloaded_file(
     state: &AppState,
-    source: &Path,
+    source: DownloadedRelease,
     file_name: &str,
     repository_id: &str,
     repository_name: &str,
@@ -108,23 +129,25 @@ pub(crate) fn stage_downloaded_file(
     let workers =
         crate::concurrency::workers_from(state.config.load_or_default().mod_metadata_concurrency);
     let mut preview = if extension == "dll" {
-        build_preview(vec![analyze_dll(source, file_name)], file_name)
+        build_preview(vec![analyze_dll(source.path(), file_name)], file_name)
     } else {
-        analyze_zip(source, file_name, workers)?
+        analyze_zip(source.path(), file_name, workers)?
     };
     apply_repository_origin(&mut preview, repository_name, release_tag, release_body);
     attach_install_conflicts(state, &mut preview, Some((repository_id, release_tag)));
-    stage_local(state, &preview, source)?;
-    // 记录来源：确认安装时要回到仓库安装路径，才知道回收哪个仓库的旧包
-    write_origin_record(
-        state,
-        &preview.preview_id,
-        &PreviewOriginRecord {
-            repository_id: repository_id.to_string(),
-            release_tag: release_tag.to_string(),
-            prerelease,
-        },
-    )?;
+    stage_file(state, &preview, |dir, target| {
+        write_origin_record(
+            dir,
+            &PreviewOriginRecord {
+                repository_id: repository_id.to_string(),
+                release_tag: release_tag.to_string(),
+                prerelease,
+            },
+        )?;
+        // Both locations are in the data cache. Transfer ownership without
+        // another full ZIP copy on top of the persistent cache.
+        fs::rename(source.path(), target).map_err(|error| error.to_string())
+    })?;
     log::info!(
         "仓库资产已送入预览暂存：预览={}，仓库={}，DLL 数={}，MOD 数={}，依赖数={}",
         preview.preview_id,

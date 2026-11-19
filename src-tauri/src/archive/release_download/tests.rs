@@ -6,6 +6,8 @@ use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
+pub(crate) mod reuse_tests;
+
 fn asset(name: &str) -> ReleaseAsset {
     ReleaseAsset {
         name: name.into(),
@@ -57,13 +59,18 @@ fn split_fixture() -> (Vec<Vec<u8>>, Vec<u8>) {
     let payload = (0..170000)
         .map(|i| ((i * 37 + i / 251) % 256) as u8)
         .collect::<Vec<_>>();
+    let parts = split_zip_parts(&[("firstentry", &payload), ("secondentry", b"second file")]);
+    (parts, payload)
+}
+
+pub(crate) fn split_zip_parts(entries: &[(&str, &[u8])]) -> Vec<Vec<u8>> {
     let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let options =
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-    writer.start_file("firstentry", options).unwrap();
-    writer.write_all(&payload).unwrap();
-    writer.start_file("secondentry", options).unwrap();
-    writer.write_all(b"second file").unwrap();
+    for (name, bytes) in entries {
+        writer.start_file(*name, options).unwrap();
+        writer.write_all(bytes).unwrap();
+    }
     let bytes = writer.finish().unwrap().into_inner();
     let mut data = b"PK\x07\x08".to_vec();
     data.extend(bytes);
@@ -75,7 +82,7 @@ fn split_fixture() -> (Vec<Vec<u8>>, Vec<u8>) {
     let boundaries = [0, 65536, 131072];
     let disk_at = |offset: usize| boundaries.iter().rposition(|b| *b <= offset).unwrap();
     let mut cursor = cd;
-    for _ in 0..2 {
+    for _ in entries {
         let local = read32(&data, cursor + 42) + 4;
         let disk = disk_at(local);
         data[cursor + 34..cursor + 36].copy_from_slice(&(disk as u16).to_le_bytes());
@@ -91,14 +98,11 @@ fn split_fixture() -> (Vec<Vec<u8>>, Vec<u8>) {
     data[end + 6..end + 8].copy_from_slice(&(disk_at(cd) as u16).to_le_bytes());
     data[end + 16..end + 20]
         .copy_from_slice(&((cd - boundaries[disk_at(cd)]) as u32).to_le_bytes());
-    (
-        vec![
-            data[..65536].to_vec(),
-            data[65536..131072].to_vec(),
-            data[131072..].to_vec(),
-        ],
-        payload,
-    )
+    vec![
+        data[..65536].to_vec(),
+        data[65536..131072].to_vec(),
+        data[131072..].to_vec(),
+    ]
 }
 
 struct TempDir(PathBuf);
@@ -155,15 +159,15 @@ fn reassembly_fixes_disk_relative_offsets_and_rejects_corruption_and_zip64() {
     );
 }
 
-struct Server {
-    url: String,
+pub(crate) struct Server {
+    pub(crate) url: String,
     stop: Arc<AtomicBool>,
     calls: Arc<AtomicUsize>,
     peak: Arc<AtomicUsize>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 impl Server {
-    fn new(parts: Vec<Vec<u8>>, fail: bool) -> Self {
+    pub(crate) fn new(parts: Vec<Vec<u8>>, fail: bool) -> Self {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -254,6 +258,7 @@ async fn real_http_downloads_two_volumes_and_cleans_all_parts_after_reassembly()
             &client,
             assets,
             &dir.0,
+            None,
             "test",
             None,
             &crate::models::NetworkConfig::default(),
@@ -293,7 +298,7 @@ async fn real_http_downloads_two_volumes_and_cleans_all_parts_after_reassembly()
     assert_eq!(server.calls.load(Ordering::Relaxed), 3);
     assert_eq!(server.peak.load(Ordering::Relaxed), 2);
     assert_eq!(std::fs::read_dir(&dir.0).unwrap().count(), 1);
-    let mut zip = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(path.path()).unwrap()).unwrap();
     let mut actual = Vec::new();
     zip.by_name("firstentry")
         .unwrap()
@@ -322,6 +327,7 @@ async fn real_http_download_observer_retains_exact_bytes_and_scope_ends_with_the
                 download_count: None,
             }],
             &dir.0,
+            None,
             "actual MOD",
             None,
             &crate::models::NetworkConfig::default(),
@@ -342,7 +348,7 @@ async fn real_http_download_observer_retains_exact_bytes_and_scope_ends_with_the
     )
     .await
     .unwrap();
-    assert_eq!(std::fs::read(path).unwrap(), bytes);
+    assert_eq!(std::fs::read(path.path()).unwrap(), bytes);
     let seen = progress.lock().unwrap();
     assert!(!seen.first().unwrap().finished);
     assert!(
@@ -370,6 +376,7 @@ async fn exhausted_candidates_allow_only_three_outer_retries_and_leave_no_files(
         &client,
         assets,
         &dir.0,
+        None,
         "test",
         None,
         &crate::models::NetworkConfig::default(),
@@ -451,6 +458,7 @@ async fn bad_volume_digest_retries_and_cleans_successful_companions() {
         &client,
         assets,
         &dir.0,
+        None,
         "test",
         None,
         &crate::models::NetworkConfig::default(),
@@ -492,6 +500,7 @@ async fn dropping_download_cleans_completed_and_inflight_volumes() {
             &client,
             assets,
             &dir.0,
+            None,
             "test",
             None,
             &crate::models::NetworkConfig::default(),
@@ -525,6 +534,7 @@ async fn ordinary_single_file_keeps_exact_bytes_and_has_no_outer_retry() {
         &client,
         vec![asset("single.dll")],
         &dir.0,
+        None,
         "test",
         None,
         &crate::models::NetworkConfig::default(),
@@ -544,7 +554,8 @@ async fn ordinary_single_file_keeps_exact_bytes_and_has_no_outer_retry() {
     )
     .await
     .unwrap();
-    assert_eq!(std::fs::read(path).unwrap(), payload);
+    assert_eq!(std::fs::read(path.path()).unwrap(), payload);
+    assert!(path.split_proof().unwrap().is_none());
     assert_eq!(server.calls.load(Ordering::Relaxed), 1);
 }
 

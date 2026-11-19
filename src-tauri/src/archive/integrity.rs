@@ -36,24 +36,33 @@ pub fn verify_digest(path: &Path, digest: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-fn normalized_digest(digest: &str) -> String {
-    digest
-        .strip_prefix("sha256:")
-        .unwrap_or(digest)
-        .trim()
-        .to_ascii_lowercase()
+/// SHA-256 is the only digest we can verify for Release and update assets.
+/// Accept the tagged form from hosting APIs as well as the legacy bare hex.
+pub(crate) fn normalize_sha256(digest: &str) -> Option<&str> {
+    let digest = digest.trim();
+    let hex = match digest.split_once(':') {
+        Some((algorithm, hex)) if algorithm.eq_ignore_ascii_case("sha256") => hex.trim(),
+        Some(_) => return None,
+        None => digest,
+    };
+    (hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit())).then_some(hex)
 }
 
 /// Compare a SHA-256 already computed while reading a file with Release metadata.
 pub(crate) fn validate_download_digest(actual: &str, expected: &str) -> Result<(), String> {
-    let expected = normalized_digest(expected);
-    if actual == expected {
+    let Some(expected) = normalize_sha256(expected) else {
+        return Err("download.checksumFailed".into());
+    };
+    if actual.eq_ignore_ascii_case(expected) {
         return Ok(());
     }
     log::error!("下载文件 SHA-256 校验失败");
     Err(crate::locale_tag::with_params(
         "download.checksumMismatch",
-        &[("expected", &expected), ("actual", actual)],
+        &[
+            ("expected", &expected.to_ascii_lowercase()),
+            ("actual", actual),
+        ],
     ))
 }
 
@@ -91,9 +100,7 @@ pub fn validate_download_bytes(
     validate_download_size(bytes.len() as u64, expected_size)?;
     if let Some(expected) = digest {
         let actual = format!("{:x}", Sha256::digest(bytes));
-        if actual != normalized_digest(expected) {
-            return Err("download.checksumFailed".into());
-        }
+        validate_download_digest(&actual, expected).map_err(|_| "download.checksumFailed")?;
     }
     Ok(())
 }
@@ -102,12 +109,29 @@ pub fn validate_download_bytes(
 /// each entry's compressed stream and CRC while it is read, so this catches a
 /// truncated or otherwise damaged download before installation starts.
 pub fn validate_zip(zip_path: &Path) -> Result<(), String> {
+    validate_zip_with_cancel(zip_path, || false)
+}
+
+pub(super) fn validate_zip_with_cancel(
+    zip_path: &Path,
+    cancelled: impl Fn() -> bool,
+) -> Result<(), String> {
+    let check_cancelled = || {
+        if cancelled() {
+            Err("download.cancelled".to_string())
+        } else {
+            Ok(())
+        }
+    };
+    check_cancelled()?;
     log::debug!("开始校验 ZIP：文件={}", zip_path.display());
     let file = File::open(zip_path).map_err(|e| e.to_string())?;
     let mut archive = ZipArchive::new(file).map_err(|e| {
         crate::locale_tag::with_params("archive.zipReadFailed", &[("reason", &e.to_string())])
     })?;
+    let mut buffer = [0u8; 64 * 1024];
     for index in 0..archive.len() {
+        check_cancelled()?;
         let mut entry = archive.by_index(index).map_err(|e| {
             crate::locale_tag::with_params(
                 "archive.zipEntryReadFailed",
@@ -115,14 +139,24 @@ pub fn validate_zip(zip_path: &Path) -> Result<(), String> {
             )
         })?;
         if !entry.is_dir() {
-            io::copy(&mut entry, &mut io::sink()).map_err(|e| {
-                crate::locale_tag::with_params(
-                    "archive.zipValidationFailed",
-                    &[("reason", &e.to_string())],
-                )
-            })?;
+            // Read through EOF to check CRC; an entry may itself be several GB.
+            loop {
+                check_cancelled()?;
+                match entry.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(_) => (),
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => (),
+                    Err(error) => {
+                        return Err(crate::locale_tag::with_params(
+                            "archive.zipValidationFailed",
+                            &[("reason", &error.to_string())],
+                        ));
+                    }
+                }
+            }
         }
     }
+    check_cancelled()?;
     log::info!(
         "ZIP 内容校验通过：文件={}，条目数={}",
         zip_path.display(),

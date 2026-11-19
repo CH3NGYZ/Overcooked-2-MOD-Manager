@@ -371,6 +371,7 @@ fn attach_preview(
         &id,
         &candidate,
         None,
+        None,
         &session.staging.join(format!("manual-{preview}")),
     )?;
     // A manual file replaces a unique matching installed unit, preserving package atomicity.
@@ -457,6 +458,7 @@ fn attach_preview(
             preview,
             &id,
             &candidate,
+            None,
             None,
             &session.staging.join(format!("manual-verified-{preview}")),
         )?

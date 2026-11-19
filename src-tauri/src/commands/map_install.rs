@@ -201,10 +201,13 @@ pub async fn stage_map_release(
         let client = releases::build_download_client(config.network.first_byte_timeout())
             .map_err(|error| error.to_string())?;
         let cache_dir = state.config.cache_dir();
+        let cache_scope =
+            archive::release_download::ReleaseCacheScope::for_map(&map, &release.tag_name);
         let temp = archive::release_download::download(
             &client,
             assets,
             &cache_dir,
+            Some(&cache_scope),
             &display_name,
             Some(&app),
             &config.network,
@@ -225,7 +228,8 @@ pub async fn stage_map_release(
         .map_err(|error| {
             log::error!("地图资产下载失败：地图={}，原因={}", map.name, error);
             error
-        })?;
+        })?
+        .into_path();
 
         /*
          * 识别 + 身份校验在暂存阶段做完：

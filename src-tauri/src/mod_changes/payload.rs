@@ -28,6 +28,7 @@ pub(crate) fn from_preview(
     node_id: &str,
     candidate: &Candidate,
     asset_name: Option<&str>,
+    split_proof: Option<&archive::release_download::SplitZipProof>,
     stage_root: &Path,
 ) -> Result<Payload, String> {
     let id = uuid::Uuid::parse_str(preview_id).map_err(|_| "modPreview.invalidId")?;
@@ -99,8 +100,8 @@ pub(crate) fn from_preview(
         _ => return Err("modChanges.targetChanged".into()),
     }
     let prerelease = origin.as_ref().is_some_and(|value| value.prerelease);
-    let mut release_digest = None;
-    let mut expected_size = None;
+    let mut asset_digest_verified = false;
+    let mut release_asset = None;
     if let Some(repo) = repo {
         if let Some(tag) = &candidate.tag {
             let release = repo
@@ -120,8 +121,7 @@ pub(crate) fn from_preview(
             if asset.name != file_name {
                 return Err("modChanges.targetChanged".into());
             }
-            expected_size = (asset.size > 0).then_some(asset.size);
-            release_digest = asset.digest.as_deref();
+            release_asset = Some((asset, &release.assets));
         } else if !candidate.raw {
             return Err("modChanges.targetChanged".into());
         }
@@ -134,9 +134,28 @@ pub(crate) fn from_preview(
     if !is_zip && !extension.eq_ignore_ascii_case("dll") {
         return Err("mods.unsupportedFileType".into());
     }
-    archive::validate_download_size(*size, expected_size)?;
-    if let Some(digest) = release_digest {
-        archive::validate_download_digest(sha256, digest)?;
+    if let Some((asset, assets)) = release_asset {
+        let parts = archive::release_download::asset_set(asset, assets)?;
+        if parts.len() > 1 {
+            // The main .zip's API metadata describes the last volume only.
+            // Verify the reassembled bytes using the backend's fresh receipt.
+            let proof = split_proof.ok_or("modChanges.targetChanged")?;
+            asset_digest_verified = proof.validate(&parts, *size, sha256)?;
+        } else {
+            if split_proof.is_some() {
+                return Err("modChanges.targetChanged".into());
+            }
+            archive::validate_download_size(*size, (asset.size > 0).then_some(asset.size))?;
+            if let Some(digest) = asset.digest.as_deref() {
+                archive::validate_download_digest(sha256, digest)?;
+                asset_digest_verified = true;
+            }
+        }
+    } else {
+        if split_proof.is_some() {
+            return Err("modChanges.targetChanged".into());
+        }
+        archive::validate_download_size(*size, None)?;
     }
     if is_zip {
         archive::validate_zip(&source)?;
@@ -259,7 +278,7 @@ pub(crate) fn from_preview(
             relations,
             prerelease,
         );
-        let (stage_fingerprint, release_files) = if is_zip && release_digest.is_some() {
+        let (stage_fingerprint, release_files) = if is_zip && asset_digest_verified {
             let mut files = HashMap::new();
             // Disk enumeration may use a different spelling of a shared parent
             // directory than the ZIP. Use the transaction's portable alias key.

@@ -5,7 +5,7 @@ use crate::{
     models::{ModDownloadMode, ProxyMode},
     releases,
 };
-use std::{fs, path::PathBuf};
+use std::path::PathBuf;
 use tauri::AppHandle;
 
 /// 仓库安装的结果。
@@ -17,6 +17,8 @@ pub struct ModRepositoryInstallOutcome {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview: Option<crate::mod_preview::ModPreview>,
+    #[serde(skip)]
+    pub(crate) split_proof: Option<archive::release_download::SplitZipProof>,
 }
 
 /// Existing transport and preview path, shared by single downloads and whole-chain preparation.
@@ -170,10 +172,20 @@ pub(crate) async fn run_repository_install(
         } else {
             download_assets
         };
+        let cache_scope = (!is_raw_file).then(|| {
+            archive::release_download::ReleaseCacheScope::new(
+                repo.provider.clone(),
+                &repo.username,
+                &repo.repository,
+                None,
+                &release_tag,
+            )
+        });
         let temp = archive::release_download::download(
             &client,
             assets,
             &cache_dir,
+            cache_scope.as_ref(),
             &display_name,
             Some(&app),
             &config.network,
@@ -209,17 +221,23 @@ pub(crate) async fn run_repository_install(
          * 复用这里已经完成的下载（含代理与竞速），把临时文件移进预览暂存，
          * 后续仅由已确认链式计划消费暂存资产并统一提交。
          */
-        let preview = crate::mod_preview::stage_downloaded_file(
-            &state,
-            &temp,
-            &download_name,
-            &repo.id,
-            &display_name,
-            &release_tag,
-            &release_body,
-            release_prerelease,
-        )?;
-        let _ = fs::remove_file(&temp);
+        let repository = repo.id;
+        let (preview, split_proof) = tauri::async_runtime::spawn_blocking(move || {
+            let proof = temp.split_proof()?;
+            let preview = crate::mod_preview::stage_downloaded_file(
+                &state,
+                temp,
+                &download_name,
+                &repository,
+                &display_name,
+                &release_tag,
+                &release_body,
+                release_prerelease,
+            )?;
+            Ok::<_, String>((preview, proof))
+        })
+        .await
+        .map_err(|error| error.to_string())??;
         log::info!(
             "仓库资产已下载并解析（预览模式）：仓库={}，DLL 数={}",
             repo.name,
@@ -232,6 +250,7 @@ pub(crate) async fn run_repository_install(
                 &[("name", &repo.name.to_string())],
             ),
             preview: Some(preview),
+            split_proof,
         });
     })
     .await

@@ -115,7 +115,7 @@ fn real_zip_update_accepts_normal_windows_data_path() {
     preparation::finish(&state, &mut session).unwrap();
     assert_eq!(fs::read(map.join("info")).unwrap(), b"previous bundle");
     session.plan.prepared = true;
-    execution::commit(&state, &mut session).unwrap();
+    execution::commit(&state, &mut session, |_| {}).unwrap();
     assert!(!map.join("keep-until-commit").exists());
     assert_eq!(
         level_sets::read_info_metadata(&map.join("info")).unwrap(),

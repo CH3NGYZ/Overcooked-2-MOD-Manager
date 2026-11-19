@@ -80,6 +80,7 @@ fn fixture() -> Fixture {
             },
             roots: vec![],
             nodes: vec![],
+            previous_enabled_members: Default::default(),
             install_notes: vec![],
             prepared: true,
         },
@@ -225,7 +226,7 @@ fn replacement_deletes_disabled_old_and_batches_manifest_with_final_flags() {
     let prepared = super::super::transaction::prepare(
         &f.roots.data_root.join("transactions"),
         &f.roots,
-        changes,
+        changes.into_iter().map(|owned| owned.mutation).collect(),
     )
     .unwrap();
     prepared.apply().unwrap();
@@ -313,10 +314,14 @@ fn member_toggle_uses_final_inventory_without_replaying_actions() {
     node.current.as_mut().unwrap().provides[0].enabled = false;
     let changes = assemble(&f.session, f.roots.clone()).unwrap();
     assert_eq!(changes.len(), 1);
-    super::super::transaction::prepare(&f.roots.data_root.join("transactions"), &f.roots, changes)
-        .unwrap()
-        .apply()
-        .unwrap();
+    super::super::transaction::prepare(
+        &f.roots.data_root.join("transactions"),
+        &f.roots,
+        changes.into_iter().map(|owned| owned.mutation).collect(),
+    )
+    .unwrap()
+    .apply()
+    .unwrap();
     assert!(
         f.roots
             .game_root
@@ -362,10 +367,14 @@ fn framework_root_migration_keeps_unknown_user_tree_and_rewrites_registry() {
         .guid = mods::plugin_target::DIYLEVEL_GUID.into();
     write(&f.roots.data_root, "manifests/level-set-plugins.json", br#"{"version":1,"entries":[{"dll":"BepInEx/plugins/old/levels/unrecognized/plugin.dll","owner":{"name":"map"}}]}"#);
     let changes = assemble(&f.session, f.roots.clone()).unwrap();
-    super::super::transaction::prepare(&f.roots.data_root.join("transactions"), &f.roots, changes)
-        .unwrap()
-        .apply()
-        .unwrap();
+    super::super::transaction::prepare(
+        &f.roots.data_root.join("transactions"),
+        &f.roots,
+        changes.into_iter().map(|owned| owned.mutation).collect(),
+    )
+    .unwrap()
+    .apply()
+    .unwrap();
     assert_eq!(
         fs::read(
             f.roots
@@ -570,7 +579,7 @@ fn framework_root_migration_combines_map_gates_and_internal_member_switches() {
             super::super::transaction::prepare(
                 &f.roots.data_root.join("transactions"),
                 &f.roots,
-                changes,
+                changes.into_iter().map(|owned| owned.mutation).collect(),
             )
             .unwrap()
             .apply()
@@ -615,10 +624,31 @@ fn framework_root_migration_changes_internal_member_without_changing_map_gate() 
         .unwrap();
     map.current.as_mut().unwrap().provides[0].enabled = true;
     let changes = assemble(&f.session, f.roots.clone()).unwrap();
-    super::super::transaction::prepare(&f.roots.data_root.join("transactions"), &f.roots, changes)
-        .unwrap()
-        .apply()
-        .unwrap();
+    let map_switch = ItemKey::new(
+        "map:fixture",
+        Some(&inventory::key(&format!("{initial}/nested/plugin.dll"))),
+    );
+    let tree_edits = changes
+        .iter()
+        .filter_map(|owned| match &owned.mutation {
+            Mutation::Tree(edit) if owned.items.contains(&map_switch) => {
+                Some(inventory::key(&edit.target.relative))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tree_edits,
+        ["bepinex/plugins/old/levels", "bepinex/plugins/new/levels"]
+    );
+    super::super::transaction::prepare(
+        &f.roots.data_root.join("transactions"),
+        &f.roots,
+        changes.into_iter().map(|owned| owned.mutation).collect(),
+    )
+    .unwrap()
+    .apply()
+    .unwrap();
     assert!(
         f.roots
             .game_root

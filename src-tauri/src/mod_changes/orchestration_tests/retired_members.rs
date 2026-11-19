@@ -50,7 +50,7 @@ fn repair_web_requirement_accepts_verified_older_framework_without_newer_bundled
             .is_file()
     );
     session.plan.prepared = true;
-    super::super::execution::commit(&f.state, &mut session).unwrap();
+    super::super::execution::commit(&f.state, &mut session, |_| {}).unwrap();
     let actual = inventory::build(&f.state).unwrap();
     let framework = actual
         .inventory

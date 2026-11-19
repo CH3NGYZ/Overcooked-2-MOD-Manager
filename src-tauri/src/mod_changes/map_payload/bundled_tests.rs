@@ -92,7 +92,7 @@ fn same_root_framework_bundle_and_map_update_keep_disjoint_tree_endpoints() {
     changes.extend(output::build_at(&f.roots.data_root, &f.session).unwrap());
     let tree_targets = changes
         .iter()
-        .filter_map(|change| match change {
+        .filter_map(|change| match &change.mutation {
             Mutation::Tree(tree) => Some(key(&tree.target.relative)),
             _ => None,
         })
@@ -107,7 +107,7 @@ fn same_root_framework_bundle_and_map_update_keep_disjoint_tree_endpoints() {
     super::super::super::transaction::prepare(
         &f.roots.data_root.join("transactions"),
         &f.roots,
-        changes,
+        changes.into_iter().map(|owned| owned.mutation).collect(),
     )
     .unwrap()
     .apply()

@@ -1,6 +1,12 @@
 use super::{PreparedTransaction, durable, paths, types::*};
 use std::{fs, path::Path};
 
+pub(in crate::mod_changes) enum RecordProgress {
+    Applying(usize),
+    Processed(usize),
+    Committed,
+}
+
 pub(super) fn verify_file_before(
     path: &Path,
     before: &Fingerprint,
@@ -81,16 +87,17 @@ impl PreparedTransaction {
 
     #[cfg(test)]
     pub(crate) fn apply(self) -> Result<String, String> {
-        self.apply_with_cancel(|| false)
+        self.apply_with_cancel(|| false, |_| {})
     }
 
     /// The caller holds the shared operation lock and has rechecked game/source revisions.
     /// Cancellation is observed between atomic filesystem operations; it rolls back the batch.
-    pub(crate) fn apply_with_cancel(
+    pub(in crate::mod_changes) fn apply_with_cancel(
         mut self,
         cancelled: impl Fn() -> bool,
+        mut observe: impl FnMut(RecordProgress),
     ) -> Result<String, String> {
-        let result = self.apply_inner(&cancelled);
+        let result = self.apply_inner(&cancelled, &mut observe);
         if let Err(error) = result {
             if self.journal.state == JournalState::Committed {
                 // A failed durable commit write can have reached disk. Only restart
@@ -106,6 +113,7 @@ impl PreparedTransaction {
             return Err(error);
         }
         let id = self.journal.id.clone();
+        observe(RecordProgress::Committed);
         // A durable commit is final. Cleanup failure must never turn into a rollback.
         if let Err(error) = self.cleanup() {
             log::warn!("批次已提交，恢复材料待清理：{error}");
@@ -113,7 +121,11 @@ impl PreparedTransaction {
         Ok(id)
     }
 
-    fn apply_inner(&mut self, cancelled: &impl Fn() -> bool) -> Result<(), String> {
+    fn apply_inner(
+        &mut self,
+        cancelled: &impl Fn() -> bool,
+        observe: &mut impl FnMut(RecordProgress),
+    ) -> Result<(), String> {
         if self.journal.state != JournalState::Prepared {
             return Err(paths::INVALID.into());
         }
@@ -135,7 +147,8 @@ impl PreparedTransaction {
             if cancelled() {
                 return Err("download.cancelled".into());
             }
-            self.apply_record(index)?;
+            self.apply_record(index, || observe(RecordProgress::Applying(index)))?;
+            observe(RecordProgress::Processed(index));
         }
         for record in &self.journal.records {
             verify_after(record, &self.journal.roots)?;
@@ -148,10 +161,15 @@ impl PreparedTransaction {
         durable::write_journal(&self.directory, &self.journal)
     }
 
-    pub(super) fn apply_record(&mut self, index: usize) -> Result<(), String> {
+    pub(super) fn apply_record(
+        &mut self,
+        index: usize,
+        started: impl FnOnce(),
+    ) -> Result<(), String> {
         verify_before(&self.journal.records[index], &self.journal.roots)?;
         self.journal.records[index].phase = RecordPhase::Applying;
         self.persist()?;
+        started();
         while self.journal.created_directory_count < self.journal.created_directories.len() {
             let path = &self.journal.created_directories[self.journal.created_directory_count];
             let absolute = path.resolve(&self.journal.roots)?;

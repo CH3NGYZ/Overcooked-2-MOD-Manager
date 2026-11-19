@@ -2,7 +2,7 @@
 use super::{install_notes::InstallNote, inventory::*, model::*, transaction::Fingerprint};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     path::PathBuf,
     sync::Arc,
 };
@@ -48,6 +48,10 @@ pub(crate) struct ChangePlan {
     pub result: SolveResult,
     pub roots: Vec<RootSummary>,
     pub nodes: Vec<NodeSummary>,
+    /// Member keys that were effectively enabled before a whole-node disable.
+    /// The solved node summaries describe the final state, so cannot show these.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub previous_enabled_members: BTreeMap<String, Vec<String>>,
     pub install_notes: Vec<InstallNote>,
     pub prepared: bool,
 }
@@ -78,7 +82,7 @@ pub(crate) struct PlanSession {
     /// Exact staged bytes, checked again before applying anything to the game.
     pub payload_fingerprints: HashMap<PathBuf, super::transaction::Fingerprint>,
     /// Frozen under preparation; execute must not recapture changed live targets.
-    pub mutations: Option<Vec<super::transaction::Mutation>>,
+    pub(super) mutations: Option<Vec<super::application_progress::OwnedMutation>>,
     pub created: std::time::Instant,
 }
 
@@ -205,6 +209,28 @@ pub(crate) fn presentation(
     id: String,
     prepared: bool,
 ) -> ChangePlan {
+    let disabled_nodes: BTreeSet<_> = result
+        .actions
+        .iter()
+        .filter(|action| action.kind == ActionKind::Disable && action.member_key.is_none())
+        .map(|action| action.node_id.as_str())
+        .collect();
+    let previous_enabled_members = trusted
+        .inventory
+        .nodes
+        .iter()
+        .filter(|node| node.enabled && disabled_nodes.contains(node.id.as_str()))
+        .map(|node| {
+            let enabled_keys = node
+                .current
+                .iter()
+                .flat_map(|candidate| &candidate.provides)
+                .filter(|member| member.enabled)
+                .filter_map(|member| member.member_key.clone())
+                .collect();
+            (node.id.clone(), enabled_keys)
+        })
+        .collect();
     ChangePlan {
         plan_id: id,
         result,
@@ -234,6 +260,7 @@ pub(crate) fn presentation(
             })
             .collect(),
         nodes: trusted.files.values().map(|f| f.summary.clone()).collect(),
+        previous_enabled_members,
         install_notes: Vec::new(),
     }
 }

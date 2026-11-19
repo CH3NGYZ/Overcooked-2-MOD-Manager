@@ -143,10 +143,14 @@ fn matching_verified_web_resources_join_new_manifest_as_both_packages_upgrade() 
     let changes = assemble(&f.session, f.roots.clone())
         .expect("the online package already contains the identical loose files");
     assert_eq!(fingerprint(&f), before);
-    transaction::prepare(&f.roots.data_root.join("transactions"), &f.roots, changes)
-        .unwrap()
-        .apply()
-        .unwrap();
+    transaction::prepare(
+        &f.roots.data_root.join("transactions"),
+        &f.roots,
+        changes.into_iter().map(|owned| owned.mutation).collect(),
+    )
+    .unwrap()
+    .apply()
+    .unwrap();
 
     assert_eq!(
         fs::read(f.roots.game_root.join(FW_DLL)).unwrap(),
@@ -278,7 +282,7 @@ fn release_files_can_share_a_directory_with_mixed_case_zip_paths() {
     for (name, bytes) in [(first, b"first".as_slice()), (second, b"second")] {
         let staged = changes
             .iter()
-            .find_map(|change| match change {
+            .find_map(|change| match &change.mutation {
                 Mutation::File(change)
                     if path_key(Path::new(&change.target.relative))
                         == path_key(&Path::new("BepInEx").join(name)) =>
@@ -356,7 +360,11 @@ fn adopted_file_changed_after_assembly_blocks_the_transaction() {
     let changes = assemble(&f.session, f.roots.clone()).unwrap();
     write(&f.roots.game_root, WEB_RESOURCE_6, b"new-runtime-X");
     let edited = fingerprint(&f);
-    let outcome = transaction::prepare(&f.roots.data_root.join("transactions"), &f.roots, changes);
+    let outcome = transaction::prepare(
+        &f.roots.data_root.join("transactions"),
+        &f.roots,
+        changes.into_iter().map(|owned| owned.mutation).collect(),
+    );
     assert_eq!(outcome.err().as_deref(), Some("recycle.payloadModified"));
     assert_eq!(fingerprint(&f), edited);
 }
@@ -369,7 +377,11 @@ fn adopted_file_linked_after_assembly_blocks_the_transaction() {
     let alias = f.roots.data_root.join("linked-runtime");
     fs::hard_link(f.roots.game_root.join(WEB_RESOURCE_6), &alias).unwrap();
     let journal = f.roots.data_root.join("transactions");
-    let outcome = transaction::prepare(&journal, &f.roots, changes);
+    let outcome = transaction::prepare(
+        &journal,
+        &f.roots,
+        changes.into_iter().map(|owned| owned.mutation).collect(),
+    );
     assert_eq!(outcome.err().as_deref(), Some("recycle.payloadModified"));
     assert_eq!(fingerprint(&f), before);
     assert_eq!(fs::read(alias).unwrap(), b"new-runtime-6");
@@ -385,9 +397,14 @@ fn a_link_added_during_apply_rolls_back_previous_writes() {
     let upgraded_dll = mods::plugin_blob(mods::plugin_target::DIYLEVEL_GUID, "DIYLevel", "0.11.1");
     let linked = Cell::new(false);
     let journal = f.roots.data_root.join("transactions");
-    let outcome = transaction::prepare(&journal, &f.roots, changes)
-        .unwrap()
-        .apply_with_cancel(|| {
+    let outcome = transaction::prepare(
+        &journal,
+        &f.roots,
+        changes.into_iter().map(|owned| owned.mutation).collect(),
+    )
+    .unwrap()
+    .apply_with_cancel(
+        || {
             if !linked.get()
                 && fs::read(f.roots.game_root.join(FW_DLL)).is_ok_and(|bytes| bytes == upgraded_dll)
             {
@@ -395,7 +412,9 @@ fn a_link_added_during_apply_rolls_back_previous_writes() {
                 linked.set(true);
             }
             false
-        });
+        },
+        |_| {},
+    );
     assert!(linked.get(), "the link must be added after a real write");
     assert_eq!(outcome.unwrap_err(), "recycle.payloadModified");
     assert_eq!(fingerprint(&f), before);
@@ -413,7 +432,11 @@ fn staged_source_changed_after_assembly_blocks_the_transaction() {
         b"new-runtime-X",
     );
     let before = fingerprint(&f);
-    let outcome = transaction::prepare(&f.roots.data_root.join("transactions"), &f.roots, changes);
+    let outcome = transaction::prepare(
+        &f.roots.data_root.join("transactions"),
+        &f.roots,
+        changes.into_iter().map(|owned| owned.mutation).collect(),
+    );
     assert_eq!(outcome.err().as_deref(), Some("recycle.payloadModified"));
     assert_eq!(fingerprint(&f), before);
 }
@@ -430,9 +453,14 @@ fn cancelling_after_real_upgrade_writes_restores_both_packages_and_loose_files()
     let saw_writes = Cell::new(false);
     let upgraded_dll = mods::plugin_blob(mods::plugin_target::DIYLEVEL_GUID, "DIYLevel", "0.11.1");
     let upgraded_web = mods::plugin_blob(WEB_GUID, "Web", "4.0.0");
-    let outcome = transaction::prepare(&f.roots.data_root.join("transactions"), &f.roots, changes)
-        .unwrap()
-        .apply_with_cancel(|| {
+    let outcome = transaction::prepare(
+        &f.roots.data_root.join("transactions"),
+        &f.roots,
+        changes.into_iter().map(|owned| owned.mutation).collect(),
+    )
+    .unwrap()
+    .apply_with_cancel(
+        || {
             let wrote = fs::read(f.roots.game_root.join(FW_DLL))
                 .is_ok_and(|bytes| bytes == upgraded_dll)
                 && fs::read(f.roots.game_root.join(WEB_DLL))
@@ -444,7 +472,9 @@ fn cancelling_after_real_upgrade_writes_restores_both_packages_and_loose_files()
                 && manifest(&f, "web").release_tag == "v4.0.0";
             saw_writes.set(wrote);
             wrote
-        });
+        },
+        |_| {},
+    );
     assert_eq!(outcome.unwrap_err(), "download.cancelled");
     assert!(
         saw_writes.get(),

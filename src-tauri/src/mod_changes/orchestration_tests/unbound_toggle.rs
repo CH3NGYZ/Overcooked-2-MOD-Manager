@@ -75,7 +75,7 @@ fn prepared(f: &Fixture, plan: &ChangePlan) -> PlanSession {
 }
 
 fn commit(f: &Fixture, session: &mut PlanSession) {
-    super::super::execution::commit(&f.state, session).unwrap();
+    super::super::execution::commit(&f.state, session, |_| {}).unwrap();
 }
 
 fn map(f: &Fixture, enabled: bool, relations: Vec<RepositoryRelation>) -> std::path::PathBuf {
@@ -281,6 +281,10 @@ fn unbound_map_switch_ignores_own_runtime_requirement_but_still_displays_it() {
     let runtime_file = install(&f, "WebRuntime", &runtime.guid, "3.10.2", false);
     let inactive = map(&f, false, vec![]);
     write_embedded_plugin(&inactive);
+    write(
+        &inactive.join("AlreadyOff.dll.disabled"),
+        &mods::plugin_blob("test-fixture.already-off", "AlreadyOff", "1.0.0"),
+    );
     write(&inactive.join("requires.txt"), b"3.10.2\n");
 
     let request = toggle(&f, MAP, None, true);
@@ -295,6 +299,16 @@ fn unbound_map_switch_ignores_own_runtime_requirement_but_still_displays_it() {
 
     let plan = planning::create(&f.state, request).unwrap();
     assert_eq!(plan_actions(&plan), [(MAP, ActionKind::Enable)]);
+    let wire = serde_json::to_value(&plan).unwrap();
+    assert!(wire.get("previous_enabled_members").is_none());
+    let members = &plan
+        .nodes
+        .iter()
+        .find(|node| node.node_id == MAP)
+        .unwrap()
+        .members;
+    assert_eq!(members.len(), 2);
+    assert!(members.iter().all(|member| member.enabled));
     let evaluation = plan
         .result
         .evaluations
@@ -318,7 +332,56 @@ fn unbound_map_switch_ignores_own_runtime_requirement_but_still_displays_it() {
             .join("BepInEx/plugins/DIYLevel/levels/Kitchen/Embedded.dll")
             .is_file()
     );
+    assert!(
+        f.game
+            .join("BepInEx/plugins/DIYLevel/levels/Kitchen/AlreadyOff.dll")
+            .is_file()
+    );
     assert!(!inactive.exists());
+}
+
+#[test]
+fn map_disable_preserves_only_its_previously_enabled_members_in_the_plan() {
+    let f = fixture(vec![repository(
+        "DIYLevel",
+        FRAMEWORK_GUID,
+        &["0.10.0"],
+        vec![],
+    )]);
+    install(&f, "DIYLevel", FRAMEWORK_GUID, "0.10.0", true);
+    let active = map(&f, true, vec![]);
+    write_embedded_plugin(&active);
+    write(
+        &active.join("AlreadyOff.dll.disabled"),
+        &mods::plugin_blob("test-fixture.already-off", "AlreadyOff", "1.0.0"),
+    );
+    let request = toggle(&f, MAP, None, false);
+    let plan = planning::create(&f.state, request).unwrap();
+    assert_eq!(plan_actions(&plan), [(MAP, ActionKind::Disable)]);
+    let map_members = &plan
+        .nodes
+        .iter()
+        .find(|node| node.node_id == MAP)
+        .unwrap()
+        .members;
+    assert_eq!(map_members.len(), 2);
+    assert!(map_members.iter().all(|member| !member.enabled));
+    let embedded = inventory::key("BepInEx/plugins/DIYLevel/levels/Kitchen/Embedded.dll");
+    let wire = serde_json::to_value(&plan).unwrap();
+    assert_eq!(
+        wire["previous_enabled_members"],
+        serde_json::json!({ (MAP): [embedded] })
+    );
+    let mut session = prepared(&f, &plan);
+    assert_eq!(
+        plan.previous_enabled_members,
+        session.plan.previous_enabled_members
+    );
+    commit(&f, &mut session);
+    let inactive = level_sets::disabled_root(&f.game).join("Kitchen");
+    assert!(!active.exists());
+    assert!(inactive.join("Embedded.dll").is_file());
+    assert!(inactive.join("AlreadyOff.dll.disabled").is_file());
 }
 
 #[test]

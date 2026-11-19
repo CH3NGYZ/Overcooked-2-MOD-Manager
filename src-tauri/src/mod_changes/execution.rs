@@ -1,5 +1,6 @@
 //! Commit one prepared whole-chain plan under the existing write lock.
 use super::{
+    application_progress::{ChangeApplicationProgress, ItemKey, Recorder},
     inventory,
     model::{ActionKind, NodeKind, SolveStatus},
     preparation,
@@ -14,10 +15,11 @@ pub(crate) fn execute(
     app: &AppHandle,
     state: &AppState,
     id: &str,
+    report: impl FnMut(ChangeApplicationProgress),
 ) -> Result<OperationResult, String> {
     let mut lease = SessionLease::take(state, id)?;
     let session = lease.session.as_mut().ok_or("modChanges.planExpired")?;
-    commit(state, session)?;
+    commit(state, session, report)?;
     // Only a completed solution can scope the notification. A map request may
     // also enable or replace MODs, so the original intent alone is insufficient.
     let actions = &session.plan.result.actions;
@@ -49,7 +51,11 @@ pub(crate) fn execute(
 
 /// The write boundary is also used by isolated real-file orchestration tests.
 /// Notification failures are deliberately outside the durable transaction.
-pub(super) fn commit(state: &AppState, session: &mut PlanSession) -> Result<(), String> {
+pub(super) fn commit(
+    state: &AppState,
+    session: &mut PlanSession,
+    report: impl FnMut(ChangeApplicationProgress),
+) -> Result<(), String> {
     if !session.plan.prepared || session.plan.result.status != SolveStatus::Ready {
         return Err("modChanges.notPrepared".into());
     }
@@ -90,6 +96,22 @@ pub(super) fn commit(state: &AppState, session: &mut PlanSession) -> Result<(), 
             game_root: root.clone(),
             data_root: data_root.clone(),
         };
+        let (changes, records) = changes
+            .into_iter()
+            .map(|owned| (owned.mutation, owned.items))
+            .unzip();
+        let action_items = session
+            .plan
+            .result
+            .actions
+            .iter()
+            .map(|action| ItemKey::new(&action.node_id, action.member_key.as_deref()));
+        let mut progress = Recorder::new(
+            &session.plan.plan_id,
+            action_items,
+            records,
+            report,
+        );
         let transaction = super::transaction::prepare(
             &data_root.join("mod-change-transactions"),
             &roots,
@@ -100,7 +122,12 @@ pub(super) fn commit(state: &AppState, session: &mut PlanSession) -> Result<(), 
             transaction.id(),
             session.plan.result.actions.len()
         );
-        if let Err(error) = transaction.apply_with_cancel(crate::archive::is_download_cancelled) {
+        if let Err(error) = transaction
+            .apply_with_cancel(crate::archive::is_download_cancelled, |event| {
+                progress.observe(event)
+            })
+        {
+            progress.failed();
             return Err(error);
         }
     }

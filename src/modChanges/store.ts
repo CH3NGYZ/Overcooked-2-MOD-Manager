@@ -1,14 +1,16 @@
-import { computed, readonly, shallowRef } from 'vue'
+import { computed, readonly, shallowReactive, shallowRef } from 'vue'
 import { api } from '../services/tauri'
 import { beginDownloadTask, cancelDownloadTask, endDownloadTask, updateDownloadProgress } from '../downloadTask'
 import { createChangeWorkflow } from './workflow'
 import { setEvaluationSnapshotReader } from './evaluationProjection'
 import { installNoteKey, localizedInstallNotes, type InstallNote } from './planNotes'
+import { changeStatusKey } from './presentation'
 import type { ChangeWorkflowState } from './workflow'
-import type { ChangePreparationProgress, EvaluationSnapshot, EvaluationSubject } from './types'
+import type { ChangeExecutionStage, ChangePreparationProgress, EvaluationSnapshot, EvaluationSubject } from './types'
 
 const state = shallowRef<ChangeWorkflowState | null>(null)
 const preparation = shallowRef<ChangePreparationProgress | null>(null)
+const execution = shallowReactive(new Map<string, ChangeExecutionStage>())
 const cancellingDownload = shallowRef(false)
 const evaluation = shallowRef<EvaluationSnapshot | null>(null)
 const evaluating = shallowRef(false)
@@ -57,12 +59,29 @@ const workflow = createChangeWorkflow({
       endDownloadTask(token)
     }
   },
-  execute: planId => api.executeModChanges(planId),
+  execute: async planId => {
+    let committed = false
+    let active = true
+    execution.clear()
+    try {
+      const result = await api.executeModChanges(planId, progress => {
+        if (!active || progress.plan_id !== planId) return
+        for (const { node_id, member_key, stage } of progress.items) execution.set(changeStatusKey(node_id, member_key), stage)
+      })
+      committed = result.ok
+      return result
+    } finally {
+      active = false
+      // A write verified before commit can be rolled back. Never leave a stale
+      // checkmark if the command fails before the final Channel message arrives.
+      if (!committed) for (const [key, stage] of execution) if (stage !== 'applied') execution.set(key, 'failed')
+    }
+  },
   cancel: planId => api.cancelModChanges(planId),
 }, value => {
   state.value = value
   if (!value && readNotes.value.size) readNotes.value = new Set()
-  if (!value || value.phase === 'planning') { preparationSequence += 1; preparation.value = null }
+  if (!value || value.phase === 'planning') { preparationSequence += 1; preparation.value = null; execution.clear() }
   if (value?.phase !== 'preparing') cancellingDownload.value = false
 })
 
@@ -131,7 +150,7 @@ function invalidate() {
 
 export function useModChanges() {
   return {
-    state: readonly(state), preparation: readonly(preparation), cancellingDownload: readonly(cancellingDownload),
+    state: readonly(state), preparation: readonly(preparation), execution: readonly(execution), cancellingDownload: readonly(cancellingDownload),
     canCancelDownload: computed(canCancelPreparation), cancelPreparationDownload,
     installNotes, acceptInstallNotes,
     evaluation: readonly(evaluation), evaluating: readonly(evaluating),

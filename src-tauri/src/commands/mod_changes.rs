@@ -59,13 +59,19 @@ pub(crate) async fn execute_mod_changes(
     app: AppHandle,
     state: State<'_, AppState>,
     plan_id: String,
+    on_update: tauri::ipc::Channel<
+        crate::mod_changes::application_progress::ChangeApplicationProgress,
+    >,
 ) -> Result<OperationResult, String> {
     let state = state.inner().clone();
     // Preserve repository_cache → operation ordering for the final source check.
     let cache = state.repository_cache.clone().lock_owned().await;
     tauri::async_runtime::spawn_blocking(move || {
         let _cache = cache;
-        crate::mod_changes::execution::execute(&app, &state, &plan_id)
+        crate::mod_changes::execution::execute(&app, &state, &plan_id, move |progress| {
+            // Closing the UI cannot abort or invalidate the filesystem transaction.
+            let _ = on_update.send(progress);
+        })
     })
     .await
     .map_err(|e| e.to_string())?

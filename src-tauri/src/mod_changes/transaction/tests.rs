@@ -116,7 +116,7 @@ fn cancellation_after_first_write_reverses_batch_and_keeps_original_permissions(
     let calls = AtomicUsize::new(0);
     assert_eq!(
         pending
-            .apply_with_cancel(|| calls.fetch_add(1, Ordering::SeqCst) >= 2)
+            .apply_with_cancel(|| calls.fetch_add(1, Ordering::SeqCst) >= 2, |_| {})
             .unwrap_err(),
         "download.cancelled"
     );
@@ -152,7 +152,7 @@ fn mixed_disabled_rename_directory_migration_and_manifest_rollback_after_restart
     pending.journal.state = JournalState::Applying;
     pending.persist().unwrap();
     for index in 0..3 {
-        pending.apply_record(index).unwrap();
+        pending.apply_record(index, || {}).unwrap();
     }
     assert!(w.roots.game_root.join("new/levels/map/info").exists());
     drop(pending);
@@ -176,7 +176,7 @@ fn write_ahead_gap_after_rename_is_recovered() {
     let mut pending = w.prepare(vec![w.file("a.dll", Some(b"new"))]);
     pending.journal.state = JournalState::Applying;
     pending.persist().unwrap();
-    pending.apply_record(0).unwrap();
+    pending.apply_record(0, || {}).unwrap();
     pending.journal.records[0].phase = types::RecordPhase::Applying;
     pending.persist().unwrap();
     drop(pending);
@@ -196,7 +196,7 @@ fn user_edit_after_interruption_blocks_recovery_without_overwriting() {
     let mut pending = w.prepare(vec![w.file("a.dll", Some(b"new"))]);
     pending.journal.state = JournalState::Applying;
     pending.persist().unwrap();
-    pending.apply_record(0).unwrap();
+    pending.apply_record(0, || {}).unwrap();
     drop(pending);
     w.write("a.dll", b"user changed");
     let report = recover_all(&w.journal_root, &w.roots).unwrap();
@@ -230,7 +230,7 @@ fn committed_restart_only_cleans_and_never_rolls_back() {
     let mut pending = w.prepare(vec![w.file("a.dll", Some(b"new"))]);
     pending.journal.state = JournalState::Applying;
     pending.persist().unwrap();
-    pending.apply_record(0).unwrap();
+    pending.apply_record(0, || {}).unwrap();
     pending.journal.state = JournalState::Committed;
     pending.persist().unwrap();
     drop(pending);
@@ -332,7 +332,7 @@ fn externally_created_parent_is_never_adopted_or_removed_by_rollback() {
         if during_apply {
             pending.journal.state = JournalState::Applying;
             pending.persist().unwrap();
-            assert!(pending.apply_record(0).is_err());
+            assert!(pending.apply_record(0, || {}).is_err());
             drop(pending);
             assert_eq!(
                 recover_all(&w.journal_root, &w.roots)

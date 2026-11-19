@@ -101,6 +101,7 @@ fn session(candidate_id: &str) -> PlanSession {
             plan_id: "revised-plan".into(),
             roots: vec![],
             nodes: vec![],
+            previous_enabled_members: Default::default(),
             install_notes: vec![],
             prepared: false,
             result: SolveResult {

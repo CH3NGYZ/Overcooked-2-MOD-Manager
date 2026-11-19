@@ -155,7 +155,10 @@ pub(crate) fn attach(state: &AppState, session: &mut PlanSession) -> Result<(), 
     Ok(())
 }
 
-pub(crate) fn mutations(state: &AppState, session: &PlanSession) -> Result<Vec<Mutation>, String> {
+pub(super) fn mutations(
+    state: &AppState,
+    session: &PlanSession,
+) -> Result<Vec<super::application_progress::OwnedMutation>, String> {
     output::build(state, session)
 }
 

@@ -4,6 +4,7 @@ import {registerHooks} from 'node:module'
 registerHooks({resolve(specifier,context,next){if(specifier.startsWith('.')&&!/\.[cm]?[jt]s$/.test(specifier)){try{return next(`${specifier}.ts`,context)}catch{}}return next(specifier,context)},
  load(url,context,next){if(url.endsWith('/src/services/tauri.ts'))return {format:'module',shortCircuit:true,source:'export const api=new Proxy({}, {get:(_,name)=>(...args)=>globalThis.__changeStoreApi(name,args)})'};return next(url,context)}})
 const {useModChanges,registerEvaluationSubject}=await import('../src/modChanges/store.ts')
+const {changeStatusKey}=await import('../src/modChanges/presentation.ts')
 const {downloadTaskState,updateDownloadProgress}=await import('../src/downloadTask.ts')
 const tick=()=>new Promise(resolve=>setImmediate(resolve)),deferred=()=>{let resolve;const promise=new Promise(yes=>resolve=yes);return{promise,resolve}}
 const snapshot=revision=>({revision,nodes:[],evaluations:[]})
@@ -118,4 +119,43 @@ test('preparation cancellation hides progress only after the downloader accepts 
  assert.equal(store.cancellingDownload.value,false)
  await store.cancelPreparationDownload();assert.equal(cancels,2)
  await store.cancel();await pending
+})
+
+test('apply progress ignores foreign and closed Channels and clears provisional success after rollback',async()=>{
+ const first=deferred(),second=deferred(),channels=[]
+ globalThis.__changeStoreApi=async(name,args)=>{
+   if(name==='planModChanges')return plan('same',true)
+   if(name==='executeModChanges'){
+     channels.push(args[1])
+     return (channels.length===1?first:second).promise
+   }
+ }
+ const store=useModChanges(),request={roots:[{node_id:'mod:root',enabled:true}]}
+ const root={node_id:'mod:root',member_key:'root.dll'},sibling={...root,member_key:'sibling.dll'}
+ const rootKey=changeStatusKey(root.node_id,root.member_key),siblingKey=changeStatusKey(sibling.node_id,sibling.member_key)
+ const progress=(item,stage,plan_id='same')=>({plan_id,items:[{...item,stage}]})
+
+ const pending=store.run(request);await tick()
+ const confirm=store.confirm()
+ assert.equal(store.state.value.phase,'executing')
+ channels[0](progress(root,'processed','foreign'));assert.equal(store.execution.size,0)
+ channels[0](progress(root,'applying'));assert.equal(store.execution.get(rootKey),'applying')
+ channels[0](progress(root,'processed'));assert.equal(store.execution.get(rootKey),'processed')
+ assert.equal(store.execution.has(siblingKey),false)
+ // The command can report rollback before its final Channel event is delivered.
+ first.resolve({ok:false,message:'recycle.partialFailure'});await confirm
+ assert.equal(store.state.value.phase,'failed');assert.equal(store.execution.get(rootKey),'failed')
+ channels[0](progress(root,'processed'));assert.equal(store.execution.get(rootKey),'failed')
+ await store.cancel();assert.equal(await pending,null);assert.equal(store.execution.size,0)
+
+ const retry=store.run(request);await tick()
+ const confirmRetry=store.confirm()
+ assert.equal(store.state.value.phase,'executing')
+ channels[1](progress(root,'applying'));assert.equal(store.execution.get(rootKey),'applying')
+ channels[0](progress(root,'processed'));channels[0](progress(sibling,'applying'))
+ assert.equal(store.execution.get(rootKey),'applying','a stale Channel with the same plan ID cannot advance the new run')
+ assert.equal(store.execution.has(siblingKey),false)
+ channels[1](progress(root,'applied'));assert.equal(store.execution.get(rootKey),'applied')
+ second.resolve({ok:true,message:''});await confirmRetry
+ assert.equal((await retry).ok,true);assert.equal(store.execution.size,0)
 })

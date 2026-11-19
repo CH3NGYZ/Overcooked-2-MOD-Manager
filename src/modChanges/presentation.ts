@@ -1,48 +1,11 @@
-import type { ChangeAction, ChangeActionReason, ChangePlan, ChangePreparationItem, ChangePreparationProgress } from './types'
+import type { ChangeAction, ChangeActionKind, ChangeActionReason, ChangePlan, ChangePreparationItem, ChangePreparationProgress } from './types'
 import type { DeepReadonly } from 'vue'
 
-export interface ChangePlanRow {
-  nodeId: string
-  label: string
-  actions: DeepReadonly<ChangeAction>[]
-  item?: DeepReadonly<ChangePreparationItem>
-  version?: { from?: string | null; to?: string | null }
-}
-
 const isVersionChange = ({ kind }: DeepReadonly<ChangeAction>) => kind !== 'enable' && kind !== 'disable'
+export const changeStatusKey = (nodeId: string, memberKey?: string | null) => JSON.stringify([nodeId, memberKey ?? null])
 
-function changeVersion(action: DeepReadonly<ChangeAction>, item?: DeepReadonly<ChangePreparationItem>): ChangePlanRow['version'] {
-  // Switch actions carry the installed tag, even though the package isn't changing.
-  if (!isVersionChange(action)) return
-  const from = action.from_tag
-  const to = item?.tag || action.to_tag
+function versionPair(from?: string | null, to?: string | null) {
   if (from || to) return { from, to }
-}
-
-/** One readable row per package; member switches remain available in details. */
-export function changePlanRows(plan: DeepReadonly<ChangePlan> | null | undefined, progress?: DeepReadonly<ChangePreparationProgress> | null): ChangePlanRow[] {
-  if (!plan) return []
-  const rows = new Map<string, ChangePlanRow>()
-  const labels = planLabels(plan)
-  for (const action of progress?.actions ?? plan.actions) {
-    const row = rows.get(action.node_id)
-    if (row) {
-      row.actions.push(action)
-      continue
-    }
-    rows.set(action.node_id, { nodeId: action.node_id, label: labels.get(action.node_id) || '',
-      actions: [action] })
-  }
-  for (const item of progress?.items ?? []) {
-    const row = rows.get(item.node_id)
-    if (row) { row.item = item; row.label = item.label || row.label }
-    else rows.set(item.node_id, { nodeId: item.node_id, label: item.label, actions: [], item })
-  }
-  for (const row of rows.values()) {
-    const action = row.actions.find(isVersionChange)
-    if (action) row.version = changeVersion(action, row.item)
-  }
-  return [...rows.values()]
 }
 
 function planLabels(plan: DeepReadonly<ChangePlan>) {
@@ -51,7 +14,7 @@ function planLabels(plan: DeepReadonly<ChangePlan>) {
 
 function namedPlugin(path: string | null | undefined) {
   const name = path?.trim().split(/[\\/]/).pop()
-  return path && name && /\.dll(?:\.disabled)?$/i.test(name) ? { name, path } : undefined
+  return path && name && /\.dll(?:\.disabled)?$/i.test(name) ? { name: name.replace(/\.disabled$/i, ''), path } : undefined
 }
 
 function relatedLabels(ids: readonly string[], nodeId: string, labels: ReadonlyMap<string, string>) {
@@ -72,7 +35,25 @@ function describeReasons(reasons: readonly DeepReadonly<ChangeActionReason>[], n
   })
 }
 
-/** Keep authoritative action order and scope; don't infer causes from labels or opaque identifiers. */
+interface ChangePlanDetailRow {
+  key: string
+  nodeId: string
+  statusKey?: string
+  kind?: ChangeActionKind
+  label?: string
+  member?: ReturnType<typeof namedPlugin>
+  memberOnly?: boolean
+  bundled?: boolean
+  bundleReason?: 'enabled' | 'disabled' | 'included'
+  selected?: boolean
+  reason?: string
+  reasons?: ReturnType<typeof describeReasons>
+  causes?: string[]
+  version?: ReturnType<typeof versionPair>
+  preparationStage?: ChangePreparationItem['stage']
+}
+
+/** Keep the order of package actions; related file rows follow each parent. */
 export function changePlanDetails(plan: DeepReadonly<ChangePlan>, progress?: DeepReadonly<ChangePreparationProgress> | null) {
   const labels = planLabels(plan)
   const nodes = new Map(plan.nodes.map(node => [node.node_id, node]))
@@ -83,33 +64,76 @@ export function changePlanDetails(plan: DeepReadonly<ChangePlan>, progress?: Dee
   const actions = progress?.actions ?? plan.actions
   const coveredNodes = new Set<string>()
   const coveredTags = new Map<string, string>()
-  const packageActions = new Set(actions.filter(isVersionChange).map(a => a.node_id))
-  const rows = actions.map(action => {
+  const parentActions = new Map<string, DeepReadonly<ChangeAction>>()
+  const memberActions = new Map<string, DeepReadonly<ChangeAction>[]>()
+  const explicitMembers = new Set<string>()
+  for (const action of actions) {
+    const { node_id: nodeId, member_key: memberKey } = action
+    if (memberKey) {
+      explicitMembers.add(changeStatusKey(nodeId, memberKey))
+      const group = memberActions.get(nodeId)
+      if (group) group.push(action)
+      else memberActions.set(nodeId, [action])
+    } else if (!parentActions.has(nodeId) || isVersionChange(action)) parentActions.set(nodeId, action)
+  }
+  const actionRow = (action: DeepReadonly<ChangeAction>, bundled = false): ChangePlanDetailRow => {
     const { node_id: nodeId, member_key: memberKey, kind } = action
     const item = items.get(nodeId)
-    const version = changeVersion(action, item)
-    const member = memberKey && nodes.get(nodeId)?.members?.find(member => member.key === memberKey)
-    const plugin = memberKey ? namedPlugin(member && member.dll_file) ?? namedPlugin(memberKey) : undefined
+    const changesVersion = isVersionChange(action)
+    // A switch may carry a version in the DTO, but it leaves that version installed.
+    const version = changesVersion ? versionPair(action.from_tag, item?.tag || action.to_tag) : undefined
+    const node = nodes.get(nodeId)
+    const member = memberKey && node?.members?.find(member => member.key === memberKey)
+    const plugin = memberKey ? (member ? namedPlugin(member.dll_file) : undefined) ?? namedPlugin(memberKey) : undefined
     const reasons = describeReasons(action.reason_details ?? [], nodeId, labels)
     const causes = reasons.length ? [] : relatedLabels(action.caused_by, nodeId, labels)
-    // A package's preparation status belongs to its package action, or its first switch if it has no package action.
-    const showStage = packageActions.has(nodeId) ? isVersionChange(action) : !coveredNodes.has(nodeId)
+    const statusKey = changeStatusKey(nodeId, memberKey)
     coveredNodes.add(nodeId)
     if (version?.to) coveredTags.set(nodeId, version.to)
-    return { key: JSON.stringify([nodeId, kind, memberKey]), kind, label: labels.get(nodeId), member: plugin, memberOnly: !!memberKey,
-      reason: action.reason, reasons, causes, version, showStage, stage: showStage ? item?.stage : undefined }
-  })
-  const pending = [...items.values()].filter(item => !coveredNodes.has(item.node_id))
-  const roots = plan.roots.filter(root => root.label.trim() && (!coveredNodes.has(root.node_id)
-    || root.tag && root.tag !== coveredTags.get(root.node_id)))
-  const packages = plan.nodes.filter(node => coveredNodes.has(node.node_id)).flatMap(node => {
-    const plugins = (node.members ?? []).flatMap(member => {
-      const file = namedPlugin(member.dll_file)
-      return file ? [{ ...file, enabled: member.enabled }] : []
-    })
-    return plugins.length ? [{ nodeId: node.node_id, label: labels.get(node.node_id), plugins }] : []
-  })
-  return { rows, pending, roots, packages }
+    return { key: JSON.stringify([nodeId, kind, memberKey ?? null]), nodeId, statusKey, kind, label: labels.get(nodeId),
+      member: plugin, memberOnly: !!memberKey, bundled, reason: action.reason, reasons, causes, version,
+      preparationStage: changesVersion ? item?.stage : undefined }
+  }
+  const rows: ChangePlanDetailRow[] = []
+  for (const action of actions) {
+    const { node_id: nodeId, member_key: memberKey, kind } = action
+    const parent = parentActions.get(nodeId)
+    if (memberKey && parent) continue
+    const row = actionRow(action)
+    rows.push(row)
+    if (action !== parent) continue
+
+    // Only the node's true internal members follow a package operation. In
+    // particular, a separately registered map DLL is its own plan node.
+    const node = nodes.get(nodeId)
+    const children = node?.members ?? []
+    const changesVersion = isVersionChange(action)
+    const previousMembers = plan.previous_enabled_members?.[nodeId]
+    const includedBeforeDisable = previousMembers && new Set(previousMembers)
+    if (node?.kind === 'map' || children.length > 1) {
+      for (const child of children) {
+        const file = namedPlugin(child.dll_file)
+        const childKey = changeStatusKey(nodeId, child.key)
+        const affected = kind === 'disable' && includedBeforeDisable ? includedBeforeDisable.has(child.key) : child.enabled
+        if (!file || explicitMembers.has(childKey) || (!changesVersion && !affected)) continue
+        explicitMembers.add(childKey)
+        rows.push({ key: childKey, nodeId, statusKey: row.statusKey, member: file, bundled: true,
+          kind: changesVersion ? undefined : kind, bundleReason: changesVersion ? 'included' : kind === 'enable' ? 'enabled' : 'disabled' })
+      }
+    }
+    for (const memberAction of memberActions.get(nodeId) ?? []) rows.push(actionRow(memberAction, true))
+  }
+  for (const [nodeId, item] of items) {
+    if (!coveredNodes.has(nodeId)) rows.push({ key: `pending:${nodeId}`, nodeId, label: labels.get(nodeId),
+      version: versionPair(undefined, item.tag), preparationStage: item.stage })
+  }
+  for (const root of plan.roots) {
+    const nodeId = root.node_id
+    if (!root.label.trim() || (coveredNodes.has(nodeId) && (!root.tag || root.tag === coveredTags.get(nodeId)))
+      || (!coveredNodes.has(nodeId) && items.has(nodeId) && (!root.tag || root.tag === items.get(nodeId)?.tag))) continue
+    rows.push({ key: `selected:${nodeId}`, nodeId, label: root.label, version: versionPair(undefined, root.tag), selected: true })
+  }
+  return { rows }
 }
 
 /** This measures verified packages, never pretends to measure solver progress. */

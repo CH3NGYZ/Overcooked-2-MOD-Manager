@@ -199,7 +199,7 @@ fn installed_secondary_declarations_survive_actual_prepare_commit_and_rescan() {
             secondary_enabled,
         );
         session.plan.prepared = true;
-        super::super::execution::commit(&f.state, &mut session).unwrap();
+        super::super::execution::commit(&f.state, &mut session, |_| {}).unwrap();
         let actual = inventory::build(&f.state).unwrap();
         assert_relations(&actual.inventory, secondary_enabled);
         let current = actual

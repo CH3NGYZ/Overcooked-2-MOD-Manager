@@ -1,5 +1,5 @@
 import type { LevelPreview, LevelPreviewDetail } from '../types'
-import type { ChangeRequest, ChangePlan, ChangePreparationOutcome, ChangePreparationProgress, EvaluationSnapshot, EvaluationSubject, ChangeExecutionResult, ChangeAppliedEvent } from '../modChanges/types'
+import type { ChangeRequest, ChangePlan, ChangePreparationOutcome, ChangePreparationProgress, EvaluationSnapshot, EvaluationSubject, ChangeExecutionResult, ChangeExecutionProgress, ChangeAppliedEvent } from '../modChanges/types'
 import type { LocalModSnapshot, ChefEditorOpen, ChefEditorSnapshot, ChefDraft, ChefValidation, ChefFilesChanged } from '../diychef/types'
 import type { ChefPreviewScene } from '../diychef/preview/types'
 import type { PublishProvider } from '../types'
@@ -95,7 +95,13 @@ export const api = {
     }
     finally { active = false }
   },
-  executeModChanges: (planId: string) => invoke<ChangeExecutionResult>('execute_mod_changes', { planId }),
+  executeModChanges: async (planId: string, onProgress: (value: ChangeExecutionProgress) => void) => {
+    const onUpdate = new Channel<ChangeExecutionProgress>()
+    let active = true
+    onUpdate.onmessage = value => { if (active && value.plan_id === planId) onProgress(value) }
+    try { return await invoke<ChangeExecutionResult>('execute_mod_changes', { planId, onUpdate }) }
+    finally { active = false }
+  },
   cancelModChanges: (planId: string) => invoke<void>('cancel_mod_changes', { planId }),
   dashboard: readDashboard,
   localMods: () => invoke<LocalModSnapshot>('get_local_mods'),

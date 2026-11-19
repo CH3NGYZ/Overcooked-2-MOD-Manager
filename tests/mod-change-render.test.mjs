@@ -3,12 +3,12 @@ import { readFileSync } from 'node:fs'
 import { registerHooks } from 'node:module'
 import test from 'node:test'
 import { compileScript, parse } from '@vue/compiler-sfc'
-import { createRenderer, h, nextTick, shallowRef } from 'vue'
+import { createRenderer, nextTick, shallowReactive, shallowRef } from 'vue'
 import { modChanges } from '../src/locale/modChanges.ts'
 
 const fixture = globalThis.__changeRender = {
   state: shallowRef(null), preparation: shallowRef(null), cancelDownload: shallowRef(false), cancelling: shallowRef(false),
-  installNotes: shallowRef([]), messages: modChanges, calls: [],
+  execution: shallowReactive(new Map()), installNotes: shallowRef([]), messages: modChanges, calls: [],
 }
 registerHooks({
   resolve(specifier, context, next) {
@@ -23,18 +23,18 @@ registerHooks({
     const fake = source => ({ format: 'module', shortCircuit: true, source })
     if (url === 'change-render:naive') return fake(`import{h}from'vue';
       const leaf=tag=>({props:['percentage','showIndicator','processing','disabled','type'],setup:(p,{slots})=>()=>h(tag,{...p},slots.default?.())});
-      export const NButton=leaf('button'),NProgress=leaf('progress'),NTag=leaf('tag'),NAlert=leaf('alert'),NSpin=leaf('spin')`)
-    if (/\/modChanges\/(?:ChangePlan(?:Dialog|Details|Item)|ModInstallNoteDialog)\.vue$/.test(url)) {
+      export const NButton=leaf('button'),NProgress=leaf('progress'),NTag=leaf('tag'),NAlert=leaf('alert'),NSpin=leaf('spin'),NIcon=leaf('i')`)
+    if (/\/modChanges\/[^/]+\.vue$/.test(url)) {
       const { descriptor } = parse(readFileSync(new URL(url), 'utf8'))
       return { format: 'module-typescript', shortCircuit: true,
         source: compileScript(descriptor, { id: 'change-render', inlineTemplate: true }).content }
     }
     if (url.endsWith('/src/modChanges/store.ts')) return fake(`export const useModChanges=()=>{const f=globalThis.__changeRender;
-      return{state:f.state,preparation:f.preparation,canCancelDownload:f.cancelDownload,cancellingDownload:f.cancelling,
+      return{state:f.state,preparation:f.preparation,execution:f.execution,canCancelDownload:f.cancelDownload,cancellingDownload:f.cancelling,
       installNotes:f.installNotes,acceptInstallNotes:()=>f.calls.push('note-read'),
       confirm:()=>f.calls.push('confirm'),retry:()=>f.calls.push('retry'),cancel:()=>f.calls.push('cancel'),cancelPreparationDownload:()=>f.calls.push('cancel-download')}}`)
     if (url.endsWith('/src/modChanges/useModChangesLifecycle.ts')) return fake('export const useModChangesLifecycle=()=>{}')
-    if (url.endsWith('/src/components/AppModal.vue')) return fake(`import{h}from'vue';export default{props:['show','cardClass'],setup:(p,{slots})=>()=>p.show?h('modal',{class:p.cardClass},[slots.default?.(),h('footer',{},slots.footer?.())]):null}`)
+    if (url.endsWith('/src/components/AppModal.vue')) return fake(`import{h}from'vue';export default{props:['show','cardClass','maxWidth','maxHeight','fill'],setup:(p,{slots})=>()=>p.show?h('modal',{class:p.cardClass,maxWidth:p.maxWidth,maxHeight:p.maxHeight,fill:p.fill},[h('header',{},slots['header-extra']?.()),slots.default?.(),h('footer',{},slots.footer?.())]):null}`)
     if (url.endsWith('/src/markdown.ts')) return fake('export const renderReadme=String')
     if (url.endsWith('/src/locale/backend.ts')) return fake('export const backendMessageOf=String;export const translateBackendMessage=String')
     if (url.endsWith('/src/i18n.ts')) return fake(`export const pickI18n=(_,fallback)=>fallback; export const locale={value:'zh-CN'};
@@ -43,6 +43,7 @@ registerHooks({
   },
 })
 const { default: Dialog } = await import('../src/modChanges/ChangePlanDialog.vue')
+const { changeStatusKey } = await import('../src/modChanges/presentation.ts')
 const host = createRenderer({
   createElement: tag => ({ tag, props: {}, children: [] }), createText: text => ({ text }), createComment: () => ({}),
   patchProp: (node, key, _, value) => { node.props[key] = value },
@@ -57,13 +58,17 @@ const host = createRenderer({
 })
 const find = (node, match) => [...(match(node) ? [node] : []), ...(node.children?.flatMap(child => find(child, match)) ?? [])]
 const text = node => (node.text ?? '') + (node.children?.map(text).join('') ?? '')
+const bodyRows = root => find(root, node => node.tag === 'tbody').flatMap(body => body.children.filter(node => node.tag === 'tr'))
+const cells = row => row.children.filter(node => node.tag === 'td' || node.tag === 'th')
+const statuses = row => find(cells(row)[1], node => node.props?.['data-change-stage'])
+const stage = row => statuses(row)[0]?.props['data-change-stage']
 const action = (id, kind, extra = {}) => ({ node_id: id, kind, reason: '', caused_by: [], ...extra })
 const plan = { plan_id: 'one', status: 'ready', prepared: false, blockers: [], impacts: [], roots: [], evaluations: [], install_notes: [],
   nodes: [{ node_id: 'web', label: 'Web 前置', dll_files: [], candidates: [] }, { node_id: 'level', label: 'DIYLevel 框架', dll_files: [], candidates: [] }],
   actions: [action('web', 'downgrade', { from_tag: 'v4.0.0', to_tag: 'v3.10.2' }), action('level', 'replace', { from_tag: 'v0.10', to_tag: 'v0.10' })] }
 function mounted(t) {
   fixture.state.value = { phase: 'confirming', plan, error: null }; fixture.preparation.value = null
-  fixture.calls = []; fixture.cancelDownload.value = false; fixture.installNotes.value = []
+  fixture.execution.clear(); fixture.calls = []; fixture.cancelDownload.value = false; fixture.installNotes.value = []
   const root = { children: [] }, app = host.createApp(Dialog)
   app.mount(root); t.after(() => app.unmount())
   return root
@@ -90,7 +95,7 @@ test('first install hides the entire plan while one five-second note window can 
   assert.deepEqual(fixture.calls, ['cancel'])
 })
 
-test('production dialog renders current actions and stages without inline transfer UI or technical ids', async t => {
+test('the plan table shows live preparation only in the affected row and leaves transfer details to the race overlay', async t => {
   const root = mounted(t)
   fixture.state.value = { phase: 'preparing', plan, error: null }
   fixture.preparation.value = { plan_id: 'one', stage: 'downloading', actions: [
@@ -98,38 +103,47 @@ test('production dialog renders current actions and stages without inline transf
     items: [{ node_id: 'web', label: 'Web 前置', tag: 'v5.0.0', candidate_id: 'candidate', stage: 'downloading',
       download: { downloaded: 50, total: 100, speed_bytes: 1024, finished: false, phase: 'connecting' } }] }
   await nextTick()
-  assert.equal(find(root, n => n.tag === 'article' && n.props['data-change-node']).length, 1)
-  const row = find(root, n => n.tag === 'article' && n.props['data-change-node'])[0]
-  assert.match(text(row), /升级.*禁用.*Web 前置.*v4\.0\.0.*v5\.0\.0/)
-  assert.doesNotMatch(text(row), /opaque-uuid|DIYLevel 框架|降级/)
-  assert.match(text(find(row, n => n.props?.role === 'status')[0]), /正在下载/)
-  assert.equal(find(row, n => n.tag === 'progress').length, 0)
-  assert.doesNotMatch(text(row), /50%|50 B|100 B|KB\/s/)
+  const rows = bodyRows(root)
+  assert.equal(rows.length, 2)
+  assert.match(text(rows[0]), /升级.*Web 前置.*v4\.0\.0.*v5\.0\.0/)
+  assert.match(text(rows[1]), /禁用.*包内插件/)
+  assert.doesNotMatch(text(root), /opaque-uuid|DIYLevel 框架|降级/)
+  assert.deepEqual(rows.map(stage), ['downloading', undefined])
+  assert.equal(statuses(rows[0])[0].props.title, '正在下载')
+  const table = find(root, n => n.tag === 'table')[0]
+  assert.equal(find(table, n => n.tag === 'progress').length, 0)
+  assert.doesNotMatch(text(table), /50%|50 B|100 B|KB\/s/)
   assert.equal(find(root, n => n.tag === 'footer').flatMap(n => find(n, x => x.tag === 'progress'))[0].props.percentage, 0)
   fixture.preparation.value = { ...fixture.preparation.value, stage: 'verifying', items: [{ ...fixture.preparation.value.items[0],
     stage: 'verifying', download: { downloaded: 100, total: 100, speed_bytes: 1024, finished: true } }] }
   await nextTick()
-  assert.match(text(find(row, n => n.props?.role === 'status')[0]), /正在验证/)
-  assert.equal(find(row, n => n.tag === 'progress').length, 0)
-  assert.doesNotMatch(text(row), /正在下载|100%|100 B|KB\/s/)
+  assert.deepEqual(bodyRows(root).map(stage), ['verifying', undefined])
+  assert.equal(statuses(bodyRows(root)[0])[0].props.title, '正在验证')
+  assert.equal(find(table, n => n.tag === 'progress').length, 0)
+  assert.doesNotMatch(text(table), /100%|100 B|KB\/s/)
+  fixture.preparation.value = { ...fixture.preparation.value, stage: 'failed', items: [{ ...fixture.preparation.value.items[0], stage: 'failed' }] }
+  fixture.state.value = { phase: 'failed', plan, error: 'Download failed.' }
+  await nextTick()
+  assert.deepEqual(bodyRows(root).map(stage), ['preparationFailed', undefined])
+  assert.match(statuses(bodyRows(root)[0])[0].props.title, /失败/)
   assert.deepEqual(fixture.calls, [])
 })
 
-test('final confirmation uses the returned plan actions, keeps details collapsed and never self-executes', async t => {
+test('final confirmation shows the returned plan directly and never self-executes', async t => {
   const root = mounted(t)
   fixture.preparation.value = { plan_id: 'one', stage: 'ready', actions: [action('web', 'upgrade', { to_tag: 'v5' })], items: [] }
   fixture.state.value = { phase: 'reconfirming', plan: { ...plan, plan_id: 'verified', prepared: true,
     actions: [action('level', 'downgrade', { from_tag: 'v0.11', to_tag: 'v0.10' })] }, error: null }
   await nextTick()
-  const rows = find(root, n => n.tag === 'article' && n.props['data-change-node'])
+  const rows = bodyRows(root)
   assert.equal(rows.length, 1); assert.match(text(rows[0]), /降级.*DIYLevel 框架.*v0\.11.*v0\.10/)
   assert.doesNotMatch(text(rows[0]), /升级|v5|Web 前置/)
-  assert.equal(find(root, n => n.tag === 'details')[0].props.open, false)
+  assert.equal(find(root, n => n.tag === 'details').length, 0)
   assert.deepEqual(fixture.calls, [])
   assert.match(text(find(root, n => n.tag === 'footer')[0]), /确认更新后的方案/)
 })
 
-test('expanded details replace the summary and expose actual dependency and conflict reasons in separate rows', async t => {
+test('the only view is a five-column table with separate actions, version changes, and readable reasons', async t => {
   const root = mounted(t)
   fixture.state.value = { phase: 'confirming', plan: { ...plan, impacts: ['mod:opaque'], actions: [
     action('web', 'disable', { from_tag: 'v4.0.0', to_tag: 'v4.0.0', reason: 'disable_conflict_or_dependent',
@@ -138,24 +152,34 @@ test('expanded details replace the summary and expose actual dependency and conf
       reason_details: [{ kind: 'required_by', related_node_ids: ['level'], requirement: '>=4' }] }),
   ] }, error: null }
   await nextTick()
-  const details = find(root, n => n.tag === 'details')[0]
-  details.props.onToggle({ currentTarget: { open: true } })
-  await nextTick()
-  assert.equal(find(root, n => n.tag === 'article').length, 0)
-  const rows = find(root, n => n.tag === 'tbody')[0].children.filter(n => n.tag === 'tr')
+  const [modal] = find(root, n => n.tag === 'modal')
+  assert.equal(modal.props.maxWidth, '90%'); assert.equal(modal.props.maxHeight, '90%'); assert.ok(!modal.props.fill)
+  assert.equal(find(root, n => n.tag === 'table').length, 1)
+  assert.deepEqual(find(root, n => n.props?.scope === 'col').map(text), ['操作', '状态', '项目', '版本', '变更原因'])
+  assert.equal(find(root, n => n.tag === 'article' || n.tag === 'details').length, 0)
+  const rows = bodyRows(root)
   assert.equal(rows.length, 2)
-  assert.equal(text(rows[0].children[2]), '')
-  assert.match(text(rows[0].children[3]), /与 DIYLevel 框架 冲突.*冲突版本 >=0\.11.*仅预发布版/)
-  assert.equal(text(rows[1].children[2]), 'v3.10.2 → v4.0.0')
-  assert.match(text(rows[1].children[3]), /DIYLevel 框架 依赖此项.*要求 >=4/)
+  assert.deepEqual(cells(rows[0]).slice(0, 4).map(text), ['禁用', '', 'Web 前置', ''])
+  assert.match(text(cells(rows[0])[4]), /与 DIYLevel 框架 冲突.*冲突版本 >=0\.11.*仅预发布版/)
+  assert.equal(text(cells(rows[1])[3]), 'v3.10.2 → v4.0.0')
+  assert.match(text(cells(rows[1])[4]), /DIYLevel 框架 依赖此项.*要求 >=4/)
   assert.doesNotMatch(text(root), /disable_conflict_or_dependent|mod:opaque/)
-  details.props.onToggle({ currentTarget: { open: false } })
-  await nextTick()
-  assert.equal(find(root, n => n.tag === 'table').length, 0)
-  assert.equal(find(root, n => n.tag === 'article').length, 1)
 })
 
-test('prepared switches show a check and honest preparation status inside the same heading', async t => {
+test('a manual map selection remains visible by name and version when no action covers it', async t => {
+  const root = mounted(t)
+  fixture.state.value = { phase: 'confirming', error: null, plan: { ...plan,
+    actions: [], roots: [{ node_id: 'preview:temporary-id', label: '羊的回合', tag: '0.8' }],
+  } }
+  await nextTick()
+  const [row] = bodyRows(root)
+  assert.equal(bodyRows(root).length, 1)
+  assert.match(text(cells(row)[2]), /羊的回合/)
+  assert.equal(text(cells(row)[3]), '0.8')
+  assert.doesNotMatch(text(root), /temporary-id/)
+})
+
+test('verified files never get an execution check before changes actually run', async t => {
   const root = mounted(t)
   const actions = [action('web', 'disable'), action('level', 'upgrade', { from_tag: 'v0.10', to_tag: 'v0.11.1' })]
   fixture.state.value = { phase: 'preparing', plan: { ...plan, actions }, error: null }
@@ -165,16 +189,64 @@ test('prepared switches show a check and honest preparation status inside the sa
       download: { downloaded: 25, total: 100, speed_bytes: 1024, finished: false } },
   ] }
   await nextTick()
-  const rows = find(root, n => n.tag === 'article' && n.props['data-change-node'])
-  const statuses = rows.map(row => find(row, n => n.props?.role === 'status')[0])
-  assert.match(text(rows[0]), /禁用.*Web 前置.*✓准备完成/)
-  assert.equal(statuses[0].parent.props.class, 'item-heading')
-  assert.equal(find(statuses[0], n => n.props?.['aria-hidden'] === 'true').length, 1)
-  assert.equal(find(rows[0], n => n.tag === 'progress').length, 0)
-  assert.doesNotMatch(text(rows[0]), /文件已就绪|执行完毕|已禁用/)
-  assert.equal(statuses[1].parent.props.class, 'item-heading')
-  assert.match(text(rows[1]), /v0\.10.*v0\.11\.1.*正在下载/)
-  assert.equal(find(rows[1], n => n.tag === 'progress').length, 0)
-  assert.doesNotMatch(text(rows[1]), /25%|25 B|KB\/s/)
+  const rows = bodyRows(root)
+  assert.deepEqual(rows.map(stage), [undefined, 'downloading'])
+  assert.match(text(rows[0]), /禁用.*Web 前置/)
+  assert.doesNotMatch(text(rows[0]), /准备完成|文件已就绪|执行完毕|已禁用|✓/)
+  assert.equal(text(cells(rows[0])[3]), '')
+  assert.equal(text(cells(rows[1])[3]), 'v0.10 → v0.11.1')
   assert.deepEqual(fixture.calls, [])
+})
+
+test('execution icons follow exact member writes, and a rolled-back write loses its check', async t => {
+  const root = mounted(t)
+  const activePlan = { ...plan, prepared: true, nodes: [
+    { ...plan.nodes[0], members: [{ key: 'a', dll_file: 'Package/A.dll', enabled: true }, { key: 'b', dll_file: 'Package/B.dll', enabled: true }] },
+    plan.nodes[1],
+  ], actions: [action('web', 'disable', { member_key: 'a' }), action('web', 'disable', { member_key: 'b' }),
+    action('level', 'upgrade', { from_tag: 'v0.10', to_tag: 'v0.11.1' })] }
+  fixture.state.value = { phase: 'executing', plan: activePlan, error: null }
+  fixture.execution.set(changeStatusKey('web', 'a'), 'applying')
+  await nextTick()
+  const rows = bodyRows(root)
+  assert.equal(rows.length, 3)
+  assert.match(text(cells(rows[0])[2]), /Web 前置.*A\.dll/)
+  assert.match(text(cells(rows[1])[2]), /Web 前置.*B\.dll/)
+  assert.deepEqual(rows.map(stage), ['applying', undefined, undefined])
+  assert.equal(statuses(rows[0])[0].props.title, '正在处理')
+  assert.equal(find(statuses(rows[0])[0], node => node.tag === 'spin').length, 1)
+  fixture.execution.set(changeStatusKey('web', 'a'), 'processed')
+  fixture.execution.set(changeStatusKey('level'), 'applying')
+  await nextTick()
+  assert.deepEqual(bodyRows(root).map(stage), ['processed', undefined, 'applying'])
+  assert.equal(statuses(bodyRows(root)[0])[0].props.title, '已处理，等待整批提交')
+  fixture.execution.set(changeStatusKey('web', 'a'), 'failed')
+  fixture.execution.set(changeStatusKey('level'), 'failed')
+  fixture.state.value = { phase: 'failed', plan: activePlan, error: 'Rolled back.' }
+  await nextTick()
+  assert.deepEqual(bodyRows(root).map(stage), ['failed', undefined, 'failed'])
+  assert.equal(statuses(bodyRows(root)[0])[0].props.title, '未能应用')
+  assert.match(text(root), /Rolled back\./)
+  assert.deepEqual(fixture.calls, [])
+})
+
+test('the rows for a bundled DLL stay with its map and show the map transaction status', async t => {
+  const root = mounted(t)
+  const activePlan = { ...plan, prepared: true, nodes: [
+    { ...plan.nodes[0], kind: 'map', members: [{ key: 'addon', dll_file: 'Map/Addon.dll', enabled: true }] },
+    plan.nodes[1],
+  ], actions: [action('web', 'disable'), action('level', 'upgrade', { from_tag: 'v0.10', to_tag: 'v0.11.1' })] }
+  fixture.state.value = { phase: 'executing', plan: activePlan, error: null }
+  fixture.execution.set(changeStatusKey('web'), 'processed')
+  await nextTick()
+  const rows = bodyRows(root)
+  assert.equal(rows.length, 3)
+  assert.deepEqual(rows.map(stage), ['processed', 'processed', undefined])
+  assert.deepEqual(rows.map(row => text(cells(row)[2]).trim()), ['Web 前置', 'Addon.dll', 'DIYLevel 框架'])
+  assert.match(text(cells(rows[1])[4]), /随包.*禁用/)
+  fixture.execution.set(changeStatusKey('web'), 'applied')
+  fixture.execution.set(changeStatusKey('level'), 'applied')
+  await nextTick()
+  assert.deepEqual(bodyRows(root).map(stage), ['applied', 'applied', 'applied'])
+  assert.equal(statuses(rows[1])[0].props.title, '已应用')
 })

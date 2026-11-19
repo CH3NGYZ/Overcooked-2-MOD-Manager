@@ -64,7 +64,7 @@ fn directory_replacement_restart_restores_members_and_permissions() {
     let mut pending = w.prepare(vec![change(&w, "map", Some("map"))]);
     pending.journal.state = JournalState::Applying;
     pending.persist().unwrap();
-    pending.apply_record(0).unwrap();
+    pending.apply_record(0, || {}).unwrap();
     drop(pending);
     let report = recover_all(&w.journal_root, &w.roots).unwrap();
     assert_eq!(report.recovered.len(), 1);
@@ -119,7 +119,7 @@ fn user_edit_in_applied_tree_blocks_recovery_and_retains_both_trees() {
     let mut pending = w.prepare(vec![change(&w, "map", Some("map"))]);
     pending.journal.state = JournalState::Applying;
     pending.persist().unwrap();
-    pending.apply_record(0).unwrap();
+    pending.apply_record(0, || {}).unwrap();
     let types::RecordedMutation::Tree { backup, .. } = &pending.journal.records[0].operation else {
         panic!()
     };
@@ -150,7 +150,7 @@ fn tree_cancel_reverses_preceding_file_and_committed_restart_only_cleans() {
     let calls = AtomicUsize::new(0);
     assert!(
         pending
-            .apply_with_cancel(|| calls.fetch_add(1, Ordering::SeqCst) >= 2)
+            .apply_with_cancel(|| calls.fetch_add(1, Ordering::SeqCst) >= 2, |_| {})
             .is_err()
     );
     assert_eq!(w.read("first.dll"), b"old");
@@ -158,7 +158,7 @@ fn tree_cancel_reverses_preceding_file_and_committed_restart_only_cleans() {
     let mut pending = w.prepare(vec![change(&w, "map", Some("map"))]);
     pending.journal.state = JournalState::Applying;
     pending.persist().unwrap();
-    pending.apply_record(0).unwrap();
+    pending.apply_record(0, || {}).unwrap();
     pending.journal.state = JournalState::Committed;
     pending.persist().unwrap();
     drop(pending);
@@ -180,7 +180,7 @@ fn changed_committed_backup_is_retained_and_partial_purge_resumes() {
     let mut pending = w.prepare(vec![change(&w, "map", Some("map"))]);
     pending.journal.state = JournalState::Applying;
     pending.persist().unwrap();
-    pending.apply_record(0).unwrap();
+    pending.apply_record(0, || {}).unwrap();
     pending.journal.state = JournalState::Committed;
     pending.persist().unwrap();
     let types::RecordedMutation::Tree { backup, .. } = &pending.journal.records[0].operation else {

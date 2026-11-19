@@ -79,7 +79,7 @@ fn missing_maps(
     stage: &Path,
     destination: &str,
     replacements: &[Replacement],
-) -> Result<Vec<(String, PathBuf)>, String> {
+) -> Result<Vec<(String, PathBuf, ItemKey)>, String> {
     let mut result = Vec::new();
     for (owner, payload) in &session.payloads {
         let Some(prefix) = bundled_level_root(session, owner)? else {
@@ -143,7 +143,7 @@ fn missing_maps(
                 return Err("modChanges.ambiguousOwnership".into());
             }
             let source = mutations::game(&physical).resolve(&source_roots)?;
-            result.push((name, source));
+            result.push((name, source, ItemKey::new(owner, None)));
         }
     }
     Ok(result)
@@ -155,7 +155,7 @@ pub(super) fn merge_missing_maps(
     stage: &Path,
     destination: &str,
 ) -> Result<(), String> {
-    for (name, source) in missing_maps(session, roots, stage, destination, &[])? {
+    for (name, source, _) in missing_maps(session, roots, stage, destination, &[])? {
         stage_tree(&source, &stage.join(name), &Fingerprint::capture(&source)?)?;
     }
     Ok(())
@@ -180,7 +180,7 @@ pub(super) fn compose_missing_maps(
         map_paths: vec![],
     };
     let mut targets = BTreeSet::new();
-    for (name, source) in missing {
+    for (name, source, item) in missing {
         // A same-root replacement must not copy every installed user map merely
         // to seed a few shipped examples. Each absent map is its own tree write.
         let staged = session
@@ -193,6 +193,7 @@ pub(super) fn compose_missing_maps(
             roots,
             &format!("{destination}/{name}"),
             Some(staged),
+            [item],
         )?;
     }
     Ok(Some(result))

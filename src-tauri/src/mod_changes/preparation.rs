@@ -267,8 +267,8 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
     // FileChange already keeps the exact file source stamps. Freeze composed map
     // trees too, without replacing the proofs captured during Release verification.
     planning::remember_payloads(session)?;
-    for mutation in &mutations {
-        if let Mutation::Tree(change) = mutation
+    for owned in &mutations {
+        if let Mutation::Tree(change) = &owned.mutation
             && let Some(source) = &change.source
         {
             session

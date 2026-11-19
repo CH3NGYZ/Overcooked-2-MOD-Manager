@@ -116,7 +116,7 @@ fn bundled_zip_existing_map_dll_keeps_only_real_inventory_member_and_bytes() {
     super::super::super::transaction::prepare(
         &f.roots.data_root.join("transactions"),
         &f.roots,
-        changes,
+        changes.into_iter().map(|owned| owned.mutation).collect(),
     )
     .unwrap()
     .apply()

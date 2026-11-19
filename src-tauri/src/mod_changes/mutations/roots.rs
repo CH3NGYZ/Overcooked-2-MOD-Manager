@@ -8,13 +8,15 @@ pub(super) struct RootMigration {
     pub map_paths: Vec<(String, String)>,
 }
 
-pub(crate) fn final_package(inventory: &Inventory) -> Result<Option<String>, String> {
+pub(in crate::mod_changes) fn final_framework_package(
+    inventory: &Inventory,
+) -> Result<Option<(&str, String)>, String> {
     let members = inventory
         .nodes
         .iter()
-        .filter_map(|node| node.current.as_ref())
-        .flat_map(|candidate| &candidate.provides)
-        .filter(|member| {
+        .filter_map(|node| node.current.as_ref().map(|candidate| (node, candidate)))
+        .flat_map(|(node, candidate)| candidate.provides.iter().map(move |member| (node, member)))
+        .filter(|(_, member)| {
             member
                 .guid
                 .eq_ignore_ascii_case(mods::plugin_target::DIYLEVEL_GUID)
@@ -23,7 +25,7 @@ pub(crate) fn final_package(inventory: &Inventory) -> Result<Option<String>, Str
     let indices = mods::plugin_target::highest_indices(
         &members
             .iter()
-            .map(|member| member.version.as_deref())
+            .map(|(_, member)| member.version.as_deref())
             .collect::<Vec<_>>(),
     );
     if indices.len() > 1 {
@@ -32,17 +34,24 @@ pub(crate) fn final_package(inventory: &Inventory) -> Result<Option<String>, Str
     indices
         .first()
         .map(|&index| {
-            let path = members[index]
+            let (node, member) = members[index];
+            let path = member
                 .member_key
                 .as_deref()
                 .ok_or("modChanges.ambiguousOwnership")?;
             let canonical = mods::canonical_dll_name(path);
             Path::new(&canonical)
                 .parent()
-                .map(|path| path.to_string_lossy().replace('\\', "/"))
+                .map(|path| (node.id.as_str(), path.to_string_lossy().replace('\\', "/")))
                 .ok_or_else(|| "archive.pathEscape".into())
         })
         .transpose()
+}
+
+pub(in crate::mod_changes) fn final_package(
+    inventory: &Inventory,
+) -> Result<Option<String>, String> {
+    Ok(final_framework_package(inventory)?.map(|(_, package)| package))
 }
 
 pub(super) fn prepare(
@@ -200,6 +209,7 @@ pub(super) fn toggle_map(
                 &builder.roots,
                 directory,
                 None,
+                [ItemKey::new(&node.id, None)],
             )?;
             super::super::level_trees::push_tree(
                 &mut builder.moves,
@@ -207,9 +217,14 @@ pub(super) fn toggle_map(
                 &builder.roots,
                 &target,
                 Some(staged),
+                std::iter::once(ItemKey::new(&node.id, None)).chain(
+                    internal
+                        .iter()
+                        .map(|(key, _)| ItemKey::new(&node.id, Some(key))),
+                ),
             )?;
         } else {
-            builder.add_move(&node.id, directory, &target)?;
+            builder.add_move(&node.id, None, directory, &target)?;
         }
         builder.map_paths.push((directory.into(), target));
     } else {
@@ -222,7 +237,7 @@ pub(super) fn toggle_map(
             } else {
                 mods::disabled_dll_file(&canonical)
             };
-            builder.add_move(&node.id, &from, &to)?;
+            builder.add_move(&node.id, Some(&key), &from, &to)?;
         }
     }
     Ok(())
@@ -266,6 +281,7 @@ pub(super) fn update_registry(
     )? {
         builder.write(
             "map-plugin-registry",
+            None,
             FileChange {
                 target,
                 source: Some(StagedFile::capture(staged)?),

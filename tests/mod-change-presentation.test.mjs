@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { changePlanDetails, changePlanRows, preparationCompletion } from '../src/modChanges/presentation.ts'
+import { changePlanDetails, changeStatusKey, preparationCompletion } from '../src/modChanges/presentation.ts'
 
 const action = (node, kind = 'downgrade', extra = {}) => ({ node_id: node, kind, reason: '', caused_by: [], ...extra })
 const node = (id, label) => ({ node_id: id, label, members: [], dll_files: [], candidates: [] })
@@ -9,13 +9,13 @@ const plan = { nodes: [node('web', 'DIYLevel Web 前置'), node('level', 'DIYLev
     action('level', 'enable', { from_tag: 'v0.10', to_tag: 'v0.10' }),
     action('level', 'replace', { from_tag: 'v0.10', to_tag: 'v0.10' })] }
 
-test('groups package switches with the version action while preserving the complete details', () => {
-  const rows = changePlanRows(plan)
-  assert.deepEqual(rows.map(row => [row.nodeId, row.label, row.version]), [
-    ['web', 'DIYLevel Web 前置', { from: 'v4.0.0', to: 'v3.10.2' }],
-    ['level', 'DIYLevel - 自定义关卡', { from: 'v0.10', to: 'v0.10' }]])
-  assert.deepEqual(rows[1].actions.map(({ kind }) => kind), ['enable', 'replace'])
-  assert.equal(plan.actions.length, 3)
+test('keeps each action in solve order and only shows versions for package changes', () => {
+  const { rows } = changePlanDetails(plan)
+  assert.deepEqual(rows.map(row => [row.kind, row.label, row.version]), [
+    ['downgrade', 'DIYLevel Web 前置', { from: 'v4.0.0', to: 'v3.10.2' }],
+    ['enable', 'DIYLevel - 自定义关卡', undefined],
+    ['replace', 'DIYLevel - 自定义关卡', { from: 'v0.10', to: 'v0.10' }],
+  ])
 })
 
 test('projects authoritative progress by node identity and includes newly discovered download targets', () => {
@@ -24,11 +24,10 @@ test('projects authoritative progress by node identity and includes newly discov
     action('new', 'install')]
   const progress = { actions, items: [{ node_id: 'level', label: 'Level', tag: 'v0.10', stage: 'ready' },
     { node_id: 'new', label: 'New dependency', tag: 'v1.0', stage: 'queued' }] }
-  const rows = changePlanRows(plan, progress)
+  const { rows } = changePlanDetails(plan, progress)
   assert.deepEqual(rows.slice(0, 2).map(row => row.version), [undefined, undefined])
-  assert.equal(rows[0].actions[0].member_key, 'opaque-member-id')
-  assert.equal(rows[0].item.stage, 'ready')
-  assert.equal(rows[1].item, undefined)
+  assert.equal(rows[0].statusKey, changeStatusKey('level', 'opaque-member-id'))
+  assert.equal(rows[1].preparationStage, undefined)
   assert.equal(rows[2].label, 'New dependency')
   assert.equal(rows[2].version.from, undefined)
   assert.equal(rows[2].version.to, 'v1.0')
@@ -36,11 +35,12 @@ test('projects authoritative progress by node identity and includes newly discov
 
 test('uses the latest solved actions and removes candidates abandoned during preparation', () => {
   const actions = [action('web', 'upgrade', { from_tag: 'v4', to_tag: 'v5' })]
-  const rows = changePlanRows(plan, { actions, items: [{ node_id: 'web', label: 'Web', tag: 'v5', stage: 'downloading' }] })
+  const { rows } = changePlanDetails(plan, { actions, items: [{ node_id: 'web', label: 'Web', tag: 'v5', stage: 'downloading' }] })
   assert.equal(rows.length, 1)
-  assert.equal(rows[0].actions[0].kind, 'upgrade')
+  assert.equal(rows[0].kind, 'upgrade')
   assert.deepEqual(rows[0].version, { from: 'v4', to: 'v5' })
-  assert.deepEqual(changePlanRows(plan, { actions: [], items: [] }), [])
+  assert.equal(rows[0].preparationStage, 'downloading')
+  assert.deepEqual(changePlanDetails(plan, { actions: [], items: [] }).rows, [])
 })
 
 test('measures only verified packages and does not treat downloaded bytes as validated contents', () => {
@@ -73,20 +73,45 @@ test('details keep individual actions and explain them with names and ranges ins
   assert.doesNotMatch(JSON.stringify(model), /mod:uuid|map:uuid|unknown|ignored/)
 })
 
-test('details keep a selected version when not represented by an action and list only named package DLLs', () => {
-  const dllFile = 'BepInEx\\plugins\\Package\\Level.dll.disabled'
-  const model = changePlanDetails({ ...plan,
+test('uncovered selected targets and newly discovered candidates remain visible in the same table', () => {
+  const { rows } = changePlanDetails({ ...plan,
     roots: [{ node_id: 'level', label: 'Chosen Level', tag: 'v0.10' },
       { node_id: 'web', label: 'Chosen Web', tag: 'v3.10.2' },
       { node_id: 'missing', label: 'Chosen local map', tag: 'v1' }],
-    nodes: [{ ...plan.nodes[0], members: [{ key: '', dll_file: '', enabled: true }] },
-      { ...plan.nodes[1], members: [{ key: 'level-key', dll_file: dllFile, enabled: false }] }],
-  }, { actions: [action('web', 'downgrade', { to_tag: 'v3.10.2' }), action('level', 'disable', { member_key: 'level-key' })],
-    items: [{ node_id: 'web', stage: 'ready', label: 'Prepared Web' }, { node_id: 'new', stage: 'queued', label: 'Discovered' }] })
-  assert.deepEqual(model.roots.map(({ label, tag }) => [label, tag]), [['Chosen Level', 'v0.10'], ['Chosen local map', 'v1']])
-  assert.deepEqual(model.packages, [{ nodeId: 'level', label: 'DIYLevel - 自定义关卡', plugins: [{ name: 'Level.dll.disabled', path: dllFile, enabled: false }] }])
-  assert.deepEqual(model.rows[1].member, { name: 'Level.dll.disabled', path: dllFile })
-  assert.equal(model.rows[0].label, 'Prepared Web')
-  assert.equal(model.rows[0].stage, 'ready')
-  assert.deepEqual(model.pending.map(({ label }) => label), ['Discovered'])
+  }, { actions: [action('web', 'downgrade', { to_tag: 'v3.10.2' })],
+    items: [{ node_id: 'web', stage: 'ready', label: 'Prepared Web' }, { node_id: 'new', stage: 'queued', label: 'Discovered', tag: 'v2' }] })
+  assert.deepEqual(rows.map(({ label, version }) => [label, version?.to]).sort(), [
+    ['Chosen Level', 'v0.10'], ['Chosen local map', 'v1'], ['Discovered', 'v2'], ['Prepared Web', 'v3.10.2'],
+  ])
+})
+
+test('bundle rows follow their map, merge explicit member actions and exclude external map DLLs', () => {
+  const member = (key, dllFile, enabled = true) => ({ key, dll_file: dllFile, enabled })
+  const internal = 'BepInEx/plugins/OC2DIYLevel/Levels/Map/Addon.dll'
+  const second = 'BepInEx/plugins/OC2DIYLevel/Levels/Map/Guard.dll'
+  const alreadyDisabled = 'BepInEx/plugins/OC2DIYLevel/Levels/Map/Preserved.dll.disabled'
+  const external = 'BepInEx/plugins/External.dll'
+  const externalId = `map-dll:${external.toLowerCase()}`
+  const { rows } = changePlanDetails({ ...plan, nodes: [
+    { ...node('map', '地图合集'), kind: 'map', map_id: 'test-map', members: [member('addon', internal), member('guard', second), member('preserved', alreadyDisabled, false)] },
+    { ...node(externalId, '外置插件'), kind: 'mod', map_id: 'test-map', members: [member('external', external)] },
+    ...plan.nodes,
+  ], actions: [
+    action('map', 'disable'), action('web', 'downgrade', { to_tag: 'v3.10.2' }),
+    action('map', 'disable', { member_key: 'guard', reason_details: [{ kind: 'requested', related_node_ids: [] }] }),
+    action(externalId, 'disable', { member_key: 'external' }),
+  ] })
+  const children = rows.filter(row => row.bundled)
+  assert.equal(rows[0].label, '地图合集')
+  assert.deepEqual(rows.slice(1, 1 + children.length), children)
+  assert.deepEqual(children.map(row => row.member.path).sort(), [internal, second].sort())
+  assert.ok(children.every(row => row.kind === 'disable' && row.version === undefined))
+  const explicit = children.find(row => row.member.path === second)
+  assert.equal(explicit.statusKey, changeStatusKey('map', 'guard'))
+  assert.deepEqual(explicit.reasons.map(reason => reason.kind), ['requested'])
+  const implicit = children.find(row => row.member.path === internal)
+  assert.equal(implicit.statusKey, changeStatusKey('map'))
+  assert.equal(implicit.bundleReason, 'disabled')
+  assert.equal(rows.filter(row => row.member?.path === second).length, 1)
+  assert.equal(rows.filter(row => row.member?.path === external && !row.bundled).length, 1)
 })

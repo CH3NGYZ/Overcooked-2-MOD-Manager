@@ -184,7 +184,7 @@ fn removing_only_bundled_levels_from_two_real_zips_avoids_collision() {
     super::super::super::transaction::prepare(
         &f.roots.data_root.join("transactions"),
         &f.roots,
-        changes,
+        changes.into_iter().map(|owned| owned.mutation).collect(),
     )
     .unwrap()
     .apply()
@@ -210,7 +210,7 @@ fn two_real_zips_replace_framework_with_bundled_maps_and_downgrade_web() {
     super::super::super::transaction::prepare(
         &f.roots.data_root.join("transactions"),
         &f.roots,
-        changes,
+        changes.into_iter().map(|owned| owned.mutation).collect(),
     )
     .unwrap()
     .apply()
@@ -257,7 +257,7 @@ fn bundled_maps_never_revive_disabled_map_directories() {
     super::super::super::transaction::prepare(
         &f.roots.data_root.join("transactions"),
         &f.roots,
-        changes,
+        changes.into_iter().map(|owned| owned.mutation).collect(),
     )
     .unwrap()
     .apply()
@@ -295,7 +295,7 @@ fn bundled_maps_seed_first_framework_install_without_live_changes_during_prepare
     super::super::super::transaction::prepare(
         &f.roots.data_root.join("transactions"),
         &f.roots,
-        changes,
+        changes.into_iter().map(|owned| owned.mutation).collect(),
     )
     .unwrap()
     .apply()
@@ -361,7 +361,7 @@ fn framework_migration_and_bundled_map_seed_share_one_tree_composition() {
     super::super::super::transaction::prepare(
         &f.roots.data_root.join("transactions"),
         &f.roots,
-        changes,
+        changes.into_iter().map(|owned| owned.mutation).collect(),
     )
     .unwrap()
     .apply()
@@ -394,23 +394,26 @@ fn cancellation_after_tree_and_package_writes_rolls_back_both_real_zips() {
     let outcome = super::super::super::transaction::prepare(
         &f.roots.data_root.join("transactions"),
         &f.roots,
-        changes,
+        changes.into_iter().map(|owned| owned.mutation).collect(),
     )
     .unwrap()
-    .apply_with_cancel(|| {
-        calls.set(calls.get() + 1);
-        if calls.get() == 5 {
-            observed_write.set(
-                f.roots
-                    .game_root
-                    .join("BepInEx/plugins/OC2DIYLevel/levels/oc1_dlc/info")
-                    .exists(),
-            );
-            true
-        } else {
-            false
-        }
-    });
+    .apply_with_cancel(
+        || {
+            calls.set(calls.get() + 1);
+            if calls.get() == 5 {
+                observed_write.set(
+                    f.roots
+                        .game_root
+                        .join("BepInEx/plugins/OC2DIYLevel/levels/oc1_dlc/info")
+                        .exists(),
+                );
+                true
+            } else {
+                false
+            }
+        },
+        |_| {},
+    );
     assert_eq!(outcome.unwrap_err(), "download.cancelled");
     assert!(
         observed_write.get(),

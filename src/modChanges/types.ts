@@ -70,6 +70,8 @@ export interface ChangePlan {
   impacts: string[]
   roots: { node_id: string; label: string; tag?: string | null }[]
   nodes: ChangeNode[]
+  /** Effectively enabled members before a whole-node disable. */
+  previous_enabled_members?: Record<string, string[]>
   install_notes: ChangeInstallNote[]
   prepared: boolean
 }
@@ -94,6 +96,12 @@ export interface ChangeNode {
 }
 export interface EvaluationSubject { repository_id?: string; tag?: string; map_id?: string; dll_file?: string; map_dir_name?: string }
 export interface ChangeExecutionResult { ok: boolean; message: string }
+export type ChangeExecutionStage = 'applying' | 'processed' | 'applied' | 'failed'
+/** Changes since the previous update of this execute call, keyed by the trusted action's target. */
+export interface ChangeExecutionProgress {
+  plan_id: string
+  items: { node_id: string; member_key?: string | null; stage: ChangeExecutionStage }[]
+}
 /** Refresh scope of the committed solution, and not of the requested intent. */
 export interface ChangeAppliedEvent { map_toggle_only: boolean }
 export interface ChangePreparationItem {

@@ -1,5 +1,11 @@
 //! Turn the verified final inventory into one explicit filesystem transaction.
-use super::{inventory, model::*, session::PlanSession, transaction::*};
+use super::{
+    application_progress::{ItemKey, OwnedMutation},
+    inventory,
+    model::*,
+    session::PlanSession,
+    transaction::*,
+};
 use crate::{app_state::AppState, archive, mods};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -10,25 +16,25 @@ use std::{
 mod physical;
 mod release_ownership;
 mod roots;
-pub(crate) use roots::final_package;
+pub(super) use roots::{final_framework_package, final_package};
 
 pub(super) fn file_conflict(owner: &str, relative: &str) -> String {
     log::warn!("整链安装无法确认文件归属：节点={owner}，路径={relative}");
     crate::locale_tag::with_params("modChanges.fileOwnershipConflict", &[("path", relative)])
 }
 
-pub(crate) struct Builder<'a> {
+pub(super) struct Builder<'a> {
     pub roots: TransactionRoots,
     pub session: &'a PlanSession,
-    pub writes: BTreeMap<String, (String, Mutation)>,
-    pub moves: Vec<Mutation>,
+    pub writes: BTreeMap<String, (String, OwnedMutation)>,
+    pub moves: Vec<OwnedMutation>,
     pub ownership: BTreeMap<String, BTreeSet<String>>,
     ownership_paths: BTreeSet<String>,
     pub protected_maps: Vec<String>,
     pub map_paths: Vec<(String, String)>,
 }
 
-pub(crate) fn build(state: &AppState, session: &PlanSession) -> Result<Vec<Mutation>, String> {
+pub(super) fn build(state: &AppState, session: &PlanSession) -> Result<Vec<OwnedMutation>, String> {
     let data_root = state
         .config
         .config_path()
@@ -44,10 +50,10 @@ pub(crate) fn build(state: &AppState, session: &PlanSession) -> Result<Vec<Mutat
     )
 }
 
-pub(crate) fn assemble(
+pub(super) fn assemble(
     session: &PlanSession,
     transaction_roots: TransactionRoots,
-) -> Result<Vec<Mutation>, String> {
+) -> Result<Vec<OwnedMutation>, String> {
     let solved = session.solved.as_ref().ok_or("modChanges.notPrepared")?;
     let mut builder = Builder {
         roots: transaction_roots,
@@ -109,7 +115,7 @@ pub(crate) fn assemble(
                         mods::disabled_dll_file(&canonical)
                     };
                     builder.ensure_owner(&from, &node.id)?;
-                    builder.add_move(&node.id, &from, &to)?;
+                    builder.add_move(&node.id, Some(key), &from, &to)?;
                 }
             }
         }
@@ -213,7 +219,13 @@ impl Builder<'_> {
         }
     }
 
-    pub fn add_move(&mut self, owner: &str, from: &str, to: &str) -> Result<(), String> {
+    pub fn add_move(
+        &mut self,
+        owner: &str,
+        member: Option<&str>,
+        from: &str,
+        to: &str,
+    ) -> Result<(), String> {
         let source = game(from).resolve(&self.roots)?;
         let target = game(to).resolve(&self.roots)?;
         let expected = Fingerprint::capture(&source)?;
@@ -225,8 +237,8 @@ impl Builder<'_> {
             );
             return Err("modChanges.pathCollision".into());
         }
-        for mutation in &self.moves {
-            if let Mutation::Move(change) = mutation {
+        for owned in &self.moves {
+            if let Mutation::Move(change) = &owned.mutation {
                 for existing in [&change.from, &change.to] {
                     if paths_overlap(&existing.relative, from)
                         || paths_overlap(&existing.relative, to)
@@ -240,8 +252,8 @@ impl Builder<'_> {
                 }
             }
         }
-        for (_, mutation) in self.writes.values() {
-            if let Mutation::File(change) = mutation {
+        for (_, owned) in self.writes.values() {
+            if let Mutation::File(change) = &owned.mutation {
                 if change.target.root == RootKind::Game
                     && (paths_overlap(&change.target.relative, from)
                         || paths_overlap(&change.target.relative, to))
@@ -254,15 +266,27 @@ impl Builder<'_> {
                 }
             }
         }
-        self.moves.push(Mutation::Move(MoveChange {
-            from: game(from),
-            to: game(to),
-            expected,
-        }));
+        let mut items = vec![ItemKey::new(owner, None)];
+        if member.is_some() {
+            items.push(ItemKey::new(owner, member));
+        }
+        self.moves.push(OwnedMutation::new(
+            Mutation::Move(MoveChange {
+                from: game(from),
+                to: game(to),
+                expected,
+            }),
+            items,
+        ));
         Ok(())
     }
 
-    fn write(&mut self, owner: &str, change: FileChange) -> Result<(), String> {
+    fn write(
+        &mut self,
+        owner: &str,
+        items: impl IntoIterator<Item = ItemKey>,
+        change: FileChange,
+    ) -> Result<(), String> {
         let FileChange {
             target,
             source,
@@ -277,8 +301,8 @@ impl Builder<'_> {
             );
             return Err("modChanges.pathCollision".into());
         }
-        for mutation in &self.moves {
-            if let Mutation::Move(change) = mutation {
+        for owned in &self.moves {
+            if let Mutation::Move(change) = &owned.mutation {
                 if target.root == RootKind::Game
                     && (paths_overlap(&change.from.relative, &target.relative)
                         || paths_overlap(&change.to.relative, &target.relative))
@@ -291,7 +315,8 @@ impl Builder<'_> {
                 }
             }
         }
-        if let Some((previous_owner, previous)) = self.writes.get(&id) {
+        let mut items = items.into_iter().collect::<BTreeSet<_>>();
+        if let Some((previous_owner, previous)) = self.writes.get_mut(&id) {
             if previous_owner != owner {
                 log::warn!(
                     "整链写入归属冲突：节点={owner}，路径={}，前一归属={previous_owner}",
@@ -299,24 +324,34 @@ impl Builder<'_> {
                 );
                 return Err("modChanges.ambiguousOwnership".into());
             }
-            if let Mutation::File(previous) = previous {
-                if previous.source.is_some() && source.is_some() {
+            if let Mutation::File(previous_file) = &mut previous.mutation {
+                if previous_file.source.is_some() && source.is_some() {
                     log::warn!(
                         "整链写入路径冲突：节点={owner}，路径={}，原因=同一目标重复写入",
                         target.relative
                     );
                     return Err("modChanges.pathCollision".into());
                 }
-                if previous.source.is_some() {
+                if previous_file.source.is_some() {
+                    previous.items.append(&mut items);
                     return Ok(());
                 }
+                items.append(&mut previous.items);
             }
         }
         if *expected == Fingerprint::Missing && source.is_none() {
             return Ok(());
         }
-        self.writes
-            .insert(id, (owner.into(), Mutation::File(change)));
+        self.writes.insert(
+            id,
+            (
+                owner.into(),
+                OwnedMutation {
+                    mutation: Mutation::File(change),
+                    items,
+                },
+            ),
+        );
         Ok(())
     }
 
@@ -324,6 +359,7 @@ impl Builder<'_> {
         let expected = Fingerprint::capture(&target.resolve(&self.roots)?)?;
         self.write(
             owner,
+            Some(ItemKey::new(owner, None)),
             FileChange {
                 target,
                 source: None,
@@ -484,6 +520,7 @@ impl Builder<'_> {
             // Do not re-sample either side after authorizing the untracked target.
             self.write(
                 &node.id,
+                Some(ItemKey::new(&node.id, None)),
                 FileChange {
                     target,
                     source: Some(source),
@@ -519,6 +556,7 @@ impl Builder<'_> {
         )?;
         self.write(
             &node.id,
+            Some(ItemKey::new(&node.id, None)),
             FileChange {
                 target: manifest_target,
                 source: Some(StagedFile::capture(staged)?),

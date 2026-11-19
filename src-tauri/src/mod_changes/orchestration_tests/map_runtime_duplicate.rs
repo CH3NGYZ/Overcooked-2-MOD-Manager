@@ -127,7 +127,7 @@ fn assert_safe_runtime_switch(map_requirements: Vec<RepositoryRelation>) {
     assert!(disabled.is_dir());
 
     session.plan.prepared = true;
-    super::super::execution::commit(&f.state, &mut session).unwrap();
+    super::super::execution::commit(&f.state, &mut session, |_| {}).unwrap();
     let enabled = f.game.join("BepInEx/plugins/DIYLevel/levels/young");
     assert!(!disabled.exists());
     assert!(!f.game.join(EXTERNAL).exists());
@@ -277,7 +277,7 @@ fn map_runtime_duplicate_rejects_a_stale_switch_after_preparation() {
     write(&occupied, b"occupied after confirmation");
     let before = Fingerprint::capture(&f.game).unwrap();
     assert_eq!(
-        super::super::execution::commit(&f.state, &mut session).unwrap_err(),
+        super::super::execution::commit(&f.state, &mut session, |_| {}).unwrap_err(),
         "modChanges.targetChanged"
     );
     assert_eq!(Fingerprint::capture(&f.game).unwrap(), before);
@@ -301,7 +301,7 @@ fn assert_duplicate_untouched(f: &Fixture, disabled: &Path) {
             );
             let mut session = take(f, &plan);
             assert_eq!(
-                super::super::execution::commit(&f.state, &mut session).unwrap_err(),
+                super::super::execution::commit(&f.state, &mut session, |_| {}).unwrap_err(),
                 "modChanges.notPrepared"
             );
         }

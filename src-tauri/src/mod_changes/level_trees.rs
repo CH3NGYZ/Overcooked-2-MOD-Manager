@@ -1,6 +1,7 @@
 //! Compose final map contents once when the unique DIYLevel package moves.
 //! All edits happen below the private plan stage; live endpoints remain trees.
 use super::{
+    application_progress::{ItemKey, OwnedMutation},
     inventory::{self, key},
     model::*,
     mutations,
@@ -24,21 +25,21 @@ pub(crate) struct Replacement {
     pub member_prefix: String,
 }
 
-pub(crate) struct Composition {
-    pub mutations: Vec<Mutation>,
+pub(super) struct Composition {
+    pub mutations: Vec<OwnedMutation>,
     pub handled_maps: BTreeSet<String>,
     pub from: String,
     pub to: String,
     pub map_paths: Vec<(String, String)>,
 }
 
-pub(crate) fn compose(
+pub(super) fn compose(
     session: &PlanSession,
     roots: &TransactionRoots,
     replacements: &[Replacement],
 ) -> Result<Option<Composition>, String> {
     let solved = session.solved.as_ref().ok_or("modChanges.notPrepared")?;
-    let Some(package) = mutations::final_package(solved)? else {
+    let Some((framework, package)) = mutations::final_framework_package(solved)? else {
         return Ok(None);
     };
     let to = format!("{package}/levels");
@@ -94,6 +95,8 @@ pub(crate) fn compose(
         map_paths: final_map_paths(session, roots)?,
     };
     let mut targets = BTreeSet::new();
+    let mut old_tree_items = BTreeSet::from([ItemKey::new(framework, None)]);
+    let mut new_tree_items = old_tree_items.clone();
     for node in solved
         .nodes
         .iter()
@@ -121,6 +124,18 @@ pub(crate) fn compose(
             continue;
         }
         let current = node.current.as_ref().ok_or("modChanges.targetChanged")?;
+        let mut items = BTreeSet::from([ItemKey::new(&node.id, None)]);
+        if let Some(before) = original.and_then(|old| old.current.as_ref()) {
+            for member in &current.provides {
+                if let Some(key) = member.member_key.as_deref()
+                    && before.provides.iter().any(|old| {
+                        old.member_key.as_deref() == Some(key) && old.enabled != member.enabled
+                    })
+                {
+                    items.insert(ItemKey::new(&node.id, Some(key)));
+                }
+            }
+        }
         let name = replacement
             .map(|replacement| replacement.target_dir.as_str())
             .or(files.summary.map_dir_name.as_deref())
@@ -142,6 +157,12 @@ pub(crate) fn compose(
         let target_in_tree = mutations::within(&target, &result.to);
         let old_in_tree =
             previous.is_some_and(|previous| mutations::within(previous, &result.from));
+        if old_in_tree {
+            old_tree_items.extend(items.iter().cloned());
+        }
+        if target_in_tree {
+            new_tree_items.extend(items.iter().cloned());
+        }
         let old_staged = previous
             .filter(|_| old_in_tree)
             .map(|previous| child(&stage, previous, &result.from))
@@ -181,7 +202,14 @@ pub(crate) fn compose(
                 remove_private(&session.staging, old_staged.as_ref().unwrap())?;
             }
             if !old_in_tree && key(previous) != key(&target) {
-                push_tree(&mut result.mutations, &mut targets, roots, previous, None)?;
+                push_tree(
+                    &mut result.mutations,
+                    &mut targets,
+                    roots,
+                    previous,
+                    None,
+                    items.iter().cloned(),
+                )?;
             }
             if replacement.is_some() {
                 preserve_replaced_tree_permissions(&roots.game_root.join(previous), &destination)?;
@@ -205,6 +233,7 @@ pub(crate) fn compose(
                 roots,
                 &target,
                 Some(destination),
+                items,
             )?;
         }
     }
@@ -217,6 +246,7 @@ pub(crate) fn compose(
             roots,
             &result.from,
             None,
+            old_tree_items,
         )?;
     }
     push_tree(
@@ -225,6 +255,7 @@ pub(crate) fn compose(
         roots,
         &result.to,
         Some(stage),
+        new_tree_items,
     )?;
     Ok(Some(result))
 }
@@ -363,12 +394,13 @@ pub(crate) fn final_map_paths(
     Ok(result)
 }
 
-pub(crate) fn push_tree(
-    result: &mut Vec<Mutation>,
+pub(super) fn push_tree(
+    result: &mut Vec<OwnedMutation>,
     targets: &mut BTreeSet<String>,
     roots: &TransactionRoots,
     path: &str,
     source: Option<PathBuf>,
+    items: impl IntoIterator<Item = ItemKey>,
 ) -> Result<(), String> {
     if targets
         .iter()
@@ -386,11 +418,14 @@ pub(crate) fn push_tree(
     {
         return Err("modChanges.targetChanged".into());
     }
-    result.push(Mutation::Tree(TreeChange {
-        target,
-        source,
-        expected,
-    }));
+    result.push(OwnedMutation::new(
+        Mutation::Tree(TreeChange {
+            target,
+            source,
+            expected,
+        }),
+        items,
+    ));
     Ok(())
 }
 

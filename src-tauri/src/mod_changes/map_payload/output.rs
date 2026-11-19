@@ -1,7 +1,8 @@
 //! Resolve map endpoints only after every dependency asset has actual member paths.
 use super::*;
+use crate::mod_changes::application_progress::{ItemKey, OwnedMutation};
 
-pub(super) fn build(state: &AppState, session: &PlanSession) -> Result<Vec<Mutation>, String> {
+pub(super) fn build(state: &AppState, session: &PlanSession) -> Result<Vec<OwnedMutation>, String> {
     let data_root = state
         .config
         .config_path()
@@ -11,7 +12,10 @@ pub(super) fn build(state: &AppState, session: &PlanSession) -> Result<Vec<Mutat
     build_at(&data_root, session)
 }
 
-pub(super) fn build_at(data_root: &Path, session: &PlanSession) -> Result<Vec<Mutation>, String> {
+pub(super) fn build_at(
+    data_root: &Path,
+    session: &PlanSession,
+) -> Result<Vec<OwnedMutation>, String> {
     let batch = session
         .map_payload
         .as_ref()
@@ -41,8 +45,8 @@ pub(super) fn build_at(data_root: &Path, session: &PlanSession) -> Result<Vec<Mu
         .collect::<Vec<_>>();
     let migration = crate::mod_changes::level_trees::compose(session, &roots, &replacements)?;
     if let Some(migration) = &migration {
-        for mutation in &migration.mutations {
-            if let Mutation::Tree(change) = mutation {
+        for owned in &migration.mutations {
+            if let Mutation::Tree(change) = &owned.mutation {
                 reserve(&mut targets, &change.target)?;
             }
         }
@@ -80,7 +84,7 @@ pub(super) fn build_at(data_root: &Path, session: &PlanSession) -> Result<Vec<Mu
         }
         if let Some(old) = &map.old_path {
             if key(old) != key(&target) {
-                push_tree(&mut result, &mut targets, &roots, old, None)?;
+                push_tree(&mut result, &mut targets, &roots, old, None, &map.node_id)?;
             }
         }
         let destination = game(&target).resolve(&roots)?;
@@ -96,7 +100,14 @@ pub(super) fn build_at(data_root: &Path, session: &PlanSession) -> Result<Vec<Mu
             game_root: batch.stage_root.clone(),
             data_root: roots.data_root.clone(),
         })?;
-        push_tree(&mut result, &mut targets, &roots, &target, Some(source))?;
+        push_tree(
+            &mut result,
+            &mut targets,
+            &roots,
+            &target,
+            Some(source),
+            &map.node_id,
+        )?;
     }
     if let Some(migration) = migration {
         result.extend(migration.mutations);
@@ -143,7 +154,14 @@ pub(super) fn build_at(data_root: &Path, session: &PlanSession) -> Result<Vec<Mu
         };
         if let Some(old) = old {
             if key(old) != key(&target) {
-                push_file(&mut result, &mut targets, &roots, game(old), None)?;
+                push_file(
+                    &mut result,
+                    &mut targets,
+                    &roots,
+                    game(old),
+                    None,
+                    Some(&external.node_id),
+                )?;
             }
         }
         let source = batch.stage_root.join(&external.stage_path);
@@ -153,6 +171,7 @@ pub(super) fn build_at(data_root: &Path, session: &PlanSession) -> Result<Vec<Mu
             &roots,
             game(&target),
             Some(source),
+            Some(&external.node_id),
         )?;
     }
     for relative in &batch.extra_files {
@@ -167,6 +186,7 @@ pub(super) fn build_at(data_root: &Path, session: &PlanSession) -> Result<Vec<Mu
             &roots,
             target,
             Some(batch.stage_root.join(relative)),
+            None,
         )?;
     }
     for name in [level_sets::LEVEL_SET_PLUGIN_REGISTRY, "map-relations.json"] {
@@ -181,6 +201,7 @@ pub(super) fn build_at(data_root: &Path, session: &PlanSession) -> Result<Vec<Mu
                     relative: format!("manifests/{name}"),
                 },
                 Some(source),
+                None,
             )?;
         }
     }
@@ -221,11 +242,12 @@ fn reserve(targets: &mut BTreeSet<String>, path: &TransactionPath) -> Result<(),
 }
 
 pub(super) fn push_tree(
-    result: &mut Vec<Mutation>,
+    result: &mut Vec<OwnedMutation>,
     targets: &mut BTreeSet<String>,
     roots: &TransactionRoots,
     path: &str,
     source: Option<PathBuf>,
+    owner: &str,
 ) -> Result<(), String> {
     let target = game(path);
     reserve(targets, &target)?;
@@ -239,32 +261,39 @@ pub(super) fn push_tree(
     if expected == Fingerprint::Missing && source.is_none() {
         return Err("modChanges.targetChanged".into());
     }
-    result.push(Mutation::Tree(TreeChange {
-        target,
-        source,
-        expected,
-    }));
+    result.push(OwnedMutation::for_node(
+        Mutation::Tree(TreeChange {
+            target,
+            source,
+            expected,
+        }),
+        owner,
+    ));
     Ok(())
 }
 
 fn push_file(
-    result: &mut Vec<Mutation>,
+    result: &mut Vec<OwnedMutation>,
     targets: &mut BTreeSet<String>,
     roots: &TransactionRoots,
     target: TransactionPath,
     source: Option<PathBuf>,
+    owner: Option<&str>,
 ) -> Result<(), String> {
     reserve(targets, &target)?;
     let expected = Fingerprint::capture(&target.resolve(roots)?)?;
     if matches!(expected, Fingerprint::Directory { .. }) {
         return Err("modChanges.pathCollision".into());
     }
-    result.push(Mutation::File(FileChange {
-        target,
-        source: source.map(StagedFile::capture).transpose()?,
-        expected,
-        require_single_link: false,
-    }));
+    result.push(OwnedMutation::new(
+        Mutation::File(FileChange {
+            target,
+            source: source.map(StagedFile::capture).transpose()?,
+            expected,
+            require_single_link: false,
+        }),
+        owner.map(|node| ItemKey::new(node, None)),
+    ));
     Ok(())
 }
 

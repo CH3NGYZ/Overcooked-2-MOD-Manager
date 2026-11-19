@@ -254,6 +254,7 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
         result: super::super::solve(&trusted.inventory, &ChangeRequest::default()),
         roots: vec![],
         nodes: vec![],
+        previous_enabled_members: Default::default(),
         install_notes: vec![],
         prepared: false,
     };
@@ -344,7 +345,7 @@ fn online_map_update_uses_the_chosen_source_when_a_mirror_has_the_same_identity(
     super::super::transaction::prepare(
         &fixture.roots.data_root.join("transactions"),
         &fixture.roots,
-        mutations,
+        mutations.into_iter().map(|owned| owned.mutation).collect(),
     )
     .unwrap()
     .apply()
@@ -445,7 +446,7 @@ fn sandbox_map_update_is_one_tree_and_keeps_external_disabled_and_other_registry
     let tree_targets = mutations
         .iter()
         .filter_map(|mutation| {
-            if let Mutation::Tree(change) = mutation {
+            if let Mutation::Tree(change) = &mutation.mutation {
                 Some(&change.target.relative)
             } else {
                 None
@@ -465,7 +466,7 @@ fn sandbox_map_update_is_one_tree_and_keeps_external_disabled_and_other_registry
     let transaction = super::super::transaction::prepare(
         &fixture.roots.data_root.join("transactions"),
         &fixture.roots,
-        mutations,
+        mutations.into_iter().map(|owned| owned.mutation).collect(),
     )
     .unwrap();
     assert!(old.join("old-level").is_file(), "prepare不能碰live");
@@ -511,14 +512,23 @@ fn map_tree_endpoint_collisions_and_external_active_disabled_duplicates_block() 
     let mut result = Vec::new();
     let mut targets = BTreeSet::new();
     let parent = format!("{}/levels", crate::framework::DIYLEVEL_DIR);
-    output::push_tree(&mut result, &mut targets, &fixture.roots, &parent, None).unwrap();
+    output::push_tree(
+        &mut result,
+        &mut targets,
+        &fixture.roots,
+        &parent,
+        None,
+        "map:parent",
+    )
+    .unwrap();
     assert!(
         output::push_tree(
             &mut result,
             &mut targets,
             &fixture.roots,
             &format!("{parent}/Child"),
-            None
+            None,
+            "map:child",
         )
         .is_err()
     );
@@ -742,7 +752,7 @@ fn framework_directory_change_and_map_update_commit_with_all_map_and_member_swit
     let endpoints = mutations
         .iter()
         .filter_map(|mutation| {
-            if let Mutation::Tree(change) = mutation {
+            if let Mutation::Tree(change) = &mutation.mutation {
                 Some(change.target.relative.clone())
             } else {
                 None
@@ -764,7 +774,7 @@ fn framework_directory_change_and_map_update_commit_with_all_map_and_member_swit
     let transaction = super::super::transaction::prepare(
         &fixture.roots.data_root.join("transactions"),
         &fixture.roots,
-        mutations,
+        mutations.into_iter().map(|owned| owned.mutation).collect(),
     )
     .unwrap();
     assert!(fixture.roots.game_root.join(&other).is_file());

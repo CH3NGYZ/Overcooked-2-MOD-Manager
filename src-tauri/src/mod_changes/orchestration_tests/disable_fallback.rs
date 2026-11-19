@@ -187,7 +187,31 @@ fn incompatible_web_history_disables_mod_map_and_independent_external_dll_atomic
         "v0.11.0"
     );
     session.plan.prepared = true;
-    super::super::execution::commit(&f.state, &mut session).unwrap();
+    let mut stages = BTreeMap::<String, Vec<String>>::new();
+    super::super::execution::commit(&f.state, &mut session, |event| {
+        let payload = serde_json::to_value(event).unwrap();
+        for item in payload["items"].as_array().unwrap() {
+            assert!(
+                item["member_key"].is_null(),
+                "whole-package actions use their node ID"
+            );
+            stages
+                .entry(item["node_id"].as_str().unwrap().to_owned())
+                .or_default()
+                .push(item["stage"].as_str().unwrap().to_owned());
+        }
+    })
+    .unwrap();
+    assert_eq!(stages.len(), 5);
+    for id in [
+        "mod:web".into(),
+        "mod:dependent".into(),
+        "mod:framework".into(),
+        format!("map:{MAP}"),
+        external_id(),
+    ] {
+        assert_eq!(stages[&id], ["applying", "processed", "applied"], "{id}");
+    }
 
     for file in [test.web.as_str(), test.dependent.as_str(), EXTERNAL] {
         assert!(!f.game.join(file).exists());
@@ -268,7 +292,13 @@ fn cancelling_frozen_disable_batch_restores_real_mod_map_registry_and_manifest_f
     let mut session = ready_session(&test);
     assert_eq!(Fingerprint::capture(&f.game).unwrap(), game_before);
     assert_eq!(Fingerprint::capture(&manifests).unwrap(), manifests_before);
-    let mut changes = session.mutations.take().unwrap();
+    let mut changes = session
+        .mutations
+        .take()
+        .unwrap()
+        .into_iter()
+        .map(|owned| owned.mutation)
+        .collect::<Vec<_>>();
     let framework_path = f.game.join(&test.framework);
     let framework_before = fs::read(&framework_path).unwrap();
     let framework_after = changes
@@ -320,31 +350,34 @@ fn cancelling_frozen_disable_batch_restores_real_mod_map_registry_and_manifest_f
     assert_eq!(Fingerprint::capture(&manifests).unwrap(), manifests_before);
     let observed_payload = Cell::new(false);
     let error = transaction
-        .apply_with_cancel(|| {
-            if !fs::read(&framework_path).is_ok_and(|bytes| bytes == framework_after) {
-                return false;
-            }
-            observed_payload.set(true);
-            assert_eq!(
-                archive::read_manifest(&manifests, "framework")
-                    .unwrap()
-                    .release_tag,
-                "v0.10.0"
-            );
-            for file in [test.dependent.as_str(), EXTERNAL] {
-                assert!(!f.game.join(file).exists());
-                assert!(f.game.join(mods::disabled_dll_file(file)).is_file());
-            }
-            assert!(!f.game.join(MAP_PATH).exists());
-            assert!(
-                level_sets::disabled_root(&f.game)
-                    .join(MAP)
-                    .join("Inside.dll.disabled")
-                    .is_file()
-            );
-            assert!(f.game.join(&test.web).is_file());
-            true
-        })
+        .apply_with_cancel(
+            || {
+                if !fs::read(&framework_path).is_ok_and(|bytes| bytes == framework_after) {
+                    return false;
+                }
+                observed_payload.set(true);
+                assert_eq!(
+                    archive::read_manifest(&manifests, "framework")
+                        .unwrap()
+                        .release_tag,
+                    "v0.10.0"
+                );
+                for file in [test.dependent.as_str(), EXTERNAL] {
+                    assert!(!f.game.join(file).exists());
+                    assert!(f.game.join(mods::disabled_dll_file(file)).is_file());
+                }
+                assert!(!f.game.join(MAP_PATH).exists());
+                assert!(
+                    level_sets::disabled_root(&f.game)
+                        .join(MAP)
+                        .join("Inside.dll.disabled")
+                        .is_file()
+                );
+                assert!(f.game.join(&test.web).is_file());
+                true
+            },
+            |_| {},
+        )
         .unwrap_err();
 
     assert!(

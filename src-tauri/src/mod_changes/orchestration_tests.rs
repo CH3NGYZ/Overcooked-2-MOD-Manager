@@ -280,7 +280,7 @@ fn actual_chain_downgrades_framework_and_reverse_web_atomically() {
     assert_eq!(fs::read(f.game.join(&web_path)).unwrap(), before_web);
     assert!(!f.game.join("BepInEx/plugins/fix/fix.dll").exists());
     session.plan.prepared = true;
-    super::execution::commit(&f.state, &mut session).unwrap();
+    super::execution::commit(&f.state, &mut session, |_| {}).unwrap();
     let actual = inventory::build(&f.state).unwrap();
     for (name, version) in [("framework", "0.10.0"), ("web", "3.10.2"), ("fix", "0.4.0")] {
         let node = actual
@@ -325,7 +325,7 @@ fn changed_target_blocks_prepared_batch_without_touching_other_files() {
     session.plan.prepared = true;
     fs::write(f.game.join(&two), b"user changed target after approval").unwrap();
     assert_eq!(
-        super::execution::commit(&f.state, &mut session).unwrap_err(),
+        super::execution::commit(&f.state, &mut session, |_| {}).unwrap_err(),
         "modChanges.targetChanged"
     );
     assert!(f.game.join(&one).is_file());
@@ -557,7 +557,7 @@ fn missing_loader_blocks_online_local_prepare_and_commit_but_allows_disabling() 
     session.plan.prepared = true;
     fs::remove_file(&loader).unwrap();
     assert_eq!(
-        super::execution::commit(&f.state, &mut session).unwrap_err(),
+        super::execution::commit(&f.state, &mut session, |_| {}).unwrap_err(),
         expected
     );
     assert!(session.plan.prepared);
@@ -597,7 +597,7 @@ fn pending_recompression_recovery_blocks_prepared_commit_without_any_live_write(
         crate::level_sets::recompress::PendingRecoveryFixture::new(scene.clone(), backup.clone());
     assert!(crate::level_sets::recompress::has_pending_recovery(&f.game));
     assert_eq!(
-        super::execution::commit(&f.state, &mut session).unwrap_err(),
+        super::execution::commit(&f.state, &mut session, |_| {}).unwrap_err(),
         "modChanges.recoveryRequired"
     );
     assert_eq!(Fingerprint::capture(&f.game).unwrap(), before);
@@ -623,7 +623,7 @@ fn pending_recompression_recovery_blocks_prepared_commit_without_any_live_write(
     assert!(!crate::level_sets::recompress::has_pending_recovery(
         &f.game
     ));
-    super::execution::commit(&f.state, &mut session).unwrap();
+    super::execution::commit(&f.state, &mut session, |_| {}).unwrap();
     assert!(!f.game.join(&dll).exists());
     assert!(f.game.join(mods::disabled_dll_file(&dll)).is_file());
     assert_eq!(fs::read(scene).unwrap(), b"map bytes awaiting recovery");

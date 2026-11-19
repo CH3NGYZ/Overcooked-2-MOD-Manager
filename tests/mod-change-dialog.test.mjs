@@ -2,20 +2,18 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {readFileSync,existsSync} from 'node:fs'
 const read=path=>readFileSync(new URL(`../${path}`,import.meta.url),'utf8')
-const dialog=read('src/modChanges/ChangePlanDialog.vue'),app=read('src/App.vue'),details=read('src/modChanges/ChangePlanDetails.vue'),item=read('src/modChanges/ChangePlanItem.vue')
+const dialog=read('src/modChanges/ChangePlanDialog.vue'),app=read('src/App.vue'),details=read('src/modChanges/ChangePlanDetails.vue')
 test('App owns the only shared plan modal and all pages use its store',()=>{
  assert.equal((app.match(/<ChangePlanDialog\s*\/>/g)||[]).length,1)
  for(const name of ['ModsLocalView','ModsOnlineView','LevelsView','MapsOnlineView'])assert.doesNotMatch(read(`src/views/${name}.vue`),/<(?:ChangePlanDialog|InstallCheckDialog|InstallPlanDialog|ModInstallNoteDialog)/)
  for(const path of ['components/InstallCheckDialog.vue','components/InstallPlanDialog.vue','components/ModInstallDialog.vue','components/ModInstallNoteDialog.vue','composables/useInstallPlanGate.ts'])assert.equal(existsSync(new URL(`../src/${path}`,import.meta.url)),false,path)
 })
-test('confirmation switches from the compact list to a table with a reason per action and optional named plugins',()=>{
- for(const pattern of [/<table v-if="details\.rows\.length"/,/v-for="row in details\.rows"/,/column\.reason/,/describeReason\(reason\)/,/v-for="pkg in details\.packages"/,/plugin\.enabled/,/:title="plugin\.path"/])assert.match(details,pattern)
- for(const pattern of [/v-if="row\.version" class="item-version"/,/row\.version\.from/,/row\.version\.to/])assert.match(item,pattern)
- assert.match(details,/<details v-if="hasDetails" class="plan-details" :open="expanded" @toggle=/)
- assert.match(details,/<div v-if="expanded" class="details-content">/)
- assert.match(details,/<slot v-if="!expanded \|\| !hasDetails"/)
- assert.doesNotMatch(details,/plan\.impacts|\{\{ plugin\.path \}\}/)
- assert.match(dialog,/in plan\.blockers/);assert.match(dialog,/blocker\.owner_id/);assert.match(dialog,/v-for="row in rows"/)
+test('shared confirmation delegates the single action table and only connects transaction entry points',()=>{
+ assert.match(dialog,/<ChangePlanDetails v-if="plan" :plan="plan" :progress="currentProgress"/)
+ assert.equal(existsSync(new URL('../src/modChanges/ChangePlanItem.vue',import.meta.url)),false)
+ assert.doesNotMatch(dialog,/ChangePlanItem|changePlanRows/)
+ assert.doesNotMatch(details,/plan\.impacts/)
+ assert.match(dialog,/in plan\.blockers/);assert.match(dialog,/blocker\.owner_id/)
  assert.doesNotMatch(dialog,/api\.(?:install|toggle|uninstall)|execute\(action|done\.value|failures\.value/)
 })
 test('blocked and busy plans cannot confirm; failure can only replan; preparation and execution cannot cancel',()=>{
@@ -39,7 +37,7 @@ test('online selection freezes the exact release or RAW candidate before shared 
  assert.match(source,/candidate_id: raw \? `raw:/);assert.match(source,/`release:\$\{repo\.id\}:\$\{release!\.tag_name\}`/)
  assert.match(source,/asset_name: assetName/);assert.doesNotMatch(source,/prepareInstall|dialog\.warning|api\.installModRepository/)
 })
-test('planning stays indeterminate; task-local bytes use the shared race overlay while rows keep compact status',()=>{
+test('planning stays indeterminate; task-local bytes use the shared race overlay',()=>{
  const strip=read('src/components/DownloadStrip.vue')
  assert.match(dialog,/state\?\.phase === 'planning' \|\| state\?\.phase === 'preparing'/)
  assert.match(dialog,/<NProgress[^>]+:show-indicator="false"[^>]+processing/)
@@ -52,7 +50,7 @@ test('planning stays indeterminate; task-local bytes use the shared race overlay
  assert.match(store,/beginDownloadTask/);assert.match(store,/endDownloadTask\(token\)/)
  assert.match(store,/progressSource: 'caller'/);assert.match(store,/cancel: cancelPreparationDownload/)
  assert.match(store,/updateDownloadProgress\([\s\S]*?, token\)/)
- assert.doesNotMatch(item,/<NProgress|<DownloadVolumes|formatFileSize|speed_bytes|item-download/)
+ assert.doesNotMatch(details,/<NProgress|<DownloadVolumes|formatFileSize|speed_bytes|item-download/)
  assert.match(strip,/<AppModal :show="visible" :closable="false"[^>]*:z-index="canCancel \? 2600 : 6200"/)
  assert.match(dialog,/<AppModal v-else[^>]*:z-index="2599"/)
  assert.match(dialog,/v-if="showDownloadFallback"/)

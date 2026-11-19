@@ -37,7 +37,7 @@ fn ordinary_and_external_dll_toggles_preserve_real_source_and_destination_spelli
 
             let changes = assemble(&f.session, f.roots.clone()).unwrap();
             assert_eq!(changes.len(), 1);
-            let Mutation::Move(change) = &changes[0] else {
+            let Mutation::Move(change) = &changes[0].mutation else {
                 panic!("a member toggle must use one physical rename");
             };
             assert_eq!(change.from.relative, source);
@@ -45,7 +45,7 @@ fn ordinary_and_external_dll_toggles_preserve_real_source_and_destination_spelli
             super::super::super::transaction::prepare(
                 &f.roots.data_root.join("transactions"),
                 &f.roots,
-                changes,
+                changes.into_iter().map(|owned| owned.mutation).collect(),
             )
             .unwrap()
             .apply()

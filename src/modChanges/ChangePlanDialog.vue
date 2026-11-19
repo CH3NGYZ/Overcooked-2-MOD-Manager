@@ -8,9 +8,8 @@ import { useModChanges } from './store'
 import { useModChangesLifecycle } from './useModChangesLifecycle'
 import { changeReasonText } from './messages'
 import ChangePlanDetails from './ChangePlanDetails.vue'
-import ChangePlanItem from './ChangePlanItem.vue'
 import ModInstallNoteDialog from './ModInstallNoteDialog.vue'
-import { changePlanRows, preparationCompletion } from './presentation'
+import { preparationCompletion } from './presentation'
 import { activeDownloadProgress } from '../downloadTask'
 import { appUpdateState } from '../appUpdateState'
 const changes = useModChanges()
@@ -21,7 +20,6 @@ const plan = computed(() => state.value?.plan)
 const preparation = changes.preparation
 const currentProgress = computed(() => (state.value?.phase === 'preparing'
   || state.value?.phase === 'failed' && !plan.value?.prepared) ? preparation.value : null)
-const rows = computed(() => changePlanRows(plan.value, currentProgress.value))
 const completion = computed(() => preparationCompletion(preparation.value))
 const waiting = computed(() => ['planning', 'preparing', 'executing'].includes(state.value?.phase ?? ''))
 const canCancel = computed(() => !['preparing', 'executing'].includes(state.value?.phase ?? ''))
@@ -62,7 +60,7 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
 <template>
   <ModInstallNoteDialog v-if="installNotes.length" :notes="installNotes"
     @continue="changes.acceptInstallNotes" @cancel="changes.cancel" />
-  <AppModal v-else :show="!!state && !state.silent" :title="t('modChanges.title')" :z-index="2599" max-width="min(760px, 94%)"
+  <AppModal v-else :show="!!state && !state.silent" :title="t('modChanges.title')" :z-index="2599" max-width="90%" max-height="90%"
     :closable="canCancel" :mask-closable="false" card-class="mod-changes-modal"
     @update:show="(show: boolean) => { if (!show) void changes.cancel() }">
     <template #header-extra>
@@ -86,12 +84,7 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
           <span v-if="blocker.target_guid"> · {{ blocker.target_guid }}</span>
         </li>
       </ul>
-      <ChangePlanDetails v-if="plan" :plan="plan" :progress="currentProgress" :processing="state?.phase === 'preparing'">
-        <div v-if="rows.length" class="plan-actions">
-          <ChangePlanItem v-for="row in rows" :key="row.nodeId" :row="row" :processing="state?.phase === 'preparing'" />
-        </div>
-        <p v-else-if="plan.status === 'ready'" class="plan-empty">{{ t('modChanges.noChanges') }}</p>
-      </ChangePlanDetails>
+      <ChangePlanDetails v-if="plan" :plan="plan" :progress="currentProgress" :execution="changes.execution" />
     </div>
     <template #footer>
       <div class="plan-bottom">
@@ -119,7 +112,7 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
 </template>
 
 <style scoped>
-.change-plan { display: flex; flex-direction: column; gap: 14px; min-width: 0; width: min(640px, calc(100vw - 100px)); max-width: 100%; }
+.change-plan { display: flex; flex-direction: column; gap: 12px; min-width: 0; max-width: 100%; }
 .plan-progress p { margin: 8px 0 0; color: var(--oc2-text-3); font-size: 12px; }
 .plan-bottom { width: 100%; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
 .plan-buttons { display: flex; justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -127,7 +120,5 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
 .plan-phase { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; line-height: 1.4; color: var(--oc2-text-2); text-align: end; overflow-wrap: anywhere; }
 .plan-phase-spinner { flex: none; }
 .progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--oc2-text-3); margin-bottom: 8px; font-variant-numeric: tabular-nums; }
-.plan-actions { display: flex; flex-direction: column; gap: 10px; }
 .plan-notes { margin: 0; padding-left: 20px; overflow-wrap: anywhere; }
-.plan-empty { margin: 0; }
 </style>

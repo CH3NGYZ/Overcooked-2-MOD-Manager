@@ -38,6 +38,8 @@ fn os_watch_refreshes_a_same_size_and_timestamp_replacement() {
     let folder = plugins.join("nested");
     fs::create_dir_all(&folder).unwrap();
     let dll = folder.join("Live.dll");
+    let seed = root.join("Initial.dll");
+    write_plugin(&seed, "1.0.0");
     let config = super::super::test_support::config(vec![]);
     let watcher = LocalModWatcher::default();
     let scan = || {
@@ -47,45 +49,92 @@ fn os_watch_refreshes_a_same_size_and_timestamp_replacement() {
         mods
     };
     let scan_version = || scan()[0].version.clone();
-    write_plugin(&dll, "1.0.0");
     let (sent, received) = mpsc::channel();
-    watcher.watch(&root, move |_, _, plugins, _| {
+    watcher.watch(&root, move |_, _, plugins, paths| {
         metadata_read::invalidate_dll_details_under(plugins);
-        let _ = sent.send(());
+        let _ = sent.send(paths);
     });
-    assert_eq!(scan_version().as_deref(), Some("1.0.0"));
+    let wait_for = |expected: &[&Path], operation: &str| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut observed = Vec::new();
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(
+                !remaining.is_zero(),
+                "{operation}: expected one of {expected:?}, saw {observed:?}"
+            );
+            let paths = received.recv_timeout(remaining).unwrap_or_else(|error| {
+                panic!("{operation}: expected one of {expected:?}, saw {observed:?}: {error}")
+            });
+            if paths
+                .iter()
+                .any(|change| expected.contains(&change.as_path()))
+            {
+                return;
+            }
+            observed.extend(paths);
+        }
+    };
 
-    // An ordinary config write and a scanner read do not refresh MODs.
-    fs::write(folder.join("settings.cfg"), "ignored").unwrap();
+    // FSEvents can deliver fixture creation late. Construct the DLL outside
+    // the watched tree, then observe its arrival before priming the cache.
+    fs::rename(seed, &dll).unwrap();
+    wait_for(&[&dll], "OS event for initial DLL arrival");
     assert_eq!(scan_version().as_deref(), Some("1.0.0"));
-    assert_eq!(
-        received.recv_timeout(Duration::from_millis(900)),
-        Err(mpsc::RecvTimeoutError::Timeout)
-    );
 
     let start = Instant::now();
     overwrite_preserving_metadata(&dll, "2.0.0");
-    received
-        .recv_timeout(Duration::from_secs(5))
-        .expect("OS event for DLL overwrite");
+    wait_for(&[&dll], "OS event for DLL overwrite");
     assert_eq!(scan_version().as_deref(), Some("2.0.0"));
     eprintln!(
         "DLL overwrite→OS notification→new scan: {} ms",
         start.elapsed().as_millis()
     );
 
-    fs::rename(&dll, folder.join("Live.dll.disabled")).unwrap();
-    received
-        .recv_timeout(Duration::from_secs(5))
-        .expect("OS event for DLL rename");
+    let disabled = folder.join("Live.dll.disabled");
+    fs::rename(&dll, &disabled).unwrap();
+    // Native backends can report the departure or arrival separately. Either
+    // is enough to refresh, but the rescan must see the resulting disabled DLL.
+    wait_for(&[&dll, &disabled], "OS event for DLL rename");
     assert!(!scan()[0].enabled);
     let moved = root.join("MovedPackage");
-    fs::rename(folder, &moved).unwrap();
-    received
-        .recv_timeout(Duration::from_secs(5))
-        .expect("OS event for directory move");
+    fs::rename(&folder, &moved).unwrap();
+    wait_for(&[&folder], "OS event for directory move");
     assert!(scan_mods_with_manifests(&root, &config, None).is_empty());
     drop(watcher);
+}
+
+#[test]
+fn config_create_beside_an_indexed_dll_does_not_trigger_a_mod_refresh() {
+    use notify::{Event, EventKind, event::CreateKind};
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = game::resolve_existing_ancestor(temp.path()).unwrap();
+    let plugins = root.join(PLUGINS_DIR);
+    let folder = plugins.join("nested");
+    fs::create_dir_all(&folder).unwrap();
+    let dll = folder.join("Live.dll");
+    write_plugin(&dll, "1.0.0");
+    let settings = folder.join("settings.cfg");
+    fs::write(&settings, "ignored").unwrap();
+
+    let scope = RootScope::new(&root, plugins.clone(), plugins.clone());
+    let mut paths = PluginPaths::default();
+    paths.reconcile(
+        &plugins,
+        Arc::new(ScannedPluginPaths {
+            ordinary: vec![dll.strip_prefix(&plugins).unwrap().to_path_buf()],
+            ..ScannedPluginPaths::default()
+        }),
+    );
+    let mut config_only =
+        Event::new(EventKind::Create(CreateKind::File)).add_path(settings.clone());
+    assert!(!paths.accept(&scope, &mut config_only));
+    let mut mixed = Event::new(EventKind::Create(CreateKind::File))
+        .add_path(settings)
+        .add_path(dll.clone());
+    assert!(paths.accept(&scope, &mut mixed));
+    assert_eq!(mixed.paths, vec![dll]);
 }
 
 #[test]
@@ -123,6 +172,7 @@ fn os_watch_ignores_non_dll_and_both_diy_level_map_trees() {
     watcher.publish_paths(&root, paths);
 
     let non_dll = regular.join("settings.cfg");
+    fs::write(regular.join("settings-new.cfg"), "ignored").unwrap();
     fs::rename(&non_dll, regular.join("settings-renamed.cfg")).unwrap();
     fs::remove_file(regular.join("settings-renamed.cfg")).unwrap();
     let non_plugin = plugins.join("folder.dll");

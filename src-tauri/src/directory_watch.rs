@@ -8,6 +8,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+mod scope;
+pub(crate) use scope::{RootScope, relative_path};
+
 /// Wait for a burst of copy/install operations to settle before one read-back.
 pub(crate) const QUIET_WINDOW: Duration = Duration::from_millis(600);
 
@@ -42,7 +45,7 @@ impl<K: Eq> DirectoryWatcher<K> {
         key: K,
         roots: Vec<PathBuf>,
         guards: &[PathBuf],
-        accept: impl Fn(&mut Event) -> bool + Send + 'static,
+        accept: impl FnMut(&mut Event) -> bool + Send + 'static,
         emit: impl FnMut(Vec<PathBuf>) + Send + 'static,
     ) -> bool {
         let plan = watch_plan(&roots, guards);
@@ -131,7 +134,7 @@ impl Drop for WatchState {
 
 fn build_watch_state(
     plan: Vec<WatchTarget>,
-    accept: impl Fn(&mut Event) -> bool + Send + 'static,
+    mut accept: impl FnMut(&mut Event) -> bool + Send + 'static,
     mut emit: impl FnMut(Vec<PathBuf>) + Send + 'static,
 ) -> Option<WatchState> {
     if plan.is_empty() {
@@ -141,7 +144,7 @@ fn build_watch_state(
     let mut watcher =
         match notify::recommended_watcher(move |result: notify::Result<Event>| match result {
             Ok(event) => {
-                if let Some(paths) = accepted_paths(event, &accept) {
+                if let Some(paths) = accepted_paths(event, &mut accept) {
                     let _ = sender.send(paths);
                 }
             }
@@ -206,7 +209,10 @@ fn build_watch_state(
 }
 
 /// Reads from the scanner itself must never cause another scan.
-fn accepted_paths(mut event: Event, accept: &impl Fn(&mut Event) -> bool) -> Option<Vec<PathBuf>> {
+fn accepted_paths(
+    mut event: Event,
+    accept: &mut impl FnMut(&mut Event) -> bool,
+) -> Option<Vec<PathBuf>> {
     if matches!(event.kind, EventKind::Access(_)) || !accept(&mut event) {
         return None;
     }

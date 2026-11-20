@@ -2,7 +2,7 @@ use super::binding::{bind_declared_package_members, inherit_repository_from_sibl
 use super::file_state::PLUGINS_DIR;
 use super::file_state::canonical_dll_file;
 use super::file_state::is_disabled_mod_file;
-use super::file_state::is_map_plugin;
+use super::file_state::is_in_map_tree;
 use super::file_state::is_mod_file;
 use super::file_state::is_ordinary_plugin;
 use super::file_state::manifest_dll_key;
@@ -11,6 +11,7 @@ use super::identity::note_key_for_values;
 use super::metadata::choose_local_version;
 use super::metadata::placeholder_dll_details;
 use super::status::refresh_status_labels;
+use super::watch::ScannedPluginPaths;
 use crate::archive;
 use crate::archive::InstallManifest;
 use crate::models::AppConfig;
@@ -25,6 +26,15 @@ pub fn scan_mods_with_manifests(
     game: &Path,
     config: &AppConfig,
     manifest_dir: Option<&Path>,
+) -> Vec<InstalledMod> {
+    scan_mods(game, config, manifest_dir, None)
+}
+
+pub(crate) fn scan_mods(
+    game: &Path,
+    config: &AppConfig,
+    manifest_dir: Option<&Path>,
+    scanned_paths: Option<&mut ScannedPluginPaths>,
 ) -> Vec<InstalledMod> {
     let plugins = game.join(PLUGINS_DIR);
     // 关卡集目录里的 DLL 是地图的随包插件（见 `level_sets::assign_plugins`），
@@ -45,6 +55,9 @@ pub fn scan_mods_with_manifests(
     log::debug!("开始扫描本地 MOD：插件目录={}", plugins.display());
     if !plugins.is_dir() {
         log::warn!("插件目录不存在，跳过 MOD 扫描：{}", plugins.display());
+        if let Some(scanned) = scanned_paths {
+            scanned.registered = registered;
+        }
         return Vec::new();
     }
     let manifests = manifest_dir
@@ -88,17 +101,35 @@ pub fn scan_mods_with_manifests(
     // Keep one logical MOD row and let the enabled copy win.
     paths.sort_by_key(|path| is_disabled_mod_file(path));
     let mut seen = HashSet::new();
-    let paths = paths
+    let (paths, twins): (Vec<_>, Vec<_>) = paths
         .into_iter()
-        .filter(|path| seen.insert(canonical_dll_file(path, game).to_ascii_lowercase()))
-        .collect::<Vec<_>>();
+        .partition(|path| seen.insert(canonical_dll_file(path, game).to_ascii_lowercase()));
     /*
      * 元数据读取彼此独立，交给中间层按上限并发（默认全部核心，设置里可调）。
      * 结果按 `paths` 原顺序返回，卡片顺序与串行扫描时一致；某个文件读失败
      * 只影响它自己那一行（占位成纯依赖）。
      */
     let workers = crate::concurrency::workers_from(config.mod_metadata_concurrency);
-    let mut installed = read_plugin_metadata(&plugins, paths, workers)
+    let mut installed =
+        read_plugin_metadata(&plugins, paths, workers, |items, packages, map_info| {
+            if let Some(scanned) = scanned_paths {
+                let relative =
+                    |path: &Path| path.strip_prefix(&plugins).ok().map(Path::to_path_buf);
+                scanned.diy_level_packages =
+                    packages.iter().filter_map(|path| relative(path)).collect();
+                scanned.ordinary = items
+                    .iter()
+                    .map(|(path, _)| path)
+                    .chain(
+                        twins
+                            .iter()
+                            .filter(|path| !is_in_map_tree(path, &plugins, packages, map_info)),
+                    )
+                    .filter_map(|path| relative(path))
+                    .collect();
+                scanned.registered = registered;
+            }
+        })
         .into_iter()
         .map(|(path, outcome)| inspect_dll(&path, &outcome, game, config, &manifests))
         .collect::<Vec<_>>();
@@ -135,6 +166,11 @@ pub(super) fn read_plugin_metadata(
     plugins: &Path,
     paths: Vec<PathBuf>,
     workers: usize,
+    observe: impl FnOnce(
+        &[(PathBuf, crate::metadata_read::MetadataOutcome)],
+        &HashSet<PathBuf>,
+        &mut HashMap<PathBuf, bool>,
+    ),
 ) -> Vec<(PathBuf, crate::metadata_read::MetadataOutcome)> {
     let requests = paths
         .iter()
@@ -160,11 +196,13 @@ pub(super) fn read_plugin_metadata(
         .filter_map(|(path, _)| path.parent().map(Path::to_path_buf))
         .collect::<HashSet<_>>();
     let mut map_info = HashMap::new();
-    paths
+    let items: Vec<_> = paths
         .into_iter()
         .zip(details)
-        .filter(|(path, _)| !is_map_plugin(path, plugins, &diy_level_packages, &mut map_info))
-        .collect()
+        .filter(|(path, _)| !is_in_map_tree(path, plugins, &diy_level_packages, &mut map_info))
+        .collect();
+    observe(&items, &diy_level_packages, &mut map_info);
+    items
 }
 
 /// 把一条 DLL 的元数据解析结果组装成一个 MOD 行。

@@ -13,7 +13,7 @@ fn temp_root(label: &str) -> PathBuf {
 
 #[test]
 fn access_events_do_not_trigger_reload() {
-    let affects_contents = |kind| accepted_paths(Event::new(kind), &|_| true).is_some();
+    let affects_contents = |kind| accepted_paths(Event::new(kind), &mut |_| true).is_some();
     assert!(!affects_contents(EventKind::Access(
         notify::event::AccessKind::Any
     )));
@@ -39,14 +39,14 @@ fn accepted_paths_are_projected_before_debounce() {
         .add_path(ignored.clone())
         .add_path(kept.clone());
     assert_eq!(
-        accepted_paths(event, &|event| {
+        accepted_paths(event, &mut |event| {
             event.paths.retain(|path| path != &ignored);
             !event.paths.is_empty()
         }),
         Some(vec![kept])
     );
     assert_eq!(
-        accepted_paths(Event::new(EventKind::Other), &|_| false),
+        accepted_paths(Event::new(EventKind::Other), &mut |_| false),
         None
     );
 }

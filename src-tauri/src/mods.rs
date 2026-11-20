@@ -33,7 +33,7 @@ pub(crate) use metadata::{
 pub(crate) use relations::{
     effective_map_relations, effective_relations, select_release_relations,
 };
-pub(crate) use scan::scan_mods_with_manifests;
+pub(crate) use scan::{scan_mods, scan_mods_with_manifests};
 pub(crate) use status::local_update_version;
 #[cfg(test)]
 pub(crate) use test_support::plugin_blob;

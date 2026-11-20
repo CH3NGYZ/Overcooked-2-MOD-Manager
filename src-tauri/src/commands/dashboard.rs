@@ -61,14 +61,16 @@ pub async fn get_local_mods(
                 .map_err(|e| e.to_string())?
                 .begin(scan_root.as_deref())
         };
+        let mut scanned = mods::watch::ScannedPluginPaths::default();
         let installed = game_info
             .path
             .as_ref()
             .map(|path| {
-                mods::scan_mods_with_manifests(
+                mods::scan_mods(
                     Path::new(path),
                     &config,
                     Some(&state.config.manifests_dir()),
+                    Some(&mut scanned),
                 )
             })
             .unwrap_or_default();
@@ -89,8 +91,11 @@ pub async fn get_local_mods(
             .lock()
             .map_err(|e| e.to_string())?
             .publish(generation, scan_root.as_deref(), installed)?;
+        if let Some(root) = scan_root.as_deref() {
+            state.local_mod_watch.publish_paths(root, scanned);
+        }
         drop(_operation);
-        crate::level_sets::recompress::watch_selected(&state, &app);
+        crate::level_sets::recompress::watch_selected(&state, &app, false);
         crate::level_sets::recompress::enqueue_installed(&state, &app, None);
         Ok(snapshot)
     })

@@ -33,44 +33,49 @@ pub(super) fn is_ordinary_plugin(relative: &Path, registered: &HashSet<String>) 
 
 /// 只有已读 GUID 确认的 DIYLevel 包，或仍有明确 info 的地图集才拥有地图子树。
 /// 这里只判文件归属，不选择版本；扫描和批量开关使用同一份批读结果。
-pub(super) fn is_map_plugin(
+/// The watcher also uses this for directories, so it can skip an entire map
+/// subtree when a folder is moved into the MOD root.
+pub(super) fn is_in_map_tree(
     path: &Path,
     plugins: &Path,
     diy_level_packages: &HashSet<PathBuf>,
     map_info: &mut HashMap<PathBuf, bool>,
 ) -> bool {
     let mut child = path;
-    for directory in path
-        .ancestors()
-        .skip(1)
-        .take_while(|directory| *directory != plugins)
-    {
+    for directory in path.ancestors().take_while(|dir| {
+        crate::directory_watch::relative_path(dir, plugins)
+            .is_some_and(|relative| !relative.as_os_str().is_empty())
+    }) {
         if directory.file_name().is_some_and(|name| {
             name.eq_ignore_ascii_case("levels") || name.eq_ignore_ascii_case("disabled")
         }) {
-            if directory
-                .parent()
-                .is_some_and(|package| diy_level_packages.contains(package))
-            {
+            if directory.parent().is_some_and(|package| {
+                diy_level_packages.contains(package)
+                    || (cfg!(windows)
+                        && diy_level_packages
+                            .iter()
+                            .any(|dir| dir.as_os_str().eq_ignore_ascii_case(package.as_os_str())))
+            }) {
                 return true;
             }
             // 框架 DLL 已移除时，沿用固定 info / 唯一 info_* 的候选规则，
             // 仅检查目录结构，不再解析 bundle；每个目录一批只枚举一次。
-            let has_info = map_info.entry(child.to_path_buf()).or_insert_with(|| {
-                child.join("info").is_file()
-                    || fs::read_dir(child).is_ok_and(|entries| {
-                        entries
-                            .flatten()
-                            .filter(|entry| {
-                                entry.file_type().is_ok_and(|kind| kind.is_file())
-                                    && entry.file_name().to_string_lossy().starts_with("info_")
-                            })
-                            .take(2)
-                            .count()
-                            == 1
-                    })
-            });
-            if *has_info {
+            if child != directory
+                && *map_info.entry(child.to_path_buf()).or_insert_with(|| {
+                    child.join("info").is_file()
+                        || fs::read_dir(child).is_ok_and(|entries| {
+                            entries
+                                .flatten()
+                                .filter(|entry| {
+                                    entry.file_type().is_ok_and(|kind| kind.is_file())
+                                        && entry.file_name().to_string_lossy().starts_with("info_")
+                                })
+                                .take(2)
+                                .count()
+                                == 1
+                        })
+                })
+            {
                 return true;
             }
         }
@@ -142,7 +147,7 @@ pub fn plugin_dll_files(
     // 批量开关也必须先确认真实 DIYLevel 包，避免把地图 DLL 当成独立 MOD。
     // 复用扫描的唯一元数据批读，保留同时存在的 .dll / .dll.disabled 两个路径。
     let workers = crate::concurrency::workers_from(crate::concurrency::AUTO_CONCURRENCY);
-    let mut files = super::scan::read_plugin_metadata(&plugins, paths, workers)
+    let mut files = super::scan::read_plugin_metadata(&plugins, paths, workers, |_, _, _| {})
         .into_iter()
         .filter_map(|(path, _)| {
             let relative = path.strip_prefix(&plugins).ok()?;

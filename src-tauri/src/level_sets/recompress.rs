@@ -153,7 +153,11 @@ pub(crate) fn snapshot() -> Progress {
 }
 
 /// Watch only directories selected by a completed local MOD scan.
-pub(crate) fn watch_selected(state: &crate::app_state::AppState, app: &tauri::AppHandle) {
+pub(crate) fn watch_selected(
+    state: &crate::app_state::AppState,
+    app: &tauri::AppHandle,
+    reattach: bool,
+) {
     // Root changes and scan invalidation hold the same lock. A late callback must
     // select and install one current watch plan without a mutation between them.
     let Ok(_operation) = state.operation.lock() else {
@@ -163,15 +167,28 @@ pub(crate) fn watch_selected(state: &crate::app_state::AppState, app: &tauri::Ap
     let roots = crate::game::detect_game(&state.config.load_or_default())
         .path
         .and_then(|game| crate::mods::snapshot::level_roots(state, Path::new(&game)).ok())
-        .map(|(_, roots)| {
-            let mut paths = vec![super::disabled_root(roots.game_root())];
-            if let Ok(enabled) = super::levels_root(&roots) {
-                paths.insert(0, enabled);
-            }
-            paths
-        })
+        .map(|(_, roots)| watch_roots(&roots))
         .unwrap_or_default();
-    state.level_watch.watch(app, roots);
+    state.level_watch.watch(app, roots, reattach);
+}
+
+fn watch_roots(roots: &super::LevelSetRoots) -> Vec<crate::directory_watch::RootScope> {
+    let disabled = super::disabled_root(roots.game_root());
+    let enabled = roots
+        .package_root()
+        .map(|package| package.join(super::paths::LEVELS_DIR));
+    enabled
+        .into_iter()
+        .chain([disabled])
+        .filter_map(|logical| {
+            let actual = roots.safe_path(&logical).ok()?;
+            Some(crate::directory_watch::RootScope::new(
+                roots.game_root(),
+                logical,
+                actual,
+            ))
+        })
+        .collect()
 }
 
 /// Completed local scans pass None; installation passes only successful directories.

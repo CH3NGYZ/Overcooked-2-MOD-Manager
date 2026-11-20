@@ -46,7 +46,7 @@ pub async fn get_level_sets(
              * 游戏目录没了：旧监听还指着已经消失的路径，先停掉（空 roots 在
              * `LevelWatcher::watch` 里就是「停掉现有监听」），下次检测到目录再建。
              */
-            state.level_watch.watch(&app, Vec::new());
+            state.level_watch.watch(&app, Vec::new(), false);
             crate::api_scheduler::set_installed("map", Vec::new());
             return Ok(Vec::new());
         };
@@ -54,7 +54,7 @@ pub async fn get_level_sets(
          * 目录监听跟着游戏目录走：`watch` 幂等，目标没变直接返回，游戏路径被
          * 用户改掉时重建。这里仍在同步段，`State` 不能跨 await，先把它用掉。
          */
-        crate::level_sets::recompress::watch_selected(&state, &app);
+        crate::level_sets::recompress::watch_selected(&state, &app, false);
         let manifests_dir = state.config.manifests_dir();
         // 并行度在同步段算好再 move 进闭包（`State` 不能跨 await）
         let info_workers = crate::concurrency::workers_from(config.map_info_concurrency);

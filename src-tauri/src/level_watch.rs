@@ -8,7 +8,8 @@
 //! 事件合并路径后将变化地图集加入后台转换队列，并提醒前端重读；扫描口径（两个根的第一层）、
 //! 排序与身份判定都在 `level_sets` 里，前端重读一次就能拿到完整一致的结果。
 
-use crate::directory_watch::DirectoryWatcher;
+use crate::directory_watch::{DirectoryWatcher, RootScope, relative_path};
+use notify::Event;
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -17,42 +18,89 @@ const LEVEL_SETS_CHANGED_EVENT: &str = "level-sets-changed";
 /// AppState owns the same shared OS watcher used by DIYChef files.
 #[derive(Default)]
 pub struct LevelWatcher {
-    directory: DirectoryWatcher<()>,
+    directory: DirectoryWatcher<Vec<PathBuf>>,
 }
 
 impl LevelWatcher {
-    pub fn watch(&self, app: &AppHandle, roots: Vec<PathBuf>) {
-        if roots.is_empty() {
+    pub(crate) fn watch(&self, app: &AppHandle, scopes: Vec<RootScope>, reattach: bool) {
+        if scopes.is_empty() {
             self.directory.stop();
             return;
         }
         let emit_app = app.clone();
-        self.directory.watch(
-            (),
-            roots.clone(),
-            &[],
-            |_| true,
-            move |paths| {
-                let app = emit_app.clone();
-                let roots = roots.clone();
-                tauri::async_runtime::spawn_blocking(move || {
-                    if let Some(state) = app.try_state::<crate::app_state::AppState>() {
-                        let names = changed_sets(&roots, &paths);
-                        crate::level_sets::recompress::enqueue_installed(
-                            &state,
-                            &app,
-                            names.as_deref(),
-                        );
-                        // Rebuild away from the owned notification thread if a root appeared.
-                        crate::level_sets::recompress::watch_selected(&state, &app);
+        self.watch_paths(scopes, reattach, move |names| {
+            let app = emit_app.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Some(state) = app.try_state::<crate::app_state::AppState>() {
+                    if names.is_none() {
+                        // Rebuild away from the owned notification thread,
+                        // also when a replacement has the exact same name.
+                        crate::level_sets::recompress::watch_selected(&state, &app, true);
                     }
-                });
-                if let Err(error) = emit_app.emit(LEVEL_SETS_CHANGED_EVENT, ()) {
-                    log::debug!("发送关卡集变化事件失败：{error}");
+                    if let Err(error) = app.emit(LEVEL_SETS_CHANGED_EVENT, ()) {
+                        log::debug!("发送关卡集变化事件失败：{error}");
+                    }
+                    crate::level_sets::recompress::enqueue_installed(
+                        &state,
+                        &app,
+                        names.as_deref(),
+                    );
                 }
-            },
+            });
+        });
+    }
+
+    fn watch_paths(
+        &self,
+        scopes: Vec<RootScope>,
+        reattach: bool,
+        mut emit: impl FnMut(Option<Vec<String>>) + Send + 'static,
+    ) {
+        if reattach {
+            self.directory.stop();
+        }
+        let paths = scopes
+            .iter()
+            .map(|scope| scope.root.clone())
+            .collect::<Vec<_>>();
+        let guards = scopes
+            .iter()
+            .flat_map(|scope| scope.guards())
+            .collect::<Vec<_>>();
+        self.directory.watch(
+            scopes.iter().map(|scope| scope.logical.clone()).collect(),
+            paths.clone(),
+            &guards,
+            move |event| accept_event(&scopes, event),
+            move |changed| emit(changed_sets(&paths, &changed)),
         );
     }
+}
+
+fn accept_event(scopes: &[RootScope], event: &mut Event) -> bool {
+    if event.need_rescan()
+        || event.paths.iter().any(|path| {
+            scopes
+                .iter()
+                .any(|scope| scope.topology_changed(path, event.kind))
+        })
+    {
+        event.paths = vec![PathBuf::new()];
+        return true;
+    }
+    event.paths.retain_mut(|path| {
+        for scope in scopes {
+            if let Some(relative) = scope.content(path) {
+                // Debounce per set and use the physical root consistently.
+                if let Some(name) = relative.iter().next() {
+                    *path = scope.root.join(name);
+                    return true;
+                }
+            }
+        }
+        false
+    });
+    !event.paths.is_empty()
 }
 
 /// Only changed top-level sets are queued; ancestor notifications recheck all candidates.
@@ -61,7 +109,7 @@ fn changed_sets(roots: &[PathBuf], paths: &[PathBuf]) -> Option<Vec<String>> {
     for path in paths {
         let mut matched = false;
         for root in roots {
-            if let Ok(relative) = path.strip_prefix(root) {
+            if let Some(relative) = relative_path(path, root) {
                 if let Some(std::path::Component::Normal(name)) = relative.components().next() {
                     names.insert(name.to_string_lossy().into_owned());
                     matched = true;

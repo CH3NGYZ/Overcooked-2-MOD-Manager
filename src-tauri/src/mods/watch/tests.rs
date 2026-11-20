@@ -7,12 +7,12 @@ use std::{
 };
 
 fn write_plugin(path: &Path, version: &str) {
+    write_plugin_guid(path, "com.example.live", version);
+}
+
+fn write_plugin_guid(path: &Path, guid: &str, version: &str) {
     let mut data = b"MZ".to_vec();
-    data.extend(crate::mods::plugin_blob(
-        "com.example.live",
-        "Live",
-        version,
-    ));
+    data.extend(crate::mods::plugin_blob(guid, "Live", version));
     fs::write(path, data).unwrap();
 }
 
@@ -39,19 +39,21 @@ fn os_watch_refreshes_a_same_size_and_timestamp_replacement() {
     fs::create_dir_all(&folder).unwrap();
     let dll = folder.join("Live.dll");
     let config = super::super::test_support::config(vec![]);
-    let scan_version = || {
-        scan_mods_with_manifests(&root, &config, None)[0]
-            .version
-            .clone()
-    };
-    write_plugin(&dll, "1.0.0");
-    assert_eq!(scan_version().as_deref(), Some("1.0.0"));
     let watcher = LocalModWatcher::default();
+    let scan = || {
+        let mut paths = ScannedPluginPaths::default();
+        let mods = crate::mods::scan_mods(&root, &config, None, Some(&mut paths));
+        watcher.publish_paths(&root, paths);
+        mods
+    };
+    let scan_version = || scan()[0].version.clone();
+    write_plugin(&dll, "1.0.0");
     let (sent, received) = mpsc::channel();
     watcher.watch(&root, move |_, plugins, _| {
         metadata_read::invalidate_dll_details_under(plugins);
         let _ = sent.send(());
     });
+    assert_eq!(scan_version().as_deref(), Some("1.0.0"));
 
     // An ordinary config write and a scanner read do not refresh MODs.
     fs::write(folder.join("settings.cfg"), "ignored").unwrap();
@@ -76,7 +78,7 @@ fn os_watch_refreshes_a_same_size_and_timestamp_replacement() {
     received
         .recv_timeout(Duration::from_secs(5))
         .expect("OS event for DLL rename");
-    assert!(!scan_mods_with_manifests(&root, &config, None)[0].enabled);
+    assert!(!scan()[0].enabled);
     let moved = root.join("MovedPackage");
     fs::rename(folder, &moved).unwrap();
     received
@@ -84,6 +86,82 @@ fn os_watch_refreshes_a_same_size_and_timestamp_replacement() {
         .expect("OS event for directory move");
     assert!(scan_mods_with_manifests(&root, &config, None).is_empty());
     drop(watcher);
+}
+
+#[test]
+fn os_watch_ignores_non_dll_and_both_diy_level_map_trees() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = game::resolve_existing_ancestor(temp.path()).unwrap();
+    let plugins = root.join(PLUGINS_DIR);
+    for (package, version) in [("FrameworkOld", "0.10.0"), ("FrameworkNew", "0.11.1")] {
+        let package = plugins.join(package);
+        fs::create_dir_all(package.join("levels/Map")).unwrap();
+        fs::create_dir_all(package.join("disabled/Map")).unwrap();
+        write_plugin_guid(
+            &package.join("framework.dll"),
+            super::super::plugin_target::DIYLEVEL_GUID,
+            version,
+        );
+        // No info fixture: exclusion must come from the DLL's actual GUID.
+        write_plugin(&package.join("levels/Map/map.dll"), "1.0.0");
+    }
+    let regular = plugins.join("Other/levels");
+    fs::create_dir_all(&regular).unwrap();
+    write_plugin(&regular.join("Tool.dll"), "1.0.0");
+    fs::write(regular.join("settings.cfg"), "ignored").unwrap();
+    let watcher = LocalModWatcher::default();
+    let (sent, received) = mpsc::channel();
+    watcher.watch(&root, move |_, _, _| {
+        let _ = sent.send(());
+    });
+    let mut paths = ScannedPluginPaths::default();
+    let config = super::super::test_support::config(vec![]);
+    assert_eq!(
+        crate::mods::scan_mods(&root, &config, None, Some(&mut paths)).len(),
+        3
+    );
+    watcher.publish_paths(&root, paths);
+
+    let non_dll = regular.join("settings.cfg");
+    fs::rename(&non_dll, regular.join("settings-renamed.cfg")).unwrap();
+    fs::remove_file(regular.join("settings-renamed.cfg")).unwrap();
+    let non_plugin = plugins.join("folder.dll");
+    fs::create_dir(&non_plugin).unwrap();
+    fs::remove_dir(&non_plugin).unwrap();
+    for package in [plugins.join("FrameworkOld"), plugins.join("FrameworkNew")] {
+        let map = package.join("levels/Map");
+        write_plugin(&map.join("map.dll"), "1.1.0");
+        let disabled = package.join("disabled/Map/added.dll.disabled");
+        write_plugin(&disabled, "1.0.0");
+        fs::remove_file(disabled).unwrap();
+        fs::rename(&map, package.join("levels/MapMoved")).unwrap();
+    }
+    assert_eq!(
+        received.recv_timeout(Duration::from_millis(1200)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    );
+
+    // A real non-map MOD is still watched when its parent happens to be `levels`.
+    write_plugin(&regular.join("Tool.dll"), "1.1.0");
+    received
+        .recv_timeout(Duration::from_secs(5))
+        .expect("ordinary DLL below levels");
+
+    // Copying a plain folder above the watcher first and moving it into the
+    // watcher gives only the directory arrival on some native backends.
+    let outside = root.join("Incoming");
+    fs::create_dir(&outside).unwrap();
+    write_plugin(&outside.join("incoming.dll.disabled"), "1.0.0");
+    let moved = plugins.join("Incoming");
+    fs::rename(&outside, &moved).unwrap();
+    received
+        .recv_timeout(Duration::from_secs(5))
+        .expect("move in an ordinary DLL folder");
+    // No intervening scan: the index must retain arrivals immediately.
+    fs::rename(&moved, &outside).unwrap();
+    received
+        .recv_timeout(Duration::from_secs(5))
+        .expect("move out an incrementally indexed DLL folder");
 }
 
 #[test]

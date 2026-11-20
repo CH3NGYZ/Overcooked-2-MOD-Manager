@@ -144,8 +144,8 @@ test('apply progress ignores foreign and closed Channels and clears provisional 
  assert.equal(store.execution.has(siblingKey),false)
  // The command can report rollback before its final Channel event is delivered.
  first.resolve({ok:false,message:'recycle.partialFailure'});await confirm
- assert.equal(store.state.value.phase,'failed');assert.equal(store.execution.get(rootKey),'failed')
- channels[0](progress(root,'processed'));assert.equal(store.execution.get(rootKey),'failed')
+ assert.equal(store.state.value.phase,'failed');assert.equal(store.execution.get(rootKey),'not_applied')
+ channels[0](progress(root,'processed'));assert.equal(store.execution.get(rootKey),'not_applied')
  await store.cancel();assert.equal(await pending,null);assert.equal(store.execution.size,0)
 
  const retry=store.run(request);await tick()

@@ -81,7 +81,7 @@ test('uncovered selected targets and newly discovered candidates remain visible 
   }, { actions: [action('web', 'downgrade', { to_tag: 'v3.10.2' })],
     items: [{ node_id: 'web', stage: 'ready', label: 'Prepared Web' }, { node_id: 'new', stage: 'queued', label: 'Discovered', tag: 'v2' }] })
   assert.deepEqual(rows.map(({ label, version }) => [label, version?.to]).sort(), [
-    ['Chosen Level', 'v0.10'], ['Chosen local map', 'v1'], ['Discovered', 'v2'], ['Prepared Web', 'v3.10.2'],
+    ['Chosen local map', 'v1'], ['DIYLevel - 自定义关卡', 'v0.10'], ['DIYLevel Web 前置', 'v3.10.2'], ['Discovered', 'v2'],
   ])
 })
 

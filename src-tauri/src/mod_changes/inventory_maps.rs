@@ -79,11 +79,6 @@ pub(crate) fn append_at(
             }
         }
         require_framework(&mut info.relations);
-        let label = if info.name.is_empty() {
-            set.dir_name.clone()
-        } else {
-            info.name.clone()
-        };
         let internal = internal_members(root, &set.path, config.mod_metadata_concurrency)?;
         let mut relationships = owned(info.relations.clone(), None);
         let mut known = set.error.is_none();
@@ -135,7 +130,9 @@ pub(crate) fn append_at(
             NodeFiles {
                 summary: NodeSummary {
                     node_id: id,
-                    label,
+                    label: info.name,
+                    name_i18n: BTreeMap::new(),
+                    map_name_zh: info.name_zh,
                     kind: NodeKind::Map,
                     enabled: set.enabled,
                     repository_id: None,
@@ -307,6 +304,8 @@ fn append_external(
             summary: NodeSummary {
                 node_id: id,
                 label: details.name.unwrap_or_else(|| dll.into()),
+                name_i18n: BTreeMap::new(),
+                map_name_zh: None,
                 kind: NodeKind::Mod,
                 enabled,
                 repository_id: None,

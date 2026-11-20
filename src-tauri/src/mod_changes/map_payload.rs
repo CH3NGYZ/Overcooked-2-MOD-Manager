@@ -13,9 +13,9 @@ use std::{
 mod output;
 mod projection;
 
-type MapSource<'a> = (
-    &'a crate::asset_bundle::LevelSetMetadata,
-    &'a crate::models::MapRepositoryConfig,
+type MapSource<'metadata, 'source> = (
+    &'metadata crate::asset_bundle::LevelSetMetadata,
+    &'source crate::models::MapRepositoryConfig,
 );
 
 pub(crate) struct MapBatch {
@@ -142,6 +142,7 @@ pub(crate) fn attach(state: &AppState, session: &mut PlanSession) -> Result<(), 
         extra_files: vec![],
     };
     let registered = level_sets::read_registered_plugins(&state.config.manifests_dir());
+    let primary = primary.map(|(metadata, source)| (metadata, source.clone()));
     projection::merge(
         session,
         &mut batch,
@@ -149,6 +150,9 @@ pub(crate) fn attach(state: &AppState, session: &mut PlanSession) -> Result<(), 
         files,
         &registered,
         chosen.len(),
+        primary
+            .as_ref()
+            .map(|(metadata, source)| (*metadata, source)),
     )?;
     batch.extra_files = loose_files(&batch)?;
     session.map_payload = Some(batch);
@@ -235,11 +239,11 @@ fn copy_metadata(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_origin<'a>(
-    metadata: &[&'a crate::asset_bundle::LevelSetMetadata],
+fn validate_origin<'metadata, 'source>(
+    metadata: &[&'metadata crate::asset_bundle::LevelSetMetadata],
     origin: Option<&MapInstallOrigin>,
-    config: &'a crate::models::AppConfig,
-) -> Result<Option<MapSource<'a>>, String> {
+    config: &'source crate::models::AppConfig,
+) -> Result<Option<MapSource<'metadata, 'source>>, String> {
     let Some(origin) = origin else {
         return Ok(None);
     };
@@ -306,7 +310,10 @@ fn validate_origin<'a>(
     Ok(Some((primary, source)))
 }
 
-fn verify_staged_source(manifests: &Path, primary: Option<MapSource<'_>>) -> Result<(), String> {
+fn verify_staged_source(
+    manifests: &Path,
+    primary: Option<MapSource<'_, '_>>,
+) -> Result<(), String> {
     if let Some((metadata, source)) = primary {
         let snapshots = archive::read_map_relation_snapshots(manifests);
         let persisted = level_sets::installed_repository_id(

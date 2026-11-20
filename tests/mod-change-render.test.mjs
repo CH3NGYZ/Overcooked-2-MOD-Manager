@@ -10,7 +10,7 @@ import { modsOnline } from '../src/locale/modsOnline.ts'
 
 const fixture = globalThis.__changeRender = {
   state: shallowRef(null), preparation: shallowRef(null), cancelDownload: shallowRef(false), cancelling: shallowRef(false),
-  execution: shallowReactive(new Map()), installNotes: shallowRef([]), messages: { modChanges, common, modsOnline }, calls: [],
+  execution: shallowReactive(new Map()), installNotes: shallowRef([]), locale: shallowRef('zh-CN'), messages: { modChanges, common, modsOnline }, calls: [],
 }
 registerHooks({
   resolve(specifier, context, next) {
@@ -39,8 +39,9 @@ registerHooks({
     if (url.endsWith('/src/components/AppModal.vue')) return fake(`import{h}from'vue';export default{props:['show','cardClass','maxWidth','maxHeight','fill'],setup:(p,{slots})=>()=>p.show?h('modal',{class:p.cardClass,maxWidth:p.maxWidth,maxHeight:p.maxHeight,fill:p.fill},[h('header',{},slots['header-extra']?.()),slots.default?.(),h('footer',{},slots.footer?.())]):null}`)
     if (url.endsWith('/src/markdown.ts')) return fake('export const renderReadme=String')
     if (url.endsWith('/src/locale/backend.ts')) return fake('export const backendMessageOf=String;export const translateBackendMessage=String')
-    if (url.endsWith('/src/i18n.ts')) return fake(`export const pickI18n=(_,fallback)=>fallback; export const locale={value:'zh-CN'};
-      export const t=(key,args={})=>{const [domain,...path]=key.split('.');let text=globalThis.__changeRender.messages[domain]?.[path.join('.')]?.['zh-CN']??key;for(const[k,v]of Object.entries(args))text=text.replaceAll('{'+k+'}',String(v));return text}`)
+    if (url.endsWith('/src/i18n.ts')) return fake(`export const locale=globalThis.__changeRender.locale;
+      export const pickI18n=(values,fallback)=>values?.[locale.value]??fallback;
+      export const t=(key,args={})=>{const [domain,...path]=key.split('.');let text=globalThis.__changeRender.messages[domain]?.[path.join('.')]?.[locale.value]??key;for(const[k,v]of Object.entries(args))text=text.replaceAll('{'+k+'}',String(v));return text}`)
     return next(url, context)
   },
 })
@@ -64,13 +65,14 @@ const bodyRows = root => find(root, node => node.tag === 'tbody').flatMap(body =
 const cells = row => row.children.filter(node => node.tag === 'td' || node.tag === 'th')
 const statuses = row => find(cells(row)[1], node => node.props?.['data-change-stage'])
 const stage = row => statuses(row)[0]?.props['data-change-stage']
+const icon = row => statuses(row)[0]?.props['data-change-icon']
 const action = (id, kind, extra = {}) => ({ node_id: id, kind, reason: '', caused_by: [], ...extra })
 const plan = { plan_id: 'one', status: 'ready', prepared: false, blockers: [], impacts: [], roots: [], evaluations: [], install_notes: [],
   nodes: [{ node_id: 'web', label: 'Web 前置', dll_files: [], candidates: [] }, { node_id: 'level', label: 'DIYLevel 框架', dll_files: [], candidates: [] }],
   actions: [action('web', 'downgrade', { from_tag: 'v4.0.0', to_tag: 'v3.10.2' }), action('level', 'replace', { from_tag: 'v0.10', to_tag: 'v0.10' })] }
 function mounted(t) {
   fixture.state.value = { phase: 'confirming', plan, error: null }; fixture.preparation.value = null
-  fixture.execution.clear(); fixture.calls = []; fixture.cancelDownload.value = false; fixture.installNotes.value = []
+  fixture.execution.clear(); fixture.calls = []; fixture.cancelDownload.value = false; fixture.installNotes.value = []; fixture.locale.value = 'zh-CN'
   const root = { children: [] }, app = host.createApp(Dialog)
   app.mount(root); t.after(() => app.unmount())
   return root
@@ -110,7 +112,8 @@ test('the plan table shows live preparation only in the affected row and leaves 
   assert.match(text(rows[0]), /升级.*Web 前置.*v4\.0\.0.*v5\.0\.0/)
   assert.match(text(rows[1]), /禁用.*包内插件/)
   assert.doesNotMatch(text(root), /opaque-uuid|DIYLevel 框架|降级/)
-  assert.deepEqual(rows.map(stage), ['downloading', undefined])
+  assert.deepEqual(rows.map(stage), ['downloading', 'queued'])
+  assert.deepEqual(rows.map(icon), ['spinner', 'dots'])
   assert.equal(statuses(rows[0])[0].props.title, '正在下载')
   const table = find(root, n => n.tag === 'table')[0]
   assert.equal(find(table, n => n.tag === 'progress').length, 0)
@@ -119,14 +122,15 @@ test('the plan table shows live preparation only in the affected row and leaves 
   fixture.preparation.value = { ...fixture.preparation.value, stage: 'verifying', items: [{ ...fixture.preparation.value.items[0],
     stage: 'verifying', download: { downloaded: 100, total: 100, speed_bytes: 1024, finished: true } }] }
   await nextTick()
-  assert.deepEqual(bodyRows(root).map(stage), ['verifying', undefined])
+  assert.deepEqual(bodyRows(root).map(stage), ['verifying', 'queued'])
   assert.equal(statuses(bodyRows(root)[0])[0].props.title, '正在验证')
   assert.equal(find(table, n => n.tag === 'progress').length, 0)
   assert.doesNotMatch(text(table), /100%|100 B|KB\/s/)
   fixture.preparation.value = { ...fixture.preparation.value, stage: 'failed', items: [{ ...fixture.preparation.value.items[0], stage: 'failed' }] }
   fixture.state.value = { phase: 'failed', plan, error: 'Download failed.' }
   await nextTick()
-  assert.deepEqual(bodyRows(root).map(stage), ['preparationFailed', undefined])
+  assert.deepEqual(bodyRows(root).map(stage), ['preparationFailed', 'queued'])
+  assert.deepEqual(bodyRows(root).map(icon), ['error', 'dots'])
   assert.match(statuses(bodyRows(root)[0])[0].props.title, /失败/)
   assert.deepEqual(fixture.calls, [])
 })
@@ -139,6 +143,9 @@ test('final confirmation shows the returned plan directly and never self-execute
   await nextTick()
   const rows = bodyRows(root)
   assert.equal(rows.length, 1); assert.match(text(rows[0]), /降级.*DIYLevel 框架.*v0\.11.*v0\.10/)
+  assert.deepEqual(rows.map(stage), ['prepared'])
+  assert.deepEqual(rows.map(icon), ['dots'])
+  assert.equal(statuses(rows[0])[0].props.title, '文件已验证，等待应用')
   assert.doesNotMatch(text(rows[0]), /升级|v5|Web 前置/)
   assert.equal(find(root, n => n.tag === 'details').length, 0)
   assert.deepEqual(fixture.calls, [])
@@ -246,7 +253,7 @@ test('verified files never get an execution check before changes actually run', 
   ] }
   await nextTick()
   const rows = bodyRows(root)
-  assert.deepEqual(rows.map(stage), [undefined, 'downloading'])
+  assert.deepEqual(rows.map(stage), ['queued', 'downloading'])
   assert.match(text(rows[0]), /禁用.*Web 前置/)
   assert.doesNotMatch(text(rows[0]), /准备完成|文件已就绪|执行完毕|已禁用|✓/)
   assert.equal(text(cells(rows[0])[3]), '')
@@ -268,20 +275,22 @@ test('execution icons follow exact member writes, and a rolled-back write loses 
   assert.equal(rows.length, 3)
   assert.match(text(cells(rows[0])[2]), /Web 前置.*A\.dll/)
   assert.match(text(cells(rows[1])[2]), /Web 前置.*B\.dll/)
-  assert.deepEqual(rows.map(stage), ['applying', undefined, undefined])
+  assert.deepEqual(rows.map(stage), ['applying', 'queued', 'prepared'])
   assert.equal(statuses(rows[0])[0].props.title, '正在处理')
   assert.equal(find(statuses(rows[0])[0], node => node.tag === 'spin').length, 1)
   fixture.execution.set(changeStatusKey('web', 'a'), 'processed')
   fixture.execution.set(changeStatusKey('level'), 'applying')
   await nextTick()
-  assert.deepEqual(bodyRows(root).map(stage), ['processed', undefined, 'applying'])
+  assert.deepEqual(bodyRows(root).map(stage), ['processed', 'queued', 'applying'])
   assert.equal(statuses(bodyRows(root)[0])[0].props.title, '已处理，等待整批提交')
-  fixture.execution.set(changeStatusKey('web', 'a'), 'failed')
+  fixture.execution.set(changeStatusKey('web', 'a'), 'rolled_back')
   fixture.execution.set(changeStatusKey('level'), 'failed')
   fixture.state.value = { phase: 'failed', plan: activePlan, error: 'Rolled back.' }
   await nextTick()
-  assert.deepEqual(bodyRows(root).map(stage), ['failed', undefined, 'failed'])
-  assert.equal(statuses(bodyRows(root)[0])[0].props.title, '未能应用')
+  assert.deepEqual(bodyRows(root).map(stage), ['rolled_back', 'queued', 'failed'])
+  assert.deepEqual(bodyRows(root).map(icon), ['undo', 'dots', 'error'])
+  assert.match(statuses(bodyRows(root)[0])[0].props.title, /已回滚/)
+  assert.equal(statuses(bodyRows(root)[2])[0].props.title, '未能应用')
   assert.match(text(root), /Rolled back\./)
   assert.deepEqual(fixture.calls, [])
 })
@@ -307,11 +316,11 @@ test('a release upgrade shows each old copy before approval and gives it indepen
   fixture.execution.set(changeStatusKey(id, first.member_key), 'processed')
   fixture.state.value = { phase: 'executing', plan: { ...activePlan, prepared: true }, error: null }
   await nextTick()
-  assert.deepEqual(bodyRows(root).map(stage), ['applying', 'processed', undefined])
+  assert.deepEqual(bodyRows(root).map(stage), ['applying', 'processed', 'queued'])
   fixture.execution.set(changeStatusKey(id), 'failed')
-  fixture.execution.set(changeStatusKey(id, first.member_key), 'failed')
+  fixture.execution.set(changeStatusKey(id, first.member_key), 'rolled_back')
   await nextTick()
-  assert.deepEqual(bodyRows(root).map(stage), ['failed', 'failed', undefined])
+  assert.deepEqual(bodyRows(root).map(stage), ['failed', 'rolled_back', 'queued'])
 })
 
 test('the rows for a bundled DLL stay with its map and show the map transaction status', async t => {
@@ -325,7 +334,7 @@ test('the rows for a bundled DLL stay with its map and show the map transaction 
   await nextTick()
   const rows = bodyRows(root)
   assert.equal(rows.length, 3)
-  assert.deepEqual(rows.map(stage), ['processed', 'processed', undefined])
+  assert.deepEqual(rows.map(stage), ['processed', 'processed', 'prepared'])
   assert.deepEqual(rows.map(row => text(cells(row)[2]).trim()), ['Web 前置', 'Addon.dll', 'DIYLevel 框架'])
   assert.match(text(cells(rows[1])[4]), /随包.*禁用/)
   fixture.execution.set(changeStatusKey('web'), 'applied')
@@ -333,4 +342,48 @@ test('the rows for a bundled DLL stay with its map and show the map transaction 
   await nextTick()
   assert.deepEqual(bodyRows(root).map(stage), ['applied', 'applied', 'applied'])
   assert.equal(statuses(rows[1])[0].props.title, '已应用')
+})
+
+test('names switch with the UI for sources, local maps, actions and reasons and survive progress updates', async t => {
+  const root = mounted(t)
+  const nodes = [
+    { node_id: 'online', kind: 'map', label: 'Source fallback', name_i18n: { 'zh-CN': '在线地图卡片', en: 'Online map card' } },
+    { node_id: 'local', kind: 'map', label: 'Local Map', map_name_zh: '本地地图', map_dir_name: 'Dir' },
+    { node_id: 'mod', kind: 'mod', label: 'Package.dll', name_i18n: { 'zh-CN': '仓库卡片名称', en: 'Repository card name' } },
+  ]
+  const actions = [action('local', 'disable'), action('mod', 'upgrade', { to_tag: '2.0',
+    reason_details: [{ kind: 'required_by', related_node_ids: ['online'] }] })]
+  const activePlan = { ...plan, nodes, actions, roots: [{ node_id: 'online', label: 'Stale fallback' }] }
+  fixture.state.value = { phase: 'preparing', plan: activePlan, error: null }
+  fixture.preparation.value = { plan_id: 'one', stage: 'verifying', actions, items: [
+    { node_id: 'mod', label: 'Raw DLL progress label', stage: 'verifying' },
+  ] }
+  await nextTick()
+  assert.deepEqual(bodyRows(root).map(row => text(cells(row)[2])), ['本地地图', '仓库卡片名称', '在线地图卡片'])
+  assert.match(text(cells(bodyRows(root)[1])[4]), /在线地图卡片 依赖此项/)
+  assert.doesNotMatch(text(root), /Raw DLL progress label|Stale fallback/)
+  fixture.locale.value = 'en'
+  await nextTick()
+  assert.deepEqual(bodyRows(root).map(row => text(cells(row)[2])), ['Local Map', 'Repository card name', 'Online map card'])
+  assert.match(text(cells(bodyRows(root)[1])[4]), /Online map card requires this item/)
+})
+
+test('the missing edge and blocker notes use the source title while retaining the exact failing row', async t => {
+  const root = mounted(t)
+  const guid = 'Example.Plugin'
+  const nodes = [{ node_id: 'owner', kind: 'map', label: 'Local Map', map_name_zh: '本地地图', map_dir_name: 'Dir' }]
+  const step = { owner_id: 'owner', owner_version: '1.0', relation: { guid }, targets: [], state: 'missing', reason: 'required_plugin_missing' }
+  fixture.state.value = { phase: 'confirming', error: null, plan: { ...plan, status: 'unsatisfiable', nodes,
+    roots: [{ node_id: 'owner', label: 'Local Map', tag: '1.0' }],
+    relation_labels: { 'example.plugin': { label: 'Dependency package', name_i18n: { 'zh-CN': '依赖仓库卡片', en: 'Dependency card' } } },
+    blockers: [{ code: 'relation_has_no_solution', traces: [[step]] }, { code: 'relation_has_no_solution', owner_id: 'owner', target_guid: guid }],
+  } }
+  await nextTick()
+  assert.deepEqual(bodyRows(root).map(row => [text(cells(row)[2]), icon(row)]), [['本地地图', undefined], ['依赖仓库卡片', 'error']])
+  assert.match(text(cells(bodyRows(root)[1])[4]), /本地地图 \(1\.0\) 依赖此项/)
+  assert.match(text(root), /无法找到同时满足.*本地地图.*依赖仓库卡片/)
+  assert.doesNotMatch(text(root), /Example\.Plugin/)
+  fixture.locale.value = 'en'
+  await nextTick()
+  assert.deepEqual(bodyRows(root).map(row => text(cells(row)[2])), ['Local Map', 'Dependency card'])
 })

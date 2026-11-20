@@ -83,6 +83,7 @@ fn fixture() -> Fixture {
             },
             roots: vec![],
             nodes: vec![],
+            relation_labels: Default::default(),
             previous_enabled_members: Default::default(),
             retired_mod_copies: Default::default(),
             install_notes: vec![],
@@ -145,6 +146,8 @@ fn add_mod(fixture: &mut Fixture, id: &str, provides: Vec<ProvidedPlugin>, owned
             summary: NodeSummary {
                 node_id: id.into(),
                 label: id.into(),
+                name_i18n: Default::default(),
+                map_name_zh: None,
                 kind: NodeKind::Mod,
                 enabled: node.enabled,
                 repository_id: None,
@@ -483,6 +486,8 @@ fn map_with_member(f: &mut Fixture, id: &str, path: &str, enabled: bool, member_
             summary: NodeSummary {
                 node_id: id.into(),
                 label: id.into(),
+                name_i18n: Default::default(),
+                map_name_zh: None,
                 kind: NodeKind::Map,
                 enabled,
                 repository_id: None,

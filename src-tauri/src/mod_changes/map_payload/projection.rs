@@ -5,7 +5,7 @@ use std::collections::HashSet;
 pub(super) fn seed_snapshots(
     config: &crate::models::AppConfig,
     metadata: &[&crate::asset_bundle::LevelSetMetadata],
-    primary: Option<MapSource<'_>>,
+    primary: Option<MapSource<'_, '_>>,
     manifests: &Path,
 ) -> Result<(), String> {
     let mut snapshots = archive::read_map_relation_snapshots(manifests);
@@ -57,6 +57,7 @@ pub(super) fn merge(
     projected_files: BTreeMap<String, NodeFiles>,
     previous_registry: &[level_sets::RegisteredLevelSetPlugin],
     expected_maps: usize,
+    primary: Option<MapSource<'_, '_>>,
 ) -> Result<(), String> {
     let mut taken = session
         .trusted
@@ -159,6 +160,17 @@ pub(super) fn merge(
         }
         files.summary.node_id = id.clone();
         files.summary.map_dir_name = Some(name.clone());
+        if let Some((_, map)) = primary.filter(|(main, _)| same_identity(main, &metadata)) {
+            // Only the ZIP's verified main map may use the online card title.
+            files.summary.label = if map.name.trim().is_empty() {
+                format!("{}/{}", map.username, map.repository)
+            } else {
+                map.name.clone()
+            };
+            files.summary.name_i18n.clone_from(&map.name_i18n);
+            files.summary.map_name_zh = None;
+            files.summary.map_id = Some(map.id.clone());
+        }
         files.summary.members = candidate
             .provides
             .iter()
@@ -306,6 +318,17 @@ fn insert_candidate(
     {
         if !existing.mutable {
             return Err("modChanges.ambiguousOwnership".into());
+        }
+        if kind == NodeKind::Map {
+            let summary = &mut session
+                .trusted
+                .files
+                .get_mut(id)
+                .ok_or("modChanges.targetChanged")?
+                .summary;
+            summary.label = files.summary.label;
+            summary.name_i18n = files.summary.name_i18n;
+            summary.map_name_zh = files.summary.map_name_zh;
         }
         existing.candidates.push(candidate);
     } else {

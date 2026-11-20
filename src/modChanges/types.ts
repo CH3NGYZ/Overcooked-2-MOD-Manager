@@ -73,6 +73,7 @@ export interface ChangeInstallNote {
   note_i18n: Record<string, string>
 }
 export interface RetiredModCopy { member_key: string; label: string; version: string; dll_file: string }
+export interface ChangeLabel { label: string; name_i18n?: Record<string, string> }
 export interface ChangePlan {
   plan_id: string
   status: 'ready' | 'unsatisfiable' | 'incomplete'
@@ -82,6 +83,7 @@ export interface ChangePlan {
   impacts: string[]
   roots: { node_id: string; label: string; tag?: string | null }[]
   nodes: ChangeNode[]
+  relation_labels?: Record<string, ChangeLabel>
   /** Effectively enabled members before a whole-node disable. */
   previous_enabled_members?: Record<string, string[]>
   /** Independently installed older copies removed as part of an approved upgrade. */
@@ -94,10 +96,10 @@ export interface EvaluationSnapshot {
   nodes: ChangeNode[]
   evaluations: NodeEvaluation[]
 }
-export interface ChangeNode {
+export interface ChangeNode extends ChangeLabel {
   node_id: string
-  label: string
   kind: string
+  map_name_zh?: string | null
   enabled: boolean
   repository_id?: string | null
   dll_files: string[]
@@ -110,7 +112,8 @@ export interface ChangeNode {
 }
 export interface EvaluationSubject { repository_id?: string; tag?: string; map_id?: string; dll_file?: string; map_dir_name?: string }
 export interface ChangeExecutionResult { ok: boolean; message: string }
-export type ChangeExecutionStage = 'applying' | 'processed' | 'applied' | 'failed'
+export interface ChangeExecutionOutcome extends ChangeExecutionResult { progress: ChangeExecutionProgress }
+export type ChangeExecutionStage = 'applying' | 'processed' | 'applied' | 'failed' | 'rolled_back' | 'not_applied'
 /** Changes since the previous update of this execute call, keyed by the trusted action's target. */
 export interface ChangeExecutionProgress {
   plan_id: string

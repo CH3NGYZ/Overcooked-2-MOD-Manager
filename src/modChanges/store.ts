@@ -74,7 +74,9 @@ const workflow = createChangeWorkflow({
       active = false
       // A write verified before commit can be rolled back. Never leave a stale
       // checkmark if the command fails before the final Channel message arrives.
-      if (!committed) for (const [key, stage] of execution) if (stage !== 'applied') execution.set(key, 'failed')
+      if (!committed) for (const [key, stage] of execution) {
+        if (stage === 'applying' || stage === 'processed') execution.set(key, 'not_applied')
+      }
     }
   },
   cancel: planId => api.cancelModChanges(planId),

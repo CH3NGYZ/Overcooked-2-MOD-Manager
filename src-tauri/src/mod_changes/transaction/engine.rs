@@ -4,6 +4,7 @@ use std::{fs, path::Path};
 pub(in crate::mod_changes) enum RecordProgress {
     Applying(usize),
     Processed(usize),
+    Failed(usize),
     Committed,
 }
 
@@ -129,8 +130,9 @@ impl PreparedTransaction {
         if self.journal.state != JournalState::Prepared {
             return Err(paths::INVALID.into());
         }
-        for record in &self.journal.records {
-            verify_before(record, &self.journal.roots)?;
+        for (index, record) in self.journal.records.iter().enumerate() {
+            verify_before(record, &self.journal.roots)
+                .inspect_err(|_| observe(RecordProgress::Failed(index)))?;
         }
         for parent in &self.journal.created_directories {
             if Fingerprint::capture(&parent.resolve(&self.journal.roots)?)? != Fingerprint::Missing
@@ -147,11 +149,13 @@ impl PreparedTransaction {
             if cancelled() {
                 return Err("download.cancelled".into());
             }
-            self.apply_record(index, || observe(RecordProgress::Applying(index)))?;
+            self.apply_record(index, || observe(RecordProgress::Applying(index)))
+                .inspect_err(|_| observe(RecordProgress::Failed(index)))?;
             observe(RecordProgress::Processed(index));
         }
-        for record in &self.journal.records {
-            verify_after(record, &self.journal.roots)?;
+        for (index, record) in self.journal.records.iter().enumerate() {
+            verify_after(record, &self.journal.roots)
+                .inspect_err(|_| observe(RecordProgress::Failed(index)))?;
         }
         self.journal.state = JournalState::Committed;
         self.persist()

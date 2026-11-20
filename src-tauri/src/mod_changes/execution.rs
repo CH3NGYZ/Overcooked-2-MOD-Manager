@@ -1,6 +1,8 @@
 //! Commit one prepared whole-chain plan under the existing write lock.
 use super::{
-    application_progress::{ChangeApplicationProgress, ItemKey, Recorder},
+    application_progress::{
+        ChangeApplicationOutcome, ChangeApplicationProgress, ItemKey, Recorder,
+    },
     inventory,
     model::{ActionKind, NodeKind, SolveStatus},
     preparation,
@@ -12,6 +14,23 @@ use std::{fs, path::Path};
 use tauri::{AppHandle, Emitter};
 
 pub(crate) fn execute(
+    app: &AppHandle,
+    state: &AppState,
+    id: &str,
+    mut report: impl FnMut(ChangeApplicationProgress),
+) -> ChangeApplicationOutcome {
+    let mut progress = ChangeApplicationProgress::new(id);
+    let result = execute_inner(app, state, id, |update| {
+        progress.retain_terminal(&update);
+        report(update);
+    });
+    ChangeApplicationOutcome {
+        result: result.unwrap_or_else(|message| OperationResult { ok: false, message }),
+        progress,
+    }
+}
+
+fn execute_inner(
     app: &AppHandle,
     state: &AppState,
     id: &str,
@@ -136,7 +155,7 @@ pub(super) fn commit(
                 progress.observe(event)
             })
         {
-            progress.failed();
+            progress.failed(error != "recycle.partialFailure");
             return Err(error);
         }
     }

@@ -2,10 +2,10 @@
 use crate::{
     app_state::AppState,
     mod_changes::{
+        application_progress::{ChangeApplicationOutcome, ChangeApplicationProgress},
         planning::{EvaluationSnapshot, EvaluationSubject},
         session::{ChangePlan, PlanRequest},
     },
-    models::OperationResult,
 };
 use tauri::{AppHandle, State};
 
@@ -55,10 +55,8 @@ pub(crate) async fn execute_mod_changes(
     app: AppHandle,
     state: State<'_, AppState>,
     plan_id: String,
-    on_update: tauri::ipc::Channel<
-        crate::mod_changes::application_progress::ChangeApplicationProgress,
-    >,
-) -> Result<OperationResult, String> {
+    on_update: tauri::ipc::Channel<ChangeApplicationProgress>,
+) -> Result<ChangeApplicationOutcome, String> {
     let state = state.inner().clone();
     // Preserve repository_cache → operation ordering for the final source check.
     let cache = state.repository_cache.clone().lock_owned().await;
@@ -70,7 +68,7 @@ pub(crate) async fn execute_mod_changes(
         })
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

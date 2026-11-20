@@ -1,27 +1,30 @@
 <script setup lang="ts">
 import { computed, type DeepReadonly } from 'vue'
-import { CheckmarkOutline, CloseOutline } from '@vicons/ionicons5'
+import { ArrowUndoOutline, CheckmarkOutline, CloseOutline, EllipsisHorizontal } from '@vicons/ionicons5'
 import { NSpin, NTag } from 'naive-ui'
 import { locale, t } from '../i18n'
 import { formatVersionSpec } from '../versionSpec'
 import { changeReasonText } from './messages'
-import { changePlanDetails } from './presentation'
+import { changePlanDetails, type ChangePlanNames } from './presentation'
 import type { ChangeExecutionStage, ChangePlan, ChangePreparationProgress, DiagnosticStep } from './types'
 
-const { plan, progress, execution } = defineProps<{
+const { plan, progress, execution, names } = defineProps<{
   plan: DeepReadonly<ChangePlan>
   progress: DeepReadonly<ChangePreparationProgress> | null
   execution: ReadonlyMap<string, ChangeExecutionStage>
+  names: ChangePlanNames
 }>()
 
-const details = computed(() => changePlanDetails(plan, progress))
+const details = computed(() => changePlanDetails(plan, progress, names))
 const listFormat = computed(() => new Intl.ListFormat(locale.value, { style: 'short', type: 'conjunction' }))
 type Row = ReturnType<typeof changePlanDetails>['rows'][number]
 type Reason = NonNullable<Row['reasons']>[number]
 type Edge = NonNullable<NonNullable<Row['diagnostic']>['edge']>
 const stageLabels = {
+  queued: 'modChanges.item.queued', prepared: 'modChanges.item.prepared',
   applying: 'modChanges.apply.applying', processed: 'modChanges.apply.processed',
   applied: 'modChanges.apply.applied', failed: 'modChanges.apply.failed',
+  rolled_back: 'modChanges.apply.rolledBack', not_applied: 'modChanges.apply.notApplied',
   downloading: 'modChanges.item.downloading', verifying: 'modChanges.item.verifying', preparationFailed: 'modChanges.item.failed',
 } as const
 
@@ -29,14 +32,18 @@ const rows = computed(() => details.value.rows.map(row => {
   const terminal = row.diagnostic?.terminal
   if (terminal) {
     const reason = diagnosticReason(terminal)
-    return { ...row, terminalReason: reason, status: { stage: 'blocked', label: t('modChanges.diagnostic.blocked', { reason }), error: true, busy: false } }
+    return { ...row, terminalReason: reason, status: { stage: 'blocked', label: t('modChanges.diagnostic.blocked', { reason }), icon: 'error' } }
   }
-  const applied = row.statusKey ? execution.get(row.statusKey) : undefined
+  if (plan.status !== 'ready' || (!row.statusKey && !row.preparationStage)) return { ...row, terminalReason: undefined, status: undefined }
+  const applying = row.statusKey ? execution.get(row.statusKey) : undefined
   const prepared = row.preparationStage
-  const stage = applied ?? (prepared === 'failed' ? 'preparationFailed' : prepared === 'downloading' || prepared === 'verifying' ? prepared : undefined)
-  return { ...row, terminalReason: undefined, status: stage ? { stage, label: t(stageLabels[stage]),
-    error: stage === 'failed' || stage === 'preparationFailed',
-    busy: stage === 'applying' || stage === 'downloading' || stage === 'verifying' } : undefined }
+  const stage = applying ?? (prepared === 'failed' ? 'preparationFailed' : prepared === 'ready' ? 'prepared'
+    : prepared ?? (plan.prepared && row.waitsForPackage ? 'prepared' : 'queued'))
+  const icon = stage === 'failed' || stage === 'preparationFailed' ? 'error'
+    : stage === 'applying' || stage === 'downloading' || stage === 'verifying' ? 'spinner'
+    : stage === 'applied' || stage === 'processed' ? 'check'
+    : stage === 'rolled_back' ? 'undo' : 'dots'
+  return { ...row, terminalReason: undefined, status: { stage, label: t(stageLabels[stage]), icon } }
 }))
 
 function diagnosticReason({ state, reason, relation }: DeepReadonly<DiagnosticStep>) {
@@ -104,10 +111,12 @@ function describeCondition(reason: Reason) {
         </td>
         <td class="plan-row-status">
           <span v-if="row.status" class="row-status-icon" role="img" :aria-label="row.status.label"
-            :title="row.status.label" :data-change-stage="row.status.stage">
-            <NSpin v-if="row.status.busy" :size="16" aria-hidden="true" />
-            <CloseOutline v-else-if="row.status.error" width="16" height="16" aria-hidden="true" />
-            <CheckmarkOutline v-else width="16" height="16" aria-hidden="true" />
+            :title="row.status.label" :data-change-stage="row.status.stage" :data-change-icon="row.status.icon">
+            <NSpin v-if="row.status.icon === 'spinner'" :size="16" aria-hidden="true" />
+            <CloseOutline v-else-if="row.status.icon === 'error'" width="16" height="16" aria-hidden="true" />
+            <CheckmarkOutline v-else-if="row.status.icon === 'check'" width="16" height="16" aria-hidden="true" />
+            <ArrowUndoOutline v-else-if="row.status.icon === 'undo'" width="16" height="16" aria-hidden="true" />
+            <EllipsisHorizontal v-else width="16" height="16" aria-hidden="true" />
           </span>
         </td>
         <th scope="row" class="details-item" :style="row.diagnostic?.depth ? { '--diagnostic-indent': `${Math.min(row.diagnostic.depth, 4) * 9}px` } : undefined">
@@ -168,7 +177,8 @@ function describeCondition(reason: Reason) {
 .details-table .is-child .details-item { padding-inline-start: 24px; }
 .is-child .details-item, .is-child .details-reason { color: var(--oc2-text-2); }
 .row-status-icon { display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; min-height: 16px; color: var(--oc2-accent); }
-.row-status-icon:is([data-change-stage='failed'], [data-change-stage='preparationFailed'], [data-change-stage='blocked']), .diagnostic-blocked { color: var(--oc2-danger, #e5484d); }
+.row-status-icon[data-change-icon='error'], .diagnostic-blocked { color: var(--oc2-danger, #e5484d); }
+.row-status-icon:is([data-change-icon='dots'], [data-change-icon='undo']) { color: var(--oc2-text-2); }
 .diagnostic-blocked { display: block; margin-top: 3px; }
 .diagnostic-start th, .diagnostic-start td { background: var(--oc2-sunken); }
 .diagnostic-path { display: block; }

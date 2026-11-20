@@ -38,6 +38,10 @@ pub(crate) struct RetiredModCopy {
 pub(crate) struct NodeSummary {
     pub node_id: String,
     pub label: String,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub name_i18n: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub map_name_zh: Option<String>,
     pub kind: NodeKind,
     pub enabled: bool,
     pub repository_id: Option<String>,
@@ -346,12 +350,12 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
             toggle_unbound_nodes.insert(id.clone());
         }
         let enabled = items.iter().any(|i| i.enabled);
+        let (label, name_i18n) = mod_label(repo, items.first());
         let summary = NodeSummary {
             node_id: id.clone(),
-            label: items
-                .first()
-                .map(|i| i.package_name.clone().unwrap_or_else(|| i.name.clone()))
-                .unwrap_or_default(),
+            label,
+            name_i18n,
+            map_name_zh: None,
             kind: NodeKind::Mod,
             enabled,
             repository_id: repo.map(|r| r.id.clone()),
@@ -461,6 +465,8 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
                 summary: NodeSummary {
                     node_id: id,
                     label: repo.name.clone(),
+                    name_i18n: repo.name_i18n.clone(),
+                    map_name_zh: None,
                     kind: NodeKind::Mod,
                     enabled: false,
                     repository_id: Some(repo.id.clone()),
@@ -515,6 +521,32 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
         duplicate_release_safe_nodes,
         duplicate_releases: DuplicateReleases::default(),
     })
+}
+
+fn mod_label(
+    repo: Option<&ModRepositoryConfig>,
+    installed: Option<&InstalledMod>,
+) -> (String, BTreeMap<String, String>) {
+    if let Some(repo) = repo.filter(|repo| {
+        !repo.name.trim().is_empty() || repo.name_i18n.values().any(|name| !name.trim().is_empty())
+    }) {
+        return (repo.name.clone(), repo.name_i18n.clone());
+    }
+    let Some(installed) = installed else {
+        return Default::default();
+    };
+    let name = [
+        installed.package_name.as_deref(),
+        installed.plugin_name.as_deref(),
+        installed.title.as_deref(),
+        installed.product_name.as_deref(),
+        Some(installed.name.as_str()),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|name| !name.trim().is_empty())
+    .unwrap_or_default();
+    (name.into(), installed.package_name_i18n.clone())
 }
 
 /// Reuse one backend-owned scan until either source selection or physical facts change.

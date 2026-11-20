@@ -2,14 +2,14 @@
 import { computed, nextTick, useTemplateRef, watch } from 'vue'
 import { NAlert, NButton, NProgress, NSpin } from 'naive-ui'
 import AppModal from '../components/AppModal.vue'
-import { t } from '../i18n'
+import { locale, pickI18n, t } from '../i18n'
 import { backendMessageOf } from '../locale/backend'
 import { useModChanges } from './store'
 import { useModChangesLifecycle } from './useModChangesLifecycle'
 import { changeReasonText } from './messages'
 import ChangePlanDetails from './ChangePlanDetails.vue'
 import ModInstallNoteDialog from './ModInstallNoteDialog.vue'
-import { preparationCompletion } from './presentation'
+import { changePlanLabels, preparationCompletion } from './presentation'
 import { activeDownloadProgress } from '../downloadTask'
 import { appUpdateState } from '../appUpdateState'
 const changes = useModChanges()
@@ -23,7 +23,7 @@ const currentProgress = computed(() => (state.value?.phase === 'preparing'
 const completion = computed(() => preparationCompletion(preparation.value))
 const waiting = computed(() => ['planning', 'preparing', 'executing'].includes(state.value?.phase ?? ''))
 const canCancel = computed(() => !['preparing', 'executing'].includes(state.value?.phase ?? ''))
-const labels = computed(() => new Map(plan.value?.nodes.map(node => [node.node_id, node.label]) ?? []))
+const names = computed(() => plan.value && changePlanLabels(plan.value, currentProgress.value, pickI18n, locale.value))
 const diagnostics = computed(() => {
   const blockers = plan.value?.blockers ?? []
   const notes = blockers.filter(blocker => plan.value?.status === 'ready' || !blocker.traces?.some(path => path.length))
@@ -89,11 +89,11 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
       <ul v-if="diagnostics.notes.length" class="plan-notes">
         <li v-for="(blocker, index) in diagnostics.notes" :key="index">
           {{ changeReasonText(blocker.message || blocker.code) }}
-          <span v-if="blocker.owner_id && labels.get(blocker.owner_id)"> · {{ labels.get(blocker.owner_id) }}</span>
-          <span v-if="blocker.target_guid"> · {{ blocker.target_guid }}</span>
+          <span v-if="blocker.owner_id && names?.nodes.get(blocker.owner_id)"> · {{ names.nodes.get(blocker.owner_id) }}</span>
+          <span v-if="blocker.target_guid"> · {{ names?.dependency(blocker.target_guid) }}</span>
         </li>
       </ul>
-      <ChangePlanDetails v-if="plan" :plan="plan" :progress="currentProgress" :execution="changes.execution" />
+      <ChangePlanDetails v-if="plan && names" :plan="plan" :progress="currentProgress" :execution="changes.execution" :names="names" />
     </div>
     <template #footer>
       <div class="plan-bottom">

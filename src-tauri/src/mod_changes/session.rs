@@ -41,6 +41,14 @@ pub(crate) struct RootSummary {
     pub label: String,
     pub tag: Option<String>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct RelationLabel {
+    pub label: String,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub name_i18n: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ChangePlan {
     pub plan_id: String,
@@ -48,6 +56,9 @@ pub(crate) struct ChangePlan {
     pub result: SolveResult,
     pub roots: Vec<RootSummary>,
     pub nodes: Vec<NodeSummary>,
+    /// Source titles for referents that may have no installed or evaluated provider.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub relation_labels: BTreeMap<String, RelationLabel>,
     /// Member keys that were effectively enabled before a whole-node disable.
     /// The solved node summaries describe the final state, so cannot show these.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -236,6 +247,7 @@ pub(crate) fn presentation(
         .collect();
     ChangePlan {
         plan_id: id,
+        relation_labels: relation_labels(trusted, &result),
         result,
         prepared,
         roots: request
@@ -267,4 +279,65 @@ pub(crate) fn presentation(
         retired_mod_copies: BTreeMap::new(),
         install_notes: Vec::new(),
     }
+}
+
+fn relation_labels(
+    trusted: &TrustedInventory,
+    result: &SolveResult,
+) -> BTreeMap<String, RelationLabel> {
+    let mut needed = BTreeSet::new();
+    let mut add_guid = |guid: &str| {
+        let guid = guid.trim().to_ascii_lowercase();
+        if !guid.is_empty() {
+            needed.insert(guid);
+        }
+    };
+    for blocker in &result.blockers {
+        if let Some(guid) = &blocker.target_guid {
+            add_guid(guid);
+        }
+        for relation in blocker
+            .traces
+            .iter()
+            .flatten()
+            .filter_map(|step| step.relation.as_ref())
+        {
+            add_guid(&relation.guid);
+        }
+    }
+    for guid in result
+        .actions
+        .iter()
+        .flat_map(|a| &a.reason_details)
+        .filter_map(|reason| reason.target_guid.as_deref())
+    {
+        add_guid(guid);
+    }
+    let config = &trusted.config;
+    let mut labels: BTreeMap<_, Option<RelationLabel>> = BTreeMap::new();
+    for repo in &config.repositories {
+        let guid = repo.plugin_guid.trim().to_ascii_lowercase();
+        if !needed.contains(&guid)
+            || !crate::config::mod_repository_is_available(config, repo, &config.region)
+        {
+            continue;
+        }
+        let proposed = RelationLabel {
+            label: repo.name.clone(),
+            name_i18n: repo.name_i18n.clone(),
+        };
+        labels
+            .entry(guid)
+            .and_modify(|existing| {
+                // Channels with different titles cannot safely name an unknown provider.
+                if existing.as_ref() != Some(&proposed) {
+                    *existing = None;
+                }
+            })
+            .or_insert(Some(proposed));
+    }
+    labels
+        .into_iter()
+        .filter_map(|(guid, label)| Some((guid, label?)))
+        .collect()
 }

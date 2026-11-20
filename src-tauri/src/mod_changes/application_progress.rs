@@ -44,9 +44,11 @@ enum Stage {
     Processed,
     Applied,
     Failed,
+    RolledBack,
+    NotApplied,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 struct ItemProgress {
     #[serde(flatten)]
     key: ItemKey,
@@ -59,12 +61,46 @@ pub(crate) struct ChangeApplicationProgress {
     items: Vec<ItemProgress>,
 }
 
+impl ChangeApplicationProgress {
+    pub(super) fn new(plan_id: &str) -> Self {
+        Self {
+            plan_id: plan_id.into(),
+            items: Vec::new(),
+        }
+    }
+
+    pub(super) fn retain_terminal(&mut self, update: &Self) {
+        // Each touched key advances to exactly one terminal stage. Applying and
+        // processed packets are provisional and can arrive after the command.
+        self.items.extend(
+            update
+                .items
+                .iter()
+                .filter(|item| {
+                    matches!(
+                        item.stage,
+                        Stage::Applied | Stage::Failed | Stage::RolledBack | Stage::NotApplied
+                    )
+                })
+                .cloned(),
+        );
+    }
+}
+
+#[derive(Serialize)]
+pub(crate) struct ChangeApplicationOutcome {
+    #[serde(flatten)]
+    pub result: crate::models::OperationResult,
+    pub progress: ChangeApplicationProgress,
+}
+
 pub(super) struct Recorder<'a, F> {
     plan_id: &'a str,
     report: F,
     records: Vec<BTreeSet<ItemKey>>,
     remaining: BTreeMap<ItemKey, usize>,
     touched: BTreeSet<ItemKey>,
+    failed_record: Option<usize>,
 }
 
 impl<'a, F: FnMut(ChangeApplicationProgress)> Recorder<'a, F> {
@@ -88,6 +124,7 @@ impl<'a, F: FnMut(ChangeApplicationProgress)> Recorder<'a, F> {
             records,
             remaining,
             touched: BTreeSet::new(),
+            failed_record: None,
         }
     }
 
@@ -113,12 +150,24 @@ impl<'a, F: FnMut(ChangeApplicationProgress)> Recorder<'a, F> {
                     .collect();
                 self.emit(Stage::Processed, keys);
             }
+            RecordProgress::Failed(index) => self.failed_record = Some(index),
             RecordProgress::Committed => self.finish(Stage::Applied),
         }
     }
 
-    pub(super) fn failed(&mut self) {
-        self.finish(Stage::Failed);
+    pub(super) fn failed(&mut self, rollback_confirmed: bool) {
+        if let Some(index) = self.failed_record.take() {
+            let failed: Vec<_> = self.records[index].iter().cloned().collect();
+            for key in &failed {
+                self.touched.remove(key);
+            }
+            self.emit(Stage::Failed, failed);
+        }
+        self.finish(if rollback_confirmed {
+            Stage::RolledBack
+        } else {
+            Stage::NotApplied
+        });
     }
 
     fn finish(&mut self, stage: Stage) {

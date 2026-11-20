@@ -104,6 +104,7 @@ fn session(candidate_id: &str) -> PlanSession {
             plan_id: "revised-plan".into(),
             roots: vec![],
             nodes: vec![],
+            relation_labels: Default::default(),
             previous_enabled_members: Default::default(),
             retired_mod_copies: Default::default(),
             install_notes: vec![],

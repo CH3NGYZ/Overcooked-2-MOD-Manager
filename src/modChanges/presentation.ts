@@ -1,5 +1,6 @@
-import type { ChangeAction, ChangeActionKind, ChangeActionReason, ChangePlan, ChangePreparationItem, ChangePreparationProgress, DiagnosticStep } from './types'
+import type { ChangeAction, ChangeActionKind, ChangeActionReason, ChangeLabel, ChangePlan, ChangePreparationItem, ChangePreparationProgress, DiagnosticStep } from './types'
 import type { DeepReadonly } from 'vue'
+import { levelSetDisplayName } from '../levelSetStatus.ts'
 
 const isVersionChange = ({ kind }: DeepReadonly<ChangeAction>) => kind !== 'enable' && kind !== 'disable'
 export const changeStatusKey = (nodeId: string, memberKey?: string | null) => JSON.stringify([nodeId, memberKey ?? null])
@@ -8,9 +9,27 @@ function versionPair(from?: string | null, to?: string | null) {
   if (from || to) return { from, to }
 }
 
-function planLabels(plan: DeepReadonly<ChangePlan>) {
-  return new Map([...plan.roots, ...plan.nodes].filter(({ label }) => label.trim()).map(({ node_id, label }) => [node_id, label]))
+export function changePlanLabels(
+  plan: DeepReadonly<ChangePlan>, progress?: DeepReadonly<ChangePreparationProgress> | null,
+  pickName: (map: ChangeLabel['name_i18n'], fallback: string) => string = (_, label) => label, locale = 'en',
+) {
+  const nodes = new Map<string, string>()
+  const display = (item: DeepReadonly<ChangeLabel>) => pickName(item.name_i18n, item.label).trim()
+  for (const item of [...plan.roots, ...plan.nodes]) {
+    const label = 'kind' in item && item.kind === 'map' && !item.name_i18n
+      ? levelSetDisplayName({ name: item.label, name_zh: item.map_name_zh, dir_name: item.map_dir_name ?? '' }, locale)
+      : display(item)
+    if (label) nodes.set(item.node_id, label)
+  }
+  // A later solve may discover new work. Use the progress label only if the
+  // current trusted plan doesn't already know this item.
+  for (const { node_id, label } of progress?.items ?? []) {
+    if (!nodes.has(node_id) && label.trim()) nodes.set(node_id, label.trim())
+  }
+  const relations = new Map(Object.entries(plan.relation_labels ?? {}).map(([guid, label]) => [guid, display(label)]))
+  return { nodes, dependency: (guid: string) => relations.get(guid.trim().toLowerCase()) || guid }
 }
+export type ChangePlanNames = ReturnType<typeof changePlanLabels>
 
 function namedPlugin(path: string | null | undefined) {
   const name = path?.trim().split(/[\\/]/).pop()
@@ -21,11 +40,11 @@ function relatedLabels(ids: readonly string[], nodeId: string, labels: ReadonlyM
   return [...new Set(ids.filter(id => id !== nodeId).map(id => labels.get(id)).filter((label): label is string => !!label))]
 }
 
-function describeReasons(reasons: readonly DeepReadonly<ChangeActionReason>[], nodeId: string, labels: ReadonlyMap<string, string>) {
+function describeReasons(reasons: readonly DeepReadonly<ChangeActionReason>[], nodeId: string, { nodes, dependency }: ReturnType<typeof changePlanLabels>) {
   const seen = new Set<string>()
   return reasons.flatMap(({ kind, related_node_ids, target_guid, requirement, prerelease, condition_on_related }) => {
-    const related = relatedLabels(related_node_ids, nodeId, labels)
-    if (!related.length && target_guid?.trim()) related.push(target_guid)
+    const related = relatedLabels(related_node_ids, nodeId, nodes)
+    if (!related.length && target_guid?.trim()) related.push(dependency(target_guid))
     if (kind !== 'requested' && !related.length) return []
     const conditionOnRelated = condition_on_related === true
     const key = JSON.stringify([kind, related, requirement || null, prerelease ?? null, conditionOnRelated])
@@ -52,6 +71,7 @@ interface ChangePlanDetailRow {
   causes?: string[]
   version?: ReturnType<typeof versionPair>
   preparationStage?: ChangePreparationItem['stage']
+  waitsForPackage?: boolean
   diagnostic?: {
     start?: boolean
     path?: string
@@ -76,7 +96,7 @@ function diagnosticEdgeKey({ owner_id, owner_version, relation, targets, state, 
   ])
 }
 
-function diagnosticDetails(plan: DeepReadonly<ChangePlan>, labels: ReadonlyMap<string, string>) {
+function diagnosticDetails(plan: DeepReadonly<ChangePlan>, { nodes: labels, dependency }: ReturnType<typeof changePlanLabels>) {
   const starts = new Map<string, { step: FailureStep; children: Map<string, DiagnosticBranch> }>()
   let witness = 0
   for (const blocker of plan.blockers) {
@@ -115,9 +135,10 @@ function diagnosticDetails(plan: DeepReadonly<ChangePlan>, labels: ReadonlyMap<s
           version: versionPair(undefined, step.owner_version), diagnostic })
       } else {
         const { guid } = step.relation
-        const providers = step.targets.map(target => ({ label: labels.get(target.node_id) ?? guid, version: target.version, enabled: target.enabled }))
+        const dependencyLabel = dependency(guid)
+        const providers = step.targets.map(target => ({ label: labels.get(target.node_id) ?? dependencyLabel, version: target.version, enabled: target.enabled }))
         const only = providers.length === 1 ? providers[0] : undefined
-        diagnosticRows.push({ key, nodeId: only ? step.targets[0]!.node_id : step.owner_id, label: only?.label ?? guid,
+        diagnosticRows.push({ key, nodeId: only ? step.targets[0]!.node_id : step.owner_id, label: only?.label ?? dependencyLabel,
           version: versionPair(undefined, only?.version), diagnostic: { ...diagnostic, edge: { step, ownerLabel: labels.get(step.owner_id) }, providers } })
       }
       appendBranches(branch.children, key, branchPath, depth + 1)
@@ -140,20 +161,18 @@ function diagnosticDetails(plan: DeepReadonly<ChangePlan>, labels: ReadonlyMap<s
     if (!standalone) appendBranches(children, key, path, 1)
   }
   const roots: ChangePlanDetailRow[] = plan.roots.flatMap((root, index) => selected.has(root) ? [] : ({
-    key: `selected:${index}`, nodeId: root.node_id, label: root.label, version: versionPair(undefined, root.tag), selected: true,
+    key: `selected:${index}`, nodeId: root.node_id, label: labels.get(root.node_id), version: versionPair(undefined, root.tag), selected: true,
   }))
   return { rows: [...roots, ...diagnosticRows] }
 }
 
 /** Keep the order of package actions, or, for a blocked plan, explain the tried paths instead of showing proposed work. */
-export function changePlanDetails(plan: DeepReadonly<ChangePlan>, progress?: DeepReadonly<ChangePreparationProgress> | null) {
-  const labels = planLabels(plan)
-  if (plan.status !== 'ready') return diagnosticDetails(plan, labels)
+export function changePlanDetails(plan: DeepReadonly<ChangePlan>, progress?: DeepReadonly<ChangePreparationProgress> | null,
+  names = changePlanLabels(plan, progress)) {
+  const labels = names.nodes
+  if (plan.status !== 'ready') return diagnosticDetails(plan, names)
   const nodes = new Map(plan.nodes.map(node => [node.node_id, node]))
   const items = new Map(progress?.items.map(item => [item.node_id, item]))
-  for (const [nodeId, item] of items) {
-    if (item.label.trim()) labels.set(nodeId, item.label)
-  }
   const actions = progress?.actions ?? plan.actions
   const coveredNodes = new Set<string>()
   const coveredTags = new Map<string, string>()
@@ -178,14 +197,14 @@ export function changePlanDetails(plan: DeepReadonly<ChangePlan>, progress?: Dee
     const node = nodes.get(nodeId)
     const member = memberKey && node?.members?.find(member => member.key === memberKey)
     const plugin = memberKey ? (member ? namedPlugin(member.dll_file) : undefined) ?? namedPlugin(memberKey) : undefined
-    const reasons = describeReasons(action.reason_details ?? [], nodeId, labels)
+    const reasons = describeReasons(action.reason_details ?? [], nodeId, names)
     const causes = reasons.length ? [] : relatedLabels(action.caused_by, nodeId, labels)
     const statusKey = changeStatusKey(nodeId, memberKey)
     coveredNodes.add(nodeId)
     if (version?.to) coveredTags.set(nodeId, version.to)
     return { key: JSON.stringify([nodeId, kind, memberKey ?? null]), nodeId, statusKey, kind, label: labels.get(nodeId),
       member: plugin, memberOnly: !!memberKey, bundled, reason: action.reason, reasons, causes, version,
-      preparationStage: changesVersion ? item?.stage : undefined }
+      preparationStage: changesVersion ? item?.stage : undefined, waitsForPackage: changesVersion }
   }
   const rows: ChangePlanDetailRow[] = []
   for (const action of actions) {
@@ -201,7 +220,7 @@ export function changePlanDetails(plan: DeepReadonly<ChangePlan>, progress?: Dee
         const statusKey = changeStatusKey(nodeId, copy.member_key)
         const file = namedPlugin(copy.dll_file)
         rows.push({ key: `retire:${statusKey}`, nodeId, statusKey, kind: 'retire', retired: copy.member_key,
-          label: copy.label.trim() || file?.name, member: file, version: versionPair(undefined, copy.version) })
+          label: labels.get(nodeId) || copy.label.trim() || file?.name, member: file, version: versionPair(undefined, copy.version) })
       }
     }
 
@@ -231,9 +250,9 @@ export function changePlanDetails(plan: DeepReadonly<ChangePlan>, progress?: Dee
   }
   for (const root of plan.roots) {
     const nodeId = root.node_id
-    if (!root.label.trim() || (coveredNodes.has(nodeId) && (!root.tag || root.tag === coveredTags.get(nodeId)))
+    if (!labels.has(nodeId) || (coveredNodes.has(nodeId) && (!root.tag || root.tag === coveredTags.get(nodeId)))
       || (!coveredNodes.has(nodeId) && items.has(nodeId) && (!root.tag || root.tag === items.get(nodeId)?.tag))) continue
-    rows.push({ key: `selected:${nodeId}`, nodeId, label: root.label, version: versionPair(undefined, root.tag), selected: true })
+    rows.push({ key: `selected:${nodeId}`, nodeId, label: labels.get(nodeId), version: versionPair(undefined, root.tag), selected: true })
   }
   return { rows }
 }

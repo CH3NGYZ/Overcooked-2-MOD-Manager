@@ -38,6 +38,8 @@ fn trusted(game: &Path, provides: Vec<ProvidedPlugin>) -> TrustedInventory {
                 summary: NodeSummary {
                     node_id: "fixture".into(),
                     label: "fixture".into(),
+                    name_i18n: Default::default(),
+                    map_name_zh: None,
                     kind: NodeKind::Mod,
                     enabled: true,
                     repository_id: None,

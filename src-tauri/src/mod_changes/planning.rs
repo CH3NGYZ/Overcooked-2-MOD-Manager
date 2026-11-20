@@ -41,70 +41,73 @@ pub(crate) fn evaluate(
 }
 
 fn add_subject(trusted: &mut TrustedInventory, subject: EvaluationSubject) -> Result<(), String> {
-    let (id, label, source, candidate, map_id, kind) = if let Some(map_id) = subject.map_id {
-        let Some(map) = trusted
-            .config
-            .map_repositories
-            .iter()
-            .find(|map| map.id == map_id)
-        else {
+    let (id, label, name_i18n, source, candidate, map_id, kind) =
+        if let Some(map_id) = subject.map_id {
+            let Some(map) = trusted
+                .config
+                .map_repositories
+                .iter()
+                .find(|map| map.id == map_id)
+            else {
+                return Ok(());
+            };
+            let tag = subject.tag.clone();
+            let mut relations = crate::mods::effective_map_relations(map, tag.as_deref());
+            super::inventory_maps::require_framework(&mut relations);
+            (
+                format!(
+                    "subject:map:{map_id}:{}",
+                    tag.as_deref().unwrap_or_default()
+                ),
+                map.name.clone(),
+                map.name_i18n.clone(),
+                None,
+                Candidate {
+                    id: "subject".into(),
+                    source_id: Some(map_id.clone()),
+                    tag: tag.clone(),
+                    version: tag,
+                    provides: vec![],
+                    relations: owned(relations, None),
+                    relations_known: true,
+                    installable: false,
+                    raw: false,
+                    verification_pending: false,
+                },
+                Some(map_id),
+                NodeKind::Map,
+            )
+        } else if let Some(repo_id) = subject.repository_id {
+            let Some(repo) = trusted
+                .config
+                .repositories
+                .iter()
+                .find(|repo| repo.id == repo_id)
+            else {
+                return Ok(());
+            };
+            let candidate = candidates::for_repository(repo, None, true, &trusted.config)
+                .into_iter()
+                .find(|c| c.tag == subject.tag || subject.tag.is_none());
+            let Some(mut candidate) = candidate else {
+                return Ok(());
+            };
+            candidate.installable = false;
+            (
+                format!(
+                    "subject:{repo_id}:{}",
+                    candidate.tag.as_deref().unwrap_or_default()
+                ),
+                repo.name.clone(),
+                repo.name_i18n.clone(),
+                Some(repo_id),
+                candidate,
+                None,
+                NodeKind::Mod,
+            )
+        } else {
             return Ok(());
         };
-        let tag = subject.tag.clone();
-        let mut relations = crate::mods::effective_map_relations(map, tag.as_deref());
-        super::inventory_maps::require_framework(&mut relations);
-        (
-            format!(
-                "subject:map:{map_id}:{}",
-                tag.as_deref().unwrap_or_default()
-            ),
-            map.name.clone(),
-            None,
-            Candidate {
-                id: "subject".into(),
-                source_id: Some(map_id.clone()),
-                tag: tag.clone(),
-                version: tag,
-                provides: vec![],
-                relations: owned(relations, None),
-                relations_known: true,
-                installable: false,
-                raw: false,
-                verification_pending: false,
-            },
-            Some(map_id),
-            NodeKind::Map,
-        )
-    } else if let Some(repo_id) = subject.repository_id {
-        let Some(repo) = trusted
-            .config
-            .repositories
-            .iter()
-            .find(|repo| repo.id == repo_id)
-        else {
-            return Ok(());
-        };
-        let candidate = candidates::for_repository(repo, None, true, &trusted.config)
-            .into_iter()
-            .find(|c| c.tag == subject.tag || subject.tag.is_none());
-        let Some(mut candidate) = candidate else {
-            return Ok(());
-        };
-        candidate.installable = false;
-        (
-            format!(
-                "subject:{repo_id}:{}",
-                candidate.tag.as_deref().unwrap_or_default()
-            ),
-            repo.name.clone(),
-            Some(repo_id),
-            candidate,
-            None,
-            NodeKind::Mod,
-        )
-    } else {
-        return Ok(());
-    };
     if trusted.files.contains_key(&id) {
         return Ok(());
     }
@@ -128,6 +131,8 @@ fn add_subject(trusted: &mut TrustedInventory, subject: EvaluationSubject) -> Re
             summary: NodeSummary {
                 node_id: id,
                 label,
+                name_i18n,
+                map_name_zh: None,
                 kind,
                 enabled: false,
                 repository_id: source,
@@ -488,11 +493,12 @@ fn attach_preview(
             session.trusted.files.insert(id.clone(), files);
         }
     } else {
-        let label = payload
+        let name_i18n = payload
             .manifest
             .as_ref()
-            .map(|manifest| archive::primary_translation(&manifest.package_name_i18n))
+            .map(|manifest| manifest.package_name_i18n.clone())
             .unwrap_or_default();
+        let label = archive::primary_translation(&name_i18n);
         session.trusted.inventory.nodes.push(ChangeNode {
             id: id.clone(),
             kind: NodeKind::Mod,
@@ -508,6 +514,8 @@ fn attach_preview(
                 summary: NodeSummary {
                     node_id: id.clone(),
                     label,
+                    name_i18n,
+                    map_name_zh: None,
                     kind: NodeKind::Mod,
                     enabled: false,
                     repository_id: None,

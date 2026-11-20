@@ -1,5 +1,5 @@
 use super::{durable, tests::Workspace, types::JournalState};
-use crate::mod_changes::application_progress::{ItemKey, Recorder};
+use crate::mod_changes::application_progress::{ChangeApplicationProgress, ItemKey, Recorder};
 use serde_json::{Value, json};
 use std::cell::Cell;
 
@@ -83,6 +83,7 @@ fn later_write_failure_retracts_processed_items_and_leaves_unstarted_items_unmar
     let journal = w.journal_root.join(pending.id());
     let mut updates = vec![];
     let fail_next = Cell::new(false);
+    let mut terminal = ChangeApplicationProgress::new("fixture");
     let mut progress = Recorder::new(
         "fixture",
         [
@@ -96,6 +97,7 @@ fn later_write_failure_retracts_processed_items_and_leaves_unstarted_items_unmar
             [ItemKey::new("last", None)].into(),
         ],
         |update| {
+            terminal.retain_terminal(&update);
             let update = serde_json::to_value(update).unwrap();
             if update == event("first", None, "processed") {
                 assert_eq!(w.read("first.dll"), b"new");
@@ -120,18 +122,53 @@ fn later_write_failure_retracts_processed_items_and_leaves_unstarted_items_unmar
     assert_eq!(w.read("first.dll"), b"old");
     assert_eq!(w.read("failed.dll"), b"old");
     assert_eq!(w.read("last.dll"), b"old");
-    progress.failed();
+    progress.failed(true);
     assert_eq!(
         updates,
         vec![
             event("first", None, "applying"),
             event("first", None, "processed"),
             event("failing", None, "applying"),
-            json!({ "plan_id": "fixture", "items": [
-            { "node_id": "failing", "member_key": null, "stage": "failed" },
-            { "node_id": "first", "member_key": null, "stage": "failed" }
-        ] }),
+            event("failing", None, "failed"),
+            event("first", None, "rolled_back"),
         ]
     );
     assert!(!journal.exists());
+    assert_eq!(
+        serde_json::to_value(terminal).unwrap(),
+        json!({ "plan_id": "fixture", "items": [
+        { "node_id": "failing", "member_key": null, "stage": "failed" },
+        { "node_id": "first", "member_key": null, "stage": "rolled_back" },
+    ] })
+    );
+}
+
+#[test]
+fn an_external_preflight_change_marks_the_exact_blocking_row_before_any_write() {
+    let w = Workspace::new();
+    for file in ["first.dll", "changed.dll", "last.dll"] {
+        w.write(file, b"old");
+    }
+    let pending = w.prepare(vec![
+        w.file("first.dll", Some(b"new")),
+        w.file("changed.dll", Some(b"new")),
+        w.file("last.dll", Some(b"new")),
+    ]);
+    w.write("changed.dll", b"external");
+    let keys = ["first", "changed", "last"].map(|id| ItemKey::new(id, None));
+    let mut updates = vec![];
+    let mut progress = Recorder::new(
+        "fixture",
+        keys.clone(),
+        keys.into_iter().map(|key| [key].into()).collect(),
+        |update| updates.push(serde_json::to_value(update).unwrap()),
+    );
+    let error = pending
+        .apply_with_cancel(|| false, |event| progress.observe(event))
+        .unwrap_err();
+    progress.failed(error != "recycle.partialFailure");
+    assert_eq!(updates, vec![event("changed", None, "failed")]);
+    assert_eq!(w.read("first.dll"), b"old");
+    assert_eq!(w.read("changed.dll"), b"external");
+    assert_eq!(w.read("last.dll"), b"old");
 }

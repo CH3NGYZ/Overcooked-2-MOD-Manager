@@ -113,7 +113,7 @@ test('地图 ZIP 的导入只有一份实现，两个地图页共用', () => {
   }
   assert.match(modInstallFlow, /changes\.run\(\{ roots:/, 'MOD 拖放预览进入统一整链方案')
   assert.match(planDialog, /import ChangePlanDetails from '\.\/ChangePlanDetails\.vue'/, '统一弹窗必须接入变更表格')
-  assert.match(planDialog, /<ChangePlanDetails v-if="plan" :plan="plan" :progress="currentProgress"/, '完整方案与准备进度分别传入详情')
+  assert.match(planDialog, /<ChangePlanDetails\b[^>]*:plan="plan"[^>]*:progress="currentProgress"/, '完整方案与准备进度分别传入详情')
   assert.doesNotMatch(modInstallFlow, /confirmModInstall|uninstallLocalMod/, '拖放不能绕过批次执行')
 })
 

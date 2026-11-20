@@ -27,6 +27,8 @@ fn same_root_framework_bundle_and_map_update_keep_disjoint_tree_endpoints() {
             summary: super::super::super::inventory::NodeSummary {
                 node_id: "framework".into(),
                 label: "DIYLevel".into(),
+                name_i18n: Default::default(),
+                map_name_zh: None,
                 kind: NodeKind::Mod,
                 enabled: true,
                 repository_id: None,

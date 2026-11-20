@@ -257,6 +257,7 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
         result: super::super::solve(&trusted.inventory, &ChangeRequest::default()),
         roots: vec![],
         nodes: vec![],
+        relation_labels: Default::default(),
         previous_enabled_members: Default::default(),
         retired_mod_copies: Default::default(),
         install_notes: vec![],
@@ -293,6 +294,7 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
         projected_files,
         &level_sets::read_registered_plugins(&manifests),
         1,
+        None,
     )
     .unwrap();
     batch.extra_files = loose_files(&batch).unwrap();
@@ -635,6 +637,8 @@ fn framework_directory_change_and_map_update_commit_with_all_map_and_member_swit
             summary: NodeSummary {
                 node_id: node.id.clone(),
                 label: name.into(),
+                name_i18n: Default::default(),
+                map_name_zh: None,
                 kind: NodeKind::Map,
                 enabled: was_enabled,
                 repository_id: None,
@@ -687,6 +691,8 @@ fn framework_directory_change_and_map_update_commit_with_all_map_and_member_swit
             summary: NodeSummary {
                 node_id: "framework".into(),
                 label: "Framework".into(),
+                name_i18n: Default::default(),
+                map_name_zh: None,
                 kind: NodeKind::Mod,
                 enabled: true,
                 repository_id: None,

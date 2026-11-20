@@ -58,3 +58,24 @@ test('a resolving incomplete outcome stays unresolved and is never manufactured 
   assert.strictEqual(await api.prepareModChanges('one', value => seen.push(value)), plan)
   assert.equal(seen.at(-1).stage, 'resolving')
 })
+
+test('application shows the rollback and exact failed row even when the terminal channel is delayed', async () => {
+  const outcome = defer(), seen = []
+  boundary.invoke = (name, args) => {
+    assert.equal(name, 'execute_mod_changes')
+    assert.equal(args.planId, 'one')
+    return outcome.promise
+  }
+  const pending = api.executeModChanges('one', value => seen.push(value))
+  const channel = channels.at(-1)
+  const provisional = { plan_id: 'one', items: [{ node_id: 'first', stage: 'processed' }] }
+  channel.onmessage(provisional)
+  const terminal = { plan_id: 'one', items: [
+    { node_id: 'first', stage: 'rolled_back' }, { node_id: 'second', stage: 'failed' },
+  ] }
+  const error = { ok: false, message: 'recycle.payloadModified' }
+  outcome.resolve({ ...error, progress: terminal })
+  assert.deepEqual(await pending, error)
+  channel.onmessage(provisional)
+  assert.deepEqual(seen, [provisional, terminal])
+})

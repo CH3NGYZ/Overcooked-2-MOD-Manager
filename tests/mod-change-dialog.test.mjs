@@ -9,7 +9,7 @@ test('App owns the only shared plan modal and all pages use its store',()=>{
  for(const path of ['components/InstallCheckDialog.vue','components/InstallPlanDialog.vue','components/ModInstallDialog.vue','components/ModInstallNoteDialog.vue','composables/useInstallPlanGate.ts'])assert.equal(existsSync(new URL(`../src/${path}`,import.meta.url)),false,path)
 })
 test('shared confirmation delegates the single action table and only connects transaction entry points',()=>{
- assert.match(dialog,/<ChangePlanDetails v-if="plan" :plan="plan" :progress="currentProgress"/)
+ assert.match(dialog,/<ChangePlanDetails v-if="plan && names" :plan="plan" :progress="currentProgress"[^>]+:names="names"/)
  assert.equal(existsSync(new URL('../src/modChanges/ChangePlanItem.vue',import.meta.url)),false)
  assert.doesNotMatch(dialog,/ChangePlanItem|changePlanRows/)
  assert.doesNotMatch(details,/plan\.impacts/)

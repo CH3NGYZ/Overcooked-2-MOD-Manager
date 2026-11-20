@@ -42,7 +42,7 @@ const DIYLEVEL_GUID = 'dev.gua.overcooked.diylevel'
 
 const message = useNotify()
 const dialog = useDialog()
-const { load, loading, config, ensureLocalModsLoaded } = useDashboard()
+const { load, loading, config, mods, diyLevelTarget, modsStatus, ensureLocalModsLoaded } = useDashboard()
 const { blockModOperation } = useGameOperationGate()
 const { linkToModRepository } = useModRepositoryLink()
 
@@ -51,8 +51,9 @@ const refreshing = ref(false)
 const switching = ref(false)
 const working = ref(false)
 
-const installed = computed(() => info.value?.installed === true)
-const enabled = computed(() => info.value?.enabled === true)
+const selectedMod = computed(() => mods.value.find(mod => mod.dll_file === diyLevelTarget.value))
+const installed = computed(() => !!selectedMod.value)
+const enabled = computed(() => selectedMod.value?.enabled === true)
 const backups = computed(() => info.value?.backups ?? [])
 /**
  * 备份行展示数据：`时间 · 路径`（时间已转成当前时区）。
@@ -114,24 +115,17 @@ async function toggle(value: boolean) {
   if (blockModOperation()) return
   if (switching.value) return
   switching.value = true
-  let failed = false
   try {
-    const target = useDashboard().diyLevelTarget.value
+    const target = diyLevelTarget.value
     if (!target) throw new Error('modChanges.targetChanged')
     const result = await requestToggleChanges({ dllFiles: [target], enabled: value })
     if (!result) return
     result.ok
       ? message.success(translateBackendMessage(result.message))
       : message.error(translateBackendMessage(result.message))
-    failed = !result.ok
   } catch (reason) {
-    failed = true
     fail(reason)
   } finally {
-    // A failed write may already invalidate the backend scan. Reconcile before
-    // releasing the controls, without hiding the original operation failure.
-    await load().catch(() => undefined)
-    await refresh(!failed)
     switching.value = false
   }
 }
@@ -270,7 +264,7 @@ onMounted(() => { void refresh() })
         <n-switch v-if="installed" :value="enabled" :title="t('recycle.frameworkEnabledTheGameLoadsThisFramework')"
           :loading="switching" :disabled="busy" @update:value="toggle" />
         <span class="panel-title">{{ t('framework.diylevelFramework') }}</span>
-        <span class="panel-version muted">{{ t('modsOnline.versions') }}：{{ info?.version || '—' }}</span>
+        <span class="panel-version muted">{{ t('modsOnline.versions') }}：{{ selectedMod?.version || '—' }}</span>
         <n-tag size="small" :bordered="false" class="state-tag"
           :color="tagColorFor(installed ? (enabled ? 'accent' : 'muted') : 'muted')">
           {{ installed ? (enabled ? t('modsLocal.enabled2') : t('modsLocal.disabled')) : t('overview.notInstalled') }}
@@ -290,7 +284,7 @@ onMounted(() => { void refresh() })
       </n-button>
     </div>
 
-    <ModNotInstalled v-if="info && !installed" :guid="DIYLEVEL_GUID" name="DIYLevel" layout="inline" :disabled="busy" />
+    <ModNotInstalled v-if="modsStatus === 'ready' && !installed" :guid="DIYLEVEL_GUID" name="DIYLevel" layout="inline" :disabled="busy" />
 
     <!-- 已安装时保留重装、备份和卸载；未安装状态由共享组件提供在线入口。 -->
     <div v-if="installed" class="panel-install">

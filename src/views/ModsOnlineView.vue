@@ -45,7 +45,7 @@ import { demoActive, withDemoConfig, withDemoMods, withDemoRepositories, withDem
 
 const message = useNotify()
 const { blockModOperation: gameBlocked } = useGameOperationGate()
-const { load, ensureLoaded, loading, config: realConfig, mods: realMods } = useDashboard()
+const { ensureLoaded, loading, config: realConfig, mods: realMods } = useDashboard()
 const config = computed(() => withDemoConfig(realConfig.value))
 const mods = computed(() => withDemoMods(realMods.value))
 
@@ -76,7 +76,7 @@ const {
   openSource: openInstallSource,
   handleSourceSelect: handleInstallSourceSelect,
   pickSourceFile: pickInstallSourceFile,
-} = useModInstallFlow(() => load())
+} = useModInstallFlow()
 
 /** 拖入 / 跨页跳转过来的文件：打开来源卡片后走同一条预览链路。 */
 async function startDropInstall(path: string) {
@@ -113,7 +113,6 @@ const { previewModRepository } = useModRepositoryPreview({
     if (busy) installing.value[repositoryId] = true
     else delete installing.value[repositoryId]
   },
-  onApplied: () => load(),
 })
 
 

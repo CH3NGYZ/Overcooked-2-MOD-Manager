@@ -46,7 +46,8 @@ import { demoActive, withDemoConfig, withDemoDiyLevelTarget, withDemoGame, withD
 
 const router = useRouter()
 const message = useNotify()
-const { ensureLoaded, ensureLocalModsLoaded, load, modsLoading: realModsLoading, error: realError, mods: realMods, diyLevelTarget: realDiyLevelTarget, game: realGame, config: realConfig } = useDashboard()
+const { ensureLoaded, load, modsLoading: realModsLoading, modsStatus, modsGeneration,
+  error: realError, mods: realMods, diyLevelTarget: realDiyLevelTarget, game: realGame, config: realConfig } = useDashboard()
 const mods = computed(() => withDemoMods(realMods.value))
 const config = computed(() => withDemoConfig(realConfig.value))
 const game = computed(() => withDemoGame(realGame.value))
@@ -58,8 +59,8 @@ const frameworkOk = computed(() => game.value?.bepinex.installed === true)
 const { runtimeState } = useModRepositoryRefresh()
 const { maps: realMaps, loadMaps: loadOnlineMaps, refreshingHint } = useMapSources()
 const maps = computed(() => withDemoMaps(realMaps.value))
-/** 本地地图扫描状态（`useLevelSetScan` 的模块级单例，切页不丢）。 */
-const { scanning: levelSetScanning, scanLevelSets } = useLevelSetScan()
+const { scanning: levelSetScanning, levelSets: realLevelSets, hasResult: hasLocalMaps, contextRevision } = useLevelSetScan()
+const levelSets = computed(() => withDemoLevelSets(realLevelSets.value))
 
 /** Counts publish after scanning; each version conclusion follows its own online entry. */
 const modStatuses = computed(() => mods.value.map((mod) =>
@@ -83,9 +84,7 @@ const buttonLabel = computed(() => {
 onMounted(() => {
   if (demoActive.value) return
   void ensureLoaded()
-  void loadDiyLevel()
   void loadOnlineMaps()
-  void loadLocalMaps()
 })
 
 /* ===== BepInEx 框架 ===== */
@@ -153,22 +152,19 @@ const diyLevelValue = computed(() => {
  * 所以要单独读一次；失败按 0 处理，不能让整张卡片报错。
  */
 const diyLevelPacks = ref(0)
-const diyLevelLoading = ref(false)
-
-async function loadDiyLevel() {
-  if (demoActive.value) return
-  diyLevelLoading.value = true
+watch(contextRevision, () => { diyLevelPacks.value = 0 }, { flush: 'sync' })
+watch([realLevelSets, demoActive], async (_, _previous, onCleanup) => {
+  if (demoActive.value || !hasLocalMaps.value || !realDiyLevelTarget.value || modsStatus.value !== 'ready') return
+  const generation = modsGeneration.value, context = contextRevision.value
+  let current = true
+  onCleanup(() => { current = false })
+  const isCurrent = () => current && context === contextRevision.value
+    && generation === modsGeneration.value && modsStatus.value === 'ready'
   try {
-    await ensureLocalModsLoaded()
-    if (demoActive.value) return
     const info = await api.diyLevelInfo()
-    diyLevelPacks.value = info.level_packs ?? 0
-  } catch {
-    diyLevelPacks.value = 0
-  } finally {
-    diyLevelLoading.value = false
-  }
-}
+    if (isCurrent()) diyLevelPacks.value = info.level_packs ?? 0
+  } catch { if (isCurrent()) diyLevelPacks.value = 0 }
+}, { immediate: true })
 
 const diyLevelSub = computed(() => {
   if (!diyLevelOk.value) return t('framework.customMapsLoadOnlyAfterInstallingThis')
@@ -182,7 +178,7 @@ async function toggleDiyLevel(enabled: boolean) {
   if (working.value) return
   working.value = true
   try {
-    const target = useDashboard().diyLevelTarget.value
+    const target = realDiyLevelTarget.value
     if (!target) throw new Error('modChanges.targetChanged')
     const result = await requestToggleChanges({ dllFiles: [target], enabled })
     if (!result) return
@@ -194,8 +190,6 @@ async function toggleDiyLevel(enabled: boolean) {
   } catch (reason) {
     message.error(backendMessageOf(reason))
   } finally {
-    await load().catch(() => undefined)
-    await loadDiyLevel()
     working.value = false
   }
 }
@@ -304,27 +298,6 @@ function openOnlineRepositories() {
 
 /* ===== 在线地图 / 本地地图 ===== */
 
-/** 本地关卡集（`scanLevelSets()`），与地图管理页读同一份。 */
-const realLevelSets = ref<LevelSetInfo[]>([])
-const levelSets = computed(() => withDemoLevelSets(realLevelSets.value))
-
-/**
- * 地图区两份数据：地图源的条目列表（在线）与本地扫描结果（本地）。
- *
- * 两者互不依赖，所以并行读；**各自失败只影响自己的卡片**，不互相清空
- * （`api.maps()` 失败时地图下载页也会退化成空列表，口径一致）。
- * 读取失败按 0 处理，不能让总览整页报错 —— 与本地 MOD / 框架卡片的做法
- * 相同，数据没到就用空状态文案，布局不塌。
- */
-async function loadLocalMaps() {
-  if (demoActive.value) return
-  try {
-    realLevelSets.value = await scanLevelSets()
-  } catch (reason) {
-    message.error(backendMessageOf(reason))
-  }
-}
-
 /**
  * 「本地地图 → 在线版本」的对照表。
  *
@@ -368,7 +341,7 @@ const localMapsChecking = computed(() => levelSetScanning.value
   || !!refreshingHint.value.entryStateUnavailable
   || levelSets.value.some((set) => levelSetIsRefreshing(set, maps.value, refreshingHint.value)))
 const localMapsValue = computed(() =>
-  levelSetScanning.value && !levelSets.value.length ? '—' : String(levelSets.value.length))
+  !demoActive.value && !hasLocalMaps.value ? '—' : String(levelSets.value.length))
 
 const localMapsSub = computed(() => {
   const total = levelSets.value.length
@@ -429,9 +402,7 @@ function openLocalMaps() {
 watch(demoActive, active => {
   if (active) return
   void ensureLoaded()
-  void loadDiyLevel()
   void loadOnlineMaps()
-  void loadLocalMaps()
 })
 </script>
 

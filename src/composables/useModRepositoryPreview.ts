@@ -9,7 +9,6 @@ import type { ModRepository } from '../types'
 export interface ModRepositoryPreviewOptions {
   gameBlocked?: () => boolean
   onBusyChange?: (repositoryId: string, busy: boolean) => void
-  onApplied?: () => void | Promise<void>
 }
 
 /** Downloads, actual-package verification and root installation form one batch. */
@@ -32,7 +31,6 @@ export function useModRepositoryPreview(options: ModRepositoryPreviewOptions = {
       }] })
       if (!result) return
       if (result.message) message.success(translateBackendMessage(result.message))
-      await options.onApplied?.()
     } catch (reason) {
       message.error(backendMessageOf(reason))
     } finally {

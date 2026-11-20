@@ -68,8 +68,8 @@ import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 
 const message = useNotify()
 const dialog = useDialog()
-const { load, ensureLoaded, modsLoading: realLoading, mods: scannedMods, game: realGame, config: realConfig } = useDashboard()
-const loading = computed(() => !demoActive.value && realLoading.value)
+const { load, ensureLoaded, modsLoading: realLoading, modsGeneration, mods: scannedMods, game: realGame, config: realConfig } = useDashboard()
+const loading = computed(() => !demoActive.value && realLoading.value && !modsGeneration.value)
 const game = computed(() => withDemoGame(realGame.value))
 const config = computed(() => withDemoConfig(realConfig.value))
 
@@ -245,7 +245,7 @@ const busy = ref<Record<string, boolean>>({})
  * 一张独立卡与一个包可以同时摊开，用户分不清自己点开的是哪一个。
  */
 const { expansion, modCardKey, onCardClick, togglePackage } = useModsLocalCardExpansion()
-// 切页面复用已有 Dashboard；开关/删除后仍用 load() 取最新扫描结果
+// 切页面复用已有 Dashboard；整链成功由全局监听读取，普通卸载仍自行回读。
 onMounted(() => {
   if (demoActive.value) return
   void ensureLoaded()
@@ -379,7 +379,6 @@ async function setAllEnabled(enabled: boolean) {
     if (!result) return
     if (result.ok) {
       message.success(translateBackendMessage(result.message))
-      await load()
     } else {
       message.error(translateBackendMessage(result.message))
     }
@@ -540,7 +539,6 @@ async function toggle(mod: InstalledMod, enabled: boolean) {
     result.ok
       ? message.success(result.message ? translateBackendMessage(result.message) : (enabled ? t('modsLocal.enabled2') : t('modsLocal.disabled')))
       : message.error(translateBackendMessage(result.message))
-    await load()
   } catch (reason) { fail(reason) } finally { busy.value[mod.dll_file] = false }
 }
 
@@ -916,7 +914,7 @@ const {
   sourceBusy: installSourceBusy,
   handleSourceSelect: handleInstallSourceSelect,
   pickSourceFile: pickInstallSourceFile,
-} = useModInstallFlow(() => load())
+} = useModInstallFlow()
 
 /** 拖入 / 跨页跳转过来的文件：打开来源卡片后走同一条预览链路。 */
 async function startDropInstall(path: string) {
@@ -953,7 +951,6 @@ const { previewModRepository } = useModRepositoryPreview({
     if (busy) previewing.value[repositoryId] = true
     else delete previewing.value[repositoryId]
   },
-  onApplied: () => load(),
 })
 
 /* ===== 包级操作 ===== */
@@ -984,7 +981,6 @@ async function togglePackageEnabled(node: ModPackageNode, enabled: boolean) {
     } else {
       message.error(translateBackendMessage(result.message))
     }
-    await load()
   } catch (reason) {
     fail(reason)
   } finally {

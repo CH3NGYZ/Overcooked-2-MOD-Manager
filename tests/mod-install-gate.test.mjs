@@ -29,7 +29,7 @@ const { useModInstallFlow } = await import('../src/composables/useModInstallFlow
 const { useLevelSetImport } = await import('../src/composables/useLevelSetImport.ts')
 const tick = () => new Promise(resolve => setImmediate(resolve))
 function fixture(extra={}) {
-  const f={calls:[],plans:[],notices:[],running:false,refreshes:0,
+  const f={calls:[],plans:[],notices:[],running:false,
     api(key,args){this.calls.push([key,...args]); if(key==='analyzeModSource')return Promise.resolve({preview_id:'preview-1'});
       if(key==='cancelModPreview'||key==='discardMapSource')return Promise.resolve({ok:true,message:''});
       if(key==='stageMapSource')return Promise.resolve(this.staged); throw new Error(`Unexpected API ${key}`)},
@@ -38,17 +38,17 @@ function fixture(extra={}) {
 }
 
 test('manual source installs one preview root through the shared batch and then releases staging',async()=>{
-  const f=fixture(),flow=useModInstallFlow(()=>{f.refreshes++})
+  const f=fixture(),flow=useModInstallFlow()
   await flow.handleSourceSelect({kind:'file',value:'sample.zip'})
   assert.deepEqual(f.plans,[{roots:[{node_id:'preview:preview-1',enabled:true}]}])
   assert.deepEqual(f.calls,[['analyzeModSource','file','sample.zip'],['cancelModPreview','preview-1']])
-  assert.equal(f.refreshes,1);assert.equal(flow.sourceBusy.value,false)
+  assert.deepEqual(f.notices,[['success','modChanges.completed']]);assert.equal(flow.sourceBusy.value,false)
 })
 
 for(const result of [null,new Error('blocked')])test(`cancelled or failed batch never pre-uninstalls and cleans its preview: ${result}`,async()=>{
   const f=fixture({run:async function(request){this.plans.push(request);if(result instanceof Error)throw result;return result}})
-  await useModInstallFlow(()=>{f.refreshes++}).openPreview({preview_id:'preview-1',conflicts:[{handle:'old.dll'}]})
-  assert.deepEqual(f.calls,[['cancelModPreview','preview-1']]);assert.equal(f.refreshes,0)
+  await useModInstallFlow().openPreview({preview_id:'preview-1',conflicts:[{handle:'old.dll'}]})
+  assert.deepEqual(f.calls,[['cancelModPreview','preview-1']]);assert.equal(f.notices.some(([kind])=>kind==='success'),false)
 })
 
 test('running game prevents manual analysis and a received preview is still cleaned',async()=>{
@@ -70,12 +70,12 @@ test('source re-entry is blocked until its whole batch finishes',async()=>{
 for(const staged of [false,true])test(`map detail hands the actual selected ZIP to one batch; staged=${staged}`,async t=>{
   const item={dir_name:'Map-A',name:'Map A',author:'Author',version:'1.0',level_count:1,plugins:[],conflicts:[{handle:'old-map'}]}
   const f=fixture({staged:{path:'map.zip',staged,sets:[item],origin:{map_id:'online'}}})
-  const scope=effectScope();const flow=scope.run(()=>useLevelSetImport(()=>{f.refreshes++}));t.after(()=>scope.stop())
+  const scope=effectScope();const flow=scope.run(()=>useLevelSetImport());t.after(()=>scope.stop())
   const pending=flow.importSource({kind:'file',value:'map.zip'})
   await tick();assert.equal(flow.previewOpen.value,true);assert.deepEqual(f.plans,[])
   flow.confirmImport();await nextTick();await pending
   assert.deepEqual(f.plans,[{roots:[],map_import:{zip_path:'map.zip',selected:['Map-A'],origin:{map_id:'online'}}}])
-  assert.equal(f.refreshes,1)
+  assert.deepEqual(f.notices,[['success','levelSet.imported']])
   assert.deepEqual(f.calls.filter(([key])=>key==='discardMapSource'),staged?[['discardMapSource','map.zip']]:[])
   assert.equal(f.calls.some(([key])=>['deleteLevelSet','uninstallLocalMod','importLevelSets'].includes(key)),false)
 })

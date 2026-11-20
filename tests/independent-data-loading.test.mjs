@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { registerHooks } from 'node:module'
 import { readFileSync } from 'node:fs'
+import { createRenderer } from 'vue'
 
 // Execute the production stores. Only IPC and notification/translation adapters
 // are replaced; delays belong to those external boundaries, not copied logic.
@@ -19,6 +20,8 @@ registerHooks({
       source: `export const api = new Proxy({}, {get: (_, key) => (...args) => key === 'rebindLocalMods' && !globalThis.__loadingApi[key] ? Promise.resolve(args[0]) : globalThis.__loadingApi[key](...args)})
         export const watchGameState = async callback => { globalThis.__gameStateEvent = callback; return () => {} }
         export const watchLevelSetCompression = async callback => { globalThis.__compressionEvent = callback; return () => {} }
+        export const watchLocalModsChanged = callback => globalThis.__loadingApi.listen('mods', callback)
+        export const watchLevelSetsChanged = callback => globalThis.__loadingApi.listen('levels', callback)
         export const watchLevelSetScan = async () => () => {}`,
     }
     if (url.endsWith('/src/locale/backend.ts')) return {
@@ -34,6 +37,8 @@ registerHooks({
 const { useDashboard, startGameWatch } = await import('../src/composables/useDashboardStore.ts')
 const { useMapSources } = await import('../src/composables/useMapSources.ts')
 const { useLevelSetScan } = await import('../src/composables/useLevelSetScan.ts')
+const { useModChangesLifecycle } = await import('../src/modChanges/useModChangesLifecycle.ts')
+const { useModChanges } = await import('../src/modChanges/store.ts')
 const { levelSetIsRefreshing } = await import('../src/levelSetStatus.ts')
 const { createRefreshState } = await import('../src/refreshState.ts')
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
@@ -181,7 +186,7 @@ test('overview and local maps have no combined online/local publication barrier;
   assert.doesNotMatch(overview, /Promise\.all\(/)
   assert.doesNotMatch(levels, /Promise\.all\(\[scanLevelSets\(\), loadMaps\(\)\]/)
   assert.match(overview, /void loadOnlineMaps\(\)/)
-  assert.match(overview, /void loadLocalMaps\(\)/)
+  assert.match(overview, /levelSets: realLevelSets, hasResult: hasLocalMaps/)
   const dashboard = read('src-tauri/src/commands/dashboard.rs')
   const summary = dashboard.slice(dashboard.indexOf('fn get_dashboard_blocking'), dashboard.indexOf('pub async fn get_local_mods'))
   assert.doesNotMatch(summary, /scan_mods_with_manifests|collect_update_status/)
@@ -403,7 +408,10 @@ test('a failed DLL scan prevents local map reads without blocking online maps; a
   assert.equal(local.scanning.value, false)
   assert.equal(setScans, 0)
   globalThis.__loadingApi.localMods = async () => ({ generation: 50, mods: [], diy_level_target: null })
-  assert.deepEqual(await local.scanLevelSets(), [])
+  const empty = await local.scanLevelSets()
+  assert.deepEqual(empty, [])
+  assert.equal(local.hasResult.value, true)
+  assert.strictEqual(await local.scanLevelSets({ reuseCurrentGeneration: true }), empty)
   assert.equal(setScans, 1, 'successfully scanning zero plugins is still a completed scan')
 })
 
@@ -595,4 +603,156 @@ test('changing game or DIYLevel away and back does not republish old map cards',
   oldMaps.resolve([{ dir_name: 'overtaken' }])
   assert.deepEqual(await overlapping, [{ dir_name: 'after' }])
   assert.equal(setScans, 2)
+})
+
+test('a map edit overtaking a same-generation read keeps the old cards until the replacement arrives', async () => {
+  const d = useDashboard(), local = useLevelSetScan()
+  const path = 'same-generation-map-edits'
+  const installed = [{ dir_name: 'map', version: '1.0' }]
+  const stale = deferred(), replacement = deferred()
+  let modScans = 0, setScans = 0
+  globalThis.__loadingApi = {
+    dashboard: async () => ({ config: { repositories: [], game: { path, runtime: 'native' } }, game: { path } }),
+    localMods: async () => { modScans++; return { generation: 71, mods: [], diy_level_target: 'DIYLevel.dll' } },
+    levelSets: () => [Promise.resolve(installed), stale.promise, replacement.promise][setScans++],
+  }
+  await d.loadBase()
+  await local.scanLevelSets()
+  const context = local.contextRevision.value
+
+  local.invalidate()
+  const reading = local.scanLevelSets({ reuseCurrentGeneration: true })
+  await tick()
+  assert.equal(setScans, 2, 'a map edit alone prevents cached reuse')
+  assert.equal(local.scanning.value, true)
+  assert.strictEqual(local.levelSets.value, installed)
+
+  local.invalidate()
+  assert.strictEqual(local.scanLevelSets({ reuseCurrentGeneration: true }), reading)
+  stale.resolve([{ dir_name: 'map', version: '2.0' }])
+  await tick()
+  assert.equal(setScans, 3)
+  assert.equal(local.scanning.value, true)
+  assert.strictEqual(local.levelSets.value, installed, 'the overtaken result is not published')
+
+  const updated = [{ dir_name: 'map', version: '3.0' }]
+  replacement.resolve(updated)
+  assert.strictEqual(await reading, updated)
+  assert.strictEqual(local.levelSets.value, updated)
+  assert.strictEqual(await local.scanLevelSets({ reuseCurrentGeneration: true }), updated)
+  assert.equal(local.contextRevision.value, context)
+  assert.equal(local.scanning.value, false)
+  assert.equal(modScans, 1, 'map-only invalidation does not rescan DLLs')
+  assert.equal(setScans, 3)
+})
+
+test('a current map read failure preserves the last list and a retry can replace it', async () => {
+  const d = useDashboard(), local = useLevelSetScan()
+  const path = 'retryable-map-read'
+  const installed = [{ dir_name: 'map', version: '1.0' }]
+  const failure = new Error('map read failed')
+  globalThis.__loadingApi = {
+    dashboard: async () => ({ config: { repositories: [], game: { path, runtime: 'native' } }, game: { path } }),
+    localMods: async () => ({ generation: 72, mods: [], diy_level_target: 'DIYLevel.dll' }),
+    levelSets: async () => installed,
+  }
+  await d.loadBase()
+  await local.scanLevelSets()
+  local.invalidate()
+  globalThis.__loadingApi.levelSets = async () => { throw failure }
+  await assert.rejects(local.scanLevelSets({ reuseCurrentGeneration: true }), reason => reason === failure)
+  assert.strictEqual(local.levelSets.value, installed)
+  assert.strictEqual(local.error.value, failure)
+  assert.equal(local.hasResult.value, true)
+  assert.equal(local.scanning.value, false)
+
+  const updated = [{ dir_name: 'map', version: '2.0' }]
+  globalThis.__loadingApi.levelSets = async () => updated
+  assert.strictEqual(await local.scanLevelSets({ reuseCurrentGeneration: true }), updated)
+  assert.strictEqual(local.levelSets.value, updated)
+  assert.equal(local.error.value, null)
+})
+
+test('without a game path, an authoritative empty map read settles and is reusable', async () => {
+  const d = useDashboard(), local = useLevelSetScan()
+  let setScans = 0
+  globalThis.__loadingApi = {
+    dashboard: async () => ({ config: { repositories: [], game: { path: '', runtime: 'native' } }, game: { game_exists: false } }),
+    localMods: async () => ({ generation: 73, mods: [], diy_level_target: null }),
+    levelSets: async () => { setScans++; return [] },
+  }
+  await d.loadBase()
+  assert.equal(d.game.value.path, undefined)
+  assert.equal(local.hasResult.value, false)
+  const empty = await local.scanLevelSets({ reuseCurrentGeneration: true })
+  assert.deepEqual(empty, [])
+  assert.equal(local.hasResult.value, true)
+  assert.strictEqual(await local.scanLevelSets({ reuseCurrentGeneration: true }), empty)
+  assert.equal(setScans, 1)
+})
+
+test('a DLL notice overtaking a map reply keeps both visible snapshots until a fresh DLL and map read', async t => {
+  const dashboard = useDashboard(), local = useLevelSetScan(), changes = useModChanges()
+  const path = 'dll-overtakes-map-reply', generation = 74
+  const installed = [{ dir_name: 'map', version: '1.0' }]
+  const stale = [{ dir_name: 'map', version: '2.0' }]
+  const updated = [{ dir_name: 'map', version: '3.0' }]
+  const oldReply = deferred(), dllReply = deferred(), newReply = deferred()
+  const calls = [], listeners = new Map()
+  let dllReads = 0, mapReads = 0, evaluations = 0
+  const dllSnapshot = generation => ({ generation, mods: [], diy_level_target: 'DIYLevel.dll' })
+  globalThis.__loadingApi = {
+    dashboard: async () => ({ config: { repositories: [], game: { path, runtime: 'native' } }, game: { path } }),
+    localMods: () => { calls.push('mods'); return ++dllReads === 1 ? Promise.resolve(dllSnapshot(generation)) : dllReply.promise },
+    levelSets: () => {
+      calls.push(`levels:${dashboard.modsGeneration.value}`)
+      return [Promise.resolve(installed), oldReply.promise, newReply.promise][mapReads++]
+    },
+    evaluateModChanges: async () => { calls.push('evaluate'); return { revision: String(++evaluations), nodes: [], evaluations: [] } },
+    listen: async (kind, callback) => { listeners.set(kind, callback); return () => listeners.delete(kind) },
+  }
+  // Use the real lifecycle, scanner, dashboard and evaluation store. Only the
+  // desktop environment and the ordering of actual IPC boundaries are mocked.
+  const host = createRenderer({ patchProp() {}, insert() {}, remove() {}, createElement: () => ({}), createText: () => ({}),
+    createComment: () => ({}), setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null })
+  const app = host.createApp({ setup() { useModChangesLifecycle(); return () => null } })
+  const window = globalThis.window
+  globalThis.window = { __TAURI_INTERNALS__: { metadata: {} } }
+  // Establish this game's identity before reusing the module-level stores.
+  await dashboard.loadBase()
+  app.mount({})
+  t.after(() => {
+    app.unmount()
+    if (window === undefined) delete globalThis.window
+    else globalThis.window = window
+  })
+  await dashboard.ensureLoaded()
+  await tick()
+  assert.deepEqual(calls, ['mods', `levels:${generation}`, 'evaluate'], 'ordinary startup does not wait on the notification gate')
+  assert.strictEqual(local.levelSets.value, installed)
+  const visible = changes.evaluation.value
+
+  listeners.get('levels')()
+  await tick()
+  assert.equal(mapReads, 2)
+  listeners.get('mods')()
+  oldReply.resolve(stale)
+  await tick()
+  assert.strictEqual(local.levelSets.value, installed, 'a reply delivered after the DLL notice cannot replace the visible maps')
+  assert.equal(dllReads, 2)
+  assert.equal(mapReads, 2, 'do not retry on the old DLL generation')
+  assert.equal(evaluations, 1)
+  assert.strictEqual(changes.evaluation.value, visible)
+
+  dllReply.resolve(dllSnapshot(generation + 1))
+  await tick()
+  assert.deepEqual(calls, ['mods', `levels:${generation}`, 'evaluate', `levels:${generation}`, 'mods', `levels:${generation + 1}`])
+  assert.strictEqual(local.levelSets.value, installed)
+  newReply.resolve(updated)
+  await tick()
+  assert.strictEqual(local.levelSets.value, updated)
+  assert.deepEqual(calls.slice(-3), ['mods', `levels:${generation + 1}`, 'evaluate'])
+  assert.equal(evaluations, 2)
+  assert.equal(local.error.value, null)
+  assert.equal(local.scanning.value, false)
 })

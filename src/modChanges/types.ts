@@ -131,8 +131,6 @@ export interface ChangeExecutionProgress {
   plan_id: string
   items: { node_id: string; member_key?: string | null; stage: ChangeExecutionStage }[]
 }
-/** Refresh scope of the committed solution, and not of the requested intent. */
-export interface ChangeAppliedEvent { map_toggle_only: boolean }
 export interface ChangePreparationItem {
   node_id: string
   candidate_id: string

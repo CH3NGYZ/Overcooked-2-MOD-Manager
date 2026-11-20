@@ -51,10 +51,10 @@ export async function requestToggleChanges(targets: ToggleTargets): Promise<Chan
 
 export async function requestAllToggleChanges(kind: 'mod' | 'map', enabled: boolean) {
   const changes = useModChanges()
-  await changes.refresh()
-  const roots = changes.evaluation.value?.nodes.filter(node => !node.subject_tag && node.kind === kind
+  const inventory = await changes.refresh()
+  const roots = inventory.nodes.filter(node => !node.subject_tag && node.kind === kind
     && (kind === 'map' ? !!node.map_dir_name : node.dll_files.length > 0))
-    .map(node => ({ node_id: node.node_id, enabled })) ?? []
+    .map(node => ({ node_id: node.node_id, enabled }))
   if (!roots.length) return null
   return changes.run({ roots, bulk_toggle: true })
 }

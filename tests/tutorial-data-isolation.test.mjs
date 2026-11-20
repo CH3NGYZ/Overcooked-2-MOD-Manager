@@ -312,8 +312,9 @@ test('page wiring projects every data lane, skips mount/drop reads and restores 
     } else assert.match(source, /withDemoLevelSets\(real(?:Level)?Sets\.value\)/, file)
   }
   assert.match(read('MapsOnlineView'), /withDemoMapSourceNodes\(realSourceNodes\.value\)/)
-  assert.match(read('LevelsView'), /busyReader\(\(\) => demoActive\.value \|\|/)
-  assert.match(read('OverviewView'), /async function loadDiyLevel\(\) \{\s*if \(demoActive\.value\) return/)
+  const lifecycle = readFileSync(new URL('../src/modChanges/useModChangesLifecycle.ts', import.meta.url), 'utf8')
+  assert.match(lifecycle, /const canRead = \(\) => [^\n]+!demoActive\.value/)
+  assert.match(read('OverviewView'), /watch\(\[realLevelSets, demoActive\], async [^\n]+\{\s*if \(demoActive\.value \|\|/)
   const titlebar = readFileSync(new URL('../src/components/AppTitleBar.vue', import.meta.url), 'utf8')
   assert.match(titlebar, /withDemoGame\(realGame\.value\)/)
   assert.match(titlebar, /async function toggleGame\(\) \{\s*if \(demoActive\.value \|\|/)

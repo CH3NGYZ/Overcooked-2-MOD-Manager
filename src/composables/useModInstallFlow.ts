@@ -9,7 +9,7 @@ import { beginDownloadTask, endDownloadTask, failDownloadTask } from '../downloa
 import { useModChanges } from '../modChanges/store'
 import type { InstallSource, ModPreview } from '../types'
 
-export function useModInstallFlow(onChanged?: () => void | Promise<void>) {
+export function useModInstallFlow() {
   const message = useNotify()
   const { blockModOperation } = useGameOperationGate()
   const changes = useModChanges()
@@ -26,7 +26,6 @@ export function useModInstallFlow(onChanged?: () => void | Promise<void>) {
       const result = await changes.run({ roots: [{ node_id: `preview:${next.preview_id}`, enabled: true }] })
       if (!result) return
       if (result.message) message.success(translateBackendMessage(result.message))
-      await onChanged?.()
     } catch (reason) {
       message.error(backendMessageOf(reason))
     } finally {

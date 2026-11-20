@@ -16,8 +16,8 @@ registerHooks({
       '/src/composables/useMapSources.ts': 'export const useMapSources=()=>globalThis.__changeLifecycle.maps',
       '/src/composables/useLevelSetScan.ts': 'export const useLevelSetScan=()=>globalThis.__changeLifecycle.levels',
       '/src/modChanges/store.ts': 'export const useModChanges=()=>globalThis.__changeLifecycle.changes',
-      '/src/services/tauri.ts': `export const watchModChangesApplied=callback=>globalThis.__changeLifecycle.listen('applied',callback)
-        export const watchLocalModsChanged=callback=>globalThis.__changeLifecycle.listen('external',callback)`,
+      '/src/services/tauri.ts': `export const watchLocalModsChanged=callback=>globalThis.__changeLifecycle.listen('mods',callback)
+        export const watchLevelSetsChanged=callback=>globalThis.__changeLifecycle.listen('levels',callback)`,
       '/src/tutorial/demo.ts': 'import{shallowRef}from"vue";export const demoActive=shallowRef(false)',
       '/src/runtime.ts': 'export const isTauri=()=>true',
     }
@@ -33,22 +33,33 @@ const deferred = () => { let resolve; const promise = new Promise(yes => { resol
 const host = createRenderer({ patchProp() {}, insert() {}, remove() {}, createElement: () => ({}), createText: () => ({}), createComment: () => ({}),
   setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null })
 
-async function setup(t, registration) {
-  const calls = [], listeners = { applied: new Set(), external: new Set() }
-  let load = async () => {}, stops = 0
+async function setup(t, { registration, game = { path: 'game', kitchen_running: false }, hasCurrent = true } = {}) {
+  const calls = [], listeners = { mods: new Set(), levels: new Set() }, pauses = []
+  let load = async () => true, scan = async () => {}, stops = 0
   const fixture = {
-    dashboard: { config: shallowRef({}), mods: shallowRef([]), game: shallowRef({ path: 'game', kitchen_running: false }),
-      modsGeneration: shallowRef(1), diyLevelTarget: shallowRef('DIYLevel.dll'),
-      loadBase: async () => { calls.push('dashboard') },
+    dashboard: { config: shallowRef({}), mods: shallowRef([]), game: shallowRef(game),
+      modsGeneration: shallowRef(1), modsStatus: shallowRef('ready'),
       loadLocalMods: async options => {
-        assert.deepEqual(options, { afterPending: true }); calls.push('mods'); await load(); fixture.dashboard.mods.value = [{}]
-        fixture.dashboard.modsGeneration.value++
+        assert.deepEqual(options, { afterPending: true }); calls.push('mods')
+        fixture.dashboard.modsStatus.value = 'loading'; fixture.levels.hasCurrentResult.value = false
+        if (await load() === false) { fixture.dashboard.modsStatus.value = 'error'; return }
+        fixture.dashboard.mods.value = [{}]; fixture.dashboard.modsGeneration.value++
+        fixture.dashboard.modsStatus.value = 'ready'
       } },
-    maps: { maps: shallowRef([]), loadMaps: async options => { assert.deepEqual(options, { force: true }); calls.push('maps'); fixture.maps.maps.value = [{}] } },
-    levels: { levelSets: shallowRef([]), scanLevelSets: async options => {
-      assert.deepEqual(options, { reuseCurrentGeneration: true }); calls.push('levels'); fixture.levels.levelSets.value = [{}]
+    maps: { maps: shallowRef([]) },
+    levels: { levelSets: shallowRef([]), contextRevision: shallowRef(0), hasCurrentResult: shallowRef(hasCurrent),
+      invalidate: () => { fixture.levels.hasCurrentResult.value = false },
+      setWaitingForLocalMods: waiting => { if (waiting) fixture.levels.invalidate() },
+      scanLevelSets: async options => {
+        assert.deepEqual(options, { reuseCurrentGeneration: true })
+        if (fixture.levels.hasCurrentResult.value) return
+        calls.push('levels'); await scan(); fixture.levels.levelSets.value = [{}]; fixture.levels.hasCurrentResult.value = true
+      } },
+    changes: { state: shallowRef(null), appliedRevision: shallowRef(0), setEvaluationPaused(paused) {
+      if (paused !== (pauses.at(-1) ?? false)) pauses.push(paused)
+    }, clearEvaluation: () => calls.push('clear'), invalidate: async () => {
+      assert.notEqual(pauses.at(-1), true); calls.push('evaluate')
     } },
-    changes: { clearEvaluation: () => calls.push('clear'), invalidate: async () => { calls.push('evaluate') } },
     listen: async (kind, callback) => { if (registration) await registration.promise;
       listeners[kind].add(callback); return () => { stops++; listeners[kind].delete(callback) } },
   }
@@ -59,36 +70,44 @@ async function setup(t, registration) {
   const dispose = () => { if (!disposed) { disposed = true; app.unmount() } }
   t.after(dispose)
   await tick()
-  return { ...fixture, calls, get stops() { return stops }, listeners, dispose, setLoad(value) { load = value },
-    emit(event) { for (const callback of listeners.applied) callback(event) },
-    external() { for (const callback of listeners.external) callback() } }
+  return { ...fixture, calls, pauses, get stops() { return stops }, listeners, dispose,
+    execute() { fixture.changes.state.value = { phase: 'executing' } },
+    settled(ok) {
+      if (ok) fixture.changes.appliedRevision.value++
+      fixture.changes.state.value = ok ? null : { phase: 'failed' }
+    },
+    setLoad(value) { load = value }, setScan(value) { scan = value },
+    external(kind = 'mods') { for (const callback of listeners[kind]) callback() } }
 }
 
 test('one applied batch refreshes both domains before reevaluating, with no intermediate evaluation', async t => {
   const f = await setup(t), hold = deferred()
   f.setLoad(() => hold.promise)
-  f.emit(); f.emit(); await tick()
-  assert.deepEqual(f.calls.filter(call => call !== 'clear'), ['mods', 'dashboard', 'maps'])
-  assert.equal(f.calls.includes('evaluate'), false)
+  f.execute(); f.external(); f.external('levels'); await tick()
+  assert.deepEqual(f.calls, [], 'real changes during apply wait for the command to settle')
+  f.settled(true); await tick()
+  assert.deepEqual(f.calls, ['mods'], 'only local DLLs start, and the current relation snapshot stays visible')
+  assert.deepEqual(f.pauses, [true])
   hold.resolve(); await tick(); await tick()
-  assert.deepEqual(f.calls.filter(call => call !== 'clear'), ['mods', 'dashboard', 'maps', 'levels', 'evaluate'])
-  f.dispose(); assert.equal(f.stops, 2); assert.equal(f.listeners.applied.size + f.listeners.external.size, 0)
+  assert.deepEqual(f.calls, ['mods', 'levels', 'evaluate'])
+  assert.deepEqual(f.pauses, [true, false])
+  f.dispose(); assert.equal(f.stops, 2); assert.equal(f.listeners.mods.size + f.listeners.levels.size, 0)
 })
 
-test('pure map toggles refresh only the trusted DLL and map snapshots, then evaluate once', async t => {
+test('a successful command refreshes without waiting for the legacy broadcast', async t => {
   const f = await setup(t)
-  f.emit({ map_toggle_only: true }); await tick()
-  assert.deepEqual(f.calls, ['mods', 'clear', 'levels', 'evaluate'])
+  f.execute(); f.settled(true); await tick()
+  assert.deepEqual(f.calls, ['mods', 'levels', 'evaluate'])
 })
 
-test('mixed batches arriving during a scoped refresh run a full pass before map scan and evaluation', async t => {
+test('real DLL edits during the first read get one follow-up before map scan and evaluation', async t => {
   const f = await setup(t), hold = deferred()
   let loads = 0
   f.setLoad(async () => { if (++loads === 1) await hold.promise })
-  f.emit({ map_toggle_only: true }); await tick()
-  f.emit({ map_toggle_only: false }); hold.resolve(); await tick(); await tick()
+  f.execute(); f.settled(true); await tick()
+  f.external(); hold.resolve(); await tick(); await tick()
   assert.equal(loads, 2)
-  assert.deepEqual(f.calls.filter(call => call !== 'clear'), ['mods', 'mods', 'dashboard', 'maps', 'levels', 'evaluate'])
+  assert.deepEqual(f.calls, ['mods', 'mods', 'levels', 'evaluate'])
 })
 
 test('external plugin changes share a follow-up scan with no remote load or intermediate evaluation', async t => {
@@ -97,9 +116,39 @@ test('external plugin changes share a follow-up scan with no remote load or inte
   f.setLoad(async () => { if (++loads === 1) await hold.promise })
   f.external(); await tick()
   f.external(); f.external(); await tick()
-  assert.deepEqual(f.calls.filter(call => call !== 'clear'), ['mods', 'mods'])
+  assert.deepEqual(f.calls, ['mods'])
   hold.resolve(); await tick(); await tick()
-  assert.deepEqual(f.calls.filter(call => call !== 'clear'), ['mods', 'mods', 'levels', 'evaluate'])
+  assert.deepEqual(f.calls, ['mods', 'mods', 'levels', 'evaluate'])
+})
+
+test('later map edits refresh only the map list and relation snapshot', async t => {
+  const f = await setup(t)
+  f.execute(); f.settled(true); await tick()
+  f.calls.length = 0
+  f.external('levels'); f.external('levels'); await tick()
+  assert.deepEqual(f.calls, ['levels', 'evaluate'])
+})
+
+test('read failure does not rescan DLLs in a loop or publish stale relations; later changes can recover', async t => {
+  const f = await setup(t)
+  f.setLoad(async () => false)
+  f.execute(); f.settled(false); await tick()
+  assert.deepEqual(f.calls, ['mods']); assert.deepEqual(f.pauses, [true, false])
+  f.setLoad(async () => true)
+  f.setScan(async () => { throw new Error('scan failed') })
+  f.external(); await tick()
+  assert.deepEqual(f.calls, ['mods', 'mods', 'levels']); assert.equal(f.pauses.at(-1), false)
+  f.setScan(async () => {})
+  f.external('levels'); await tick()
+  assert.deepEqual(f.calls, ['mods', 'mods', 'levels', 'levels', 'evaluate'])
+})
+
+test('a discovered missing game settles the initial map empty state without evaluating a missing root', async t => {
+  const f = await setup(t, { game: null, hasCurrent: false })
+  assert.deepEqual(f.calls, [])
+  f.dashboard.game.value = { kitchen_running: false }; await tick()
+  assert.deepEqual(f.calls, ['levels'])
+  assert.equal(f.levels.hasCurrentResult.value, true)
 })
 
 test('external changes during the tutorial refresh once when the real UI returns', async t => {
@@ -108,14 +157,16 @@ test('external changes during the tutorial refresh once when the real UI returns
   f.external(); f.external(); await tick()
   assert.deepEqual(f.calls, [])
   demoActive.value = false; await tick()
-  assert.deepEqual(f.calls, ['mods', 'clear', 'levels', 'evaluate'])
+  assert.deepEqual(f.calls, ['clear', 'mods', 'levels', 'evaluate'])
 })
 
 test('game and source snapshot changes invalidate the shared evaluation once per watcher flush', async t => {
   const f = await setup(t)
   f.dashboard.config.value = { source: 'new' }; f.dashboard.game.value = { path: 'other-game', kitchen_running: false }
+  f.levels.contextRevision.value++; f.levels.hasCurrentResult.value = false
+  assert.deepEqual(f.calls, ['clear'], 'old relation actions are removed before the next scan')
   await tick()
-  assert.deepEqual(f.calls, ['clear', 'evaluate'])
+  assert.deepEqual(f.calls, ['clear', 'levels', 'evaluate'])
 })
 
 test('staggered MOD and map releases keep the current relation snapshot until both domains settle', async t => {
@@ -147,17 +198,17 @@ test('a file notification refreshes the local inventory while online results are
     assert.deepEqual(f.calls, [])
     f.external()
     await tick()
-    assert.deepEqual(f.calls, ['mods', 'clear', 'levels', 'evaluate'])
+    assert.deepEqual(f.calls, ['mods', 'levels', 'evaluate'])
     f.maps.maps.value = [{ id: 'later-map' }]
     await tick()
-    assert.deepEqual(f.calls, ['mods', 'clear', 'levels', 'evaluate'])
+    assert.deepEqual(f.calls, ['mods', 'levels', 'evaluate'])
   } finally { online.endBatch('full') }
   await tick()
-  assert.deepEqual(f.calls, ['mods', 'clear', 'levels', 'evaluate', 'evaluate'])
+  assert.deepEqual(f.calls, ['mods', 'levels', 'evaluate', 'evaluate'])
 })
 
 test('unmount cleans a late event subscription and never retains a page-owned listener', async t => {
-  const registration = deferred(), f = await setup(t, registration)
+  const registration = deferred(), f = await setup(t, { registration })
   f.dispose(); registration.resolve(); await tick()
-  assert.equal(f.stops, 2); assert.equal(f.listeners.applied.size + f.listeners.external.size, 0); assert.deepEqual(f.calls, [])
+  assert.equal(f.stops, 2); assert.equal(f.listeners.mods.size + f.listeners.levels.size, 0); assert.deepEqual(f.calls, [])
 })

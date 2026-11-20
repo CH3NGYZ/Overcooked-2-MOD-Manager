@@ -17,6 +17,19 @@ test('newer evaluation refresh wins even when an older IPC finishes last',async(
 test('source invalidation clears existing state and rejects an older in-flight result',async()=>{
  const pending=deferred();globalThis.__changeStoreApi=()=>pending.promise;const store=useModChanges(),work=store.refresh();store.clearEvaluation();pending.resolve(snapshot('stale'));await work;assert.equal(store.evaluation.value,null)
 })
+test('coordinated reads retain the last evaluation and include new detail subjects when both scans settle',async t=>{
+ const store=useModChanges(),overtaken=deferred(),calls=[]
+ globalThis.__changeStoreApi=async(_,args)=>{calls.push(args);return calls.length===2?overtaken.promise:snapshot(calls.length===1?'visible':'settled')}
+ await store.refresh()
+ const work=store.refresh()
+ store.setEvaluationPaused(true);t.after(()=>store.setEvaluationPaused(false))
+ const subject={map_id:'map',tag:'v2'},unregister=registerEvaluationSubject(subject);t.after(unregister)
+ await tick();assert.equal(calls.length,2);assert.equal(store.evaluating.value,false)
+ overtaken.resolve(snapshot('overtaken'));await work;assert.equal(store.evaluation.value.revision,'visible')
+ store.setEvaluationPaused(false);await store.invalidate()
+ assert.deepEqual(calls,[ [undefined], [undefined], [[subject]] ])
+ assert.equal(store.evaluation.value.revision,'settled')
+})
 test('visible exact subjects are batched, deduplicated and released on cleanup',async()=>{
  const calls=[];globalThis.__changeStoreApi=async(name,args)=>{calls.push([name,...args]);return snapshot('batch')}
  const subject={repository_id:'owner',tag:'v1'},a=registerEvaluationSubject(subject),b=registerEvaluationSubject({...subject});await tick()

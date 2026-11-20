@@ -81,8 +81,8 @@ async function clearAvatars() {
 /**
  * 清除地图（关卡集）元数据缓存。
  *
- * 两层都在后端，这里没有前端副本要清：地图页每次进入都重新调 `scanLevelSets()`，
- * 只是那次调用会被缓存拦住。清完之后再进地图页就会真正重解析。
+ * 两级解析缓存都在后端；清除不撤销界面正在展示的共享列表。
+ * 下一次实际扫描（例如在地图管理点「重新扫描」）才重新解析。
  */
 const clearingLevels = ref(false)
 async function clearLevels() {

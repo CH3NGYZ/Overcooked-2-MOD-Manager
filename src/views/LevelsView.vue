@@ -46,7 +46,6 @@ import { useDropRouting, takePendingDrop } from '../composables/useDropRouting'
 import { useLevelSetImport } from '../composables/useLevelSetImport'
 import { useLevelSetCardExpansion } from '../composables/useLevelSetCardExpansion'
 import { useLocalGroupExpansion } from '../composables/useLocalGroupExpansion'
-import { busyReader, useLevelSetsExternalChange } from '../composables/useLevelSetsExternalChange'
 import LevelPreviewDialog from '../components/levelPreview/LevelPreviewDialog.vue'
 import LevelSetGroupBody from '../components/LevelSetGroupBody.vue'
 import LevelSetGroupHeader from '../components/LevelSetGroupHeader.vue'
@@ -100,10 +99,8 @@ import { demoActive, withDemoConfig, withDemoGame, withDemoLevelSets, withDemoMa
  * **同一份**：同一张地图不能在两页得出相反的版本结论，刷新态也必须熬得过
  * 一次切页（挂在页面上的 ref 会随组件卸载一起消失）。
  *
- * 进入页面只读一次本地关卡集（`scanLevelSets()`），地图列表交给 `loadMaps()`。开关、删除、
- * 批量开关只影响本地关卡集，之后**只重读关卡集**；地图列表带 Release 缓存，
- * 与这些操作无关。「检测更新」走 `refreshBoundMaps`（并发 4、复用五分钟缓存），
- * 是唯一重拉已装地图 Release 的入口；浮动刷新是唯一「两端都重读」的入口。
+ * 本地关卡集由 App 按游戏上下文与提交/目录事件统一刷新；本页只发起手动扫描，
+ * 以及删除、整理后的本地回读。在线列表交给 `loadMaps()`；「检测更新」只查已装图的 Release。
  */
 
 const message = useNotify()
@@ -114,7 +111,7 @@ const config = computed(() => withDemoConfig(realConfig.value))
 const game = computed(() => withDemoGame(realGame.value))
 const mods = computed(() => withDemoMods(realMods.value))
 const { progress: scanProgress, scanLevelSets, levelSets: realSets, hasResult,
-  error: scanError, scanning, contextRevision } = useLevelSetScan()
+  error: scanError, scanning } = useLevelSetScan()
 const localReadError = computed(() => scanError.value ? backendMessageOf(scanError.value) : '')
 // The completed backend scan owns GUID/version selection. Tutorial data has
 // its own presentation and never adopts or changes this real target token.
@@ -152,7 +149,7 @@ const sets = computed(() => withDemoLevelSets(showMapList.value ? realSets.value
  */
 const {
   maps: realMaps, checkingBound, outcome, refreshingHint,
-  loadMaps, refreshBoundMaps, syncDependencySnapshots,
+  loadMaps, refreshBoundMaps,
 } = useMapSources()
 const maps = computed(() => withDemoMaps(realMaps.value))
 /** Dependency tags can be evaluated immediately when tutorial maps are present. */
@@ -282,7 +279,7 @@ watch([highlightId, groups], expandGroupForHighlight, { immediate: true })
 /**
  * 只重读关卡集。
  *
- * 本页用于手动扫描、删除、整理和外部变化。整链开关的成功事件由全局监听重读，
+ * 本页用于手动扫描、删除和整理。整链成功及外部变化由全局监听重读，
  * 两者共用扫描结果；在线地图加载也不阻塞本地发布。
  */
 async function reloadSets() {
@@ -299,7 +296,7 @@ async function reloadSets() {
  *
  * 管理页也有本地安装入口（与 MOD 管理页一致）：用户手上已经是一个包时，不该
  * 先切到下载页。暂存 → 确认 → 导入由 `useLevelSetImport` 承担，与地图下载页
- * 共用同一份，本页只负责装完重读关卡集。
+ * 共用同一份；提交事件更新两页都在用的列表。
  */
 const installSourceOpen = ref(false)
 const {
@@ -307,24 +304,10 @@ const {
   previewOpen: importPreviewOpen, detail: importDetail,
   confirmImport, discardImport,
   zipProgress, zipProgressText,
-} = useLevelSetImport(() => reloadSets())
+} = useLevelSetImport()
 
 /** 正在执行「更新」的卡片（目录名）；同一时刻只允许一个。 */
 const actionInFlight = ref<string | null>(null)
-
-/*
- * 手动改磁盘也要刷新列表：用户在资源管理器里删掉一个集目录、或者别的工具往
- * `levels/` 里写东西时，后端 `level_watch` 会推一声 `level-sets-changed`，
- * 本页立刻重读。自己写盘的回声不单独区分（重扫实测几十毫秒，比漏一次外部
- * 改动便宜得多，见 `src/levelSetsChangeGate.ts`）；只有操作半路上才丢弃。
- */
-useLevelSetsExternalChange(
-  reloadSets,
-  busyReader(() => demoActive.value || importing.value
-    || loading.value
-    || Object.values(busy.value).some(Boolean)
-    || Object.values(deleting.value).some(Boolean)),
-)
 
 /**
  * 整窗进度遮罩：来源卡片没打开时才用。
@@ -382,7 +365,6 @@ onMounted(() => {
    */
   void ensureLoaded()
   void loadMaps()
-  void reloadSets()
   // 从 MOD 页「去安装」跳过来：路径已暂存在模块里，直接接着走导入
   const pending = takePendingDrop('map')
   if (pending) void startDropInstall(pending)
@@ -392,10 +374,6 @@ watch(demoActive, active => {
   if (active) return
   void ensureLoaded()
   void loadMaps()
-  void reloadSets()
-})
-watch(contextRevision, () => {
-  if (!demoActive.value) void reloadSets()
 })
 
 /** 本地关卡集绑定的地图源条目（身份匹配规则与「有更新」标签同源）。 */
@@ -521,9 +499,7 @@ function actionDisabled(set: LevelSetInfo) {
 /**
  * 执行卡片动作。
  *
- * 「更新」复用地图下载页那条链：安装前检查 → 下载并暂存 Release → 确认详情
- * （同身份旧图先卸载）→ 导入。落盘后先同步依赖快照再重读关卡集，否则卡片
- * 状态会按旧快照算（与地图下载页的安装顺序一致）。
+ * 「更新」复用地图下载页的 Release 暂存、确认和整链提交。
  */
 async function runCardAction(set: LevelSetInfo) {
   const action = actionOf(set)
@@ -546,13 +522,8 @@ async function runCardAction(set: LevelSetInfo) {
   const targetTag = release.tag_name
   actionInFlight.value = set.dir_name
   try {
-    await installRelease(map.id, targetTag, undefined, {
-      afterImport: async () => {
-        await syncDependencySnapshots()
-        await reloadSets()
-      },
-      successText: () => t('levelSet.installDone', { name: levelSetDisplayName(set, locale.value) }),
-    })
+    await installRelease(map.id, targetTag, undefined,
+      () => t('levelSet.installDone', { name: levelSetDisplayName(set, locale.value) }))
   } finally {
     actionInFlight.value = null
   }

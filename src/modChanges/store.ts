@@ -14,6 +14,7 @@ const execution = shallowReactive(new Map<string, ChangeExecutionStage>())
 const cancellingDownload = shallowRef(false)
 const evaluation = shallowRef<EvaluationSnapshot | null>(null)
 const evaluating = shallowRef(false)
+const appliedRevision = shallowRef(0)
 const readNotes = shallowRef<ReadonlySet<string>>(new Set())
 const installNotes = computed<readonly InstallNote[]>(() => {
   const current = state.value
@@ -25,6 +26,7 @@ setEvaluationSnapshotReader(() => evaluation.value)
 let revision = 0
 let pending: Promise<void> | undefined
 let invalidated = false
+let evaluationPaused = false
 const registeredSubjects = new Map<string, EvaluationSubject>()
 let subjectSequence = 0
 let preparationSequence = 0
@@ -84,6 +86,9 @@ const workflow = createChangeWorkflow({
         for (const { node_id, member_key, stage } of progress.items) execution.set(changeStatusKey(node_id, member_key), stage)
       })
       committed = result.ok
+      // The command reply is the authority. Its legacy broadcast can arrive
+      // on either side of the reply and must not trigger a second refresh.
+      if (committed) appliedRevision.value += 1
       return result
     } finally {
       active = false
@@ -135,7 +140,7 @@ async function cancelPreparationDownload() {
 /** Batch all visible subjects through one backend snapshot; newer refreshes win. */
 async function refresh(subjects?: EvaluationSubject[]) {
   const mine = ++revision
-  evaluating.value = true
+  evaluating.value = !evaluationPaused
   try {
     const allSubjects = [...registeredSubjects.values(), ...(subjects ?? [])]
     const unique = allSubjects.filter((subject, index) => allSubjects.findIndex(peer =>
@@ -143,7 +148,7 @@ async function refresh(subjects?: EvaluationSubject[]) {
       && peer.tag === subject.tag && peer.dll_file === subject.dll_file
       && peer.map_dir_name === subject.map_dir_name) === index)
     const result = await api.evaluateModChanges(unique.length ? unique : undefined)
-    if (mine === revision) evaluation.value = result
+    if (mine === revision && !evaluationPaused) evaluation.value = result
     return result
   } finally {
     if (mine === revision) evaluating.value = false
@@ -156,16 +161,27 @@ function clearEvaluation() {
   evaluating.value = false
 }
 
+/** Keep the visible facts while local MOD and map scans settle together. */
+function setEvaluationPaused(paused: boolean) {
+  if (paused === evaluationPaused) return
+  evaluationPaused = paused
+  // A request issued before the gate, or for action safety while it was
+  // closed, must not overwrite the coordinated snapshot after reopening it.
+  revision += 1
+  evaluating.value = false
+}
+
 /** Coalesce ordinary invalidations; no per-row IPC or relation solver runs here. */
 function invalidate() {
   invalidated = true
+  if (evaluationPaused) return Promise.resolve()
   if (pending) return pending
   pending = Promise.resolve().then(async () => {
     try {
-      do {
+      while (invalidated && !evaluationPaused) {
         invalidated = false
-        try { await refresh() } catch (error) { if (!invalidated) throw error }
-      } while (invalidated)
+        try { await refresh() } catch (error) { if (!invalidated && !evaluationPaused) throw error }
+      }
     } finally {
       // Release the pending slot in the same turn as the final queue check.
       // A scan publishing before a chained finally could otherwise lose its refresh.
@@ -180,8 +196,8 @@ export function useModChanges() {
     state: readonly(state), preparation: readonly(preparation), execution: readonly(execution), cancellingDownload: readonly(cancellingDownload),
     canCancelDownload: computed(canCancelPreparation), cancelPreparationDownload,
     installNotes, acceptInstallNotes,
-    evaluation: readonly(evaluation), evaluating: readonly(evaluating),
+    evaluation: readonly(evaluation), evaluating: readonly(evaluating), appliedRevision: readonly(appliedRevision),
     busy: computed(() => state.value !== null),
-    run: workflow.run, refresh, invalidate, clearEvaluation, confirm, cancel: workflow.cancel, retry: workflow.retry,
+    run: workflow.run, refresh, invalidate, clearEvaluation, setEvaluationPaused, confirm, cancel: workflow.cancel, retry: workflow.retry,
   }
 }

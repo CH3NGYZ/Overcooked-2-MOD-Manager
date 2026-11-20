@@ -1,5 +1,5 @@
 import type { LevelPreview, LevelPreviewDetail } from '../types'
-import type { ChangeRequest, ChangePlan, ChangePreparationOutcome, ChangePreparationProgress, EvaluationSnapshot, EvaluationSubject, ChangeExecutionOutcome, ChangeExecutionProgress, ChangeAppliedEvent } from '../modChanges/types'
+import type { ChangeRequest, ChangePlan, ChangePreparationOutcome, ChangePreparationProgress, EvaluationSnapshot, EvaluationSubject, ChangeExecutionOutcome, ChangeExecutionProgress } from '../modChanges/types'
 import type { LocalModSnapshot, ChefEditorOpen, ChefEditorSnapshot, ChefDraft, ChefValidation, ChefFilesChanged } from '../diychef/types'
 import type { ChefPreviewScene } from '../diychef/preview/types'
 import type { PublishProvider } from '../types'
@@ -491,11 +491,6 @@ export function watchGameState(callback: (game: GameInfo) => void): Promise<Unli
 /** Re-read the authoritative runtime projection after selection or fallback. */
 export function watchDataProvider(callback: () => void): Promise<UnlistenFn> {
   return listen('data-provider-changed', () => callback())
-}
-
-/** A committed batch publishes once, after all MOD and map changes are visible. */
-export function watchModChangesApplied(callback: (event?: ChangeAppliedEvent | null) => void): Promise<UnlistenFn> {
-  return listen<ChangeAppliedEvent | null>('mod-changes-applied', (event) => callback(event.payload))
 }
 
 /** Re-read the local DLL snapshot after the OS reports plugin changes. */

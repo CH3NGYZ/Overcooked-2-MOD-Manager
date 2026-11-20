@@ -23,12 +23,14 @@ import type { UnlistenFn } from '@tauri-apps/api/event'
  */
 const inFlight = ref(0)
 const dashboard = useDashboard()
-const result = shallowRef<LevelSetInfo[] | null>(null)
+const result = shallowRef<{ sets: LevelSetInfo[], generation: number, revision: number } | null>(null)
 const error = shallowRef<unknown>(null)
 const empty: LevelSetInfo[] = []
-const levelSets = computed(() => result.value ?? empty)
+const levelSets = computed(() => result.value?.sets ?? empty)
 const hasResult = computed(() => result.value !== null)
-let resultGeneration = 0
+const scanRevision = shallowRef(0)
+const hasCurrentResult = computed(() => dashboard.modsStatus.value === 'ready'
+  && result.value?.generation === dashboard.modsGeneration.value && result.value.revision === scanRevision.value)
 const contextRevision = shallowRef(0)
 // A DLL re-scan on the same game/target may keep displaying the last result.
 // A different root or target must clear it even if the identity later reverts.
@@ -41,6 +43,16 @@ watch([() => dashboard.game.value?.path, () => dashboard.config.value?.game?.pat
   contextRevision.value += 1
 }, { flush: 'sync' })
 let pendingScan: Promise<LevelSetInfo[]> | undefined
+let waitingForLocalMods = false
+
+/** A map edit can overtake a read without changing the DLL generation. */
+function invalidate() { scanRevision.value += 1 }
+
+/** A DLL notice revokes old replies before the replacement DLL scan can start. */
+function setWaitingForLocalMods(waiting: boolean) {
+  if (waiting && !waitingForLocalMods) invalidate()
+  waitingForLocalMods = waiting
+}
 
 /** 是否有扫描在飞（总览卡片的按钮转圈读它）。 */
 const scanning = computed(() => !demoActive.value && inFlight.value > 0)
@@ -74,10 +86,7 @@ export function scanLevelSets({ reuseCurrentGeneration = false } = {}): Promise<
   // Keep this cache real. Pages project the tutorial list without publishing it here.
   if (demoActive.value) return Promise.resolve(levelSets.value)
   if (pendingScan) return pendingScan
-  // A post-commit caller can share a read that raced ahead against the new
-  // DLL generation. Manual and external change reads always hit the disk.
-  if (reuseCurrentGeneration && result.value && dashboard.modsStatus.value === 'ready'
-    && resultGeneration === dashboard.modsGeneration.value) return Promise.resolve(result.value)
+  if (waitingForLocalMods || (reuseCurrentGeneration && hasCurrentResult.value)) return Promise.resolve(levelSets.value)
   ensureProgressListener()
   error.value = null
   progress.value = null
@@ -86,21 +95,22 @@ export function scanLevelSets({ reuseCurrentGeneration = false } = {}): Promise<
     try {
       await listening
       for (;;) {
-        if (demoActive.value) return levelSets.value
+        // Yield to the lifecycle so it can rescan DLLs before retrying maps.
+        if (demoActive.value || waitingForLocalMods) return levelSets.value
         // DIYLevel's root comes from the completed DLL scan; online map reads
         // remain independent of this local dependency.
         const generation = await dashboard.ensureLocalModsLoaded()
-        if (demoActive.value) return levelSets.value
+        if (demoActive.value || waitingForLocalMods) return levelSets.value
         const context = contextRevision.value
-        const isCurrent = () => context === contextRevision.value && dashboard.modsStatus.value === 'ready'
+        const revision = scanRevision.value
+        const isCurrent = () => revision === scanRevision.value && context === contextRevision.value && dashboard.modsStatus.value === 'ready'
           && generation === dashboard.modsGeneration.value
         if (!isCurrent()) continue
         try {
           const sets = await api.levelSets()
           if (!isCurrent()) continue
           if (demoActive.value) return levelSets.value
-          resultGeneration = generation
-          result.value = sets
+          result.value = { sets, generation, revision }
           return sets
         } catch (reason) {
           if (!isCurrent()) continue
@@ -108,6 +118,7 @@ export function scanLevelSets({ reuseCurrentGeneration = false } = {}): Promise<
         }
       }
     } catch (reason) {
+      if (waitingForLocalMods) return levelSets.value
       if (!demoActive.value) error.value = reason
       throw reason
     } finally {
@@ -120,5 +131,6 @@ export function scanLevelSets({ reuseCurrentGeneration = false } = {}): Promise<
 }
 
 export function useLevelSetScan() {
-  return { scanning, progress, scanLevelSets, levelSets, hasResult, error, contextRevision: readonly(contextRevision) }
+  return { scanning, progress, scanLevelSets, levelSets, hasResult, hasCurrentResult, error,
+    invalidate, setWaitingForLocalMods, contextRevision: readonly(contextRevision) }
 }

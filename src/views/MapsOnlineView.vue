@@ -51,7 +51,7 @@ import { useFileDrop } from '../composables/useFileDrop'
 import { takePendingDrop, useDropRouting } from '../composables/useDropRouting'
 import { useLevelSetImport } from '../composables/useLevelSetImport'
 import { useLevelSetScan } from '../composables/useLevelSetScan'
-import type { InstallSource, LevelSetInfo, MapInfo, ModRepository } from '../types'
+import type { InstallSource, MapInfo, ModRepository } from '../types'
 import { demoActive, withDemoConfig, withDemoGame, withDemoLevelSets, withDemoMaps, withDemoMapSourceNodes, withDemoMods } from '../tutorial/demo'
 import { useMapReleaseDetail } from '../composables/useMapReleaseDetail'
 import { cachedInstallRelease } from '../repositoryAssets'
@@ -79,8 +79,7 @@ import { cachedInstallRelease } from '../repositoryAssets'
  *
  * 早先这里只按「有没有 Release」显示「可安装 / 未刷新」，与 MOD 安装页的
  * 「未安装 / 已安装 / 有更新 / 最新版」不是一回事，用户因此觉得两页不像。
- * 现在进页面补一次 `scanLevelSets()`（后端对 `info` 有解析缓存，这一次调用
- * 换来的是每张卡都能回答「我装没装、要不要更新」）。
+ * 与地图管理和总览共用本地关卡集快照：每张卡都能回答「我装没装、要不要更新」。
  *
  * ## 依赖状态使用同一批后端评估
  *
@@ -126,7 +125,7 @@ const { linkToModRepository } = useModRepositoryLink()
  */
 const {
   maps: realMaps, sourceNodes: realSourceNodes, loading, refreshing, queued, preparingSources, refreshingSources, installing, refreshingAll, anyRefreshing,
-  loadMaps, refreshAll, refreshSource, refreshReleases, setFlag, syncDependencySnapshots,
+  loadMaps, refreshAll, refreshSource, refreshReleases, setFlag,
 } = useMapSources()
 /**
  * 教程期间地图列表整体换成内置示例数据（与 MOD 安装页同一套 `withDemo*`，
@@ -138,18 +137,10 @@ const {
  */
 const maps = computed<MapInfo[]>(() => withDemoMaps(realMaps.value))
 const sourceNodes = computed(() => withDemoMapSourceNodes(realSourceNodes.value))
-const realSets = ref<LevelSetInfo[]>([])
+const { levelSets: realSets } = useLevelSetScan()
 const sets = computed(() => withDemoLevelSets(realSets.value))
 /**
- * 本地关卡集扫描的唯一入口。
- *
- * 状态与进度是 `useLevelSetScan` 的模块级单例：别的页面正在读时这里也在读，
- * 总览页的卡片因此看得到这次扫描（反过来同理）。
- */
-const { scanLevelSets } = useLevelSetScan()
-/**
  * 「安装地图」的暂存 → 确认 → 导入交给共享实现（地图管理页的拖放用的是同一份）。
- * 本页只负责装完重读本地关卡集：卡片状态与按钮文案都由它算出来。
  * 确认界面与 MOD 安装共用 `InstallDetailDialog`（一个地图集当一个 MOD 展示）。
  */
 const {
@@ -157,7 +148,7 @@ const {
   previewOpen: importPreviewOpen, detail: importDetail,
   confirmImport, discardImport,
   zipProgress, zipProgressText,
-} = useLevelSetImport(() => loadLevelSets())
+} = useLevelSetImport()
 /** 「安装地图」来源卡片是否打开。 */
 const installSourceOpen = ref(false)
 
@@ -276,21 +267,6 @@ const { tree, setOpenSources, setOpenGroups, sourcesExpanded, groupsExpanded } =
 )
 
 /**
- * 读一次本地关卡集。
- *
- * 卡片状态与按钮文案都依赖它（「已安装 / 有更新 / 重装」），所以进页面必须
- * 拿到。失败不影响列表展示：最坏是状态停在「无法检测更新」那一档。
- */
-async function loadLevelSets() {
-  if (demoActive.value) return
-  try {
-    realSets.value = await scanLevelSets()
-  } catch (reason) {
-    message.warning(backendMessageOf(reason))
-  }
-}
-
-/**
  * 预取 owner 头像 —— 与 MOD 安装页同一条链路、同一份实现。
  *
  * 卡片与详情抽屉的图标（`ProviderIcon`）只读 `avatars.ts` 的内存缓存，缓存
@@ -312,7 +288,6 @@ onMounted(() => {
    */
   void ensureLoaded()
   void loadMaps()
-  void loadLevelSets()
   void prefetchAvatars(maps.value)
   // 从 MOD 页「去安装」跳过来：路径已暂存在模块里，直接接着走导入
   const pending = takePendingDrop('map')
@@ -323,7 +298,6 @@ watch(demoActive, active => {
   if (active) return
   void ensureLoaded()
   void loadMaps()
-  void loadLevelSets()
 })
 
 /** 展示名：多语言表 → 单语言镜像 → 仓库坐标。 */
@@ -511,8 +485,7 @@ async function refresh(map: MapInfo) {
  * `asset` 是详情页资产下拉里选中的文件名：不传时后端按 `asset_rules` 自动选，
  * 与 MOD 安装同一条规则。
  *
- * 落盘后补读一次本地关卡集：状态标签与按钮要立刻从「未安装」翻成「已安装」，
- * 否则用户装完看到还是「安装」，会以为没生效。
+ * 落盘后卡片从共享快照得到最新安装状态。
  */
 async function install(map: MapInfo, tag?: string, asset?: string) {
   if (isInstalling(map) || isRefreshing(map)) return
@@ -522,25 +495,9 @@ async function install(map: MapInfo, tag?: string, asset?: string) {
     return
   }
   const targetTag = release.tag_name
-  // 前置检查：地图缺框架时装上也跑不起来，必须先让用户看到
-
   setFlag(installing, map.id, true)
   try {
-    /*
-     * 后端只负责「下载资产 + 识别关卡集」的暂存，确认、冲突卸载与导入全部
-     * 走 `useLevelSetImport.installRelease`（与本地 ZIP / 直链同一份实现）。
-     * 安装后的依赖快照同步必须早于关卡集重读，否则卡片状态会按旧快照算，
-     * 所以这里把「快照 → 重读」作为 afterImport 传给共享实现；成功提示仍按
-     * 地图名说「安装完成」，与本地 ZIP 导入的「已导入 N 个」区分开。
-     */
-    await installRelease(map.id, targetTag, asset, {
-      afterImport: async () => {
-        // 安装清单里的依赖快照按线上声明重写，紧接着的状态重读才不会用到旧快照
-        await syncDependencySnapshots()
-        await loadLevelSets()
-      },
-      successText: () => t('levelSet.installDone', { name: mapName(map) }),
-    })
+    await installRelease(map.id, targetTag, asset, () => t('levelSet.installDone', { name: mapName(map) }))
   } catch (reason) {
     message.error(backendMessageOf(reason))
   } finally {
@@ -554,7 +511,7 @@ async function install(map: MapInfo, tag?: string, asset?: string) {
  * 与「安装 MOD」同一职责定位 —— 线上装不进来的东西（作者发的离线包、自己
  * 整理的图、挂在别处的直链）走这里。暂存 → 确认 → 导入的实现下沉在
  * `useLevelSetImport`：地图管理页的整窗拖放走的是同一份，两页的确认文案、
- * 覆盖提示、暂存清理与「装完重读」因此不会各漂各的。
+ * 覆盖提示、暂存清理和成功提示共用同一条链。
  */
 async function handleInstallSourceSelect(source: InstallSource) {
   await importSource(source, {

@@ -164,12 +164,11 @@ test('MOD selection freezes the exact cached root version and asset in one batch
     [repo({cached_releases:[release('v2.0'),release('v1.0')]}),'v1.0','chosen.zip','release:mod:v1.0'],
     [repo({download_mode:'repository_file',cached_releases:[]}),undefined,undefined,'raw:mod'],
   ]) {
-    const state=reset();let applied=0
-    await useModRepositoryPreview({onApplied:()=>{applied++}})
-      .previewModRepository(source,tag,assetName)
+    const state=reset()
+    await useModRepositoryPreview().previewModRepository(source,tag,assetName)
     assert.deepEqual(state.plans,[{roots:[{node_id:'mod:mod',candidate_id:expected,enabled:true,...(assetName?{asset_name:assetName}:{})}]}])
     assert.deepEqual(state.calls,[],'version planning and execution are handled by the backend batch')
-    assert.equal(applied,1);assert.deepEqual(state.dialogs,[])
+    assert.deepEqual(state.errors,[]);assert.deepEqual(state.dialogs,[])
   }
 })
 

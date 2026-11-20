@@ -1,20 +1,21 @@
 import type { DomainMessages } from './types'
 
-/**
- * 内置教程：工具页与收款二维码（`tutorial.tools.*` / `tutorial.sponsor.*`）。
- *
- * 工具页是「维护动作」的集合：日志、回收站、缓存、高级。这一组不需要操作，
- * 正文只讲清两件事 —— 这里能干什么、什么时候会用到它。教程**不会**替你点
- * 「清空日志」「清除缓存」这类按钮，也不该点（见 `.tmp/tutorial-contract.md` 第 7 节）。
- *
- * 收款码单独用一个 `sponsor` 前缀：它是整份教程的最后一步，与工具页其余
- * 四步不是同一类内容（那四步讲功能，这一步只是道谢），文案也要更轻。
- *
- * 语言表里写的是**域内 key**：`tools.logs.title` 经 `locale/index.ts` 的
- * `{ domain: 'tutorial', messages: tutorialTools }` 拼成
- * `tutorial.tools.logs.title`。段名与步骤 id 对齐（`tools-logs` → `tools.logs.*`）。
- */
+/** 工具章的支持、交流与维护文案（`tutorial.tools.*` / `tutorial.sponsor.*`）。 */
 export const tutorialTools: DomainMessages = {
+  'tools.feedback.title': {
+    'zh-CN': 'QQ 交流群',
+    'zh-TW': 'QQ 交流群',
+    en: 'QQ community group',
+    ko: 'QQ 커뮤니티 그룹',
+    ja: 'QQ 交流グループ',
+  },
+  'tools.feedback.body': {
+    'zh-CN': '想交流玩法、提建议或反馈问题，可以从这里打开 QQ 群邀请。反馈故障时，带上管理器版本和相关日志会更容易定位。',
+    'zh-TW': '想交流玩法、提建議或回報問題，可以從這裡開啟 QQ 群組邀請。回報故障時，附上管理器版本和相關日誌會更容易定位。',
+    en: 'Open the QQ group invite here to ask questions, share tips or report a problem. For bug reports, include the manager version and relevant logs.',
+    ko: '여기에서 QQ 그룹 초대를 열어 질문하거나 팁을 공유하고 문제를 알릴 수 있습니다. 문제를 보고할 때 관리자 버전과 관련 로그를 첨부해 주세요.',
+    ja: 'ここから QQ グループの招待を開き、質問や情報交換、不具合の報告ができます。不具合を報告するときは管理ツールのバージョンと関連ログを添えてください。',
+  },
   'tools.logs.title': {
     'zh-CN': '日志与诊断',
     'zh-TW': '日誌與診斷',
@@ -56,6 +57,34 @@ export const tutorialTools: DomainMessages = {
     en: 'Avatars and map info are cached, so usually nothing to do here. Stale avatar or wrong map info? Clear it, then reopen that page.',
     ko: '아바타와 지도 정보는 캐시됩니다. 보통은 건드릴 필요 없고, 아바타가 갱신되지 않거나 지도 정보가 잘못 읽히면 캐시를 지운 뒤 해당 페이지를 다시 여세요.',
     ja: 'アバターとマップ情報はキャッシュされます。普段は何もしなくて大丈夫。アバターが更新されない、マップ情報が正しく読めないときは、キャッシュを消してからそのページを開き直してください。',
+  },
+  'tools.dataMigration.title': {
+    'zh-CN': '迁移配置路径',
+    'zh-TW': '遷移設定路徑',
+    en: 'Move configuration',
+    ko: '설정 경로 이동',
+    ja: '設定の保存先を移動',
+  },
+  'tools.dataMigration.body': {
+    'zh-CN': '换盘时可把设置、安装清单、缓存、备份和回收站一起搬到新位置。管理器会退出，迁移完成后请手动启动；游戏目录中的 MOD 和地图不动。',
+    'zh-TW': '換磁碟時可把設定、安裝清單、快取、備份和資源回收筒一起搬到新位置。管理器會結束，遷移完成後請手動啟動；遊戲目錄中的 MOD 和地圖不動。',
+    en: 'Move settings, install records, caches, backups and the recycle bin together. The manager exits; reopen it after the move. Installed MODs and maps stay in the game folder.',
+    ko: '설정, 설치 기록, 캐시, 백업과 휴지통을 함께 옮깁니다. 관리자가 종료되며, 이동이 끝나면 직접 다시 실행하세요. 게임 폴더의 MOD와 지도는 그대로 남습니다.',
+    ja: '設定・インストール記録・キャッシュ・バックアップ・ごみ箱をまとめて移動します。管理ツールは終了するので、移動後に手動で起動してください。ゲーム内の MOD やマップは移動しません。',
+  },
+  'tools.dataReset.title': {
+    'zh-CN': '清除所有配置',
+    'zh-TW': '清除所有設定',
+    en: 'Clear all configuration',
+    ko: '모든 설정 삭제',
+    ja: 'すべての設定を削除',
+  },
+  'tools.dataReset.body': {
+    'zh-CN': '退出后永久清除设置、安装清单、缓存、备份和回收站。下次启动恢复默认设置，游戏目录中已安装的 MOD 和地图保留。清除后无法撤销。',
+    'zh-TW': '結束後永久清除設定、安裝清單、快取、備份和資源回收筒。下次啟動恢復預設設定，保留遊戲目錄中已安裝的 MOD 和地圖。清除後無法復原。',
+    en: 'After exit, settings, install records, caches, backups and the recycle bin are erased for good. Defaults return on next launch. MODs and maps in the game folder stay installed.',
+    ko: '종료 후 설정, 설치 기록, 캐시, 백업과 휴지통을 영구 삭제합니다. 다음 실행은 기본 설정으로 시작하며, 게임 폴더에 설치된 MOD와 지도는 남습니다.',
+    ja: '終了後に設定・インストール記録・キャッシュ・バックアップ・ごみ箱を完全に削除します。次回は初期設定で起動し、ゲームフォルダー内の MOD やマップは残ります。',
   },
   'tools.advanced.title': {
     'zh-CN': '高级工具',

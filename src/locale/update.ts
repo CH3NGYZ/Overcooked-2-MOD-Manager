@@ -8,13 +8,6 @@ import type { DomainMessages } from './types'
  * `update.installFailed` 之后接 `migrate.versionMismatch`。
  */
 export const update: DomainMessages = {
-  storeManaged: {
-    'zh-CN': '更新由 Microsoft Store 管理，可在商店开启自动更新。',
-    'zh-TW': '更新由 Microsoft Store 管理，可在商店開啟自動更新。',
-    en: 'Updates are managed by Microsoft Store. You can enable automatic updates in the Store.',
-    ko: '업데이트는 Microsoft Store에서 관리합니다. 스토어에서 자동 업데이트를 켤 수 있습니다.',
-    ja: '更新は Microsoft Store で管理されます。ストアで自動更新を有効にできます。',
-  },
   standaloneChannel: {
     'zh-CN': '普通渠道',
     'zh-TW': '一般管道',

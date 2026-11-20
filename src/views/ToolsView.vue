@@ -247,7 +247,7 @@ const { managerDataDescription, managerDataBusy, clearingConfig, migratingData, 
     </div>
   </SettingsGroup>
 
-  <SettingsGroup :title="t('tools.feedbackChannels')" data-testid="feedback-channels-group">
+  <SettingsGroup :title="t('tools.feedbackChannels')" data-testid="feedback-channels-group" data-tutorial="tools-feedback">
     <SettingsRow v-for="channel in feedbackChannels" :key="channel.url" :icon="ChatbubblesOutline"
       :title="t(channel.title)" :description="t('tools.qqFeedbackGroupDescription')" clickable role="link" tabindex="0"
       @click="api.openReleasePage(channel.url).catch(fail)"
@@ -296,7 +296,7 @@ const { managerDataDescription, managerDataBusy, clearingConfig, migratingData, 
 
   <SettingsGroup :title="t('tools.configuration')" data-testid="tools-configuration-group">
     <SettingsRow :icon="ServerOutline" :title="t('tools.managerDataPath')"
-      :description="managerDataDescription" :description-title="managerDataDescription" data-manager-data-path>
+      :description="managerDataDescription" :description-title="managerDataDescription" data-tutorial="tools-data-migration" data-manager-data-path>
       <template #right>
         <n-button size="small" :disabled="managerDataBusy" :loading="selectingDataDirectory || migratingData"
           aria-haspopup="dialog" @click="confirmMigrateManagerData">{{ t('tools.migrateData') }}
@@ -305,7 +305,7 @@ const { managerDataDescription, managerDataBusy, clearingConfig, migratingData, 
     </SettingsRow>
     <SettingsRow :icon="TrashOutline" :title="t('tools.clearAllConfig')"
       :description="t('tools.clearAllConfigDescription')" :description-title="t('tools.clearAllConfigDescription')"
-      class="clear-config-entry" role="button" tabindex="0" aria-haspopup="dialog"
+      class="clear-config-entry" data-tutorial="tools-data-reset" role="button" tabindex="0" aria-haspopup="dialog"
       :aria-label="t('tools.clearAllConfig')" :aria-busy="clearingConfig" :aria-disabled="managerDataBusy"
       clickable @click="confirmClearAllConfig" @keydown.enter.prevent="confirmClearAllConfig"
       @keydown.space.prevent="confirmClearAllConfig" />

@@ -133,17 +133,21 @@ const EXPECTED_IDS = [
   'diychef-more',
   'sidebar-tools',
   'tools-sponsor',
+  'tools-feedback',
   'tools-logs',
   'tools-recycle',
   'tools-cache',
+  'tools-data-migration',
+  'tools-data-reset',
   'tools-advanced',
   'sidebar-settings',
   'settings-game-runtime',
   'settings-game-path',
   'settings-bepinex',
   'settings-diylevel',
-  'settings-update',
   'settings-switches',
+  'settings-data-sources',
+  'settings-download',
   'settings-performance',
 ]
 
@@ -211,6 +215,22 @@ test('地图概述和多彩名教程只指出真实区域，不触发安装、�
     assert.equal(step.cleanup, undefined)
     assert.equal(step.target, `[data-tutorial="${id}"]`)
   }
+})
+
+test('交流群、数据操作与下载设置只讲解，锚定真实页面且不代替用户操作', () => {
+  for (const [route, ids] of [
+    ['tools', ['tools-feedback', 'tools-data-migration', 'tools-data-reset']],
+    ['settings', ['settings-data-sources', 'settings-download', 'settings-performance']],
+  ]) {
+    for (const id of ids) {
+      const step = tutorialSteps.find(step => step.id === id)
+      assert.equal(step.route, route)
+      assert.equal(step.target, `[data-tutorial="${id}"]`)
+      assert.equal(step.prepare, undefined)
+      assert.equal(step.cleanup, undefined)
+    }
+  }
+  assert.ok(tutorialSteps.every(step => step.route !== 'map-publish'))
 })
 
 test('每一步都有 id / 标题 key / 正文 key，且是教程域下的静态 key', () => {

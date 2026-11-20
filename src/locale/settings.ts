@@ -124,22 +124,6 @@ export const settings: DomainMessages = {
     ko: '경로 선택',
     ja: 'パスを選択',
   },
-  // 程序更新
-  // 没有开关键，右侧状态标签
-  alwaysOn: {
-    'zh-CN': '始终开启',
-    'zh-TW': '永遠開啟',
-    en: 'Always on',
-    ko: '항상 켜짐',
-    ja: '常に有効',
-  },
-  appUpdate: {
-    'zh-CN': '程序更新',
-    'zh-TW': '程式更新',
-    en: 'App update',
-    ko: '앱 업데이트',
-    ja: 'アプリの更新',
-  },
   // 性能
   performance: {
     'zh-CN': '性能',

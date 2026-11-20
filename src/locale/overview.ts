@@ -395,22 +395,6 @@ export const overview: DomainMessages = {
     ko: '게임 중지',
     ja: 'ゲームを停止',
   },
-  // 启动时检查程序更新
-  checkForUpdatesOnStartup: {
-    'zh-CN': '启动时检查程序更新',
-    'zh-TW': '啟動時檢查程式更新',
-    en: 'Check for updates on startup',
-    ko: '시작 시 업데이트 확인',
-    ja: '起動時に更新を確認',
-  },
-  // 启动检查恒开，说明启动时会做什么
-  checkForUpdatesOnStartupHint: {
-    'zh-CN': '每次启动都会自动检查一次新版本，查到后提示，不会静默安装',
-    'zh-TW': '每次啟動都會自動檢查一次新版本，查到後提示，不會靜默安裝',
-    en: 'Checked once on every launch; you get a prompt, never a silent install',
-    ko: '실행할 때마다 새 버전을 한 번 확인하며, 찾으면 알려 주고 자동으로 설치하지 않습니다',
-    ja: '起動のたびに新バージョンを確認し、見つかると通知します（自動ではインストールしません）',
-  },
   // 关于
   about: {
     'zh-CN': '关于',

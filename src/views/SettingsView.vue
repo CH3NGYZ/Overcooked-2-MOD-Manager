@@ -515,18 +515,6 @@ async function clearTokens() {
     </n-drawer-content>
   </n-drawer>
 
-  <!-- 只读更新说明也是教程 `settings-update` 的锚点；操作入口统一放在「关于」。 -->
-  <SettingsGroup :title="t('settings.appUpdate')" data-tutorial="settings-update">
-    <SettingsRow v-if="storeManaged" title="Microsoft Store" :description="t('update.storeManaged')"
-      class="store-update-row" data-testid="store-update" />
-    <SettingsRow v-else :title="t('overview.checkForUpdatesOnStartup')"
-      :description="t('overview.checkForUpdatesOnStartupHint')">
-      <template #right>
-        <n-tag size="small" :bordered="false" type="success">{{ t('settings.alwaysOn') }}</n-tag>
-      </template>
-    </SettingsRow>
-  </SettingsGroup>
-
   <!-- 通用设置 -->
   <SettingsGroup :title="t('overview.general')" data-tutorial="settings-switches">
     <SettingsRow :title="t('recycle.moveDeletedModsToTheRecycleBin')"
@@ -538,7 +526,7 @@ async function clearTokens() {
       </template>
     </SettingsRow>
   </SettingsGroup>
-  <SettingsGroup :title="t('settings.dataSources')" data-testid="data-sources">
+  <SettingsGroup :title="t('settings.dataSources')" data-testid="data-sources" data-tutorial="settings-data-sources">
     <SettingsRow :title="t('settings.region')" :description="t('settings.regionHint')">
       <template #right>
         <n-select :value="userRegion" :options="regionOptions" style="width: 304px; max-width: 100%"
@@ -557,7 +545,7 @@ async function clearTokens() {
     </SettingsRow>
   </SettingsGroup>
 
-  <SettingsDownloadGroup :config="dataSourceConfig" :disabled="switchingDataProvider"
+  <SettingsDownloadGroup :config="dataSourceConfig" :disabled="switchingDataProvider" data-tutorial="settings-download"
     @saved="config = $event" @saving="savingDownload = $event" />
 
   <!--
@@ -770,7 +758,6 @@ async function clearTokens() {
 .drawer-hint.danger { color: #ee8585; }
 /* 更新检查失败弹窗的说明段：只有一句话，不要撑出多余留白 */
 .update-failed-note { margin: 0; font-size: 13px; line-height: 1.65; }
-.store-update-row :deep(.txt small) { white-space: normal; overflow: visible; }
 .drawer-pref {
   display: flex; align-items: center; justify-content: space-between; gap: 14px;
   padding: 10px 0 14px; border-bottom: 1px dashed var(--oc2-rail-line); margin-bottom: 6px;

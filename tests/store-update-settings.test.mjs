@@ -126,10 +126,10 @@ test('ordinary checks preserve current, update and all-channel failure behavior'
   assert.equal(boundary.calls.filter(([kind]) => kind === 'open').length, 0)
 })
 
-test('About shows the channel to the left of the version and one check control for both channels', () => {
+test('About shows the channel, version and the only update control for both channels', () => {
   const source = readFileSync(new URL('../src/views/SettingsView.vue', import.meta.url), 'utf8')
   assert.deepEqual(parse(source).errors, [])
-  assert.match(source, /<SettingsRow v-if="storeManaged" title="Microsoft Store" :description="t\('update\.storeManaged'\)"/)
+  assert.doesNotMatch(source, /settings-update|checkForUpdatesOnStartup|store-update-row/)
   const about = source.match(/<SettingsRow[^>]+data-testid="app-about"[^]*?<\/SettingsRow>/)?.[0]
   assert.ok(about)
   assert.match(about, /data-testid="app-distribution"[^]*?data-testid="app-version"[^]*?data-testid="app-check-update"/)

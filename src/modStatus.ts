@@ -145,11 +145,12 @@ export function isPrereleaseVersion(
  * 而 tag 其实是 `1.8.7.23` 时，会以为管理器读错了版本，也无法对照 tag
  * 排查问题。比较时第 4 段按历史 beta 序号处理，显示仍与原始版本一致。
  *
- * 至少保留两段（`1.0` 不会被压成 `1`），无法解析时原样返回。
+ * 至少保留两段（`1.0` 不会被压成 `1`）。本地 MOD 包标题可省略数字版本的 v/V，
+ * 其他位置保留发布标签的前缀；用于比较和定位附件的原始标签不在这里改动。
  */
-export function formatVersion(value: string | null | undefined): string {
+export function formatVersion(value: string | null | undefined, { stripVPrefix = false } = {}): string {
   if (!value) return ''
-  const trimmed = value.trim()
+  const trimmed = stripVPrefix ? value.trim().replace(/^[vV](?=\d)/, '') : value.trim()
   const match = trimmed.match(/^(.*?)(\d+(?:\.\d+){1,7})(?:-([0-9A-Za-z.-]+))?$/)
   if (!match) return trimmed
   const prefix = match[1]

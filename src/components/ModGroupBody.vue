@@ -182,7 +182,7 @@ const packageActions = computed(() => Object.fromEntries(packages.value.map(pkg 
             <n-tag size="tiny" :bordered="false" class="state-tag" :color="tagColorFor('muted')">
               {{ t('rename.text', { count: pkg.mods.length }) }}
             </n-tag>
-            <span v-if="pkg.version" class="card-version mono">{{ formatVersion(pkg.version) }}</span>
+            <span v-if="pkg.version" class="card-version mono">{{ formatVersion(pkg.version, { stripVPrefix: true }) }}</span>
           </div>
 
           <!-- 右：状态标签 + 分割线 + 工具列（与单 MOD 卡片同一套列宽预留） -->

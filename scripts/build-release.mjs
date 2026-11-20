@@ -46,10 +46,15 @@ export function updateFiles(bundleRoot, target, version, requiredKeys = BUILD_KE
 export function runTauri(parameters, env = process.env, invoke = spawnSync) {
   const cli = resolve('node_modules/@tauri-apps/cli/tauri.js')
   const commandEnv = { ...env }
-  // build accepts a key path in KEY; signer sign reserves KEY for inline contents.
-  if (parameters[0] === 'build' && !env.TAURI_SIGNING_PRIVATE_KEY?.trim()
-    && env.TAURI_SIGNING_PRIVATE_KEY_PATH?.trim()) {
-    commandEnv.TAURI_SIGNING_PRIVATE_KEY = env.TAURI_SIGNING_PRIVATE_KEY_PATH
+  const keyPath = env.TAURI_SIGNING_PRIVATE_KEY_PATH
+  if (keyPath?.trim() && !env.TAURI_SIGNING_PRIVATE_KEY?.trim()) {
+    if (parameters[0] === 'build') {
+      // The bundler accepts a key path in TAURI_SIGNING_PRIVATE_KEY.
+      commandEnv.TAURI_SIGNING_PRIVATE_KEY = keyPath
+    } else if (parameters[0] === 'signer' && parameters[1] === 'sign') {
+      // The signer treats even an empty inline key as conflicting with the key path.
+      delete commandEnv.TAURI_SIGNING_PRIVATE_KEY
+    }
   }
   const result = invoke(process.execPath, [cli, ...parameters], { stdio: 'inherit', env: commandEnv })
   if (result.error || result.status !== 0) throw new Error('Tauri release build/signing failed')

@@ -107,6 +107,21 @@ test('没有刷新时按缓存 Release 出结论', () => {
   assert.equal(warm.mod.update_available, true)
 })
 
+test('完整刷新但没有当前渠道的版本时，替换本地列表和汇总里的旧版本结论', () => {
+  const stale = mod({ labels: ['update_available', 'disabled'], update_available: true, enabled: false,
+    repository_binding: { provider: 'github', owner: 'u', repository: 'r1', channel: 'stable', tag: 'v1.0.0' } })
+  const betaOnly = repo({ channel: 'all', cached_releases: [release('2.0.0-beta.1')] })
+  assert.equal(modUpdateAvailable(stale, [betaOnly]), true, '旧缓存没有刷新完成的证据时保留快照')
+  for (const cached_releases of [betaOnly.cached_releases, []]) {
+    const current = [{ ...betaOnly, cached_releases, cached_releases_complete: true }]
+    const result = runtimeModStatus(stale, [stale], current, idle).mod
+    assert.deepEqual(result.labels, ['unknown', 'disabled'])
+    assert.equal(result.update_available, false)
+    assert.equal(modUpdateAvailable(stale, current), false)
+    assert.equal(statusActionFor(result.labels), undefined)
+  }
+})
+
 test('刷新中优先于缓存结论（否则点检查更新界面毫无反应）', () => {
   const state = { refreshing: { r1: true }, queued: {}, sourceRefreshing: {}, entryStateUnavailable: false }
   const result = runtimeModStatus(mod(), [mod()], [repo()], state)

@@ -1,4 +1,10 @@
-import type { InstalledMod, ModRepository } from './types'
+import type { InstalledMod, ModRepository, ModRepositoryBinding } from './types'
+
+export function matchesRepositoryIdentity(repo: ModRepository, binding: ModRepositoryBinding): boolean {
+  return repo.provider === binding.provider
+    && repo.username.toLowerCase() === binding.owner.toLowerCase()
+    && repo.repository.toLowerCase() === binding.repository.toLowerCase()
+}
 
 /**
  * 已安装 MOD 与仓库的双向匹配。
@@ -12,10 +18,7 @@ export function repositoryForMod(repositories: readonly ModRepository[], mod: In
   }
   const binding = mod.repository_binding
   if (binding) {
-    const byBinding = repositories.find((repo) =>
-      repo.provider === binding.provider
-      && repo.username.toLowerCase() === binding.owner.toLowerCase()
-      && repo.repository.toLowerCase() === binding.repository.toLowerCase())
+    const byBinding = repositories.find((repo) => matchesRepositoryIdentity(repo, binding))
     if (byBinding) return byBinding
   }
   for (const id of mod.repository_ids ?? []) {
@@ -36,10 +39,7 @@ export function modsForRepository(mods: readonly InstalledMod[], repo: ModReposi
     if (mod.repository_id === repo.id) return true
     if (mod.repository_ids?.includes(repo.id)) return true
     const binding = mod.repository_binding
-    if (!binding) return false
-    return binding.provider === repo.provider
-      && binding.owner.toLowerCase() === repo.username.toLowerCase()
-      && binding.repository.toLowerCase() === repo.repository.toLowerCase()
+    return !!binding && matchesRepositoryIdentity(repo, binding)
   })
 }
 

@@ -1,9 +1,12 @@
-import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
+import { computed, ref, shallowRef, watch, type ComputedRef, type Ref } from 'vue'
 import { mapWithConcurrency } from './concurrency.ts'
 
 // A source-package replacement pauses both refresh domains through this one gate.
 const schedulingPaused = ref(false)
 export function setRefreshSchedulingPaused(value: boolean) { schedulingPaused.value = value }
+const activeDomains = shallowRef(0)
+/** Local projections may settle when neither online domain is publishing updates. */
+export const onlineRefreshPending = computed(() => schedulingPaused.value || activeDomains.value > 0)
 
 /**
  * 刷新状态机（MOD 仓库与地图共用同一份实现）。
@@ -203,6 +206,7 @@ export function createRefreshState(concurrency: number): RefreshState {
     || Object.keys(refreshingSources.value).length > 0,
   )
   const anyRefreshing = computed(() => schedulingPaused.value || workInProgress.value)
+  watch(workInProgress, busy => { activeDomains.value += busy ? 1 : -1 }, { flush: 'sync' })
 
   const beginBatch = (trigger: RefreshTrigger) => {
     activeBatches.value += 1

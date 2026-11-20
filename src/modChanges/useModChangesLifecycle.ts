@@ -5,6 +5,7 @@ import { useMapSources } from '../composables/useMapSources'
 import { watchLocalModsChanged, watchModChangesApplied } from '../services/tauri'
 import { demoActive } from '../tutorial/demo'
 import { isTauri } from '../runtime'
+import { onlineRefreshPending } from '../refreshState'
 import { useModChanges } from './store'
 
 /** Owned by the App's only plan dialog, below the notification provider. */
@@ -17,17 +18,31 @@ export function useModChangesLifecycle() {
   let pendingRefresh: { scope: 'local' | 'full', mods: Promise<void> } | undefined
   let evaluatingApplied = false
   let externalChangeDuringDemo = false
+  let onlineDirty = false
 
-  watch([dashboard.config, dashboard.mods, maps.maps, levels.levelSets,
-    () => dashboard.game.value?.path, () => dashboard.game.value?.kitchen_running, demoActive], () => {
+  watch([dashboard.config, maps.maps, levels.levelSets, dashboard.modsGeneration, dashboard.diyLevelTarget,
+    () => dashboard.game.value?.path, () => dashboard.game.value?.kitchen_running, demoActive, onlineRefreshPending],
+  ([config, catalog, sets, generation, target, path, running, demo, onlineBusy],
+    [oldConfig, oldCatalog, oldSets, oldGeneration, oldTarget, oldPath, oldRunning, oldDemo]) => {
+    onlineDirty ||= catalog !== oldCatalog || config?.repositories !== oldConfig?.repositories
+      || config?.repository_sources !== oldConfig?.repository_sources || config?.data_provider !== oldConfig?.data_provider
+      || config?.region !== oldConfig?.region || config?.platform !== oldConfig?.platform
     if (externalChangeDuringDemo && !demoActive.value) {
       externalChangeDuringDemo = false
       void refreshApplied('local').catch(() => undefined)
     }
     if (appliedRefresh && (!evaluatingApplied || pendingRefresh)) return
-    changes.clearEvaluation()
-    if (!demoActive.value && isTauri() && dashboard.game.value?.path)
-      void changes.invalidate().catch(() => undefined)
+    // A scan generation represents disk changes. A rebinding pass only
+    // projects the same DLL facts and must not re-evaluate the inventory.
+    const localChanged = sets !== oldSets || generation !== oldGeneration || target !== oldTarget
+      || path !== oldPath || running !== oldRunning || demo !== oldDemo
+      || config?.game?.path !== oldConfig?.game?.path || config?.game?.runtime !== oldConfig?.game?.runtime
+    if (localChanged) changes.clearEvaluation()
+    if (demo || !isTauri() || !path || (!localChanged && (onlineBusy || !onlineDirty))) return
+    // Keep the last relation snapshot and its actions live as individual
+    // online results arrive. Explicit plan requests still read current facts.
+    if (!onlineBusy) onlineDirty = false
+    void changes.invalidate().catch(() => undefined)
   }, { flush: 'post' })
 
   function refreshApplied(scope: 'local' | 'full') {
@@ -50,6 +65,7 @@ export function useModChangesLifecycle() {
         if (pendingRefresh || disposed) continue
         await levels.scanLevelSets({ reuseCurrentGeneration: true }).catch(() => undefined)
         if (!pendingRefresh && !disposed) {
+          if (!onlineRefreshPending.value) onlineDirty = false
           evaluatingApplied = true
           try { await changes.invalidate().catch(() => undefined) }
           finally { evaluatingApplied = false }

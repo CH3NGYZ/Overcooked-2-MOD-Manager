@@ -27,6 +27,7 @@ registerHooks({
 })
 const { useModChangesLifecycle } = await import('../src/modChanges/useModChangesLifecycle.ts')
 const { demoActive } = await import('../src/tutorial/demo.ts')
+const { createRefreshState } = await import('../src/refreshState.ts')
 const tick = async () => { await nextTick(); await new Promise(resolve => setImmediate(resolve)) }
 const deferred = () => { let resolve; const promise = new Promise(yes => { resolve = yes }); return { promise, resolve } }
 const host = createRenderer({ patchProp() {}, insert() {}, remove() {}, createElement: () => ({}), createText: () => ({}), createComment: () => ({}),
@@ -37,9 +38,11 @@ async function setup(t, registration) {
   let load = async () => {}, stops = 0
   const fixture = {
     dashboard: { config: shallowRef({}), mods: shallowRef([]), game: shallowRef({ path: 'game', kitchen_running: false }),
+      modsGeneration: shallowRef(1), diyLevelTarget: shallowRef('DIYLevel.dll'),
       loadBase: async () => { calls.push('dashboard') },
       loadLocalMods: async options => {
         assert.deepEqual(options, { afterPending: true }); calls.push('mods'); await load(); fixture.dashboard.mods.value = [{}]
+        fixture.dashboard.modsGeneration.value++
       } },
     maps: { maps: shallowRef([]), loadMaps: async options => { assert.deepEqual(options, { force: true }); calls.push('maps'); fixture.maps.maps.value = [{}] } },
     levels: { levelSets: shallowRef([]), scanLevelSets: async options => {
@@ -113,6 +116,44 @@ test('game and source snapshot changes invalidate the shared evaluation once per
   f.dashboard.config.value = { source: 'new' }; f.dashboard.game.value = { path: 'other-game', kitchen_running: false }
   await tick()
   assert.deepEqual(f.calls, ['clear', 'evaluate'])
+})
+
+test('staggered MOD and map releases keep the current relation snapshot until both domains settle', async t => {
+  const f = await setup(t), mods = createRefreshState(1), maps = createRefreshState(1)
+  mods.beginBatch('full'); maps.beginBatch('full')
+  try {
+    f.dashboard.config.value = { repositories: [{ id: 'mod', cached_releases: [] }] }
+    await tick()
+    f.maps.maps.value = [{ id: 'map' }]
+    await tick()
+    f.dashboard.mods.value = [{}] // Rebinding is not a new disk scan.
+    assert.deepEqual(f.calls, [])
+  } finally {
+    mods.endBatch('full')
+    await tick()
+    try { assert.deepEqual(f.calls, [], 'the other domain is still active') }
+    finally { maps.endBatch('full') }
+  }
+  await tick()
+  assert.deepEqual(f.calls, ['evaluate'], 'online evaluation replaces the snapshot without clearing it first')
+})
+
+test('a file notification refreshes the local inventory while online results are still pending', async t => {
+  const f = await setup(t), online = createRefreshState(1)
+  online.beginBatch('full')
+  try {
+    f.dashboard.config.value = { repositories: [{ id: 'mod' }] }
+    await tick()
+    assert.deepEqual(f.calls, [])
+    f.external()
+    await tick()
+    assert.deepEqual(f.calls, ['mods', 'clear', 'levels', 'evaluate'])
+    f.maps.maps.value = [{ id: 'later-map' }]
+    await tick()
+    assert.deepEqual(f.calls, ['mods', 'clear', 'levels', 'evaluate'])
+  } finally { online.endBatch('full') }
+  await tick()
+  assert.deepEqual(f.calls, ['mods', 'clear', 'levels', 'evaluate', 'evaluate'])
 })
 
 test('unmount cleans a late event subscription and never retains a page-owned listener', async t => {

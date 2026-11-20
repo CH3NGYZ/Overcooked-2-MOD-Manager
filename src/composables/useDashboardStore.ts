@@ -1,7 +1,9 @@
-import { computed, ref, shallowRef } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 import { api, watchGameState } from '../services/tauri'
 import { backendMessageOf } from '../locale/backend'
 import { demoActive } from '../tutorial/demo'
+import { modBindingInputsChanged } from '../modBindingInputs'
+import { onlineRefreshPending } from '../refreshState'
 import type { Dashboard, GameInfo, PublicConfig, InstalledMod } from '../types'
 
 /**
@@ -33,6 +35,7 @@ let latestGame: GameInfo | undefined
 let gameIdentity: GameInfo | undefined
 let bindingRevision = 0
 let bindingPending: Promise<void> | undefined
+let bindingDeferred = false
 
 /** A different game root/runtime invalidates both metadata and its trusted scan token. */
 function invalidateLocalMods() {
@@ -46,6 +49,7 @@ function invalidateLocalMods() {
   modsError.value = ''
   localMods.value = []
   bindingRevision += 1
+  bindingDeferred = false
   updateRevision += 1
   const current = dashboard.value
   if (current) dashboard.value = { ...current, mods: [], updates: [] }
@@ -63,10 +67,12 @@ function gamePathChanged(before: GameInfo | undefined, after: GameInfo) {
 /** Both independently arriving lanes reconcile against the backend's current
  * repository configuration. Coalesce updates; reject responses overtaken by
  * a newer TOML or local scan without blocking either lane's initial display. */
-function rebindLocalMods(): Promise<void> {
+function rebindLocalMods({ deferForOnline = false } = {}): Promise<void> {
   if (demoActive.value) return Promise.resolve()
   bindingRevision += 1
   if (!modsLoaded || !localMods.value.length) return Promise.resolve()
+  bindingDeferred = deferForOnline && onlineRefreshPending.value
+  if (bindingDeferred) return Promise.resolve()
   if (bindingPending) return bindingPending
   bindingPending = (async () => {
     let revision: number
@@ -86,9 +92,22 @@ function rebindLocalMods(): Promise<void> {
           modsError.value = backendMessageOf(reason)
         }
       }
-    } while (revision !== bindingRevision)
+    } while (revision !== bindingRevision && !bindingDeferred)
   })().finally(() => { bindingPending = undefined })
   return bindingPending
+}
+
+watch(onlineRefreshPending, busy => { if (!busy && bindingDeferred) void rebindLocalMods() })
+
+function publishConfig(config: PublicConfig): Promise<void> | undefined {
+  const current = dashboard.value
+  if (!current || current.config === config) return
+  if (configGameChanged(current.config, config)) {
+    invalidateLocalMods()
+    gameIdentity = undefined
+  }
+  dashboard.value = { ...dashboard.value!, config }
+  if (modBindingInputsChanged(current.config, config, localMods.value)) return rebindLocalMods({ deferForOnline: true })
 }
 
 /**
@@ -209,7 +228,7 @@ export function useDashboard() {
           mods: localMods.value,
           updates: dashboard.value?.updates ?? [],
         }
-        await rebindLocalMods()
+        if (modBindingInputsChanged(current?.config, config, localMods.value)) await rebindLocalMods({ deferForOnline: true })
         // A root discovered by this summary may have overtaken the parallel
         // scan. Resume once against the newly established identity.
         if (identityChanged) await loadLocalMods()
@@ -322,13 +341,8 @@ export function useDashboard() {
           return
         }
         const config = options.project?.(current.config, received) ?? received
-        if (configGameChanged(current.config, config)) {
-          invalidateLocalMods()
-          gameIdentity = undefined
-        }
         if (options.project) configRevision += 1
-        dashboard.value = { ...dashboard.value!, config }
-        await rebindLocalMods()
+        await publishConfig(config)
         return
       }
     } catch (reason) {
@@ -346,14 +360,7 @@ export function useDashboard() {
    */
   function applyConfigSnapshot(config: PublicConfig) {
     configRevision += 1
-    const current = dashboard.value
-    if (!current) return
-    if (configGameChanged(current.config, config)) {
-      invalidateLocalMods()
-      gameIdentity = undefined
-    }
-    dashboard.value = { ...dashboard.value!, config }
-    void rebindLocalMods()
+    void publishConfig(config)
   }
 
   /**

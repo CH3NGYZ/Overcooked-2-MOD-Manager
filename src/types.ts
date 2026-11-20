@@ -173,6 +173,8 @@ export interface ModRepository {
   /** Only a successful complete pagination proves this cache exhaustive; legacy absence is unknown. */
   cached_releases_complete?: boolean
   release_prerelease_metadata?: Record<string, boolean>
+  releases_cached_at?: number | null
+  etag?: string | null
   last_error?: string
 }
 export interface PublicConfig {

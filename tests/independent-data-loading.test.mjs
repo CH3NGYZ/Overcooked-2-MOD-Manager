@@ -35,6 +35,7 @@ const { useDashboard, startGameWatch } = await import('../src/composables/useDas
 const { useMapSources } = await import('../src/composables/useMapSources.ts')
 const { useLevelSetScan } = await import('../src/composables/useLevelSetScan.ts')
 const { levelSetIsRefreshing } = await import('../src/levelSetStatus.ts')
+const { createRefreshState } = await import('../src/refreshState.ts')
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
 function deferred() { let resolve, reject; const promise = new Promise((r, j) => { resolve = r; reject = j }); return { promise, resolve, reject } }
 function mapSnapshot(map, tag) {
@@ -246,6 +247,37 @@ test('late binding responses cannot overwrite a newer TOML snapshot and pending 
   assert.equal(calls,2,'multiple source changes while in flight need only one latest reconciliation')
 })
 
+test('online repository display updates do not rebind DLLs, but installed tag evidence and declaration changes do', async () => {
+  const d = useDashboard(), refresh = createRefreshState(1)
+  const binding = { provider: 'github', owner: 'Owner', repository: 'Repo', channel: 'all', tag: 'v1.2.3.4' }
+  const mod = { dll_file: 'bound.dll', update_version: binding.tag, repository_binding: binding, prerelease: true }
+  const repo = { id: 'repo', provider: 'github', username: 'owner', repository: 'repo', download_mode: 'release', plugin_guid: 'guid' }
+  let rebinds = 0
+  globalThis.__loadingApi = {
+    localMods: async () => ({ generation: 19, mods: [mod] }),
+    rebindLocalMods: async installed => { rebinds++; return installed },
+  }
+  const apply = patch => d.applyConfigSnapshot({ repositories: [{ ...repo, ...patch }] })
+  apply({})
+  await d.loadLocalMods()
+  rebinds = 0
+  apply({ cached_releases: [{ tag_name: 'v2', apiPrerelease: true }], cached_releases_complete: true,
+    release_prerelease_metadata: { v2: true }, etag: 'Fresh', releases_cached_at: 1 })
+  await tick()
+  assert.equal(rebinds, 0)
+  refresh.beginBatch('full')
+  try {
+    apply({ release_prerelease_metadata: { [binding.tag]: false } })
+    await tick()
+    assert.equal(rebinds, 0, 'do not rebind while the online batch is publishing')
+  } finally { refresh.endBatch('full') }
+  await tick()
+  assert.equal(rebinds, 1, 'the exact installed tag now explicitly says this is not a prerelease')
+  apply({ plugin_guid: 'changed.guid', release_prerelease_metadata: { [binding.tag]: false } })
+  await tick()
+  assert.equal(rebinds, 2, 'a changed identity declaration must still reconcile')
+})
+
 test('conversion status is independent of local scanning and receives queue events', async () => {
   globalThis.__loadingApi.levelCompressionProgress = async () => ({ running: false, done: 0, total: 0 })
   const { useLevelCompression } = await import('../src/composables/useLevelCompression.ts')
@@ -444,6 +476,36 @@ test('local map results and errors from an overtaken root cannot publish as the 
     assert.equal(setScans, 2)
     assert.equal(local.levelSets.value[0].dir_name, `fresh-${key}`)
   }
+})
+
+test('online configuration replacements preserve the local map snapshot; real runtime or DIYLevel changes invalidate it', async () => {
+  const d = useDashboard(), local = useLevelSetScan()
+  const game = { path: 'retained-map-game-root', runtime: 'native' }
+  const sets = [{ dir_name: 'retained-map' }]
+  let reads = 0
+  d.applyConfigSnapshot({ game, repositories: [] })
+  globalThis.__loadingApi = {
+    localMods: async () => ({ generation: 57, mods: [], diy_level_target: 'DIYLevel.dll' }),
+    levelSets: async () => { reads++; return sets },
+  }
+  await local.scanLevelSets()
+  const revision = local.contextRevision.value
+  for (const tag of ['v1', 'v2', 'v3']) {
+    d.applyConfigSnapshot({ game: { ...game }, repositories: [{ id: 'latest', cached_releases: [{ tag_name: tag }] }] })
+    await tick()
+    assert.strictEqual(local.levelSets.value, sets)
+    assert.equal(local.contextRevision.value, revision)
+  }
+  assert.equal(reads, 1)
+  globalThis.__loadingApi.localMods = async () => ({ generation: 58, mods: [], diy_level_target: 'NewDIYLevel.dll' })
+  await d.loadLocalMods()
+  assert.equal(local.contextRevision.value, revision + 1)
+  assert.equal(local.hasResult.value, false)
+  await local.scanLevelSets()
+  const targetRevision = local.contextRevision.value
+  d.applyConfigSnapshot({ game: { ...game, runtime: 'wine' }, repositories: [] })
+  assert.ok(local.contextRevision.value > targetRevision)
+  assert.equal(local.hasResult.value, false)
 })
 
 test('DIYLevel summaries retain only the backend-selected DLL token, including disabled highest versions', async () => {

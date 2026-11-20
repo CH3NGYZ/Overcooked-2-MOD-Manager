@@ -11,7 +11,7 @@
  * 最近一次本地结果也由此保存，供两页展示与已安装优先排序复用；在飞扫描
  * 合并为一次，但不等待任何在线地图请求。在线与本地分别发布、分别处理失败。
  */
-import { computed, ref, shallowRef, watch } from 'vue'
+import { computed, readonly, ref, shallowRef, watch } from 'vue'
 import { api, watchLevelSetScan } from '../services/tauri'
 import { useDashboard } from './useDashboardStore'
 import { demoActive } from '../tutorial/demo'
@@ -29,14 +29,16 @@ const empty: LevelSetInfo[] = []
 const levelSets = computed(() => result.value ?? empty)
 const hasResult = computed(() => result.value !== null)
 let resultGeneration = 0
-let contextRevision = 0
+const contextRevision = shallowRef(0)
 // A DLL re-scan on the same game/target may keep displaying the last result.
 // A different root or target must clear it even if the identity later reverts.
+// A shallow ref passed directly to this multi-source watcher would also fire
+// on identical game fields whenever a new online config snapshot arrives.
 watch([() => dashboard.game.value?.path, () => dashboard.config.value?.game?.path,
-  () => dashboard.config.value?.game?.runtime, dashboard.diyLevelTarget], () => {
-  contextRevision += 1
+  () => dashboard.config.value?.game?.runtime, () => dashboard.diyLevelTarget.value], () => {
   result.value = null
   error.value = null
+  contextRevision.value += 1
 }, { flush: 'sync' })
 let pendingScan: Promise<LevelSetInfo[]> | undefined
 
@@ -89,8 +91,8 @@ export function scanLevelSets({ reuseCurrentGeneration = false } = {}): Promise<
         // remain independent of this local dependency.
         const generation = await dashboard.ensureLocalModsLoaded()
         if (demoActive.value) return levelSets.value
-        const context = contextRevision
-        const isCurrent = () => context === contextRevision && dashboard.modsStatus.value === 'ready'
+        const context = contextRevision.value
+        const isCurrent = () => context === contextRevision.value && dashboard.modsStatus.value === 'ready'
           && generation === dashboard.modsGeneration.value
         if (!isCurrent()) continue
         try {
@@ -118,5 +120,5 @@ export function scanLevelSets({ reuseCurrentGeneration = false } = {}): Promise<
 }
 
 export function useLevelSetScan() {
-  return { scanning, progress, scanLevelSets, levelSets, hasResult, error }
+  return { scanning, progress, scanLevelSets, levelSets, hasResult, error, contextRevision: readonly(contextRevision) }
 }

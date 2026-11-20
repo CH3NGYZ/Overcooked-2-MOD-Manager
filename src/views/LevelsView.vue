@@ -115,7 +115,7 @@ const config = computed(() => withDemoConfig(realConfig.value))
 const game = computed(() => withDemoGame(realGame.value))
 const mods = computed(() => withDemoMods(realMods.value))
 const { progress: scanProgress, scanLevelSets, levelSets: realSets, hasResult,
-  error: scanError, scanning } = useLevelSetScan()
+  error: scanError, scanning, contextRevision } = useLevelSetScan()
 const localReadError = computed(() => scanError.value ? backendMessageOf(scanError.value) : '')
 // The completed backend scan owns GUID/version selection. Tutorial data has
 // its own presentation and never adopts or changes this real target token.
@@ -395,8 +395,7 @@ watch(demoActive, active => {
   void loadMaps()
   void reloadSets()
 })
-watch([() => realGame.value?.path, () => realConfig.value?.game?.path,
-  () => realConfig.value?.game?.runtime, diyLevelTarget], () => {
+watch(contextRevision, () => {
   if (!demoActive.value) void reloadSets()
 })
 

@@ -93,8 +93,8 @@ export function modRelationForTag(tags: readonly LocalRelationTag[] | undefined,
  *   2. 这个仓库这次刷新**失败**了（`last_error`）→ 「仓库刷新失败」。
  *      失败是这一条自己的结果，刷新引擎在它失败的那一刻就写回了 `last_error`
  *      （与后端清缓存、置错误的规则一致），所以不必等整批结束的后端重扫。
- *   3. 仓库有 Release 且版本可比 → 用缓存重算（刷新完立刻生效）
- *   4. 其余情况 → 保留后端扫描时的标签
+ *   3. 版本可比或已完成刷新 → 用当前缓存出结论，完成但无法比较时显示「版本未知」。
+ *   4. 缓存仍无结论 → 保留后端扫描时的标签。
  *
  * 关系判定（缺依赖 / 冲突）是另一件事，永远往标签最前面插，不参与上面的取舍。
  */
@@ -173,7 +173,7 @@ export function runtimeModStatus(
         update_available: verdict.updateAvailable,
         labels: withRelation(replaceVersionConclusion(
           mod.labels as string[] | undefined,
-          verdict.updateAvailable ? 'update_available' : 'latest',
+          verdict.source === 'no_comparable_release' ? 'unknown' : verdict.updateAvailable ? 'update_available' : 'latest',
         ) as InstalledMod['labels']),
       } as InstalledMod,
     }

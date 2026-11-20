@@ -1,5 +1,5 @@
 import type { InstalledMod, InstalledModStatusLabel, ModRepository } from './types'
-import { compareVersions, isPrereleaseVersion, localVersion, modsForRepository, repositoryForMod } from './modStatus.ts'
+import { compareVersions, isPrereleaseVersion, localVersion, matchesRepositoryIdentity, modsForRepository, repositoryForMod } from './modStatus.ts'
 import { DEPENDENCY_ISSUE_TEXT } from './modRelations.ts'
 
 /**
@@ -457,9 +457,7 @@ export function repositoryStatus(repo: ModRepository, installedMods: InstalledMo
 }
 
 function matchesReleaseBinding(repo: ModRepository, binding: NonNullable<InstalledMod['repository_binding']>): boolean {
-  return repo.download_mode === 'release' && binding.provider === repo.provider
-    && binding.owner.toLowerCase() === repo.username.toLowerCase()
-    && binding.repository.toLowerCase() === repo.repository.toLowerCase()
+  return repo.download_mode === 'release' && matchesRepositoryIdentity(repo, binding)
     && (repo.channel === binding.channel || repo.channel === 'all')
 }
 
@@ -491,7 +489,9 @@ export type ModUpdateVerdict =
   | { known: true; updateAvailable: boolean; source: 'release' }
   /** 已有可保留的较新本地副本；不为当前文件重新判定线上版本。 */
   | { known: true; updateAvailable: false; source: 'newer_copy' }
-  /** 无法判定（未绑定 / 仓库报错 / RAW / 版本不可比较），调用方保留后端快照。 */
+  /** 当前渠道已完成刷新，但没有版本可比；以前的结论已失效。 */
+  | { known: true; updateAvailable: false; source: 'no_comparable_release' }
+  /** 当前缓存不足以取代后端判断，调用方可保留扫描快照。 */
   | { known: false }
 
 export function modUpdateVerdict(mod: InstalledMod, repositories: readonly ModRepository[]): ModUpdateVerdict {
@@ -503,7 +503,12 @@ export function modUpdateVerdict(mod: InstalledMod, repositories: readonly ModRe
   // 仓库文件模式没有版本比较的意义
   if (repo.download_mode === 'repository_file') return { known: false }
   const updateAvailable = releaseUpdateVerdict(mod, repo)
-  return updateAvailable === undefined ? { known: false } : { known: true, updateAvailable, source: 'release' }
+  if (updateAvailable !== undefined) return { known: true, updateAvailable, source: 'release' }
+  const binding = mod.repository_binding
+  if (repo.cached_releases_complete === true && (!binding || matchesReleaseBinding(repo, binding))) {
+    return { known: true, updateAvailable: false, source: 'no_comparable_release' }
+  }
+  return { known: false }
 }
 
 /**

@@ -136,9 +136,10 @@ test('chef, local maps and drawer share missing-state routing and centered layou
   // Target changes clear the shared list immediately; in-flight reads must
   // still belong to that context before the page can show their result.
   const scan = read('src/composables/useLevelSetScan.ts')
-  assert.match(scan, /dashboard\.diyLevelTarget\], \(\) => \{\s*contextRevision \+= 1\s*result\.value = null[^}]*\}, \{ flush: 'sync' \}\)/)
+  assert.match(scan, /\(\) => dashboard\.diyLevelTarget\.value\], \(\) => \{\s*result\.value = null[^}]*contextRevision\.value \+= 1[^}]*\}, \{ flush: 'sync' \}\)/)
   assert.match(scan, /const hasResult = computed\(\(\) => result\.value !== null\)/)
-  assert.match(scan, /const isCurrent = \(\) => context === contextRevision/)
+  assert.match(scan, /const isCurrent = \(\) => context === contextRevision\.value/)
+  assert.match(levels, /watch\(contextRevision, \(\) => \{\s*if \(!demoActive\.value\) void reloadSets\(\)/)
   assert.match(panel, /<ModNotInstalled[^>]*layout="inline"/)
   assert.doesNotMatch(panel, /cached_releases|installableRepository/)
   assert.match(shared, /useModRepositoryLink\(\)/)

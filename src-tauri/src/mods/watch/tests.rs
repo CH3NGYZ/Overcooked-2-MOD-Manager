@@ -151,7 +151,7 @@ fn os_watch_ignores_non_dll_and_both_diy_level_map_trees() {
     // watcher gives only the directory arrival on some native backends.
     let outside = root.join("Incoming");
     fs::create_dir(&outside).unwrap();
-    write_plugin(&outside.join("incoming.dll.disabled"), "1.0.0");
+    write_plugin(&outside.join("Incoming.dll.disabled"), "1.0.0");
     let moved = plugins.join("Incoming");
     fs::rename(&outside, &moved).unwrap();
     received

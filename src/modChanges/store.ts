@@ -161,8 +161,17 @@ function invalidate() {
   invalidated = true
   if (pending) return pending
   pending = Promise.resolve().then(async () => {
-    do { invalidated = false; await refresh() } while (invalidated)
-  }).finally(() => { pending = undefined })
+    try {
+      do {
+        invalidated = false
+        try { await refresh() } catch (error) { if (!invalidated) throw error }
+      } while (invalidated)
+    } finally {
+      // Release the pending slot in the same turn as the final queue check.
+      // A scan publishing before a chained finally could otherwise lose its refresh.
+      pending = undefined
+    }
+  })
   return pending
 }
 

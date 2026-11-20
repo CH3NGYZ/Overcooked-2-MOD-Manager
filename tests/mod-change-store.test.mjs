@@ -31,6 +31,13 @@ test('an invalidation during evaluation schedules a second snapshot before the s
  const store=useModChanges(),pending=store.invalidate();await tick();const again=store.invalidate();assert.strictEqual(again,pending)
  first.resolve(snapshot('older'));await pending;assert.equal(calls,2);assert.equal(store.evaluation.value.revision,'latest')
 })
+test('a map scan publishing just after the evaluation loop exits cannot lose its refresh',async()=>{
+ const first=deferred();let calls=0;globalThis.__changeStoreApi=()=>++calls===1?first.promise:Promise.resolve(snapshot('map-scanned'))
+ const store=useModChanges(),pending=store.invalidate();await tick()
+ const mapPublished=first.promise.then(async()=>{await Promise.resolve();store.clearEvaluation();await store.invalidate()})
+ first.resolve(snapshot('before-map-scan'));await Promise.all([pending,mapPublished])
+ assert.equal(calls,2);assert.equal(store.evaluation.value.revision,'map-scanned')
+})
 
 const plan=(id='initial',prepared=false,install_notes=[])=>({plan_id:id,prepared,status:'ready',nodes:[],roots:[],actions:[],evaluations:[],blockers:[],impacts:[],install_notes})
 const note={id:'github-beta',name:'Arcade Beta',name_i18n:{},note:'Read the beta instructions.',note_i18n:{}}

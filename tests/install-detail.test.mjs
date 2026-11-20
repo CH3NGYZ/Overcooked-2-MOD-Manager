@@ -259,7 +259,7 @@ test('Release 日志只在「仓库来源 + 有版本 + 有正文」时出现', 
     origin: 'repository', release_tag: 'v1.2.0', release_body: '## 改动\n- 修好了',
   }))
   assert.equal(withLog.releaseLog.tag, 'v1.2.0')
-  assert.match(withLog.releaseLog.html, /<h2>改动<\/h2>/, '日志正文要走 Markdown 渲染')
+  assert.match(withLog.releaseLog.source, /^## 改动/, '正文保留原始 Markdown，交给共享正文组件')
 
   // 本地文件 / 直链：没有版本概念
   assert.equal(modPreviewDetail(modPreview()).releaseLog, null)

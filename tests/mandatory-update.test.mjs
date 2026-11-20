@@ -97,8 +97,8 @@ test('only manual fallback keeps its guidance; release notes render without the 
   assert.match(prompt, /<p v-if="manual" class="update-requirement">\{\{ t\('update\.manualRequired'\) \}\}<\/p>/)
   assert.doesNotMatch(prompt, /['"]update\.required['"]|body-label|dialogs\.whatSNew/)
   assert.match(prompt, /v-if="manual && failureDetail" class="update-error" role="alert"/)
-  assert.match(prompt, /class="body markdown-body" v-html="bodyHtml"/)
-  assert.match(prompt, /<div v-else class="body">\{\{ bodyText \}\}<\/div>/)
+  assert.match(prompt, /<MarkdownBody v-if="bodyText" class="body" :source="bodyText"/)
+  assert.match(prompt, /<div v-else class="body">\{\{ t\('dialogs\.noReleaseNotesWereProvided'\) \}\}<\/div>/)
 })
 
 test('UI hides cancellation; native cancel, exit and close share the atomic update guard', () => {

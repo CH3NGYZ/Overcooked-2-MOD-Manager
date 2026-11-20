@@ -11,7 +11,7 @@ const md = new MarkdownIt({
   linkify: true,      // 裸链接自动成链
   breaks: true,       // 单个换行即换行（备注/日志更符合直觉）
   highlight(code: string, language: string): string {
-    // mermaid 交给 renderMermaid() 异步渲染，这里只输出占位容器并保留源码
+    // Mermaid 交给 MarkdownBody 的 DOM 后处理，Markdown 阶段只保留源码。
     if (language === 'mermaid') return ''
     if (language && hljs.getLanguage(language)) {
       try {
@@ -147,6 +147,7 @@ function loadMermaid(): Promise<MermaidApi> {
     api.initialize({
       startOnLoad: false,
       securityLevel: 'strict',
+      suppressErrorRendering: true,
       theme: document.documentElement.classList.contains('dark') ? 'dark' : 'default',
       fontFamily: "'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif",
     })
@@ -175,6 +176,9 @@ export async function renderMermaidBlocks(root: HTMLElement | null): Promise<voi
     if (!block.isConnected) continue
     const source = block.dataset.mermaidSource ?? ''
     if (!source.trim()) continue
+    // Claim the placeholder once. New Markdown replaces the node; an older
+    // render can never overwrite a new note after the modal or tab changes.
+    delete block.dataset.mermaidSource
     mermaidCounter += 1
     try {
       const { svg } = await api.render(`oc2-mermaid-${mermaidCounter}`, source)

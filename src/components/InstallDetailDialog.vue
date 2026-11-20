@@ -18,6 +18,7 @@ import { formatVersion } from '../modStatus'
 import { t } from '../i18n'
 import AppModal from './AppModal.vue'
 import LocalItemCard from './LocalItemCard.vue'
+import MarkdownBody from './MarkdownBody.vue'
 import { useCardExpansion } from '../composables/useCardExpansion'
 import { collapseCardWithScroll, scrollExpandedCardIntoView } from '../expandScroll'
 import type { InstallDetailEntry, InstallDetailModel } from '../installDetail'
@@ -250,8 +251,7 @@ watch(() => props.show, (open) => { if (open) expansion.closeAll() })
           <span class="muted">{{ t('modsLocal.releaseNotes') }}</span>
           <b class="mono">{{ formatVersion(model.releaseLog.tag) }}</b>
         </div>
-        <!-- renderReadme 关闭了原始 HTML，日志只能输出 Markdown 生成的安全节点 -->
-        <div class="release-log-box markdown-body" v-html="model.releaseLog.html"></div>
+        <MarkdownBody class="release-log-box" :source="model.releaseLog.source" />
       </div>
     </div>
 

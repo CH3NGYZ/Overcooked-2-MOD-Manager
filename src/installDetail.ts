@@ -16,7 +16,6 @@
  * 后端读这些字段的实现同样只有一份（`mods::read_dll_details`）。
  */
 import { t } from './i18n'
-import { renderReadme } from './markdown'
 import { formatVersion } from './modStatus'
 import type { DependencyRow } from './dependencyRows'
 import type { InstallConflict, ModPreview, ModPreviewRole, ZipLevelSet } from './types'
@@ -92,8 +91,8 @@ export interface InstallDetailModel {
   conflictHint: string
   /** 没有任何条目时的说明行；空数组表示这种安装不该出现空态。 */
   emptyHint: string[]
-  /** 仓库来源的 Release 日志（纯 Markdown 已渲染成安全 HTML）；没有就整块不出现。 */
-  releaseLog: { tag: string; html: string } | null
+  /** 仓库来源的 Release 正文；没有就整块不出现。 */
+  releaseLog: { tag: string; source: string } | null
   confirmLabel: string
   cancelLabel: string
   /** 有没有可安装的内容；false 时「立即安装」禁用，只能取消。 */
@@ -232,7 +231,7 @@ export function modPreviewDetail(preview: ModPreview): InstallDetailModel {
     conflicts,
     conflictHint: conflicts.length > 0 ? t('tools.installConflictHint') : '',
     emptyHint: [t('tools.thisArchiveContainsNoDllFiles'), t('tools.nothingInstallableHere')],
-    releaseLog: showReleaseLog ? { tag: preview.release_tag, html: renderReadme(releaseBody) } : null,
+    releaseLog: showReleaseLog ? { tag: preview.release_tag, source: releaseBody } : null,
     confirmLabel: conflicts.length > 0 ? t('tools.uninstallAndInstall') : t('tools.installNow'),
     cancelLabel: t('recycle.cancel'),
     confirmable: preview.total_dlls > 0,

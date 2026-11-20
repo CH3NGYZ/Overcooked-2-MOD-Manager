@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { t } from '../i18n'
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { NButton } from 'naive-ui'
 import { api, watchAppUpdatePhase } from '../services/tauri'
-import { renderMermaidBlocks, renderReadme } from '../markdown'
 import AppModal from './AppModal.vue'
+import MarkdownBody from './MarkdownBody.vue'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { beginDownloadTask, endDownloadTask } from '../downloadTask'
 import { appUpdateState, beginAppUpdate, finishAppUpdate } from '../appUpdateState'
@@ -46,13 +46,7 @@ onUnmounted(() => {
   window.removeEventListener('beforeunload', preventReload)
 })
 
-const bodyText = computed(() => update.value?.body?.trim() || t('dialogs.noReleaseNotesWereProvided'))
-const bodyHtml = computed(() => renderReadme(update.value?.body?.trim() || ''))
-const bodyElement = ref<HTMLElement | null>(null)
-watch([bodyHtml, show], async () => {
-  await nextTick()
-  if (show.value) void renderMermaidBlocks(bodyElement.value)
-}, { flush: 'post' })
+const bodyText = computed(() => update.value?.body?.trim() ?? '')
 
 async function install() {
   if (!beginAppUpdate()) return
@@ -103,8 +97,8 @@ async function openRelease() {
         {{ failureDetail }}
       </div>
       <div v-if="releaseError" class="update-error" role="alert">{{ releaseError }}</div>
-      <div v-if="bodyHtml" ref="bodyElement" class="body markdown-body" v-html="bodyHtml"></div>
-      <div v-else class="body">{{ bodyText }}</div>
+      <MarkdownBody v-if="bodyText" class="body" :source="bodyText" />
+      <div v-else class="body">{{ t('dialogs.noReleaseNotesWereProvided') }}</div>
       <div v-if="phaseText" class="phase" role="status">{{ translateBackendMessage(phaseText) }}</div>
     </div>
     <template #footer>

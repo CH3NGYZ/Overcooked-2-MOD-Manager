@@ -1,14 +1,13 @@
 <script setup lang="ts">
-import { computed, shallowRef, watch } from 'vue'
+import { shallowRef, watch } from 'vue'
 import { NButton } from 'naive-ui'
 import AppModal from '../components/AppModal.vue'
+import MarkdownBody from '../components/MarkdownBody.vue'
 import { t } from '../i18n'
-import { renderReadme } from '../markdown'
 import { installNoteKey, type InstallNote } from './planNotes'
 
 const props = defineProps<{ notes: readonly InstallNote[] }>()
 const emit = defineEmits<{ continue: [notes: readonly InstallNote[]]; cancel: [] }>()
-const articles = computed(() => props.notes.map(note => ({ ...note, html: renderReadme(note.text) })))
 const READ_SECONDS = 5
 const remaining = shallowRef(READ_SECONDS)
 
@@ -31,9 +30,9 @@ function continueReading() {
   <AppModal :show="true" :title="t('dialogs.readModNoteFirst')" max-width="min(640px, 94%)"
     :mask-closable="false" card-class="mod-install-note"
     @update:show="(show: boolean) => { if (!show) emit('cancel') }">
-    <article v-for="article in articles" :key="article.id" class="install-note">
+    <article v-for="article in notes" :key="article.id" class="install-note">
       <h3 class="install-note-name">{{ article.name }}</h3>
-      <div class="markdown-body" v-html="article.html"></div>
+      <MarkdownBody :source="article.text" />
     </article>
     <template #footer>
       <NButton @click="emit('cancel')">{{ t('common.action.cancel') }}</NButton>

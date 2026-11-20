@@ -70,9 +70,9 @@ import { NButton, NDivider, NSelect, NSkeleton, NTabPane, NTabs, NTag } from 'na
 import type { SelectOption } from 'naive-ui'
 import { CloseOutline, DownloadOutline } from '@vicons/ionicons5'
 import { t } from '../i18n'
-import { renderMermaidBlocks, renderReadme } from '../markdown'
 import { formatFileSize, formatLocalDateTime } from '../repositoryAssets'
 import DependencyTable, { type DependencyRow } from './DependencyTable.vue'
+import MarkdownBody from './MarkdownBody.vue'
 import ProviderIcon from './ProviderIcon.vue'
 import type { Provider } from '../types'
 import { providerLabel, repositoryHomepage } from '../providers'
@@ -229,8 +229,6 @@ const sourceUrl = computed(() =>
 )
 
 /* ===== 说明 tab ===== */
-const noteHtml = computed(() => renderReadme(props.note))
-const readmeHtml = computed(() => renderReadme(props.readmeContent))
 /** README 区域是否出现：加载中、请求失败、有内容时都显示。 */
 const readmeSectionVisible = computed(() => {
   if (props.readmeLoading) return true
@@ -246,8 +244,7 @@ const versionText = computed(() => props.versionFallback || props.version || '�
 const bindingText = computed(() => props.bindingLabel || t('tools.versionBinding'))
 /** 资产区用本地时间的时分秒；UTC 的 `published_at` 直接截日期会跨时区错位。 */
 const publishedDateTime = computed(() => formatLocalDateTime(props.publishedAt))
-const logHtml = computed(() => renderReadme(props.releaseNotes.trim()))
-const hasLog = computed(() => !!props.releaseNotes.trim())
+const logText = computed(() => props.releaseNotes.trim())
 const emptyLogText = computed(() => props.logEmptyText || t('modsLocal.thisReleaseHasNoNotes'))
 
 /** 版本下拉与资产下拉的 Naive 选项（外部传入的是纯数据，`SelectMixedOption` 要求 `type`，这里统一转换）。 */
@@ -347,21 +344,6 @@ function runPrimaryAction() {
   else emit('install', installTag.value, installAsset.value)
 }
 
-/* ===== Markdown / Mermaid ===== */
-const noteElement = ref<HTMLElement | null>(null)
-const readmeElement = ref<HTMLElement | null>(null)
-watch(
-  [noteHtml, logHtml, readmeElement, () => props.readmeLoading],
-  async () => {
-    if (!panelElement.value) return
-    await nextTick()
-    void renderMermaidBlocks(noteElement.value)
-    void renderMermaidBlocks(logBoxElement.value)
-    void renderMermaidBlocks(readmeElement.value)
-  },
-  { flush: 'post' },
-)
-
 /* ===== 下载安装 tab：把「资产 / 安装」一行钉在抽屉视口内 ===== */
 /*
  * 面板高度 = 抽屉可视高度，日志框吃掉剩下的空间（有下限），安装行靠
@@ -377,8 +359,7 @@ const {
   isFitted,
 } = useReleasePanelFit({
   activeTab,
-  hasLog,
-  logHtml,
+  logText,
   dependencies: [
     () => props.version,
     () => props.assetValue,
@@ -387,6 +368,7 @@ const {
     () => props.disabledLabel,
   ],
 })
+const setLogBoxElement = (element: unknown) => { logBoxElement.value = element as HTMLElement | null }
 </script>
 
 <template>
@@ -451,7 +433,7 @@ const {
           <n-divider />
         </template>
 
-        <section v-if="note" ref="noteElement" class="note markdown-body" v-html="noteHtml"></section>
+        <MarkdownBody v-if="note" class="note" :source="note" />
         <section v-else-if="noteEmptyVisible" class="note muted">{{ emptyNoteText }}</section>
 
         <!-- README：加载中显示骨架动画；文件不存在时整块（含分割线）收起 -->
@@ -470,7 +452,7 @@ const {
                   <n-skeleton text class="skeleton-line" />
                 </div>
                 <div v-else-if="readmeError" key="error" class="muted">{{ readmeError }}</div>
-                <div v-else key="body" ref="readmeElement" class="markdown-body" v-html="readmeHtml"></div>
+                <MarkdownBody v-else key="body" :source="readmeContent" />
               </Transition>
             </section>
           </div>
@@ -503,10 +485,9 @@ const {
             挤到折叠线以下、由抽屉滚动。
           -->
           <div class="release-log">
-            <div v-if="hasLog" ref="logBoxElement" class="log-box markdown-body" :style="logBoxStyle"
-              v-html="logHtml"></div>
-            <div v-else ref="logBoxElement" class="log-box log-empty muted" :style="logBoxStyle">
-              {{ emptyLogText }}
+            <div :ref="setLogBoxElement" class="log-box" :class="{ 'log-empty muted': !logText }" :style="logBoxStyle">
+              <MarkdownBody v-if="logText" :source="logText" />
+              <template v-else>{{ emptyLogText }}</template>
             </div>
           </div>
 

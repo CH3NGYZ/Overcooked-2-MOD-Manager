@@ -15,7 +15,8 @@ test('release panel delegates DOM sizing and lifecycle to one composable', () =>
   assert.match(panel, /useReleasePanelFit\(/)
   assert.match(panel, /:class="\{ 'detail--fill': isFitted \}"/)
   assert.match(panel, /ref="panelElement"/)
-  assert.match(panel, /ref="logBoxElement"/)
+  assert.match(panel, /:ref="setLogBoxElement"/)
+  assert.match(panel, /logBoxElement\.value = element/)
   assert.doesNotMatch(panel, /new ResizeObserver|function fitInstallPanel|function scheduleFitInstallPanel|onBeforeUnmount\(/)
 
   assert.match(fit, /new ResizeObserver/)

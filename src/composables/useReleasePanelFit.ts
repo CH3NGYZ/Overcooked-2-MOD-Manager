@@ -18,8 +18,7 @@ type ReleasePanelTab = 'info' | 'install'
 
 interface UseReleasePanelFitOptions {
   activeTab: MaybeRefOrGetter<ReleasePanelTab>
-  hasLog: MaybeRefOrGetter<boolean>
-  logHtml: MaybeRefOrGetter<string>
+  logText: MaybeRefOrGetter<string>
   /** Values that can change the fixed rows' height and therefore require a refit. */
   dependencies?: ReadonlyArray<MaybeRefOrGetter<unknown>>
 }
@@ -146,8 +145,7 @@ export function useReleasePanelFit(options: UseReleasePanelFitOptions) {
 
   const watchSources = [
     () => activeTabValue(),
-    () => toValue(options.hasLog),
-    () => toValue(options.logHtml),
+    () => toValue(options.logText),
     ...(options.dependencies ?? []).map((source) => () => toValue(source)),
   ]
   watch(watchSources, scheduleFitInstallPanel)

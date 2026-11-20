@@ -162,7 +162,7 @@ test('disabled map and MOD with updates can repair both kinds of unmet dependenc
   assert.equal(f.mod.packageRepairStatus(f.pkg)?.state, 'version_mismatch')
   assert.equal(f.mod.packageRelationTag(f.pkg, 'dependency_disabled')?.relation.guid, 'extra')
   const tags = levelSetCardTags(f.set, f.maps.value, f.mods.value, true, f.repositories.value)
-  assert.equal(tags[1]?.text, 'modChanges.card.dependencyDisabled')
+  assert.equal(tags[1]?.text, 'modChanges.relation.disabled')
   f.map.onTagClick(f.set, tags[1])
   f.mod.repairPackageDependencies(f.pkg)
   await new Promise(resolve => setImmediate(resolve))

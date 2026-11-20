@@ -24,6 +24,7 @@
  * 回调（视图传 `t`，测试传恒等函数），本地化名字走 `pickName` 回调。
  */
 import {
+  DEPENDENCY_ISSUE_TEXT,
   relationTargetRepository,
   relationsForMapRelease,
   resolveRelation,
@@ -246,8 +247,9 @@ function statusFor(
   const kind = status.relation.kind ?? 'requires'
   if (status.state === 'unassessed') return undefined
   if (status.state === 'unknown') return { text: translate('modChanges.relation.unknown'), tone: 'moderate' }
-  if (status.state === 'disabled') return { text: translate('modChanges.relation.disabled'), tone: 'critical' }
-  if (status.state === 'version_mismatch') return { text: translate('modChanges.relation.versionMismatch'), tone: 'critical' }
+  if (status.state === 'disabled' || status.state === 'version_mismatch') {
+    return { text: translate(DEPENDENCY_ISSUE_TEXT[status.state]), tone: 'critical' }
+  }
   const ok = status.state === 'ok'
 
   if (kind === 'conflicts') {
@@ -262,14 +264,14 @@ function statusFor(
   }
 
   /*
-   * 满足时只写「已满足」，**不写版本号**：版本号写在「要求」列里（那是
+   * 满足时只写「依赖已满足」，**不写版本号**：版本号写在「要求」列里（那是
    * 声明的区间），状态列只回答「现在行不行」。把本地版本塞进状态会让同一
    * 行出现两个版本号，还得让用户自己比较哪个是要求、哪个是现状。
    */
   if (ok) return { text: translate('tools.satisfied'), tone: 'mild' }
 
   if (status.state !== 'installable') {
-    return { text: translate('modsOnline.missingDep'), tone: 'critical' }
+    return { text: translate(DEPENDENCY_ISSUE_TEXT.missing), tone: 'critical' }
   }
   // 依赖已装时按实际候选区分升级/降级；候选只能来自已解析的关系结果。
   return status.installedMod

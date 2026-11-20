@@ -426,8 +426,8 @@ test('包标题同时汇总依赖禁用、依赖不符和可更新，每种依�
     mod({ dll_file: 'Companion.dll', release_companion: true, labels: ['dependency_disabled', 'latest'] }),
   ])
   assert.deepEqual(tags.map(tag => [tag.key, tag.text, tag.count]), [
-    ['dependency_disabled', 'modChanges.card.dependencyDisabled', undefined],
-    ['dependency_mismatch', 'modChanges.card.dependencyMismatch', undefined],
+    ['dependency_disabled', 'modChanges.relation.disabled', undefined],
+    ['dependency_mismatch', 'modChanges.relation.versionMismatch', undefined],
     ['update_available', 'tools.update', undefined],
   ])
 })

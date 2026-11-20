@@ -137,17 +137,17 @@ test('页头结论摘要依赖优先、按数量排序且不重复统计禁用�
   const second = set({ dir_name: 'Second', enabled: false })
   const summaries = summarizeLevelSetTags([first, second], (item) => item === first
     ? [
-        { kind: 'dependency', text: 'modsOnline.missingDep', tone: 'critical' },
+        { kind: 'dependency', text: 'modChanges.relation.missing', tone: 'critical' },
         { kind: 'state', text: 'modsLocal.latest', tone: 'accent' },
         { kind: 'state', text: 'modsLocal.disabled', tone: 'muted' },
       ]
     : [
-        { kind: 'dependency', text: 'modsOnline.missingDep', tone: 'critical' },
+        { kind: 'dependency', text: 'modChanges.relation.missing', tone: 'critical' },
         { kind: 'state', text: 'tools.update', tone: 'moderate' },
       ])
 
   assert.deepEqual(summaries, [
-    { key: 'tag:dependency:modsOnline.missingDep', text: 'modsOnline.missingDep', tone: 'critical', count: 2 },
+    { key: 'tag:dependency:modChanges.relation.missing', text: 'modChanges.relation.missing', tone: 'critical', count: 2 },
     { key: 'tag:state:modsLocal.latest', text: 'modsLocal.latest', tone: 'accent', count: 1 },
     { key: 'tag:state:tools.update', text: 'tools.update', tone: 'moderate', count: 1 },
   ])
@@ -508,7 +508,7 @@ test('卡片标签：先依赖提醒，再版本结论', () => {
   backendRelations(target, ['missing'])
   const tags = levelSetCardTags(set({ version: '0.73' }), [target], [], true)
   // 文案与 MOD 卡片是同一枚 key（「缺依赖」三个字），不再自造「依赖缺失」
-  assert.deepEqual(tags.map((tag) => tag.text), ['modsOnline.missingDep', 'tools.update'])
+  assert.deepEqual(tags.map((tag) => tag.text), ['modChanges.relation.missing', 'tools.update'])
   assert.equal(tags[0].kind, 'dependency')
   assert.equal(tags[0].tone, 'critical')
   // 「有更新」带着绑定地图 id：点下去要落到下载页那张卡
@@ -523,7 +523,7 @@ test('卡片标签：必须依赖缺了就写「缺依赖」，线上有候选�
   const tags = levelSetCardTags(set(), [target], [], true, [diy])
   assert.equal(tags[0].kind, 'dependency')
   // `requires` 是必须依赖：缺了就是缺了，线上能装只是让标签可点、可跳过去补装
-  assert.equal(tags[0].text, 'modsOnline.missingDep')
+  assert.equal(tags[0].text, 'modChanges.relation.missing')
   assert.equal(tags[0].tone, 'critical')
   // 有候选仓库 → 标签可点，落点是提供依赖的仓库卡，而不是这张图自己
   assert.equal(tags[0].dependency.repair.node_id, 'map:RW_LevelSet')
@@ -555,7 +555,7 @@ test('卡片标签：停用且缺依赖时两条都显示（重新启用前就�
   const target = map({ required_frameworks: [{ guid: 'com.rw.diylevel' }] })
   backendRelations(target, ['missing'], [], false)
   const tags = levelSetCardTags(set({ enabled: false }), [target], [], true)
-  assert.deepEqual(tags.map((tag) => tag.text), ['modsOnline.missingDep', 'modsLocal.disabled'])
+  assert.deepEqual(tags.map((tag) => tag.text), ['modChanges.relation.missing', 'modsLocal.disabled'])
 })
 
 test('地图就绪检查的依赖禁用和依赖不符分别计数和筛选', () => {
@@ -565,10 +565,10 @@ test('地图就绪检查的依赖禁用和依赖不符分别计数和筛选', ()
   const local = set({ enabled: false })
   backendRelations(target, ['version_mismatch', 'disabled', 'disabled'], [], false)
   const tags = levelSetCardTags(local, [target], [], true)
-  assert.deepEqual(tags.map(tag => tag.text), ['modChanges.card.dependencyMismatch', 'modChanges.card.dependencyDisabled', 'modsLocal.disabled'])
+  assert.deepEqual(tags.map(tag => tag.text), ['modChanges.relation.versionMismatch', 'modChanges.relation.disabled', 'modsLocal.disabled'])
   assert.deepEqual(tags.slice(0, 2).map(tag => tag.dependency.relation.guid), ['com.rw.diylevel', 'com.rw.loader'])
   assert.deepEqual(levelSetStatusKeys(local, tags).slice(0, 2), [
-    'tag:dependency:modChanges.card.dependencyMismatch', 'tag:dependency:modChanges.card.dependencyDisabled',
+    'tag:dependency:modChanges.relation.versionMismatch', 'tag:dependency:modChanges.relation.disabled',
   ])
   assert.deepEqual(summarizeLevelSetTags([local], () => tags).map(tag => tag.count), [1, 1])
   clearEvaluation()

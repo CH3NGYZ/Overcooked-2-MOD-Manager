@@ -116,21 +116,6 @@ export const modsOnline: DomainMessages = {
     ja: '依存関係をインストール',
   },
   // 缺少依赖
-  missingDependency: {
-    'zh-CN': '缺少依赖',
-    'zh-TW': '缺少依賴',
-    en: 'Missing dependency',
-    ko: '의존성 누락',
-    ja: '依存関係が不足',
-  },
-  // 缺依赖
-  missingDep: {
-    'zh-CN': '缺依赖',
-    'zh-TW': '缺依賴',
-    en: 'Missing dep',
-    ko: '의존성 없음',
-    ja: '依存不足',
-  },
   // 有冲突（被动描述：卡片自己装上了，但和别的插件撞了，唯一出路是卸载）
   conflict: {
     'zh-CN': '有冲突',

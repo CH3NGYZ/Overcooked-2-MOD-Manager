@@ -27,7 +27,7 @@ test('absent backend evaluation stays unassessed even when local data appears to
   }
 })
 
-for (const [state, text] of [['missing', 'modsOnline.missingDep'], ['disabled', 'modChanges.relation.disabled'],
+for (const [state, text] of [['missing', 'modChanges.relation.missing'], ['disabled', 'modChanges.relation.disabled'],
   ['version_mismatch', 'modChanges.relation.versionMismatch'], ['unknown', 'modChanges.relation.unknown'], ['satisfied', 'tools.satisfied']]) {
   test(`backend ${state} is projected without choosing a release or inventing a downgrade`, () => {
     evaluationSnapshot([{ id: 'mod:owner', dlls: ['Owner.dll'], rows: [{ relation, state, targets: ['mod:runtime'] }] }],
@@ -59,7 +59,7 @@ test('an exact online tag never borrows the installed owner evaluation', () => {
     { id: 'subject:repo:v1', repo: 'repo', tag: 'v1', candidates: [{ id: 'release:repo:v1', tag: 'v1' }],
       rows: [{ relation, state: 'missing' }] }])
   const old = dependencyRowsFor([], { ...options, ownerRepository: online, version: 'v1' })[0]
-  assert.equal(old.status, 'modsOnline.missingDep')
+  assert.equal(old.status, 'modChanges.relation.missing')
   assert.deepEqual(old.jump.repair, { node_id: 'mod:repo', candidate_id: 'release:repo:v1' })
   const absent = dependencyRowsFor([relation], { ...options, ownerRepository: online, version: 'v0' })[0]
   assert.equal(absent.status, undefined)

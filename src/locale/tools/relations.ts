@@ -84,11 +84,11 @@ export const toolsUiRelations: DomainMessages = {
   },
   // 依赖已满足（本地装了且版本在区间内）
   satisfied: {
-    'zh-CN': '已满足',
-    'zh-TW': '已滿足',
-    en: 'Satisfied',
-    ko: '충족',
-    ja: '充足',
+    'zh-CN': '依赖已满足',
+    'zh-TW': '相依已滿足',
+    en: 'Dependency met',
+    ko: '의존성 충족',
+    ja: '依存先の条件を満たす',
   },
   // 依赖未装、但线上有满足区间的版本可装
   installable: {

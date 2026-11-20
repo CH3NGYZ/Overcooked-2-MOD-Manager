@@ -352,6 +352,13 @@ export interface DependencyTagView {
   repositoryId?: string
 }
 
+/** Shared wording for confirmed dependency problems in cards, rows and plan traces. */
+export const DEPENDENCY_ISSUE_TEXT = {
+  missing: 'modChanges.relation.missing',
+  disabled: 'modChanges.relation.disabled',
+  version_mismatch: 'modChanges.relation.versionMismatch',
+} as const
+
 /**
  * 一条未满足的关系该显示成哪枚提醒。
  *
@@ -360,8 +367,8 @@ export interface DependencyTagView {
  * 全部走这一处 —— 三处各写一套时，同一个依赖在不同页面会得到不同结论。
  *
  * 三种关系说三件不同的事（用户 2026-11-04 定的口径）：
- *   · `requires`（必须依赖）：缺了就是缺了，**线上能不能一键补上不改变这件
- *     事** —— 一律写「缺依赖」。写成「可安装」时卡片读起来像「有东西想装」，
+ *   · `requires`（必须依赖）：未安装、禁用和版本不符分别显示；**线上能不能一键补上
+ *     不改变本地状态**。写成「可安装」时卡片读起来像「有东西想装」，
  *     而不是「这个 MOD 现在跑不起来」，必须依赖的强制性消失了。
  *   · `compatible`（兼容）：要求「对方存在时版本落在区间内」，线上有满足区间
  *     的版本就是「可安装」，换到那个版本就兼容。
@@ -373,8 +380,8 @@ export interface DependencyTagView {
  */
 export function relationTagView(status: RelationStatus | undefined): DependencyTagView | undefined {
   if (!status || !relationIsUnmet(status)) return undefined
-  if (status.state === 'disabled') return { text: 'modChanges.relation.disabled', tone: 'critical', kind: 'dependencyDisabled' }
-  if (status.state === 'version_mismatch') return { text: 'modChanges.relation.versionMismatch', tone: 'critical', kind: 'dependencyMismatch' }
+  if (status.state === 'disabled') return { text: DEPENDENCY_ISSUE_TEXT.disabled, tone: 'critical', kind: 'dependencyDisabled' }
+  if (status.state === 'version_mismatch') return { text: DEPENDENCY_ISSUE_TEXT.version_mismatch, tone: 'critical', kind: 'dependencyMismatch' }
   const kind = status.relation.kind ?? 'requires'
   /*
    * 先按 `kind` 分派，再看 `state`：`compatible` 不满足时 `resolveRelation`
@@ -396,7 +403,7 @@ export function relationTagView(status: RelationStatus | undefined): DependencyT
     return { text: 'modsOnline.conflict', tone: 'critical', kind: 'conflict' }
   }
   const view: DependencyTagView = {
-    text: 'modsOnline.missingDep',
+    text: DEPENDENCY_ISSUE_TEXT.missing,
     tone: 'critical',
     kind: 'missingDependency',
   }
@@ -427,11 +434,6 @@ export interface LocalRelationTag extends DependencyTagView {
   dependency: RelationStatus
 }
 
-export const LOCAL_RELATION_TEXT = {
-  dependencyDisabled: 'modChanges.card.dependencyDisabled',
-  dependencyMismatch: 'modChanges.card.dependencyMismatch',
-} as const
-
 export const MOD_RELATION_LABELS = {
   conflict: 'dependency_conflict',
   missingDependency: 'missing_dependency',
@@ -448,9 +450,7 @@ export function localRelationTags(statuses: readonly RelationStatus[]): LocalRel
     if (!tag) continue
     const previous = tags.get(tag.kind)
     if (!previous || (!relationJumpRepositoryId(previous.dependency) && relationJumpRepositoryId(dependency))) {
-      const text = tag.kind === 'dependencyDisabled' || tag.kind === 'dependencyMismatch'
-        ? LOCAL_RELATION_TEXT[tag.kind] : tag.text
-      tags.set(tag.kind, { ...tag, text, dependency })
+      tags.set(tag.kind, { ...tag, dependency })
     }
   }
   return [...tags.values()]

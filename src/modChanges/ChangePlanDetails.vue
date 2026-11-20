@@ -3,6 +3,7 @@ import { computed, type DeepReadonly } from 'vue'
 import { ArrowUndoOutline, CheckmarkOutline, CloseOutline, EllipsisHorizontal } from '@vicons/ionicons5'
 import { NSpin, NTag } from 'naive-ui'
 import { locale, t } from '../i18n'
+import { DEPENDENCY_ISSUE_TEXT } from '../modRelations'
 import { formatVersionSpec } from '../versionSpec'
 import { changeReasonText } from './messages'
 import { changePlanDetails, type ChangePlanNames } from './presentation'
@@ -52,9 +53,9 @@ function diagnosticReason({ state, reason, relation }: DeepReadonly<DiagnosticSt
   if (reason === 'duplicate_enabled_providers') return t('modChanges.diagnostic.duplicateProviders')
   if (reason === 'modChanges.multipleInstalledCopies') return t('modChanges.multipleInstalledCopies')
   switch (state) {
-    case 'missing': return t('modsOnline.missingDependency')
-    case 'disabled': return t('modChanges.relation.disabled')
-    case 'version_mismatch': return t('modChanges.relation.versionMismatch')
+    case 'missing':
+    case 'disabled':
+    case 'version_mismatch': return t(DEPENDENCY_ISSUE_TEXT[state])
     case 'conflict': return t(relation?.kind === 'compatible' ? 'modsOnline.incompatible' : 'modsOnline.conflict')
     default: return t('modChanges.relation.unknown')
   }

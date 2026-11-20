@@ -58,7 +58,7 @@ test('卡头不把尚未评估或无法确认的依赖当成已确认的问题',
   assert.equal(relationCardTag(unknown, true), undefined)
   assert.equal(dependencyTagFor([unassessed, unknown], true), undefined)
   assert.deepEqual(unmetRelations([unassessed, unknown, missing]), [missing])
-  assert.equal(dependencyTagFor([unassessed, unknown, missing], true)?.text, 'modsOnline.missingDep')
+  assert.equal(dependencyTagFor([unassessed, unknown, missing], true)?.text, 'modChanges.relation.missing')
 })
 
 /* ===== 按 Release 覆盖 ===== */

@@ -11,7 +11,7 @@ import { useModRepositoryRefresh } from '../composables/useModRepositoryRefresh'
 import { isPrereleaseVersion, modsForRepository, versionDisplay } from '../modStatus'
 import { repositoryInstallAction, repositoryStatus, type InstallAction, type StatusTone } from '../statusTags'
 import { useFocusHighlight, useLocalModLink } from '../crossLink'
-import { dependencyTagFor, primaryRelation, relationJumpRepositoryId, resolveRelations, type RelationStatus } from '../modRelations'
+import { dependencyTagFor, primaryRelation, relationJumpRepositoryId, relationTagView, resolveRelations, type RelationStatus } from '../modRelations'
 import { dependencyRowFromStatus, type DependencyRow } from '../dependencyRows'
 import { useDependencyNavigation } from '../composables/useDependencyNavigation'
 import { pickI18n, t } from '../i18n'
@@ -352,10 +352,12 @@ function relationTagTitle(repo: ModRepository) {
   const status = unmetRelation(repo)
   if (!status) return undefined
   if (status.repair) return t('modChanges.reviewSelection')
+  const tag = relationTagView(status)
+  if (!tag) return undefined
   const target = relationTargetName(status)
   const detail = status.state === 'conflict'
     ? t('modsOnline.isIncompatibleWithAndMustBeUninstalled', { owner: repoName(repo), target })
-    : t('modsOnline.missingDependency') + '： ' + target
+    : `${t(tag.text)}：${target}`
   return relationJumpId(repo)
     ? `${detail} · ${t('modsOnline.clickToLocateThatRepository')}`
     : detail

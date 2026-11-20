@@ -1,6 +1,6 @@
 import type { InstalledMod, InstalledModStatusLabel, ModRepository } from './types'
 import { compareVersions, isPrereleaseVersion, localVersion, modsForRepository, repositoryForMod } from './modStatus.ts'
-import { LOCAL_RELATION_TEXT } from './modRelations.ts'
+import { DEPENDENCY_ISSUE_TEXT } from './modRelations.ts'
 
 /**
  * MOD 状态标签：两页共用同一套「文案 + 语义色」，避免两边各写一份。
@@ -85,15 +85,15 @@ export const STATUS_META: Record<string, { text: string; tone: StatusTone }> = {
   /** 包内的纯依赖 DLL：读不出 BepInPlugin 元数据，只作为依赖展示。 */
   dependency: { text: 'tools.dependency', tone: 'muted' },
   /**
-   * 缺依赖：这个 MOD 声明的某个必选依赖没装（或版本不在要求区间内）。
+   * 依赖未安装：这个 MOD 声明的某个必选依赖没装。
    *
    * 等级取 `critical`（与「加载警告」同档）：缺依赖时 MOD 很可能直接不工作，
    * 比「可更新」更该被看见。但也只是提示 —— 能不能一键装由
    * `modRelations` 判定，没有可安装来源时只显示标签。
    */
-  missing_dependency: { text: 'modsOnline.missingDep', tone: 'critical' },
-  dependency_disabled: { text: LOCAL_RELATION_TEXT.dependencyDisabled, tone: 'critical' },
-  dependency_mismatch: { text: LOCAL_RELATION_TEXT.dependencyMismatch, tone: 'critical' },
+  missing_dependency: { text: DEPENDENCY_ISSUE_TEXT.missing, tone: 'critical' },
+  dependency_disabled: { text: DEPENDENCY_ISSUE_TEXT.disabled, tone: 'critical' },
+  dependency_mismatch: { text: DEPENDENCY_ISSUE_TEXT.version_mismatch, tone: 'critical' },
   /**
    * 兼容关系差一个版本：线上有落在兼容区间里的 Release 可换。
    *

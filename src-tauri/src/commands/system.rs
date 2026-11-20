@@ -6,6 +6,11 @@ use std::path::Path;
 use tauri::State;
 
 #[tauri::command]
+pub fn open_external_page(url: String) -> Result<(), String> {
+    crate::shell_open::open_web_page(&url, crate::shell_open::WebPageKind::External)
+}
+
+#[tauri::command]
 pub fn open_devtools(window: tauri::WebviewWindow) -> Result<OperationResult, String> {
     log::info!("打开开发者工具");
     window.open_devtools();

@@ -500,9 +500,7 @@ export const error: DomainMessages = {
   /*
    * 系统 Shell 打开 / 定位失败（`src-tauri/src/shell_open.rs`）。
    *
-   * 两个入口都不再调 explorer.exe：`openFailed` 的 `reason` 是 ShellExecuteW
-   * 的原始错误码（2/3 找不到、5 拒绝访问、31 没有关联程序），`revealFailed`
-   * 带的是没定位成功的路径。
+   * `openFailed` 给出 Shell/启动程序的错误码；`revealFailed` 给出未定位的路径。
    */
   'shell.openFailed': {
     'zh-CN': '系统没能打开这个位置（错误码 {reason}），请检查默认打开方式',
@@ -510,6 +508,13 @@ export const error: DomainMessages = {
     en: 'The system could not open this location (code {reason}). Check the default handler.',
     ko: '시스템이 이 위치를 열지 못했습니다(코드 {reason}). 기본 연결 프로그램을 확인하세요.',
     ja: 'システムがこの場所を開けませんでした（コード {reason}）。既定の関連付けを確認してください。',
+  },
+  'shell.webPageInvalid': {
+    'zh-CN': '无法打开此链接：请使用不含登录信息的 HTTP 或 HTTPS 网页链接。',
+    'zh-TW': '無法開啟此連結：請使用不含登入資訊的 HTTP 或 HTTPS 網頁連結。',
+    en: 'Could not open this link. Use an HTTP or HTTPS address without sign-in credentials.',
+    ko: '이 링크를 열 수 없습니다. 로그인 정보가 없는 HTTP 또는 HTTPS 주소를 사용하세요.',
+    ja: 'このリンクは開けません。ログイン情報を含まない HTTP または HTTPS のアドレスを使用してください。',
   },
   'shell.revealFailed': {
     'zh-CN': '没能在文件管理器中定位这个位置：{path}',

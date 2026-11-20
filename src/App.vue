@@ -7,6 +7,7 @@ import { CloudUploadOutline } from '@vicons/ionicons5'
 import AppSidebar from './components/AppSidebar.vue'
 import AppTitleBar from './components/AppTitleBar.vue'
 import AppCloseGuard from './components/AppCloseGuard.vue'
+import AppWebLinks from './components/AppWebLinks.vue'
 import DownloadStrip from './components/DownloadStrip.vue'
 import UpdatePrompt from './components/UpdatePrompt.vue'
 import StartupPreflightDialog from './components/StartupPreflightDialog.vue'
@@ -194,6 +195,7 @@ onMounted(() => {
     <n-message-provider placement="bottom-left">
       <n-dialog-provider>
         <AppCloseGuard />
+        <AppWebLinks />
         <div class="app-shell">
           <AppTitleBar :version="version" />
           <div class="app-body" :inert="appUpdateState.stage !== 'idle'">

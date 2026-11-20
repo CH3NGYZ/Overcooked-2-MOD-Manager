@@ -19,6 +19,7 @@
 //! 那取决于对方是否接管了 shell 命名空间。
 
 use std::path::Path;
+use url::Url;
 
 use crate::display_path::display_path;
 
@@ -39,6 +40,100 @@ pub(crate) fn open_path(path: &Path) -> Result<(), String> {
 /// 用系统默认协议处理器打开一个 URL（含 `steam://` 这类自定义协议）。
 pub(crate) fn open_url(url: &str) -> Result<(), String> {
     open_target(url)
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum WebPageKind {
+    External,
+    Release,
+}
+
+/// A URL supplied by the frontend must not reach the broader path/protocol opener unchecked.
+pub(crate) fn open_web_page(url: &str, kind: WebPageKind) -> Result<(), String> {
+    open_url(web_page_url(url, kind)?.as_str())
+}
+
+fn web_page_url(url: &str, kind: WebPageKind) -> Result<Url, String> {
+    let invalid = "error.shell.webPageInvalid";
+    let parsed = Url::parse(url).map_err(|error| match kind {
+        WebPageKind::External => invalid.into(),
+        WebPageKind::Release => {
+            crate::locale_tag::with_params("update.pageInvalid", &[("reason", &error.to_string())])
+        }
+    })?;
+    if !parsed.has_host()
+        || !(parsed.scheme() == "https"
+            || matches!(kind, WebPageKind::External) && parsed.scheme() == "http")
+    {
+        return Err(match kind {
+            WebPageKind::External => invalid,
+            WebPageKind::Release => "update.pageMustBeHttps",
+        }
+        .into());
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(match kind {
+            WebPageKind::External => invalid,
+            WebPageKind::Release => "update.pageHasCredentials",
+        }
+        .into());
+    }
+    Ok(parsed)
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+fn open_failed(code: impl ToString) -> String {
+    crate::locale_tag::with_params("error.shell.openFailed", &[("reason", &code.to_string())])
+}
+
+#[cfg(test)]
+mod web_page_tests {
+    use super::*;
+
+    #[test]
+    fn external_web_pages_allow_only_http_and_https_without_credentials() {
+        for url in [
+            "http://127.0.0.1:5311/tutorial?view=1#chapter",
+            "https://example.com/%E5%AE%89%E8%A3%85?a=1%26b",
+        ] {
+            assert_eq!(
+                web_page_url(url, WebPageKind::External).unwrap().as_str(),
+                url
+            );
+        }
+        for url in [
+            "file:///local/file",
+            "steam://store/0",
+            "mailto:example@example.com",
+            "//example.com",
+            "https://",
+            "https://account@example.com/",
+            concat!("https://:", "fixture", "@example.com/"),
+        ] {
+            assert_eq!(
+                web_page_url(url, WebPageKind::External).unwrap_err(),
+                "error.shell.webPageInvalid"
+            );
+        }
+    }
+
+    #[test]
+    fn release_pages_keep_the_https_only_policy_and_error_tags() {
+        assert!(web_page_url("https://example.com/releases", WebPageKind::Release).is_ok());
+        assert_eq!(
+            web_page_url("http://example.com/releases", WebPageKind::Release).unwrap_err(),
+            "update.pageMustBeHttps"
+        );
+        assert_eq!(
+            web_page_url("https://account@example.com/releases", WebPageKind::Release).unwrap_err(),
+            "update.pageHasCredentials"
+        );
+        assert!(
+            web_page_url("/relative", WebPageKind::Release)
+                .unwrap_err()
+                .starts_with("update.pageInvalid?")
+        );
+    }
 }
 
 fn open_target(target: &str) -> Result<(), String> {
@@ -71,21 +166,27 @@ fn open_target(target: &str) -> Result<(), String> {
         // （0 内存不足、2/3 找不到、5 拒绝访问、31 没有关联程序）。
         let code = result as usize;
         if code <= 32 {
-            return Err(crate::locale_tag::with_params(
-                "error.shell.openFailed",
-                &[("reason", &code.to_string())],
-            ));
+            return Err(open_failed(code));
         }
         Ok(())
     }
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("open")
+        use std::process::{Command, Stdio};
+
+        // Wait for Launch Services' handoff result, not for the browser to exit.
+        let status = Command::new("open")
             .arg(target)
-            .stdin(std::process::Stdio::null())
-            .spawn()
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|error| open_failed(error.raw_os_error().unwrap_or(-1)))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(open_failed(status.code().unwrap_or(-1)))
+        }
     }
     #[cfg(not(any(windows, target_os = "macos")))]
     {

@@ -19,7 +19,6 @@ use crate::models::{AppDistribution, AppUpdateCheckResult, GitHubProxyConfig, Op
 use crate::shell_open;
 use tauri::AppHandle;
 use tauri::State;
-use url::Url;
 
 #[tauri::command]
 pub fn get_app_distribution() -> Result<AppDistribution, String> {
@@ -200,16 +199,7 @@ pub async fn install_app_update(
 #[tauri::command]
 pub fn open_release_page(url: String) -> Result<OperationResult, String> {
     log::info!("打开 Release 页面");
-    let parsed = Url::parse(&url).map_err(|e| {
-        crate::locale_tag::with_params("update.pageInvalid", &[("reason", &e.to_string())])
-    })?;
-    if parsed.scheme() != "https" {
-        return Err("update.pageMustBeHttps".into());
-    }
-    if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err("update.pageHasCredentials".into());
-    }
-    shell_open::open_url(parsed.as_str())?;
+    shell_open::open_web_page(&url, shell_open::WebPageKind::Release)?;
     Ok(OperationResult {
         ok: true,
         message: "update.pageOpenedDetail".into(),

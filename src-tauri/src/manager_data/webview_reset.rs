@@ -13,38 +13,12 @@ struct ResetOptions {
 }
 
 fn options(token: uuid::Uuid, config: &tauri::Config, development: bool) -> ResetOptions {
-    let configured_url = if development {
-        config.build.dev_url.as_ref()
-    } else {
-        match config.build.frontend_dist.as_ref() {
-            Some(tauri::utils::config::FrontendDist::Url(url)) => Some(url),
-            _ => None,
-        }
-    };
-    let (protocol, host) = if let Some(url) = configured_url {
-        (
-            format!("{}:", url.scheme()),
-            url[url::Position::BeforeHost..url::Position::AfterPort].to_string(),
-        )
-    } else if cfg!(windows) {
-        let https = config
-            .app
-            .windows
-            .iter()
-            .find(|window| window.label == "main")
-            .is_some_and(|window| window.use_https_scheme);
-        (
-            if https { "https:" } else { "http:" }.to_string(),
-            "tauri.localhost".to_string(),
-        )
-    } else {
-        ("tauri:".to_string(), "localhost".to_string())
-    };
+    let url = crate::main_webview::app_url(config, development);
     ResetOptions {
         token,
         marker: CONSUMED_KEY,
-        protocol,
-        host,
+        protocol: format!("{}:", url.scheme()),
+        host: url[url::Position::BeforeHost..url::Position::AfterPort].to_string(),
     }
 }
 

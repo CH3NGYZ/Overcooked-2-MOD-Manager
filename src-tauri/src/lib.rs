@@ -39,6 +39,7 @@ mod level_sets;
 mod directory_watch;
 mod level_watch;
 mod locale_tag;
+mod main_webview;
 mod manager_data;
 // 地图仓库源（与 repository_sources 对称：源树、相对路径、Release 刷新）
 mod map_sources;
@@ -188,6 +189,7 @@ pub fn run() {
                 }
             });
             app.manage(state.clone());
+            main_webview::create(app)?;
             tauri::async_runtime::spawn(async move {
                 if proxy_config.refresh_proxies().await.is_err() {
                     log::warn!("启动数据来源不可用，继续使用随包网络默认");
@@ -372,6 +374,7 @@ pub fn run() {
             commands::mod_settings::read_bepinex_config,
             commands::mod_settings::save_bepinex_config,
             commands::paths::open_backup_directory,
+            commands::system::open_external_page,
             commands::update::open_release_page,
             commands::update::get_app_distribution,
             commands::update::open_update_repository,

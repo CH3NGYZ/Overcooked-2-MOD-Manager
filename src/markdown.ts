@@ -99,28 +99,9 @@ md.inline.ruler.before('html_inline', 'safe_img', (state) => {
   return true
 })
 
-/* markdown-it 的 renderer 规则签名在其类型定义里没有导出，这里用结构化签名标注。 */
-type Rule = (
-  tokens: Array<{ attrSet: (name: string, value: string) => void }>,
-  idx: number,
-  options: Record<string, unknown>,
-  env: unknown,
-  self: { renderToken: (tokens: unknown, idx: number, options: unknown) => string },
-) => string
-
-const rules = md.renderer.rules as Record<string, Rule>
-
-// 外链统一新窗口打开，避免抢占 WebView。
-const baseLinkOpen = rules.link_open ?? ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
-rules.link_open = (tokens, idx, options, env, self) => {
-  tokens[idx].attrSet('target', '_blank')
-  tokens[idx].attrSet('rel', 'noreferrer noopener')
-  return baseLinkOpen(tokens, idx, options, env, self)
-}
-
-// 图片懒加载
-const baseImage = rules.image ?? ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
-rules.image = (tokens, idx, options, env, self) => {
+// 链接保留原生锚点；主窗口统一做浏览器交接。图片统一懒加载。
+const baseImage = md.renderer.rules.image ?? ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
+md.renderer.rules.image = (tokens, idx, options, env, self) => {
   tokens[idx].attrSet('loading', 'lazy')
   return baseImage(tokens, idx, options, env, self)
 }

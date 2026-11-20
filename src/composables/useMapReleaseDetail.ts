@@ -30,7 +30,7 @@ export function useMapReleaseDetail(options: UseMapReleaseDetailOptions) {
     const selected = selectedTag.value
     return releases.value.find((entry) => entry.tag_name === selected) ?? releases.value[0] ?? null
   })
-  useEvaluationSubject(() => map.value && release.value
+  useEvaluationSubject(() => map.value && release.value?.tag_name
     ? { map_id: map.value.id, tag: release.value.tag_name } : undefined)
   const versions = computed(() => releases.value.map((entry) => ({
     label: formatVersion(entry.tag_name || entry.version || ''),

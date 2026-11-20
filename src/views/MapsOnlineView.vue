@@ -23,16 +23,14 @@ import InstallSourceTags from '../components/InstallSourceTags.vue'
 import { prefetchAvatars } from '../avatars'
 import { useDashboard } from '../composables/useDashboardStore'
 import { markdownSummary } from '../markdown'
-import { formatVersionSpec } from '../versionSpec'
 import { modRepositoryIsAvailable } from '../repositoryAvailability'
 import { useFocusHighlight, useLevelSetLink, useModRepositoryLink } from '../crossLink'
-import { dependencyTagFor, primaryRelation, relationJumpRepositoryId, unmetRelations } from '../modRelations'
-import { dependencyRowFromStatus } from '../dependencyRows'
+import { dependencyTagFor, type RelationStatus } from '../modRelations'
+import { dependencyRowFromStatus, dependencyTagTitle } from '../dependencyRows'
 import { useDependencyNavigation } from '../composables/useDependencyNavigation'
 import {
   levelSetForMap,
   levelSetRelationStatuses,
-  type FrameworkState,
 } from '../levelSetStatus'
 import { mapCardAction, mapCardActionLabel, mapCardStatus, mapCardVersion, type MapCardState } from '../mapCardStatus'
 import OnlineCard, { type CardAction, type CardDependencyTag } from '../components/OnlineCard.vue'
@@ -433,14 +431,6 @@ function downloadCount(map: MapInfo): number | null {
   return total || null
 }
 
-/** 一条框架依赖的展示文案：GUID 太抽象，补上「已装多少」。 */
-function describeFramework(state: FrameworkState): string {
-  const spec = formatVersionSpec(state.version)
-  const required = spec ? `${state.guid} ${spec}` : state.guid
-  if (!state.installedVersion) return required
-  return `${required}（${t('levelSet.installedVersion', { version: state.installedVersion })}）`
-}
-
 /** 详情面板头部链接：交给后端用系统浏览器打开（与 MOD 详情同一入口）。 */
 async function openLink(url: string) {
   if (!url) return
@@ -453,37 +443,28 @@ async function openLink(url: string) {
  * 已安装卡片读取本地图的权威评估；详情中选择的在线版本只影响详情依赖表。
  * 标签与 MOD 页共用展示及 repair 判定，点击后审阅完整变更方案。
  */
-function mapDependencyStatuses(map: MapInfo) {
+function mapRelationTag(map: MapInfo) {
+  if (!gameProbed.value) return undefined
   const set = levelSetForMap(map, sets.value)
-  return set ? levelSetRelationStatuses(set, maps.value, mods.value, repositories.value) : []
+  return set && dependencyTagFor(levelSetRelationStatuses(set, maps.value, mods.value), true)
+}
+
+function dependencyRow(status: RelationStatus): DependencyRow {
+  return dependencyRowFromStatus(status, { mods: mods.value, repositories: repositories.value,
+    translate: t, pickName: pickI18n, jumpToRepository: true })
 }
 
 function dependencyOf(map: MapInfo): CardDependencyTag | null {
-  if (!gameProbed.value) return null
-  const statuses = mapDependencyStatuses(map)
-  const tag = dependencyTagFor(statuses, hasLocalMap(map))
-  if (!tag) return null
-  const missing = unmetRelations(statuses).filter(status => (status.relation.kind ?? 'requires') === 'requires')
-    .map(status => ({ guid: status.relation.guid, version: status.relation.version ?? '',
-      installedVersion: status.installedVersion, satisfied: false }))
-  return {
-    text: tag.text,
-    tone: tag.tone,
-    title: missing.length
-      ? t('levelSet.frameworksNotMet', { list: missing.map(describeFramework).join(' · ') })
-      : undefined,
-    clickable: !!relationJumpRepositoryId(primaryRelation(statuses)),
-  }
+  const tag = mapRelationTag(map)
+  return tag ? { ...tag, title: dependencyTagTitle(dependencyRow(tag.dependency)) } : null
 }
 
 /** 点击时重新读取当前本地图的依赖，再交共享整链确认。 */
 function jumpToDependency(map: MapInfo) {
   dependencyNavigation.request(() => {
     const current = maps.value.find(entry => entry.id === map.id)
-    if (!current || !hasLocalMap(current)) return undefined
-    const issue = primaryRelation(mapDependencyStatuses(current))
-    return issue ? dependencyRowFromStatus(issue, { mods: mods.value, repositories: repositories.value,
-      translate: t, pickName: pickI18n, jumpToRepository: true }) : undefined
+    const tag = current && mapRelationTag(current)
+    return tag?.clickable ? dependencyRow(tag.dependency) : undefined
   })
 }
 

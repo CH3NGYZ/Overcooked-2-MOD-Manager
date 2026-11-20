@@ -200,17 +200,12 @@ test('关系标签与「刷新中」并存，且关系始终在最前', () => {
   evaluationSnapshot([{id:'mod:r1',repo:'r1',dlls:[target.dll_file],rows:[{relation:withRelation.relations[0],state:'missing'}]}])
   const result = runtimeModStatus(target, [target], [withRelation], state)
   clearEvaluation()
-  assert.equal(result.mod.labels[0], 'missing_dependency')
+  assert.equal(result.mod.labels[0], 'relation_needs_action')
   assert.ok(result.mod.labels.includes('refreshing'))
-  assert.equal(result.relationTags[0]?.dependency.state, 'missing')
+  assert.equal(result.relationTag?.dependency.state, 'missing')
 })
 
-test('必须依赖有候选版本时仍挂「缺依赖」（能不能补上不改变缺了这件事）', () => {
-  /*
-   * 用户 2026-11-04 的口径：`requires` 是必须依赖，缺了就是缺依赖。
-   * 线上有可安装来源只是让「去安装」按钮可用，不把结论改成「可安装」——
-   * 否则卡片读起来像「有东西想装」，而不是「这个 MOD 现在跑不起来」。
-   */
+test('有候选版本时卡头仍显示「需处理」，不自己选择修复版本', () => {
   const owner = repo({
     plugin_guid: 'com.a',
     relations: [{ kind: 'requires', guid: 'com.b' }],
@@ -225,11 +220,12 @@ test('必须依赖有候选版本时仍挂「缺依赖」（能不能补上不�
   evaluationSnapshot([{id:'mod:r1',repo:'r1',dlls:[target.dll_file],rows:[{relation:owner.relations[0],state:'missing'}]}])
   const result = runtimeModStatus(target, [target], [owner, provider], idle)
   clearEvaluation()
-  assert.equal(result.relationTags[0]?.dependency.state, 'missing')
-  assert.equal(result.mod.labels[0], 'missing_dependency')
+  assert.equal(result.relationTag?.dependency.state, 'missing')
+  assert.deepEqual(result.relationTag?.dependency.repair, { node_id: 'mod:r1' })
+  assert.equal(result.mod.labels[0], 'relation_needs_action')
 })
 
-test('旧版、禁用和缺失各有标签，且重复的禁用关系不重复显示', () => {
+test('旧版、禁用、缺失同时只有一枚卡头标签，详情仍可取各条评估', () => {
   const owner = repo({
     plugin_guid: 'com.a',
     relations: [{ kind: 'requires', guid: 'com.b', version: '>=2.0.0' }],
@@ -250,8 +246,10 @@ test('旧版、禁用和缺失各有标签，且重复的禁用关系不重复�
   ] }], [{node_id:'mod:dep',dll_files:[stale.dll_file]}])
   const result = runtimeModStatus(target, [target, stale], [owner, provider], idle)
   clearEvaluation()
-  assert.deepEqual(result.mod.labels.slice(0, 3), ['dependency_mismatch', 'dependency_disabled', 'missing_dependency'])
-  assert.deepEqual(result.relationTags.map(tag => tag.dependency.relation.guid), ['com.b', 'disabled.one', 'missing'])
+  assert.deepEqual(result.mod.labels.filter(label => label.startsWith('relation_')), ['relation_needs_action'])
+  assert.deepEqual(result.relations.map(status => [status.relation.guid, status.state]), [
+    ['com.b', 'version_mismatch'], ['disabled.one', 'disabled'], ['disabled.two', 'disabled'], ['missing', 'missing'],
+  ])
 })
 
 test('未绑定仓库的 MOD 保持后端标签', () => {

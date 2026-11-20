@@ -29,15 +29,17 @@ export function relationsForSubject(subject: EvaluationSubject): RelationEvaluat
   if (!snapshot) return undefined
   const matching = snapshot.nodes.filter(node => {
     if (subject.dll_file) return !node.subject_tag && node.dll_files.includes(subject.dll_file)
-    if (subject.map_dir_name) return node.map_dir_name === subject.map_dir_name
-    if (subject.map_id) return node.map_id === subject.map_id && (!subject.tag || node.subject_tag === subject.tag)
-    return node.repository_id === subject.repository_id && (subject.tag ? node.subject_tag === subject.tag : !node.subject_tag)
+    if (subject.map_dir_name) return !node.subject_tag && node.map_dir_name === subject.map_dir_name
+    if (subject.map_id) return !!subject.tag && node.map_id === subject.map_id && node.subject_tag === subject.tag
+    return !!subject.repository_id && !!subject.tag && node.repository_id === subject.repository_id && node.subject_tag === subject.tag
   })
   if (matching.length !== 1) return undefined
   const node = matching[0]!
   const result = snapshot.evaluations.find(entry => entry.node_id === node.node_id)
   if (!result) return undefined
-  return result.enabled ? result.runtime : result.readiness
+  const rows = result.enabled ? result.runtime : result.readiness
+  // No known declarations is different from an authoritative empty relation table.
+  return rows.length || result.metadata_known ? rows : undefined
 }
 
 export function relationForSubject(relation: RepositoryRelation, subject?: EvaluationSubject) {
@@ -47,6 +49,16 @@ export function relationForSubject(relation: RepositoryRelation, subject?: Evalu
 export function targetMod(evaluation: RelationEvaluation, mods: readonly InstalledMod[]) {
   const inventory = readSnapshot()
   const targets = inventory?.nodes.filter(node => evaluation.targets.includes(node.node_id)) ?? []
-  return mods.find(mod => mod.guid?.trim().toLowerCase() === evaluation.relation.guid.trim().toLowerCase()
+  const guid = evaluation.relation.guid.trim().toLowerCase()
+  const matches = mods.filter(mod => mod.guid?.trim().toLowerCase() === guid
     && targets.some(node => node.dll_files.includes(mod.dll_file)))
+  if (evaluation.state !== 'conflict' || evaluation.relation.kind !== 'conflicts') return matches[0]
+
+  // The evaluation lists installed nodes, not the exact conflicting DLL. Never
+  // offer a standalone uninstall if the conflict might belong to another node
+  // or to a different member of the same package.
+  const target = targets[0]
+  return targets.length === 1 && evaluation.targets.length === 1 && target?.kind === 'mod'
+    && target.node_id !== evaluation.owner_id && matches.length === 1 && matches[0]?.enabled
+    ? matches[0] : undefined
 }

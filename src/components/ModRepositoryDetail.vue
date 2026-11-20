@@ -77,8 +77,9 @@ const selectedRelease = computed(() => {
   const found = list.find((entry) => entry.tag_name === selectedTag.value)
   return found ?? (guided.value ? null : list[0] ?? null)
 })
-useEvaluationSubject(() => props.repo && selectedRelease.value
+const relationSubject = computed(() => props.repo && selectedRelease.value?.tag_name
   ? { repository_id: props.repo.id, tag: selectedRelease.value.tag_name } : undefined)
+useEvaluationSubject(relationSubject)
 const releaseOptions = computed(() =>
   (props.repo?.cached_releases ?? []).map((entry) => ({
     // 显示用 tag_name（原始写法，含第 4 位）；version 是 semver 归一值会丢段
@@ -141,7 +142,7 @@ const dependencyRows = computed<DependencyRow[]>(() => {
     mods: props.mods,
     repositories: props.repositories,
     ownerRepository: repo,
-    version: selectedRelease.value?.tag_name,
+    subject: relationSubject.value,
     translate: t,
     pickName: pickI18n,
     jumpToRepository: true,

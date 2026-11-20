@@ -2,9 +2,7 @@
 /**
  * 依赖表里的一行。
  *
- * 行的**内容由调用方算好**：面板/页面才知道「已满足」「缺依赖」是由哪条判定
- * 得出的（地图看 `required_frameworks` + 本地 MOD，MOD 看 `relations` +
- * Release），把这个判定塞进表格组件等于让组件认识两种业务模型。
+ * `dependencyRows.ts` 从同一份评估结果投影状态、原因和跳转入口；表格只展示。
  *
  * `kind` / `line` 是两个例外：它们是关系声明里的原始枚举，不是判定结果，
  * 表格统一翻译成文案，调用方不必各写一套映射。
@@ -26,7 +24,7 @@ export type { DependencyJump, DependencyRow } from '../dependencyRows'
  * 为什么是表格而不是一排标签：一张图/一个包可能声明三四条前置（DIYLevel、
  * Web Runtime、宿主版本…），每条都带「版本要求」（区间表达式原文）和「本地是否满足」。
  * 标签只能表达名字，满足情况得另起一行解释；表格把三件事对齐在同一列上，
- * 用户扫一眼就知道缺哪条、要求多少。
+ * 用户扫一眼就知道哪条需要处理、要求多少；原因与状态并排，窄列可换行。
  *
  * 只做版式：`rows` 为空时整块不渲染 —— 没有依赖声明的条目不该留一行
  * 「无依赖」，那会让详情面板多出一条没有信息量的分隔线。
@@ -111,14 +109,17 @@ function lineLabel(line: DependencyRow['line']): string {
             </td>
             <td class="dep-req mono">{{ row.requirement || '-' }}</td>
             <td class="dep-state">
-              <n-tag v-if="row.status" size="tiny" :bordered="false" class="state-tag"
-                :class="{ 'state-tag--link': !!row.jump }" :color="tagColorForAny(row.tone ?? 'muted')"
-                :title="row.jump?.title" :role="row.jump ? 'button' : undefined"
-                :tabindex="row.jump ? 0 : undefined"
-                @click="clickStatus(row, $event)" @keydown.enter="clickStatus(row, $event)"
-                @keydown.space.prevent="clickStatus(row, $event)">
-                {{ row.status }}
-              </n-tag>
+              <div v-if="row.status" class="dep-verdict">
+                <n-tag size="tiny" :bordered="false" class="state-tag"
+                  :class="{ 'state-tag--link': !!row.jump }" :color="tagColorForAny(row.tone ?? 'muted')"
+                  :title="row.jump?.title" :role="row.jump ? 'button' : undefined"
+                  :tabindex="row.jump ? 0 : undefined"
+                  @click="clickStatus(row, $event)" @keydown.enter="clickStatus(row, $event)"
+                  @keydown.space.prevent="clickStatus(row, $event)">
+                  {{ row.status }}
+                </n-tag>
+                <span v-if="row.reason" class="dep-reason">{{ row.reason }}</span>
+              </div>
               <span v-else>—</span>
             </td>
           </tr>
@@ -173,10 +174,10 @@ function lineLabel(line: DependencyRow['line']): string {
   border-bottom: 0;
 }
 
-.dep-col-name { width: 44%; }
-.dep-col-kind { width: 20%; }
-.dep-col-req { width: 18%; }
-.dep-col-state { width: 18%; }
+.dep-col-name { width: 40%; }
+.dep-col-kind { width: 16%; }
+.dep-col-req { width: 16%; }
+.dep-col-state { width: 28%; }
 
 .dep-name {
   min-width: 0;
@@ -189,12 +190,14 @@ function lineLabel(line: DependencyRow['line']): string {
 
 .dep-kind,
 .dep-req {
-  white-space: nowrap;
   color: var(--oc2-text-3);
 }
 
+.dep-req { overflow-wrap: anywhere; }
+
 /* 发布线小标：跟在关系名后面，说明这条关系指的是测试版还是正式版 */
 .dep-line {
+  display: inline-block;
   margin-left: 6px;
   padding: 0 6px;
   border: 1px solid var(--oc2-row-line);
@@ -202,10 +205,19 @@ function lineLabel(line: DependencyRow['line']): string {
   background: var(--oc2-sunken);
   font-size: 11px;
   color: var(--oc2-text-3);
+  white-space: nowrap;
 }
 
-.dep-state {
-  white-space: nowrap;
+.dep-verdict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 6px;
+}
+
+.dep-reason {
+  color: var(--oc2-text-3);
+  overflow-wrap: anywhere;
 }
 
 /* 可点标签的手型与悬停反馈由 global.css 的 .state-tag--link 统一提供 */

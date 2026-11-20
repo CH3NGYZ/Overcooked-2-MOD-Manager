@@ -2,10 +2,10 @@ import type { RelationSubject } from './modRelations'
 import { aggregateLevelSetVersion, isSameLevelSet, mapUpdateState, mapVersionRef, type MapVersionRef } from './mapVersion.ts'
 export { aggregateLevelSetVersion, isSameLevelSet, mapsForLevelSet, mapUpdateState, type MapVersionRef, type MapVersionOrder } from './mapVersion.ts'
 import {
-  localRelationTags, relationsForMapRelease, relationStatusesForSubject, unmetRelations,
+  conflictRemovalTarget, dependencyTagFor, relationsForMapRelease, relationStatusesForSubject, unmetRelations,
   type RelationStatus,
 } from './modRelations.ts'
-import type { InstalledMod, LevelSetInfo, MapInfo, ModRepository } from './types'
+import type { InstalledMod, LevelSetInfo, MapInfo, ModRepository, RepositoryRelation } from './types'
 
 /**
  * 关卡集（地图）的状态判定。
@@ -217,12 +217,17 @@ export function mapReleaseVersion(
   return tag || null
 }
 
+/** 省略版本时仅用于展示默认/最新版声明；`null` 表示详情没有选择。 */
+export function mapRelations(map: MapInfo | null | undefined, version?: string | null): RepositoryRelation[] {
+  return map ? relationsForMapRelease(map, version === undefined ? mapReleaseVersion(map) : version) : []
+}
+
 /** Maps supply only relation and release context to the shared evaluator. */
 export function mapRelationSubject(map: MapInfo, version?: string | null): RelationSubject {
   return {
     id: map.id, name: map.name, name_i18n: map.name_i18n,
     cached_releases: map.cached_releases ?? (map.latest_release ? [map.latest_release] : []),
-    relations: relationsForMapRelease(map, version ?? mapReleaseVersion(map)),
+    relations: mapRelations(map, version),
   }
 }
 
@@ -237,35 +242,29 @@ export interface FrameworkState {
   satisfied: boolean
 }
 
-/**
- * 关卡集的关系声明解析结果（含「可安装来源」）。
- *
- * 声明来源与依赖表完全同一条链：绑定的地图还在配置里就用它的在线声明，
- * 地图源下线（或本地导入的图没有线上条目）才退回安装清单里的快照
- * （`set.relations`）。卡片标签与依赖表因此不会对同一张图说两套话 ——
- * 早期卡片只按「绑定的在线地图」判，未绑定的图卡片上没有依赖提醒，
- * 详情里却列着一条缺依赖。
- */
+/** 仅在未评估时展示声明：按本地版本选取覆盖表，未绑定时用安装快照。 */
+export function levelSetRelations(
+  set: Pick<LevelSetInfo, 'name' | 'name_zh' | 'author' | 'version' | 'relations'>,
+  maps: readonly MapInfo[],
+): RepositoryRelation[] {
+  const bound = mapForLevelSet(set, maps)
+  return bound ? relationsForMapRelease(bound, set.version) : set.relations ?? []
+}
+
+/** 卡头与详情均按同一个已安装目录读取评估。 */
 export function levelSetRelationStatuses(
-  set: Pick<LevelSetInfo, 'name' | 'author' | 'version' | 'relations'> & { dir_name?: string },
+  set: Parameters<typeof levelSetRelations>[0] & { dir_name?: string },
   maps: readonly MapInfo[],
   mods: readonly InstalledMod[],
   _repositories: readonly ModRepository[] = [],
 ): RelationStatus[] {
-  return relationStatusesForSubject(set.dir_name ? { map_dir_name: set.dir_name } : undefined, mods, () => {
-    const bound = mapForLevelSet(set, maps)
-    return bound ? relationsForMapRelease(bound, set.version) : set.relations ?? []
-  })
+  return relationStatusesForSubject(set.dir_name ? { map_dir_name: set.dir_name } : undefined,
+    mods, () => levelSetRelations(set, maps))
 }
 
 /**
- * 地图声明的关系在本地的解析结果（含「可安装来源」）。
- *
- * `repositories` 必须传：地图声明的前置就是仓库里的 MOD（DIYLevel、
- * Web Runtime 都有 `plugin_guid`），不传的话每条依赖都会被判成「没有来源」，
- * 地图页与 MOD 页就会对同一件事给出不同结论 —— 这正是两边口径要统一的地方。
- *
- * `version` 是这次要安装的 Release 版本（不传用最新版），用于选版本覆盖表。
+ * 在线详情按选中 Release 评估；`null` 表示没有选中，不能借本地库存结论。
+ * 省略版本的调用方按最新 Release；仅有地图集版本时只用于展示声明。
  */
 export function mapRelationStatuses(
   map: MapInfo | null | undefined,
@@ -274,8 +273,8 @@ export function mapRelationStatuses(
   version?: string | null,
 ): RelationStatus[] {
   if (!map) return []
-  const tag = version ?? mapReleaseVersion(map) ?? undefined
-  return relationStatusesForSubject({ map_id: map.id, tag }, mods, () => relationsForMapRelease(map, tag))
+  const tag = version === undefined ? map.latest_tag || map.latest_release?.tag_name : version
+  return relationStatusesForSubject(tag ? { map_id: map.id, tag } : undefined, mods, () => mapRelations(map, version))
 }
 
 /**
@@ -325,17 +324,13 @@ export interface LevelSetCardTag {
   /** i18n key（视图层 `t()`）。 */
   text: string
   tone: LevelSetTone
-  /** 这个标签来自哪一类判定：依赖缺失与版本结论是两件事。 */
+  /** 关系摘要与版本结论分开。 */
   kind: 'state' | 'dependency'
-  /**
-   * 「有更新」→ 跳到下载页并高亮那张卡；
-   * 「缺依赖」→ 跳到 MOD 安装页并高亮能提供这个依赖的仓库卡片。
-   */
+  /** 版本标签可定位到绑定的在线地图。 */
   mapId?: string
-  /** 依赖的安装入口：能提供满足区间版本的仓库卡片 id（只有「缺依赖」会带）。 */
-  repositoryId?: string
-  /** 标签实际选择的关系，供导航复用同一候选而非按仓库 id 反查。 */
+  /** 关系标签的选中关系与是否有实际处理入口。 */
   dependency?: RelationStatus
+  clickable?: boolean
 }
 
 /**
@@ -382,12 +377,8 @@ export function levelSetIsRefreshing(
 /**
  * 关卡集卡片状态区的完整标签列表。
  *
- * 顺序与 MOD 卡片一致：先「缺依赖」这类关系提醒，再版本结论 ——
- * 关系提醒说的是「装上能不能跑」，比「有没有新版」更该先被看到。
- *
- * 依赖提醒与 MOD 卡片共用 `localRelationTags`，各类问题分别显示。
- * 只在**能判定**（游戏已探测）时出现；停用的地图仍然显示，
- * 因为用户重新启用前就该知道它还缺东西。
+ * 先显示一条关系摘要，再显示独立的版本结论。停用地图同样可显示摘要，
+ * 方便在启用前处理前置关系。
  *
  * 版本结论与「刷新中」互斥：刷新的那一刻旧的「有更新 / 最新版」就是过期
  * 结论，继续显示会让用户以为已经查完了（与 MOD 侧的 `replaceVersionConclusion`
@@ -406,17 +397,10 @@ export function levelSetCardTags(
   const tags: LevelSetCardTag[] = []
 
   if (gameProbed) {
-    // 与依赖表同一条声明链：绑定的在线地图优先，没有就退回本地快照
+    // 与详情使用同一个已安装目录和评估结论。
     const statuses = levelSetRelationStatuses(set, maps, mods, repositories)
-    for (const tag of localRelationTags(statuses)) {
-      tags.push({
-        text: tag.text,
-        tone: tag.tone,
-        kind: 'dependency',
-        repositoryId: tag.repositoryId,
-        dependency: tag.dependency,
-      })
-    }
+    const tag = dependencyTagFor(statuses, true)
+    if (tag) tags.push({ ...tag, kind: 'dependency' })
   }
 
   const aggregate = aggregateLevelSetVersion(set, maps, refreshing)
@@ -474,14 +458,14 @@ export function levelSetCardAction(
   const statuses = gameProbed && set.enabled
     ? levelSetRelationStatuses(set, maps, mods, repositories)
     : []
-  const conflict = statuses.find((status) => status.state === 'conflict' && status.installedMod)
-  if (conflict?.installedMod) {
+  const conflict = conflictRemovalTarget(statuses)
+  if (conflict) {
     return {
       kind: 'review-conflict',
       label: 'levelSet.resolveConflict',
       tone: 'critical',
-      repositoryId: conflict.installedMod.repository_id,
-      guid: conflict.relation.guid,
+      repositoryId: conflict.repository_id,
+      guid: conflict.guid,
     }
   }
 

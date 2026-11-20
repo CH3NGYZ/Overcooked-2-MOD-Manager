@@ -66,3 +66,10 @@ test('重复、加载警告这类需要人工处理的状态不给一键动作',
   // 它们要么要用户删文件、要么要改环境，点一下解决不了，给按钮是误导
   assert.equal(statusActionFor(['duplicate', 'load_warning']), undefined)
 })
+
+test('只有调用方提供明确排斥目标时，关系提示才会对应卸载动作', () => {
+  assert.equal(statusActionFor(['relation_needs_action']), undefined)
+  assert.equal(statusActionFor(['relation_unconfirmed']), undefined)
+  assert.equal(statusActionFor(['relation_needs_action', 'update_available']).kind, 'update')
+  assert.equal(statusActionFor(['relation_needs_action', 'update_available'], true).kind, 'uninstall-conflict')
+})

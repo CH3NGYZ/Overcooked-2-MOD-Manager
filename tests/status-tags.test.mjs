@@ -388,63 +388,57 @@ test('modUpdateVerdict 无法判定时标记为 known:false', async () => {
 
 /* ===== 包级依赖告警：与单 MOD 卡片同语义 ===== */
 
-test('仓库声明依赖被卸载后，多 DLL 包标题同样显示「缺依赖」', () => {
+test('仓库声明依赖被卸载后，多 DLL 包标题显示「需处理」', () => {
   /*
    * 真实 bug：关系标签既不是版本结论、也不在成员级告警里，多 DLL 包会被
-   * 整条丢弃 —— 同一个包的单 MOD 兄弟显示「缺依赖」，包标题却只有「最新版」。
+   * 整条丢弃 —— 同一个包的单 MOD 兄弟显示「需处理」，包标题却只有「最新版」。
    * 依赖声明挂在仓库上，整包共用一份，所以这是包级结论、不带数量。
    */
   const tags = packageStatuses([
-    mod({ dll_file: 'pkg/Loader.dll', labels: ['missing_dependency', 'latest'] }),
+    mod({ dll_file: 'pkg/Loader.dll', labels: ['relation_needs_action', 'latest'] }),
     mod({ dll_file: 'pkg/debugLog.dll', labels: ['latest'] }),
   ])
-  assert.deepEqual(tags.map((t) => t.key), ['missing_dependency', 'latest'])
-  const dep = tags.find((t) => t.key === 'missing_dependency')
+  assert.deepEqual(tags.map((t) => t.key), ['relation_needs_action', 'latest'])
+  const dep = tags[0]
   assert.equal(dep.tone, 'critical')
   assert.equal(dep.count, undefined)
 })
 
 test('包级依赖标签与单 MOD 顺序一致：预发布 → 依赖 → 版本结论', () => {
   const tags = packageStatuses([
-    mod({ dll_file: 'a.dll', labels: ['missing_dependency', 'latest'], version: '1.0.0-beta.1' }),
+    mod({ dll_file: 'a.dll', labels: ['relation_needs_action', 'latest'], version: '1.0.0-beta.1' }),
     mod({ dll_file: 'b.dll', labels: ['latest'], version: '1.0.0-beta.1' }),
   ])
-  assert.deepEqual(tags.map((t) => t.key), ['prerelease', 'missing_dependency', 'latest'])
+  assert.deepEqual(tags.map((t) => t.key), ['prerelease', 'relation_needs_action', 'latest'])
 })
 
-test('依赖冲突优先于缺依赖，且两者都只出一条', () => {
+test('同包「需处理」优先于「未确认」，只显示一枚关系标签', () => {
   const tags = packageStatuses([
-    mod({ dll_file: 'a.dll', labels: ['missing_dependency', 'latest'] }),
-    mod({ dll_file: 'b.dll', labels: ['dependency_conflict', 'latest'] }),
+    mod({ dll_file: 'a.dll', labels: ['relation_unconfirmed', 'latest'] }),
+    mod({ dll_file: 'b.dll', labels: ['relation_needs_action', 'latest'] }),
   ])
-  assert.deepEqual(tags.map((t) => t.key), ['dependency_conflict', 'missing_dependency', 'latest'])
+  assert.deepEqual(tags.map((t) => t.key), ['relation_needs_action', 'latest'])
 })
 
-test('包标题同时汇总依赖禁用、依赖不符和可更新，每种依赖问题只出现一次', () => {
+test('不同成员的「需处理」不重复显示，保留独立的可更新结论', () => {
   const tags = packageStatuses([
-    mod({ dll_file: 'Core.dll', labels: ['dependency_disabled', 'dependency_mismatch', 'update_available'] }),
-    mod({ dll_file: 'Companion.dll', release_companion: true, labels: ['dependency_disabled', 'latest'] }),
+    mod({ dll_file: 'Core.dll', labels: ['relation_needs_action', 'update_available'] }),
+    mod({ dll_file: 'Companion.dll', release_companion: true, labels: ['relation_needs_action', 'latest'] }),
   ])
   assert.deepEqual(tags.map(tag => [tag.key, tag.text, tag.count]), [
-    ['dependency_disabled', 'modChanges.relation.disabled', undefined],
-    ['dependency_mismatch', 'modChanges.relation.versionMismatch', undefined],
+    ['relation_needs_action', 'tools.relationNeedsAction', undefined],
     ['update_available', 'tools.update', undefined],
   ])
 })
 
-test('包标题认得「可安装」，且与缺依赖同位置、中档色', () => {
-  /*
-   * 兼容关系差一个版本时，单 MOD 卡与地图卡都改口说「可安装」。包标题必须
-   * 一起认 —— 否则一个多 DLL 包的标题会把这枚标签当成未知标签丢掉（或按
-   * muted 灰掉），包标题与成员卡片说的就不是一回事了。
-   */
-  const installable = packageStatuses([
-    mod({ dll_file: 'pkg/A.dll', labels: ['dependency_installable', 'latest'] }),
+test('包标题在没有已确认问题时保留「未确认」，采用中等颜色', () => {
+  const unresolved = packageStatuses([
+    mod({ dll_file: 'pkg/A.dll', labels: ['relation_unconfirmed', 'latest'] }),
     mod({ dll_file: 'pkg/B.dll', labels: ['latest'] }),
   ])
-  assert.deepEqual(installable.map((t) => t.key), ['dependency_installable', 'latest'])
-  assert.equal(installable[0].tone, 'moderate')
-  assert.equal(installable[0].text, 'tools.installable')
+  assert.deepEqual(unresolved.map((t) => t.key), ['relation_unconfirmed', 'latest'])
+  assert.equal(unresolved[0].tone, 'moderate')
+  assert.equal(unresolved[0].text, 'tools.relationUnconfirmed')
 })
 
 test('本地比较版本以扫描结果为准，明确未知时不回退清单', async () => {

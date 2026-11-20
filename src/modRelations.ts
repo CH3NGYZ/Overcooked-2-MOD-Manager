@@ -11,7 +11,7 @@ import { parseVersionSpec, versionMatches } from './versionSpec.ts'
 import type { TagTone } from './theme'
 import type {
   InstalledMod, MapInfo, ReleaseInfo, ReleaseRelationOverride, ModRepository,
-  RepositoryRelation, InstalledModStatusLabel,
+  RepositoryRelation,
 } from './types'
 
 export type RelationState = 'ok' | 'installable' | 'missing' | 'conflict' | 'unknown' | 'unassessed' | 'disabled' | 'version_mismatch'
@@ -19,6 +19,8 @@ export type RelationState = 'ok' | 'installable' | 'missing' | 'conflict' | 'unk
 export interface RelationStatus {
   relation: RepositoryRelation
   state: RelationState
+  /** 评估提供的具体原因；展示层不重新推导判断。 */
+  reason?: string
   /** 本地已装该 GUID 的版本（可能为 null：装了但没有版本元数据）。 */
   installedVersion: string | null
   /** 命中的本地 MOD（冲突时就是需要卸载的那个）。 */
@@ -153,7 +155,7 @@ export function relationStatusFromEvaluation(
   const installedMod = targetMod(evaluation, mods)
   const state: RelationState = evaluation.state === 'satisfied' || evaluation.state === 'optional'
     ? 'ok' : evaluation.state
-  return { relation: evaluation.relation, state, installedMod, installedVersion: installedMod?.version ?? null,
+  return { relation: evaluation.relation, state, reason: evaluation.reason, installedMod, installedVersion: installedMod?.version ?? null,
     ...(state !== 'ok' && state !== 'unknown' ? { repair: repairTarget(evaluation.owner_id) } : {}) }
 }
 
@@ -165,11 +167,9 @@ function unassessedRelation(relation: RepositoryRelation): RelationStatus {
 export function resolveRelation(
   relation: RepositoryRelation,
   mods: readonly InstalledMod[],
-  _repositories: readonly ModRepository[],
-  owner?: Pick<RelationSubject, 'id'>,
   subject?: EvaluationSubject,
 ): RelationStatus {
-  const evaluation = relationForSubject(relation, subject ?? (owner ? { repository_id: owner.id } : undefined))
+  const evaluation = relationForSubject(relation, subject)
   return evaluation ? relationStatusFromEvaluation(evaluation, mods)
     : unassessedRelation(relation)
 }
@@ -186,17 +186,6 @@ export function relationStatusesForSubject(
     : (declarations?.() ?? []).filter(relation => !relation.optional).map(unassessedRelation)
 }
 
-/** 这个本地 MOD 是否来自该仓库（按 id 或结构化绑定判断）。 */
-export function belongsToRepository(mod: InstalledMod, repo: ModRepository): boolean {
-  if (mod.repository_id === repo.id) return true
-  if (mod.repository_ids?.includes(repo.id)) return true
-  const binding = mod.repository_binding
-  if (!binding) return false
-  return binding.provider === repo.provider
-    && binding.owner.toLowerCase() === repo.username.toLowerCase()
-    && binding.repository.toLowerCase() === repo.repository.toLowerCase()
-}
-
 /** A subject's rows come from the backend, including empty overrides. */
 export function resolveRelations(
   repo: RelationSubject,
@@ -204,7 +193,7 @@ export function resolveRelations(
   _repositories: readonly ModRepository[],
   releaseVersion?: string | null,
 ): RelationStatus[] {
-  const subject = { repository_id: repo.id, ...(releaseVersion ? { tag: releaseVersion } : {}) }
+  const subject = releaseVersion ? { repository_id: repo.id, tag: releaseVersion } : undefined
   return relationStatusesForSubject(subject, mods, () => relationsForRelease(repo, releaseVersion))
 }
 
@@ -212,7 +201,7 @@ function relationIsUnmet(status: RelationStatus): boolean {
   return status.state !== 'ok' && status.state !== 'unknown' && status.state !== 'unassessed'
 }
 
-/** 只汇总已确认的问题，供卡头、悬停说明和处理按钮使用。 */
+/** 只汇总已确认的问题，未知及等待评估的条目不阻断。 */
 export function unmetRelations(statuses: readonly RelationStatus[]): RelationStatus[] {
   return statuses.filter(relationIsUnmet)
 }
@@ -273,193 +262,91 @@ export function relationTargetRepository(
   return unknowns.length === 1 ? unknowns[0] : undefined
 }
 
-/**
- * 挑出最该被卡片展示的那一条。
- *
- * 冲突优先于依赖：缺依赖时 MOD 只是不工作，而冲突可能已经让游戏崩了；
- * 同一档里优先「能直接处理」的那条（installable 有按钮）。
- */
-export function primaryRelation(
-  statuses: readonly RelationStatus[],
-): RelationStatus | undefined {
-  const unmet = unmetRelations(statuses)
-  return unmet.find((status) => status.state === 'conflict')
-    ?? unmet.find((status) => status.state === 'installable')
-    ?? unmet[0]
-}
-
-/**
- * 关系标签点下去该跳到哪个仓库（`undefined` 表示没有可跳转的目标）。
- *
- * 「缺依赖」「冲突」描述的是**另一个**插件，所以目标必须是关系解析出的
- * 那个仓库。跳到当前 MOD 自己的仓库是错的：用户在那里看到的是一张
- * 毫无问题的卡片，找不到该处理的东西 —— 这正是这条函数要修的 bug。
- *
- * 没有可安装来源时返回 `undefined`：线上根本没有那个 GUID，跳过去也
- * 无处可去，标签就该保持不可点。
- */
-export function relationJumpRepositoryId(
-  status: Pick<RelationStatus, 'relation' | 'repository' | 'repair'> | undefined,
-): string | undefined {
-  return status?.repair?.node_id ?? status?.repository?.id
-}
-
-/**
- * 卡头那个关系标签该显示什么（`undefined` 表示不显示）。
- *
- * ## 判据是「这张卡装没装」，不是关系种类
- *
- * 关系提醒描述的是**装上之后**会不会因为别的插件而跑不起来，所以它只在卡片
- * 自己已经安装时才有意义（用户 2026-11-04 定的口径：未安装的卡片上不要出现
- * 「缺依赖」）。卡片没装时那一行唯一该说的是「能不能装」；依赖是否满足交给
- * 安装前检查与依赖表 —— 那里本来就是装之前能看到的完整清单。
- *
- * 早期实现让「缺依赖」在未安装卡片上也显示，理由是「装之前就该知道」。实际
- * 效果是：未安装的地图卡片挂着红色「缺依赖」，用户读成「这张图有问题」，而
- * 主按钮明明是「安装」。冲突同理 —— 未安装却标「冲突」，用户不知道该卸载
- * 什么，只有「安装」按钮可点。
- *
- * 已安装之后再报才有意义：用户手动卸掉了前置、或换了不兼容的版本 —— 这时
- * 卡片上的「缺依赖 / 冲突」与「已安装」自洽，也直接指向要修的东西。
- */
-export function relationCardTag(
-  status: RelationStatus | undefined,
-  installed: boolean,
-): Pick<DependencyTagView, 'kind'> | undefined {
-  if (!installed) return undefined
-  const view = relationTagView(status)
-  return view ? { kind: view.kind } : undefined
-}
-
-/* ===== 卡片上的关系提醒标签（四个页面共用一条规则） ===== */
-
-/** 卡片「关系提醒」标签的展示口径（`text` 是 i18n key，视图层 `t()`）。 */
-export interface DependencyTagView {
-  /** 标签文案的 i18n key。 */
-  text: string
-  /**
-   * 色调：冲突与「缺依赖」取 critical；兼容关系差一个版本（可安装）取
-   * moderate —— 有办法解决的事不该比没救的事看起来更严重。
-   */
-  tone: Extract<TagTone, 'critical' | 'moderate'>
-  kind: 'conflict' | 'missingDependency' | 'installable' | 'dependencyDisabled' | 'dependencyMismatch'
-  /**
-   * 点标签该跳到的仓库卡片 id。
-   *
-   * 只有「有落点」时才给：缺依赖有候选仓库、兼容关系有可换的版本都带；
-   * 冲突与无来源的缺依赖跳过去也无处可去，标签保持纯文字。
-   */
-  repositoryId?: string
-}
-
-/** Shared wording for confirmed dependency problems in cards, rows and plan traces. */
+/** 具体原因供关系表、卡头提示和整链失败路径共用。 */
 export const DEPENDENCY_ISSUE_TEXT = {
   missing: 'modChanges.relation.missing',
   disabled: 'modChanges.relation.disabled',
   version_mismatch: 'modChanges.relation.versionMismatch',
 } as const
 
-/**
- * 一条未满足的关系该显示成哪枚提醒。
- *
- * 卡片标签（`dependencyTagFor`）、MOD 卡片状态标签
- * （`modRuntimeStatus`）、地图卡片（`levelSetStatus`）
- * 全部走这一处 —— 三处各写一套时，同一个依赖在不同页面会得到不同结论。
- *
- * 三种关系说三件不同的事（用户 2026-11-04 定的口径）：
- *   · `requires`（必须依赖）：未安装、禁用和版本不符分别显示；**线上能不能一键补上
- *     不改变本地状态**。写成「可安装」时卡片读起来像「有东西想装」，
- *     而不是「这个 MOD 现在跑不起来」，必须依赖的强制性消失了。
- *   · `compatible`（兼容）：要求「对方存在时版本落在区间内」，线上有满足区间
- *     的版本就是「可安装」，换到那个版本就兼容。
- *   · `conflicts`（冲突）：目标是「你不该装它」，换版本也清不干净旧文件，
- *     唯一出路是卸载 —— 写「有冲突」。
- *
- * `repositoryId` 只在点标签能落到那张仓库卡时给：`requires` 有候选仓库也带
- * 上（跳过去就能补装），只有线上真的没有来源才不带（标签不可点）。
- */
-export function relationTagView(status: RelationStatus | undefined): DependencyTagView | undefined {
+/** 卡头、页头筛选与关系表共用文案及色阶。 */
+export const RELATION_STATUS = {
+  relation_needs_action: { text: 'tools.relationNeedsAction', tone: 'critical' },
+  relation_unconfirmed: { text: 'tools.relationUnconfirmed', tone: 'moderate' },
+  relation_passed: { text: 'tools.relationPassed', tone: 'mild' },
+} as const satisfies Record<string, { text: string; tone: TagTone }>
+
+export const RELATION_CARD_KEYS = ['relation_needs_action', 'relation_unconfirmed'] as const
+export type RelationCardKey = typeof RELATION_CARD_KEYS[number]
+
+export function isRelationCardKey(key: string): key is RelationCardKey {
+  return RELATION_CARD_KEYS.some(candidate => candidate === key)
+}
+
+function isExclusionConflict(status: RelationStatus): boolean {
+  return status.state === 'conflict' && status.relation.kind === 'conflicts'
+}
+
+/** 兼容范围不符可以换版；只有确切的排斥关系才给单独的卸载入口。 */
+export function conflictRemovalTarget(statuses: readonly RelationStatus[]): InstalledMod | undefined {
+  return statuses.find(status => isExclusionConflict(status) && status.installedMod)?.installedMod
+}
+
+interface RelationStatusView {
+  key: keyof typeof RELATION_STATUS
+  text: string
+  tone: 'critical' | 'moderate' | 'mild'
+  reason?: string
+}
+
+export function relationStatusView(status: RelationStatus): RelationStatusView | undefined {
+  const { state, relation } = status
+  if (state === 'unassessed') return undefined
+  if (state === 'unknown') {
+    const reason = status.reason === 'duplicate_enabled_providers' ? 'modChanges.diagnostic.duplicateProviders'
+      : status.reason === 'relation_metadata_unknown' ? 'modChanges.reason.metadata' : undefined
+    return { key: 'relation_unconfirmed', ...RELATION_STATUS.relation_unconfirmed, reason }
+  }
+  if (state === 'ok') return { key: 'relation_passed', ...RELATION_STATUS.relation_passed }
+
+  const issue = state === 'disabled' || state === 'version_mismatch' ? state
+    : state === 'installable' && status.installedVersion ? 'version_mismatch' : 'missing'
+  const reason = relation.kind === 'compatible' ? 'tools.incompatible'
+    : state === 'conflict' || relation.kind === 'conflicts' ? 'modsOnline.conflict' : DEPENDENCY_ISSUE_TEXT[issue]
+  return { key: 'relation_needs_action', ...RELATION_STATUS.relation_needs_action, reason }
+}
+
+/** 有权威修复根时优先交求解器，旧的精确候选仍可定位到仓库。 */
+export function relationJumpTarget(status: RelationStatus | undefined): {
+  id: string; repair?: DependencyRepairTarget; repository?: ModRepository
+} | undefined {
   if (!status || !relationIsUnmet(status)) return undefined
-  if (status.state === 'disabled') return { text: DEPENDENCY_ISSUE_TEXT.disabled, tone: 'critical', kind: 'dependencyDisabled' }
-  if (status.state === 'version_mismatch') return { text: DEPENDENCY_ISSUE_TEXT.version_mismatch, tone: 'critical', kind: 'dependencyMismatch' }
-  const kind = status.relation.kind ?? 'requires'
-  /*
-   * 先按 `kind` 分派，再看 `state`：`compatible` 不满足时 `resolveRelation`
-   * 返回的也是 `state: 'conflict'`（「必须处理」这件事相同），先判 state
-   * 会把兼容关系读成冲突，把「换个版本就能兼容」错说成「只能卸载」。
-   */
-  if (kind === 'compatible') {
-    if (status.repository) {
-      return {
-        text: 'tools.installable',
-        tone: 'moderate',
-        kind: 'installable',
-        repositoryId: status.repository.id,
-      }
-    }
-    return { text: 'tools.incompatible', tone: 'critical', kind: 'missingDependency' }
+  if (status.repair) return { id: status.repair.node_id, repair: status.repair }
+  if (status.repository && (status.state === 'installable'
+    || (status.relation.kind === 'compatible' && status.state === 'conflict'))) {
+    return { id: status.repository.id, repository: status.repository }
   }
-  if (kind === 'conflicts' || status.state === 'conflict') {
-    return { text: 'modsOnline.conflict', tone: 'critical', kind: 'conflict' }
-  }
-  const view: DependencyTagView = {
-    text: DEPENDENCY_ISSUE_TEXT.missing,
-    tone: 'critical',
-    kind: 'missingDependency',
-  }
-  // 只在点得动时才带目标：留一个 `repositoryId: undefined` 的键会让「有没有
-  // 落点」有「键不存在」和「键存在但为空」两种表示，消费者与测试都得猜。
-  if (status.repository) view.repositoryId = status.repository.id
-  return view
+  return undefined
 }
 
-/**
- * 卡片上那条「关系提醒」标签（MOD 安装 / MOD 管理 / 地图下载 / 地图管理
- * 四页共用；`undefined` = 不显示）。
- *
- * 只回答两件事：卡片自己装没装（没装一律不显示 —— 关系提醒描述的是「装上
- * 之后会不会因为别的插件跑不起来」，挂在未安装的卡片上会被读成「这张卡/这张
- * 图本身有问题」，而主按钮明明是「安装」），以及未满足的关系该说哪句话
- * （`relationTagView`）。
- */
-export function dependencyTagFor(
-  statuses: readonly RelationStatus[],
-  installed: boolean,
-): DependencyTagView | undefined {
+export type RelationCardTag = { key: RelationCardKey; dependency: RelationStatus; clickable: boolean }
+  & typeof RELATION_STATUS[RelationCardKey]
+
+/** 卡头只汇总已安装项：确认有问题优先，全部通过或尚未检查时不占标签位。 */
+export function dependencyTagFor(statuses: readonly RelationStatus[], installed: boolean): RelationCardTag | undefined {
   if (!installed) return undefined
-  return relationTagView(primaryRelation(statuses))
+  const issues = unmetRelations(statuses)
+  // 优先给整链入口，避免不可操作的问题把同卡可处理项的入口盖住。
+  const dependency = issues.find(status => isExclusionConflict(status) && relationJumpTarget(status))
+    ?? issues.find(status => relationJumpTarget(status))
+    ?? issues[0] ?? statuses.find(status => status.state === 'unknown')
+  const view = dependency && relationStatusView(dependency)
+  return view && isRelationCardKey(view.key)
+    ? { key: view.key, ...RELATION_STATUS[view.key], dependency, clickable: !!relationJumpTarget(dependency) }
+    : undefined
 }
 
-export interface LocalRelationTag extends DependencyTagView {
-  dependency: RelationStatus
-}
-
-export const MOD_RELATION_LABELS = {
-  conflict: 'dependency_conflict',
-  missingDependency: 'missing_dependency',
-  installable: 'dependency_installable',
-  dependencyDisabled: 'dependency_disabled',
-  dependencyMismatch: 'dependency_mismatch',
-} as const satisfies Record<DependencyTagView['kind'], InstalledModStatusLabel>
-
-/** Local cards show each assessed issue kind once, preferring a clickable representative. */
-export function localRelationTags(statuses: readonly RelationStatus[]): LocalRelationTag[] {
-  const tags = new Map<DependencyTagView['kind'], LocalRelationTag>()
-  for (const dependency of statuses) {
-    const tag = relationTagView(dependency)
-    if (!tag) continue
-    const previous = tags.get(tag.kind)
-    if (!previous || (!relationJumpRepositoryId(previous.dependency) && relationJumpRepositoryId(dependency))) {
-      tags.set(tag.kind, { ...tag, dependency })
-    }
-  }
-  return [...tags.values()]
-}
-
-/** One entry is sufficient: the planner reads every requirement of the installed owner. */
+/** 一次修复传一个 owner 根，由求解器检查它的全部依赖及冲突。 */
 export function dependencyRepairStatus(statuses: readonly RelationStatus[]): RelationStatus | undefined {
-  return statuses.find(status => {
-    const tag = relationTagView(status)
-    return tag && tag.kind !== 'conflict' && relationJumpRepositoryId(status)
-  })
+  return statuses.find(status => !isExclusionConflict(status) && relationJumpTarget(status))
 }

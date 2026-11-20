@@ -25,29 +25,28 @@
  */
 import {
   DEPENDENCY_ISSUE_TEXT,
+  installedForGuid,
+  relationJumpTarget,
+  relationStatusView,
   relationTargetRepository,
-  relationsForMapRelease,
   resolveRelation,
   relationsForRelease,
   relationStatusesForSubject,
   type RelationStatus,
 } from './modRelations.ts'
-import type { EvaluationSubject } from './modChanges/types'
-import type { DependencyRepairTarget } from './modChanges/types'
-import { compareVersions, isPrereleaseVersion, localVersion, repositoryForMod } from './modStatus.ts'
-import { mapForLevelSet, mapReleaseVersion } from './levelSetStatus.ts'
+import type { DependencyRepairTarget, EvaluationSubject } from './modChanges/types'
+import { compareVersions, formatVersion, isPrereleaseVersion, localVersion, repositoryForMod } from './modStatus.ts'
+import { levelSetRelationStatuses, mapRelationStatuses } from './levelSetStatus.ts'
 import { formatVersionSpec } from './versionSpec.ts'
 import type { TagTone } from './theme'
 import type {
-  InstalledMod, LevelSetInfo, MapInfo, RelationKind, ModRepository, RepositoryRelation,
+  InstalledMod, MapInfo, RelationKind, ModRepository, RepositoryRelation,
 } from './types'
 
 /**
  * 状态标签的跳转目标。
  *
- * 只有「点一下就能去解决」的状态才带它：可安装 / 可更新 / 可降级 都意味着安装页里
- * 有一张能提供满足区间版本的仓库卡片，跳过去就是解法的入口；缺依赖（线上
- * 根本没有这个 GUID）与冲突没有可去的地方，保持纯文字。
+ * 有可处理的已评估目标才带它：整链修复优先，也支持定位已知的安装版本。
  */
 export interface DependencyJump {
   /** Solving this owner includes every required version and cascading disable. */
@@ -62,7 +61,7 @@ export interface DependencyJump {
 }
 
 export interface DependencyRow {
-  /** 稳定 key（GUID + 关系种类 + 发布线），用于 `v-for`。 */
+  /** 稳定的关系键，合并表格时也保留同一要求下的不同结论。 */
   key: string
   /** 依赖目标名：仓库名、本地 MOD 包名，或解析不出名字时的 GUID。 */
   name: string
@@ -81,6 +80,8 @@ export interface DependencyRow {
   status?: string
   /** 状态色调，走 `theme.ts` 的统一刻度。 */
   tone?: TagTone
+  /** 需要处理的具体原因，作为普通文字与状态同一行展示。 */
+  reason?: string
   /** 有解法可去时给出目标，标签变成可点；省略表示这行无处可去。 */
   jump?: DependencyJump
 }
@@ -105,40 +106,20 @@ export type DependencyPickName = (
   fallback: string,
 ) => string
 
-/**
- * 表格的展示口径。
- *
- * 只有一套：依赖由「声明了同一 GUID 的在线仓库」满足，未满足时区分
- * 「可安装 / 可更新 / 可降级 / 缺依赖」，能装的行可以跳过去解决。
- *
- * 地图曾经走另一套（「未安装 / 版本不符」且不可跳转），理由是「地图的依赖是
- * 框架、安装入口在设置页」。这条理由不成立：地图声明的前置就是仓库里的 MOD
- * （DIYLevel、Web Runtime 都有 `plugin_guid`），能装就该能给入口。
- */
+/** MOD 和地图共用关系行投影，不在展示层重算依赖是否满足。 */
 export interface DependencyRowOptions {
-  /** 本地已装 MOD（判断满足情况的对象）。 */
+  /** 本地已装 MOD（向评估结果补足名称和版本）。 */
   mods?: readonly InstalledMod[]
-  /** 在线 MOD 仓库（取名与找安装来源）。 */
+  /** 在线 MOD 仓库（用于取名）。 */
   repositories?: readonly ModRepository[]
-  /** 声明方仓库：排除「装自己」，也是状态跳转的排除项。 */
+  /** 声明方仓库：解析关系目标名时排除自己。 */
   ownerRepository?: ModRepository
   /** 文案翻译，缺省原样返回 key（测试/纯计算场景）。 */
   translate?: DependencyTranslate
   /** 名字本地化，缺省 zh-CN → 任意非空 → 回退值。 */
   pickName?: DependencyPickName
-  /**
-   * 状态标签是否可跳转到提供该依赖的仓库卡片。
-   *
-   * 四类调用方（MOD 安装 / MOD 管理 / 地图下载 / 地图管理）口径一致：
-   * 有可安装来源就跳，没有就不假装可点。
-   */
+  /** 是否允许状态标签发起整链修复或定位安装来源。 */
   jumpToRepository?: boolean
-  /**
-   * 要判定的版本（地图域）：地图详情里选中哪个 Release，依赖表就看哪一版
-   * 的 `release_relations`。省略时用「将要安装的最新版」，已安装的地图集
-   * 传自己的本地版本。
-   */
-  version?: string | null
   subject?: EvaluationSubject
 }
 
@@ -149,11 +130,6 @@ const defaultPickName: DependencyPickName = (map, fallback) => {
   if (chinese) return chinese
   const any = Object.values(map ?? {}).find((value) => value.trim().length > 0)
   return any ?? fallback
-}
-
-/** GUID 比较忽略大小写与首尾空白（与 `modRelations` 同一条规则）。 */
-function sameGuid(left: string, right: string): boolean {
-  return left.trim().toLowerCase() === right.trim().toLowerCase()
 }
 
 /**
@@ -172,11 +148,6 @@ export function dependencyLine(relation: RepositoryRelation): DependencyRow['lin
   return relation.prerelease ? 'prerelease' : 'stable'
 }
 
-/** 本地装了某个 GUID 的所有 MOD（含被禁用的 —— 禁用不等于没装）。 */
-function installedModsForGuid(mods: readonly InstalledMod[], guid: string): InstalledMod[] {
-  return mods.filter((mod) => !!mod.guid && sameGuid(mod.guid, guid))
-}
-
 /**
  * 这条关系在本地对应哪一个 MOD。
  *
@@ -188,7 +159,7 @@ function localModForRelation(
   relation: RepositoryRelation,
   mods: readonly InstalledMod[],
 ): InstalledMod | undefined {
-  const candidates = installedModsForGuid(mods, relation.guid)
+  const candidates = installedForGuid(mods, relation.guid)
   if (!candidates.length) return undefined
   const want = relation.prerelease
   if (want === undefined) return candidates[0]
@@ -199,7 +170,6 @@ function localModForRelation(
 /**
  * 依赖目标的展示名：在线仓库名 → 本地安装包标题 → GUID。
  *
- * 单独导出是因为卡片上的「缺依赖」悬停提示也只需要名字，不需要整行。
  */
 export function dependencyTargetName(
   relation: RepositoryRelation,
@@ -233,76 +203,21 @@ export function dependencyTargetName(
   return relation.guid
 }
 
-/**
- * 一条关系的状态文案与色调。
- *
- * 冲突/兼容与依赖是两套语义：`conflicts` 的「没命中」是**好事**（无冲突），
- * 不能写成「已满足」—— 用户会以为是「我已经装好了」。
- */
-function statusFor(
-  status: RelationStatus,
-  translate: DependencyTranslate,
-  downgrade: boolean,
-): { text: string; tone: TagTone } | undefined {
-  const kind = status.relation.kind ?? 'requires'
-  if (status.state === 'unassessed') return undefined
-  if (status.state === 'unknown') return { text: translate('modChanges.relation.unknown'), tone: 'moderate' }
-  if (status.state === 'disabled' || status.state === 'version_mismatch') {
-    return { text: translate(DEPENDENCY_ISSUE_TEXT[status.state]), tone: 'critical' }
-  }
-  const ok = status.state === 'ok'
-
-  if (kind === 'conflicts') {
-    return ok
-      ? { text: translate('tools.noConflict'), tone: 'mild' }
-      : { text: translate('modsOnline.conflict'), tone: 'critical' }
-  }
-  if (kind === 'compatible') {
-    return ok
-      ? { text: translate('tools.compatible'), tone: 'mild' }
-      : { text: translate('tools.incompatible'), tone: 'critical' }
-  }
-
-  /*
-   * 满足时只写「依赖已满足」，**不写版本号**：版本号写在「要求」列里（那是
-   * 声明的区间），状态列只回答「现在行不行」。把本地版本塞进状态会让同一
-   * 行出现两个版本号，还得让用户自己比较哪个是要求、哪个是现状。
-   */
-  if (ok) return { text: translate('tools.satisfied'), tone: 'mild' }
-
-  if (status.state !== 'installable') {
-    return { text: translate(DEPENDENCY_ISSUE_TEXT.missing), tone: 'critical' }
-  }
-  // 依赖已装时按实际候选区分升级/降级；候选只能来自已解析的关系结果。
-  return status.installedMod
-    ? { text: translate(downgrade ? 'tools.downgradable' : 'tools.updatable'), tone: 'moderate' }
-    : { text: translate('tools.installable'), tone: 'moderate' }
-}
-
 /** 一条关系的完整表格行（内部实现，导出便于单测单条）。 */
 export function dependencyRowFromRelation(
   relation: RepositoryRelation,
   options: DependencyRowOptions = {},
 ): DependencyRow {
-  const { mods = [], repositories = [], ownerRepository } = options
-  return dependencyRowFromStatus(resolveRelation(relation, mods, repositories, ownerRepository, options.subject), options)
+  return dependencyRowFromStatus(resolveRelation(relation, options.mods ?? [], options.subject), options)
 }
 
-/** 卡头已持有关系结果时直接投影，和依赖表复用同一候选与版本方向。 */
+/** 从同一评估结果得到标签、具体原因和精确操作目标。 */
 export function dependencyRowFromStatus(status: RelationStatus, options: DependencyRowOptions = {}): DependencyRow {
   const { translate = identityTranslate, jumpToRepository = false } = options
   const relation = status.relation
   const kind = relation.kind ?? 'requires'
   const line = dependencyLine(relation)
-  const targetVersion = status.release?.tag_name || status.release?.version || ''
-  const installable = status.state === 'installable' || (kind === 'compatible' && status.state === 'conflict')
-  const order = installable && status.installedVersion
-    ? compareVersions(status.installedVersion, targetVersion) : null
-  const versionChange = (order === 1 || order === -1) && status.installedVersion
-    ? { direction: order === 1 ? 'downgrade' as const : 'upgrade' as const,
-        installedVersion: status.installedVersion, targetVersion } : undefined
-  const presentation = statusFor(status, translate, versionChange?.direction === 'downgrade')
-
+  const view = relationStatusView(status)
   const row: DependencyRow = {
     // key 必须带上发布线：同一 GUID 的「与测试版互斥 / 与正式版互斥」是两条
     // 不同声明，只用 guid:kind 会让 v-for 出现重复 key
@@ -311,27 +226,45 @@ export function dependencyRowFromStatus(status: RelationStatus, options: Depende
     kind,
     line,
     requirement: dependencyRequirement(relation),
-    ...(presentation ? { status: presentation.text, tone: presentation.tone } : {}),
+  }
+  if (view) {
+    row.status = translate(view.text)
+    row.tone = view.tone
+    if (view.reason) {
+      const version = view.reason === DEPENDENCY_ISSUE_TEXT.version_mismatch ? formatVersion(status.installedVersion) : ''
+      row.reason = [translate(view.reason), version && translate('tools.relationInstalledVersion', { version })]
+        .filter(Boolean).join(' · ')
+    }
   }
 
-  /*
-   * 可安装 / 可更新 / 可降级指向「能提供满足区间版本的仓库卡片」：唯一一处点一下
-   * 就能把依赖补上的地方。缺依赖与冲突没有这种去处，保持纯文字。
-   */
-  if (jumpToRepository && installable && status.repository) {
+  const target = jumpToRepository ? relationJumpTarget(status) : undefined
+  if (target?.repair) {
+    row.jump = { id: target.id, title: translate('modChanges.reviewSelection'), repair: target.repair }
+  } else if (target?.repository) {
+    const targetVersion = status.release?.tag_name || status.release?.version || ''
+    const order = status.installedVersion ? compareVersions(status.installedVersion, targetVersion) : null
+    const versionChange = (order === 1 || order === -1) && status.installedVersion
+      ? { direction: order === 1 ? 'downgrade' as const : 'upgrade' as const,
+          installedVersion: status.installedVersion, targetVersion } : undefined
     row.jump = {
-      id: status.repository.id,
+      id: target.id,
       title: translate('modsOnline.viewDependencyInModInstall'),
       // 空字符串表示 Release 来源异常缺 tag；未提供字段才是普通/RAW 导航。
-      ...(status.repository.download_mode === 'release' ? { targetVersion: status.release?.tag_name ?? '' } : {}),
+      ...(target.repository.download_mode === 'release' ? { targetVersion: status.release?.tag_name ?? '' } : {}),
       ...(versionChange ? { versionChange } : {}),
     }
   }
-  if (jumpToRepository && status.repair) row.jump = {
-    id: status.repair.node_id, title: translate('modChanges.reviewSelection'), repair: status.repair,
-  }
-
+  // Two members of the same evaluated node can share a requirement but differ
+  // in verdict, reason or repair. Include those facts rather than the member name.
+  row.key = JSON.stringify([row.key, view?.key, view?.reason, status.installedVersion,
+    row.jump?.id, row.jump?.repair?.candidate_id, row.jump?.targetVersion])
   return row
+}
+
+/** 卡头悬停显示所选关系的名字、要求和原因，与展开表格用词一致。 */
+export function dependencyTagTitle(row: DependencyRow): string {
+  const item = [row.name, row.requirement].filter(Boolean).join(' ')
+  return [item, row.reason ?? row.status, row.jump?.title].filter(Boolean).join(' · ')
 }
 
 /**
@@ -344,27 +277,18 @@ export function dependencyRowsFor(
   relations: readonly RepositoryRelation[],
   options: DependencyRowOptions = {},
 ): DependencyRow[] {
-  const subject = options.subject ?? (options.ownerRepository
-    ? { repository_id: options.ownerRepository.id, ...(options.version ? { tag: options.version } : {}) } : undefined)
-  return relationStatusesForSubject(subject, options.mods ?? [], () => relations)
-    .map(status => dependencyRowFromStatus(status, options))
+  return rowsFromStatuses(relationStatusesForSubject(options.subject, options.mods ?? [], () => relations), options)
+}
+
+function rowsFromStatuses(statuses: readonly RelationStatus[], options: DependencyRowOptions) {
+  return distinctDependencyRows(statuses.map(status => dependencyRowFromStatus(status, options)))
+}
+
+function distinctDependencyRows(rows: readonly DependencyRow[]): DependencyRow[] {
+  return [...new Map(rows.map(row => [row.key, row])).values()]
 }
 
 /* ===== 卡片上的关系提醒标签 → 见 `modRelations.dependencyTagFor` ===== */
-
-/**
- * 地图仓库声明的关系（`required_frameworks` 是它的旧投影，见下方回退）。
- *
- * `version` 是这次要安装的 Release 版本：覆盖表（`release_relations`）按它选；
- * 不传时用当前最新版（`mapReleaseVersion`）—— 卡片上「将要安装的版本」正是它。
- */
-export function mapRelations(
-  map: MapInfo | null | undefined,
-  version?: string | null,
-): RepositoryRelation[] {
-  if (!map) return []
-  return relationsForMapRelease(map, version ?? mapReleaseVersion(map))
-}
 
 /**
  * 一个已安装 MOD 该用哪份关系声明。
@@ -399,20 +323,7 @@ export function installedModRelations(
  * 快照。把入参收窄到这个交集，确认界面与地图管理页才能共用同一套依赖判定，
  * 而不是给弹窗另写一份只看快照的简化版。
  */
-export type LevelSetRelationSource =
-  Pick<LevelSetInfo, 'name' | 'author' | 'version' | 'relations'> & { name_zh?: string | null; dir_name?: string }
-
-/** 一个关卡集该用哪份关系声明（在线地图 → 本地快照）。 */
-export function levelSetRelations(
-  set: LevelSetRelationSource,
-  maps: readonly MapInfo[],
-): RepositoryRelation[] {
-  const bound = mapForLevelSet(set, maps)
-  // 已安装的集按**本地版本**取覆盖表：依赖表回答的是「这一版缺什么」，
-  // 不是「最新版要不要什么」。本地版本读不出（空串）时退回默认声明。
-  if (bound) return mapRelations(bound, set.version)
-  return set.relations ?? []
-}
+type LevelSetRelationSource = Parameters<typeof levelSetRelationStatuses>[0]
 
 /** 已安装 MOD 的依赖表行（MOD 管理页 / 详情用）。 */
 export function installedModDependencyRows(
@@ -428,50 +339,28 @@ export function installedModDependencyRows(
   })
 }
 
-/**
- * 地图源条目的依赖表行（地图下载页详情用）。
- *
- * 与 MOD 侧同一套口径：地图声明的前置（DIYLevel、Web Runtime）本身就是仓库
- * 里的 MOD，能装就跳过去装，没有来源才是纯文字「缺依赖」。
- */
-/**
- * 多 DLL 包外壳的依赖表行：把包内每个成员自己的关系表合起来看。
- *
- * ## 为什么不能只取一个代表成员
- *
- * 包的关系声明挂在仓库上，但 `release_relations` 按**已装版本**筛：一个包里
- * 装着 3.10.2 与 2.0.0 两支 DLL 时，前者命中 `==3.10.2` 覆盖规则（要求
- * DIYLevel ≥ 0.10.0），后者只有仓库级声明（不设区间）。只取首个成员当代表，
- * 依赖表就会随成员顺序变脸：表里写「已满足」，包标题却按另一支成员算出
- * 「缺依赖」—— 同一张卡上下自相矛盾，用户只能来问「低版本怎么还显示缺依赖」。
- *
- * 合并口径：按 `(kind, guid)` 去重，`requires` 取区间下限更高的一条
- * （`stricterRelation`），其余种类保留先出现的。包对外只该有一个结论。
- */
+/** 同包成员可能有不同原因，共用「需处理」标签也不能合成一行。 */
 export function mergedModDependencyRows(
   members: readonly InstalledMod[],
   options: Omit<DependencyRowOptions, 'ownerRepository'> = {},
 ): DependencyRow[] {
-  const rows = members.filter(mod => !mod.is_dependency).flatMap(mod => installedModDependencyRows(mod, options))
-  return rows.filter((row, index) => rows.findIndex(peer => peer.key === row.key && peer.status === row.status) === index)
+  return distinctDependencyRows(members.filter(mod => !mod.is_dependency)
+    .flatMap(mod => installedModDependencyRows(mod, options)))
 }
 
 export function mapDependencyRows(
   map: MapInfo | null | undefined,
-  options: Omit<DependencyRowOptions, 'ownerRepository'> = {},
+  options: Omit<DependencyRowOptions, 'ownerRepository' | 'subject'> & { version?: string | null } = {},
 ): DependencyRow[] {
-  if (!map) return []
-  return dependencyRowsFor(mapRelations(map, options.version), {
-    ...options,
-    subject: { map_id: map.id, tag: options.version ?? mapReleaseVersion(map) ?? undefined },
-    jumpToRepository: options.jumpToRepository ?? true,
-  })
+  const { mods = [], repositories, version, jumpToRepository = true } = options
+  const statuses = mapRelationStatuses(map, mods, repositories, version)
+  return rowsFromStatuses(statuses, { ...options, jumpToRepository })
 }
 
 /** 本地关卡集的依赖表行（地图管理页详情用；与地图下载页同一口径）。 */
 export function levelSetDependencyRows(
   set: LevelSetRelationSource,
-  options: Omit<DependencyRowOptions, 'ownerRepository'> & {
+  options: Omit<DependencyRowOptions, 'ownerRepository' | 'subject'> & {
     /**
      * 当前地图源列表（必填）。
      *
@@ -481,10 +370,7 @@ export function levelSetDependencyRows(
     maps: readonly MapInfo[]
   },
 ): DependencyRow[] {
-  const { maps, ...rest } = options
-  return dependencyRowsFor(levelSetRelations(set, maps), {
-    ...rest,
-    subject: set.dir_name ? { map_dir_name: set.dir_name } : undefined,
-    jumpToRepository: rest.jumpToRepository ?? true,
-  })
+  const { maps, mods = [], repositories, jumpToRepository = true } = options
+  const statuses = levelSetRelationStatuses(set, maps, mods, repositories)
+  return rowsFromStatuses(statuses, { ...options, jumpToRepository })
 }

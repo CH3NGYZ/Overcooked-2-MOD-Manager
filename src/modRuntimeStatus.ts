@@ -1,6 +1,6 @@
 import type { InstalledMod, ModRepository } from './types'
 import { repositoryForMod } from './modStatus.ts'
-import { localRelationTags, MOD_RELATION_LABELS, relationStatusesForSubject, type LocalRelationTag, type RelationStatus } from './modRelations.ts'
+import { dependencyTagFor, isRelationCardKey, relationStatusesForSubject, type RelationStatus } from './modRelations.ts'
 import { modUpdateVerdict, replaceVersionConclusion } from './statusTags.ts'
 
 /**
@@ -70,16 +70,11 @@ export function repositoryRefreshing(
 export interface RuntimeModStatus {
   /** 合成后的 MOD：`labels` / `update_available` 已按当前缓存与刷新状态重算。 */
   mod: InstalledMod
-  /** 各类关系提醒及其对应的关系；版本结论独立显示。 */
-  relationTags: LocalRelationTag[]
+  /** 卡头只用一条摘要；修复及卸载入口仍可读取全部关系。 */
+  relations: RelationStatus[]
+  relationTag: ReturnType<typeof dependencyTagFor>
   /** 绑定到的仓库是否正在刷新（卡片可以直接用它决定要不要显示「刷新中」）。 */
   refreshing: boolean
-}
-
-const RELATION_LABELS = new Set<string>(Object.values(MOD_RELATION_LABELS))
-
-export function modRelationForTag(tags: readonly LocalRelationTag[] | undefined, key: string): RelationStatus | undefined {
-  return tags?.find(tag => MOD_RELATION_LABELS[tag.kind] === key)?.dependency
 }
 
 /**
@@ -105,22 +100,22 @@ export function runtimeModStatus(
   state: RuntimeRefreshState,
 ): RuntimeModStatus {
   const repo = repositoryForMod([...repositories], mod)
-  const relationTags = mod.is_dependency ? [] : localRelationTags(
-    relationStatusesForSubject({ dll_file: mod.dll_file }, mods))
+  const relations = mod.is_dependency ? [] : relationStatusesForSubject({ dll_file: mod.dll_file }, mods)
+  const relationTag = dependencyTagFor(relations, true)
+  const relationState = { relations, relationTag }
   const refreshing = repositoryRefreshing(repo, state)
 
   /** 关系标签永远置顶，且不和版本结论互相覆盖。 */
   const withRelation = (labels: InstalledMod['labels']): InstalledMod['labels'] => {
-    const base = (labels as string[] | undefined)
-      ?.filter((key) => !RELATION_LABELS.has(key)) ?? []
-    return [...relationTags.map(tag => MOD_RELATION_LABELS[tag.kind]), ...base] as InstalledMod['labels']
+    const base = labels?.filter(key => !isRelationCardKey(key)) ?? []
+    return relationTag ? [relationTag.key, ...base] : base
   }
 
-  if (mod.release_companion) return { relationTags, refreshing, mod: { ...mod, labels: withRelation(mod.labels) } }
+  if (mod.release_companion) return { ...relationState, refreshing, mod: { ...mod, labels: withRelation(mod.labels) } }
 
   if (refreshing) {
     return {
-      relationTags,
+      ...relationState,
       refreshing,
       mod: {
         ...mod,
@@ -140,7 +135,7 @@ export function runtimeModStatus(
    */
   if (repo?.last_error) {
     return {
-      relationTags,
+      ...relationState,
       refreshing,
       mod: {
         ...mod,
@@ -158,7 +153,7 @@ export function runtimeModStatus(
     if (verdict.source === 'newer_copy') {
       // 不把旧副本重算成「最新版」或「可更新」，也不抹掉独立的仓库错误、RAW 或关系标签。
       const labels = mod.labels?.filter(label => label !== 'latest' && label !== 'update_available')
-      return { relationTags, refreshing, mod: { ...mod, update_available: false, labels: withRelation(labels) } }
+      return { ...relationState, refreshing, mod: { ...mod, update_available: false, labels: withRelation(labels) } }
     }
     /*
      * 用 `replaceVersionConclusion` 而不是自己拼数组：旧实现只过滤
@@ -166,7 +161,7 @@ export function runtimeModStatus(
      * 等旧结论留在原地，出现「最新版 + 仓库不可用」这种自相矛盾的组合。
      */
     return {
-      relationTags,
+      ...relationState,
       refreshing,
       mod: {
         ...mod,
@@ -179,5 +174,5 @@ export function runtimeModStatus(
     }
   }
 
-  return { relationTags, refreshing, mod: { ...mod, labels: withRelation(mod.labels) } as InstalledMod }
+  return { ...relationState, refreshing, mod: { ...mod, labels: withRelation(mod.labels) } }
 }

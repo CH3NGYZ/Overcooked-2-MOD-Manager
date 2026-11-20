@@ -7,11 +7,10 @@ import { useDashboard } from '../composables/useDashboardStore'
 import { useModRepositoryRefresh } from '../composables/useModRepositoryRefresh'
 import { useModRepositoryLink } from '../crossLink'
 import { installedModTags } from '../statusTags'
-import { modRelationForTag, runtimeModStatus } from '../modRuntimeStatus'
-import { relationJumpRepositoryId } from '../modRelations'
+import { runtimeModStatus } from '../modRuntimeStatus'
+import { isRelationCardKey } from '../modRelations'
 import { repositoryForMod } from '../modStatus'
-import { isDependencyTag, tagTargetId, tagTargetTitle } from '../tagTargets'
-import { dependencyRowFromStatus } from '../dependencyRows'
+import { dependencyRowFromStatus, dependencyTagTitle } from '../dependencyRows'
 import { useDependencyNavigation } from '../composables/useDependencyNavigation'
 import type { InstalledMod } from '../types'
 
@@ -55,44 +54,39 @@ const status = computed(() => {
   return runtimeModStatus(current, mods.value, repositories.value, runtimeState.value)
 })
 
-const tags = computed(() =>
-  (status.value ? installedModTags(status.value.mod) : [])
-    .map((tag) => ({ ...tag, text: t(tag.text) })))
+function relationRow(tagKey: string) {
+  const summary = status.value?.relationTag
+  if (!summary || summary.key !== tagKey) return undefined
+  return dependencyRowFromStatus(summary.dependency, { mods: mods.value, repositories: repositories.value,
+    translate: t, pickName: pickI18n, jumpToRepository: true })
+}
 
-/** 标签点了跳哪个仓库：依赖类跳依赖仓库，其余跳自己绑定的仓库。 */
-function targetOf(tagKey: string): string | undefined {
+const repositoryId = computed(() => {
   const current = mod.value
-  if (!current) return undefined
-  return tagTargetId(
-    tagKey,
-    repositoryForMod(repositories.value, current)?.id,
-    relationJumpRepositoryId(modRelationForTag(status.value?.relationTags, tagKey)),
-  )
-}
+  return current && repositoryForMod(repositories.value, current)?.id
+})
 
-function titleOf(tagKey: string) {
-  if (modRelationForTag(status.value?.relationTags, tagKey)?.repair) return t('modChanges.repairDependencies')
-  return tagTargetTitle(tagKey, targetOf(tagKey))
-}
+const tags = computed(() => (status.value ? installedModTags(status.value.mod) : []).map(tag => {
+  const row = relationRow(tag.key)
+  const clickable = isRelationCardKey(tag.key) ? !!row?.jump : !!repositoryId.value
+  const title = row ? dependencyTagTitle(row) : clickable ? t('dialogs.viewInModInstall') : undefined
+  return { ...tag, text: t(tag.text), title, clickable }
+}))
 
 function activate(tagKey: string) {
-  if (isDependencyTag(tagKey)) {
-    dependencyNavigation.request(() => {
-      const issue = modRelationForTag(status.value?.relationTags, tagKey)
-      return issue ? dependencyRowFromStatus(issue, { mods: mods.value, repositories: repositories.value,
-        translate: t, pickName: pickI18n, jumpToRepository: true }) : undefined
-    })
+  if (isRelationCardKey(tagKey)) {
+    dependencyNavigation.request(() => relationRow(tagKey))
     return
   }
-  const id = targetOf(tagKey)
+  const id = repositoryId.value
   if (id) linkToModRepository(id)
 }
 </script>
 
 <template>
   <n-tag v-for="tag in tags" :key="tag.key" size="tiny" :bordered="false"
-    class="state-tag" :class="{ 'state-tag--link': !!targetOf(tag.key) }"
+    class="state-tag" :class="{ 'state-tag--link': tag.clickable }"
     :color="tagColorForAny(tag.tone)"
-    :title="titleOf(tag.key)"
+    :title="tag.title"
     @click.stop="activate(tag.key)">{{ tag.text }}</n-tag>
 </template>

@@ -11,11 +11,11 @@ import { useModRepositoryRefresh } from '../composables/useModRepositoryRefresh'
 import { isPrereleaseVersion, modsForRepository, versionDisplay } from '../modStatus'
 import { repositoryInstallAction, repositoryStatus, type InstallAction, type StatusTone } from '../statusTags'
 import { useFocusHighlight, useLocalModLink } from '../crossLink'
-import { dependencyTagFor, primaryRelation, relationJumpRepositoryId, relationTagView, resolveRelations, type RelationStatus } from '../modRelations'
-import { dependencyRowFromStatus, type DependencyRow } from '../dependencyRows'
+import { dependencyTagFor, relationStatusesForSubject, type RelationStatus } from '../modRelations'
+import { dependencyRowFromStatus, dependencyTagTitle, type DependencyRow } from '../dependencyRows'
 import { useDependencyNavigation } from '../composables/useDependencyNavigation'
 import { pickI18n, t } from '../i18n'
-import { tagColorFor, type TagTone } from '../theme'
+import { tagColorFor } from '../theme'
 import { sourceMatchesRegion } from '../repositorySources'
 import { modRepositoryIsAvailable } from '../repositoryAvailability'
 import { markdownSummary } from '../markdown'
@@ -164,23 +164,6 @@ function runCardAction(repo: ModRepository) {
   else void install(repo)
 }
 
-/**
- * 卡片的依赖提示（给共享卡片组件用）。
- *
- * 组件只管展示，判定仍在这里 —— 「缺依赖 / 冲突」的语义来自
- * `modRelations.dependencyTagFor`，四个页面共用同一份实现。
- */
-function cardDependency(repo: ModRepository): CardDependencyTag | null {
-  const tag = relationTag(repo)
-  if (!tag) return null
-  return {
-    text: tag.text,
-    tone: tag.tone,
-    title: relationTagTitle(repo),
-    clickable: !!relationJumpId(repo),
-  }
-}
-
 /** 卡片的主按钮（给共享卡片组件用）。 */
 function cardAction(repo: ModRepository): CardAction {
   return {
@@ -300,67 +283,21 @@ function repoNote(repo: ModRepository) {
 
 /* ===== 关系提示（依赖 / 冲突） ===== */
 
-/**
- * 一个仓库未满足的第一条关系。
- *
- * 只取「第一条」用于卡片提示：卡头只有一个标签位。优先级由
- * `primaryRelation` 决定 —— 冲突优先（可能已经崩游戏），其次能给安装
- * 入口的依赖，最后是只提示的那些。
- *
- * 计算只依赖当前 Dashboard（已装 MOD + 仓库 Release 缓存），
- * 所以刷新完仓库后标签会自动出现/消失，不需要额外请求。
- */
-function unmetRelation(repo: ModRepository): RelationStatus | undefined {
-  return primaryRelation(resolveRelations(repo, mods.value, repositories.value))
+/** 在线卡头也汇总本地副本；详情表才展示选中的在线版本。 */
+function repoRelationTag(repo: ModRepository) {
+  const localMods = mods.value
+  const installed = modsForRepository(localMods, repo).filter(mod => !mod.is_dependency)
+  return dependencyTagFor(installed.flatMap(mod => relationStatusesForSubject({ dll_file: mod.dll_file }, localMods)), installed.length > 0)
 }
 
-/**
- * 卡头那个关系标签该显示什么（`null` 表示不显示）。
- *
- * 判定与文案全部来自 `modRelations.dependencyTagFor` —— 与 MOD 管理页、
- * 地图下载页、地图管理页共用同一份实现，四个页面不会各写一套「缺依赖」。
- */
-function relationTag(repo: ModRepository): { text: string; tone: TagTone } | null {
-  const status = unmetRelation(repo)
-  const tag = dependencyTagFor(status ? [status] : [], hasLocalInstall(repo))
-  return tag ? { text: tag.text, tone: tag.tone } : null
+function dependencyRow(status: RelationStatus): DependencyRow {
+  return dependencyRowFromStatus(status, { mods: mods.value, repositories: repositories.value,
+    translate: t, pickName: pickI18n, jumpToRepository: true })
 }
 
-/** 关系目标的来源名（用于标签提示）。 */
-function relationTargetName(status: RelationStatus) {
-  if (status.repository) return repoName(status.repository)
-  if (status.installedMod) return status.installedMod.name
-  return status.relation.guid
-}
-
-/**
- * 点关系标签该跳到哪个仓库（`undefined` = 不可点）。
- *
- * 与 MOD 管理页共用 `relationJumpRepositoryId`：优先返回 repair owner，
- * 仅旧展示模型的仓库导航使用 repository id。
- */
-function relationJumpId(repo: ModRepository): string | undefined {
-  return relationJumpRepositoryId(unmetRelation(repo))
-}
-
-/**
- * 关系标签的悬停提示：说清「跟谁、为什么」，以及点了会去哪。
- *
- * 没有可跳转目标时不假装可点，直接说明原因（没有可安装来源）。
- */
-function relationTagTitle(repo: ModRepository) {
-  const status = unmetRelation(repo)
-  if (!status) return undefined
-  if (status.repair) return t('modChanges.reviewSelection')
-  const tag = relationTagView(status)
-  if (!tag) return undefined
-  const target = relationTargetName(status)
-  const detail = status.state === 'conflict'
-    ? t('modsOnline.isIncompatibleWithAndMustBeUninstalled', { owner: repoName(repo), target })
-    : `${t(tag.text)}：${target}`
-  return relationJumpId(repo)
-    ? `${detail} · ${t('modsOnline.clickToLocateThatRepository')}`
-    : detail
+function cardDependency(repo: ModRepository): CardDependencyTag | null {
+  const tag = repoRelationTag(repo)
+  return tag ? { ...tag, title: dependencyTagTitle(dependencyRow(tag.dependency)) } : null
 }
 
 /**
@@ -369,9 +306,8 @@ function relationTagTitle(repo: ModRepository) {
 function jumpToRelationRepository(repo: ModRepository) {
   dependencyNavigation.request(() => {
     const current = repositories.value.find(entry => entry.id === repo.id)
-    const issue = current && unmetRelation(current)
-    return issue ? dependencyRowFromStatus(issue, { mods: mods.value, repositories: repositories.value,
-      translate: t, pickName: pickI18n, jumpToRepository: true }) : undefined
+    const tag = current && repoRelationTag(current)
+    return tag?.clickable ? dependencyRow(tag.dependency) : undefined
   })
 }
 

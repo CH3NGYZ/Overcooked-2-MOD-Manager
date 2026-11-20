@@ -8,8 +8,8 @@ import test from 'node:test'
  * 展示依赖的唯一口径，所以测试要锁住三件产品定过的事：
  *
  * 1. 目标名按「在线仓库名 → 本地安装包标题 → GUID」解析，不能把 GUID 摊给用户；
- * 2. 满足时状态只写「已满足」，**不带版本号**（版本号在「要求」列）；
- * 3. 只有「点一下能解决」的状态才可跳转，地图页永远不可跳。
+ * 2. 版本要求和状态分别展示，没有评估时保留声明；
+ * 3. 只有权威评估给出的处理目标才能跳到整链。
  */
 const {
   dependencyTargetName,
@@ -19,11 +19,10 @@ const {
   installedModRelations,
   installedModDependencyRows,
   mergedModDependencyRows,
-  levelSetRelations,
   levelSetDependencyRows,
-  mapRelations,
   mapDependencyRows,
 } = await import('../src/dependencyRows.ts')
+const { levelSetRelations, mapRelations } = await import('../src/levelSetStatus.ts')
 
 /** 一台离线可用的假仓库：只填关系判定/取名会读的字段。 */
 function repo(overrides = {}) {

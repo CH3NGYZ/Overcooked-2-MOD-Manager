@@ -31,15 +31,14 @@ registerHooks({
 })
 
 const { useModRemoval } = await import('../src/composables/useModRemoval.ts')
-const { localRelationTags } = await import('../src/modRelations.ts')
-const { modRelationForTag } = await import('../src/modRuntimeStatus.ts')
+const { conflictRemovalTarget, relationStatusesForSubject } = await import('../src/modRelations.ts')
+const { evaluationSnapshot, clearEvaluation } = await import('./helpers/mod-change-evaluations.mjs')
 const { repositoryForMod } = await import('../src/modStatus.ts')
 const { statusActionFor } = await import('../src/statusActions.ts')
-const { isDependencyTag } = await import('../src/tagTargets.ts')
 const { descriptor } = parse(readFileSync(new URL('../src/views/ModsLocalView.vue', import.meta.url), 'utf8'))
 const script = descriptor.scriptSetup.content
 const ast = ts.createSourceFile('ModsLocalView.ts', script, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-const names = ['actionContext', 'cardAction', 'packageAction', 'runCardAction', 'removeOlderCopy', 'runPackageAction']
+const names = ['actionContext', 'cardAction', 'packageAction', 'packageRelations', 'runCardAction', 'removeOlderCopy', 'runPackageAction']
 const functions = names.map(name => {
   const statement = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name)
   assert.ok(statement, `production handler ${name} must exist`)
@@ -50,15 +49,15 @@ const removal = ast.statements.find(node => ts.isVariableStatement(node) && node
 assert.ok(removal, 'page must configure its removal through the shared composable')
 const createActions = new Function('environment', `${stripTypeScriptTypes(`
   const { t, useModRemoval, blockModOperation, deleteConfirm, modTitle, busy, load,
-    statusActionFor, repositoryForMod, modRelationForTag, repositories, relationTagsByDll,
+    statusActionFor, repositoryForMod, conflictRemovalTarget, repositories, relationsByDll,
     previewModRepository, linkToModRepository, refreshModRepository } = environment
   ${removal.getText(ast)}
   ${functions.join('\n')}
 `)}\nreturn { runCardAction, runPackageAction }`)
 
 const mod = name => ({ name, guid: `test.${name}`, dll_file: `${name}.dll`, version: '1.0.0', enabled: true,
-  version_source: 'plugin', update_available: false, duplicate_guid: false, status: 'installed', labels: ['dependency_conflict'] })
-function setup({ responses = [{ ok: true, message: '' }], blocked = false } = {}) {
+  version_source: 'plugin', update_available: false, duplicate_guid: false, status: 'installed', labels: ['relation_needs_action'] })
+function setup({ responses = [{ ok: true, message: '' }], blocked = false, kind = 'conflicts' } = {}) {
   const a = mod('A'), b = mod('B'), dialogs = [], calls = [], notices = [], events = [], busy = { value: {} }
   const state = { blocked, refreshes: 0 }
   const boundary = {
@@ -73,21 +72,25 @@ function setup({ responses = [{ ok: true, message: '' }], blocked = false } = {}
     },
   }
   globalThis.__modRemovalBoundary = boundary
-  const issues = Object.fromEntries([[a, b], [b, a]].map(([source, target]) => [source.dll_file,
-    localRelationTags([{ relation: { kind: 'conflicts', guid: target.guid }, state: 'conflict', installedMod: target, installedVersion: target.version }])]))
+  evaluationSnapshot([[a, b], [b, a]].map(([source, target]) => ({ id: `mod:${source.name}`, dlls: [source.dll_file],
+    rows: [{ relation: { kind, guid: target.guid }, state: 'conflict', targets: [`mod:${target.name}`] }],
+  })))
+  const issues = Object.fromEntries([a, b].map(source => [source.dll_file,
+    relationStatusesForSubject({ dll_file: source.dll_file }, [a, b])]))
+  clearEvaluation()
   const actions = createActions({
-    t: key => key, useModRemoval, statusActionFor, repositoryForMod, modRelationForTag, busy,
+    t: key => key, useModRemoval, statusActionFor, repositoryForMod, conflictRemovalTarget, busy,
     blockModOperation: () => state.blocked,
     deleteConfirm: { value: { body: name => `Remove ${name}?`, action: 'Move to recycle bin', done: 'Moved to recycle bin' } },
     modTitle: target => target.name, load: async () => { state.refreshes++ },
-    repositories: { value: [] }, relationTagsByDll: { value: issues },
+    repositories: { value: [] }, relationsByDll: { value: issues },
     previewModRepository: () => assert.fail('conflicts must not install'),
     linkToModRepository: () => assert.fail('conflicts must not navigate'),
     refreshModRepository: () => assert.fail('conflicts must not refresh an unrelated repository'),
   })
   return { ...actions, a, b, dialogs, calls, notices, events, busy, state, issues }
 }
-const packageFor = source => ({ mods: [mod('unrelated'), source], coreMods: [source], statuses: [{ key: 'dependency_conflict' }] })
+const packageFor = source => ({ mods: [mod('unrelated'), source], coreMods: [source], statuses: [{ key: 'relation_needs_action' }] })
 
 const olderFastInit = guid => ({ ...mod('FastInit'), version: '1.3', guid,
   dll_file: 'BepInEx/plugins/FastInit 1.3/DIYLevelFastInit.dll', duplicate_cleanup_available: true,
@@ -112,6 +115,7 @@ test('older duplicate shortcuts preserve the clicked physical DLL through both c
 test('duplicate cleanup never turns an aggregated label or a package warning into package deletion', async () => {
   const f = setup({ responses: [{ ok: false, requires_package_confirmation: true, message: 'Package warning' }] })
   const old = olderFastInit('oc2.diylevel.fastinit')
+  delete f.issues[f.a.dll_file] // Isolate the duplicate shortcut from an actual exclusion action.
   f.runPackageAction({ mods: [old, f.a], coreMods: [f.a], statuses: [{ key: 'duplicate_lower_version' }] })
   assert.deepEqual(f.dialogs, [])
   f.runCardAction(old)
@@ -199,4 +203,12 @@ test('a missing conflict target gives no action and cannot fall back to deleting
   delete fixture.issues[fixture.a.dll_file]
   fixture.runCardAction(fixture.a); fixture.runPackageAction(packageFor(fixture.a))
   assert.deepEqual(fixture.dialogs, []); assert.deepEqual(fixture.calls, [])
+})
+
+test('a compatibility conflict does not produce a standalone uninstall on a card or package', () => {
+  const f = setup({ kind: 'compatible' })
+  assert.equal(f.issues[f.a.dll_file][0].installedMod, f.b, 'there is a physical peer, but compatibility is not exclusion')
+  f.runCardAction(f.a); f.runPackageAction(packageFor(f.a))
+  assert.deepEqual(f.dialogs, [])
+  assert.deepEqual(f.calls, [])
 })

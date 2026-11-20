@@ -3,16 +3,9 @@ import test from 'node:test'
 
 /** 关系判定：真实源码直接执行（纯函数，不依赖 Vue / Naive）。 */
 const {
-  relationsForRelease, resolveRelation, resolveRelations, unmetRelations, primaryRelation, relationCardTag,
-  relationTargetRepository, dependencyTagFor, relationsForMapRelease,
+  relationsForRelease, resolveRelation, resolveRelations, unmetRelations, relationJumpTarget,
+  relationTargetRepository, dependencyTagFor, relationsForMapRelease, dependencyRepairStatus,
 } = await import('../src/modRelations.ts')
-
-function mod(overrides = {}) {
-  return {
-    name: 'Mod', dll_file: 'Mod.dll', enabled: true, version_source: 'plugin',
-    update_available: false, duplicate_guid: false, status: 'installed', labels: [], ...overrides,
-  }
-}
 
 function repo(overrides = {}) {
   return {
@@ -38,27 +31,30 @@ test('unmetRelations 只返回有问题的条目', () => {
   assert.equal(unmetRelations(statuses)[0].relation.guid, 'other')
 })
 
-/* 冲突优先于缺依赖：冲突可能已经让游戏崩了，缺依赖只是不工作。 */
-test('primaryRelation 优先返回冲突，其次可安装，最后只提示的', () => {
+test('卡头优先给能处理整链的条目，只有提示时不显示可点样式', () => {
   const missing = { relation: { guid: 'a' }, state: 'missing', installedVersion: null }
-  const installable = { relation: { guid: 'b' }, state: 'installable', installedVersion: null }
-  const conflict = { relation: { guid: 'c' }, state: 'conflict', installedVersion: '1.0' }
-  assert.equal(primaryRelation([missing, installable, conflict])?.state, 'conflict')
-  assert.equal(primaryRelation([missing, installable])?.state, 'installable')
-  assert.equal(primaryRelation([missing])?.state, 'missing')
-  assert.equal(primaryRelation([]), undefined)
+  const repairable = { ...missing, relation: { guid: 'b' }, repair: { node_id: 'mod:owner' } }
+  const conflict = { ...repairable, relation: { kind: 'conflicts', guid: 'c' }, state: 'conflict', installedVersion: '1.0' }
+  assert.equal(dependencyTagFor([missing, repairable, conflict], true)?.dependency, conflict)
+  assert.equal(dependencyTagFor([missing, repairable], true)?.dependency, repairable)
+  assert.equal(dependencyTagFor([missing], true)?.clickable, false)
+  assert.equal(dependencyTagFor([], true), undefined)
 })
 
 test('卡头不把尚未评估或无法确认的依赖当成已确认的问题', () => {
-  const unassessed = resolveRelation(DEP, [], [])
-  const unknown = { ...unassessed, state: 'unknown' }
+  const unassessed = resolveRelation(DEP, [])
+  const unknown = { ...unassessed, state: 'unknown', repair: { node_id: 'mod:owner' } }
   const missing = { ...unassessed, state: 'missing' }
   assert.equal(unassessed.state, 'unassessed')
-  assert.equal(relationCardTag(unassessed, true), undefined)
-  assert.equal(relationCardTag(unknown, true), undefined)
-  assert.equal(dependencyTagFor([unassessed, unknown], true), undefined)
+  assert.equal(dependencyTagFor([unassessed, { ...unassessed, state: 'ok' }], true), undefined)
+  assert.equal(dependencyTagFor([unknown, missing], false), undefined)
+  const unresolved = dependencyTagFor([unassessed, unknown], true)
+  assert.equal(unresolved?.text, 'tools.relationUnconfirmed')
+  assert.equal(unresolved?.clickable, false)
+  assert.equal(relationJumpTarget(unknown), undefined)
+  assert.equal(dependencyRepairStatus([unassessed, unknown]), undefined)
   assert.deepEqual(unmetRelations([unassessed, unknown, missing]), [missing])
-  assert.equal(dependencyTagFor([unassessed, unknown, missing], true)?.text, 'modChanges.relation.missing')
+  assert.equal(dependencyTagFor([unassessed, unknown, missing], true)?.text, 'tools.relationNeedsAction')
 })
 
 /* ===== 按 Release 覆盖 ===== */
@@ -151,21 +147,6 @@ test('release_relations 可以同时覆盖依赖与冲突', () => {
   assert.equal(statuses[0].relation.version, '>=3.0')
   assert.equal(statuses[1].relation.kind, 'conflicts')
 })
-
-const OWNER = { id: 'owner', plugin_guid: 'com.example.owner', name: 'Owner' }
-
-/* ===== 发布线（prerelease）===== */
-
-/*
- * 正式版与测试版常是同一 GUID 的两条发布线（stable / beta 两个仓库条目）。
- * 版本区间无法把它们分干净：`1.9.8.1`（= 1.9.8-beta.1）排在 `1.9.8` 之下，
- * 所以 `[1.9.8, 1.9.9)` 命中正式版却漏掉测试版。`prerelease` 直接按发布线筛。
- */
-const SAME_GUID = 'com.example.self'
-
-/* ===== 标签跳转目标 ===== */
-
-const { relationJumpRepositoryId } = await import('../src/modRelations.ts')
 
 /* ===== 展示：关系目标解析（名字取仓库配置里的，不摊 GUID） ===== */
 

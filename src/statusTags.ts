@@ -1,6 +1,6 @@
 import type { InstalledMod, InstalledModStatusLabel, ModRepository } from './types'
 import { compareVersions, isPrereleaseVersion, localVersion, matchesRepositoryIdentity, modsForRepository, repositoryForMod } from './modStatus.ts'
-import { DEPENDENCY_ISSUE_TEXT } from './modRelations.ts'
+import { RELATION_CARD_KEYS, RELATION_STATUS } from './modRelations.ts'
 
 /**
  * MOD 状态标签：两页共用同一套「文案 + 语义色」，避免两边各写一份。
@@ -84,33 +84,8 @@ export const STATUS_META: Record<string, { text: string; tone: StatusTone }> = {
   enabled: { text: 'modsLocal.enabled2', tone: 'accent' },
   /** 包内的纯依赖 DLL：读不出 BepInPlugin 元数据，只作为依赖展示。 */
   dependency: { text: 'tools.dependency', tone: 'muted' },
-  /**
-   * 依赖未安装：这个 MOD 声明的某个必选依赖没装。
-   *
-   * 等级取 `critical`（与「加载警告」同档）：缺依赖时 MOD 很可能直接不工作，
-   * 比「可更新」更该被看见。但也只是提示 —— 能不能一键装由
-   * `modRelations` 判定，没有可安装来源时只显示标签。
-   */
-  missing_dependency: { text: DEPENDENCY_ISSUE_TEXT.missing, tone: 'critical' },
-  dependency_disabled: { text: DEPENDENCY_ISSUE_TEXT.disabled, tone: 'critical' },
-  dependency_mismatch: { text: DEPENDENCY_ISSUE_TEXT.version_mismatch, tone: 'critical' },
-  /**
-   * 兼容关系差一个版本：线上有落在兼容区间里的 Release 可换。
-   *
-   * 与「缺依赖」分开两档，是因为两者对用户的意义相反：「缺依赖」是「必须
-   * 的东西没有」，而这里点一下按钮就能修好。文案与依赖表
-   * （`dependencyRows.statusFor` 的 `tools.installable`）用同一套词，卡片与
-   * 表格不会各说一种。
-   */
-  dependency_installable: { text: 'tools.installable', tone: 'moderate' },
-  /**
-   * 关系冲突：装了不该装的（`conflicts` 命中），或对方版本不在兼容区间内
-   * （`compatible` 不满足）。
-   *
-   * 与「缺依赖」同档 critical，但文案区分：缺依赖是「少东西」，
-   * 冲突是「东西不对」，后者通常要卸载而不是安装。
-   */
-  dependency_conflict: { text: 'modsOnline.conflict', tone: 'critical' },
+  relation_needs_action: RELATION_STATUS.relation_needs_action,
+  relation_unconfirmed: RELATION_STATUS.relation_unconfirmed,
   /** 仓库文件（RAW）已安装：与「最新版」同档，都用主题色。 */
   installed: { text: 'modsLocal.installed', tone: 'accent' },
   // MOD 安装页专用：仓库维度而不是已安装 MOD 维度
@@ -216,13 +191,9 @@ const TONE_PRIORITY: Record<string, number> = {
 /** 同档内的稳定排序（越靠前越需要动作）。 */
 const WITHIN_TONE_ORDER: string[] = [
   'load_warning',
-  'dependency_conflict',
-  'missing_dependency',
-  'dependency_disabled',
-  'dependency_mismatch',
+  ...RELATION_CARD_KEYS,
   'bound_repository_missing',
   'repository_unavailable',
-  'dependency_installable',
   'duplicate',
   'update_available',
   'prerelease',
@@ -303,9 +274,7 @@ export function summarizeUnits(units: readonly StatusUnit[]): StatusSummary[] {
  *
  * 因此这里把标签分成四类：
  *   1. 预发布 —— 整包共用一个 tag，不带数量，与单个 MOD 一样放在最前；
- *   2. 依赖告警（缺依赖 / 依赖冲突）—— 仓库 `relations` 挂在仓库上，
- *      包内每个 DLL 都按同一份声明判定，所以这是包级结论：整包只出一条、
- *      不带数量，与单个 MOD 卡片同一顺序同一语义；
+ *   2. 关系摘要 —— 全部成员中「需处理」优先于「未确认」，整包至多一条；
  *   3. 版本结论（最新版 / 可更新 / 刷新中 / 版本未知 / 仓库刷新失败…）
  *      —— 整包只取最需要注意的那一条，不带数量；
  *   4. 成员级告警（重复、低版本、加载警告）—— 确实可能只命中某几个 DLL，
@@ -323,21 +292,6 @@ export interface PackageStatus {
 
 /** 这些标签描述的是包内某个 DLL 的状态，可能只命中一部分成员。 */
 const MEMBER_LEVEL_LABELS = new Set(['duplicate', 'duplicate_lower_version', 'load_warning'])
-
-/**
- * 包级依赖告警：按严重度排列（冲突先于缺失）。
- *
- * 依赖声明来自仓库的 `[[repositories.relations]]`，整包共用一份：只要包内
- * 任一成员判定出问题，整个包就不可用，结论属于包而不是某个 DLL。
- * 每类问题只出一条、不带数量；不同类可以同时出现。
- */
-const PACKAGE_DEPENDENCY_LABELS = [
-  'dependency_conflict',
-  'missing_dependency',
-  'dependency_disabled',
-  'dependency_mismatch',
-  'dependency_installable',
-] as const
 
 export function packageStatuses(mods: readonly InstalledMod[]): PackageStatus[] {
   const real = mods.filter((mod) => !mod.is_dependency)
@@ -362,18 +316,8 @@ export function packageStatuses(mods: readonly InstalledMod[]): PackageStatus[] 
     result.push({ key: 'prerelease', text: meta.text, tone: meta.tone })
   }
 
-  /*
-   * 依赖告警：位置与单个 MOD 一致（预发布之后、版本结论之前）。
-   *
-   * 这类标签既不是版本结论、也不在成员级告警里，早期实现会**整条丢弃**：
-   * 仓库声明了 `requires` 但依赖被卸载时，单 MOD 显示「缺依赖」，
-   * 多 DLL 包的标题却什么都不说 —— 同一个包看起来「没问题」。
-   */
-  for (const key of PACKAGE_DEPENDENCY_LABELS) {
-    if (!present.has(key)) continue
-    const meta = STATUS_META[key]
-    result.push({ key, text: meta.text, tone: meta.tone })
-  }
+  const relation = RELATION_CARD_KEYS.find(key => present.has(key))
+  if (relation) result.push({ key: relation, ...RELATION_STATUS[relation] })
 
   // 版本结论互斥：整包只保留最需要注意的一条
   const conclusion = [...present]

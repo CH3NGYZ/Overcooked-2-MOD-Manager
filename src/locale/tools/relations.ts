@@ -82,32 +82,18 @@ export const toolsUiRelations: DomainMessages = {
     ko: '상태',
     ja: '状態',
   },
-  // 依赖已满足（本地装了且版本在区间内）
-  satisfied: {
-    'zh-CN': '依赖已满足',
-    'zh-TW': '相依已滿足',
-    en: 'Dependency met',
-    ko: '의존성 충족',
-    ja: '依存先の条件を満たす',
+  relationNeedsAction: {
+    'zh-CN': '需处理', 'zh-TW': '需處理', en: 'Needs action', ko: '조치 필요', ja: '要対応',
   },
-  // 依赖未装、但线上有满足区间的版本可装
-  installable: {
-    'zh-CN': '可安装',
-    'zh-TW': '可安裝',
-    en: 'Installable',
-    ko: '설치 가능',
-    ja: 'インストール可',
+  relationUnconfirmed: {
+    'zh-CN': '未确认', 'zh-TW': '未確認', en: 'Unconfirmed', ko: '미확인', ja: '未確認',
   },
-  // 依赖已装但版本不满足：线上有满足区间的版本，去把它换上
-  updatable: {
-    'zh-CN': '可更新',
-    'zh-TW': '可更新',
-    en: 'Updatable',
-    ko: '업데이트 가능',
-    ja: '更新可能',
+  relationPassed: {
+    'zh-CN': '已通过', 'zh-TW': '已通過', en: 'Passed', ko: '통과', ja: '確認済み',
   },
-  downgradable: {
-    'zh-CN': '可降级', 'zh-TW': '可降級', en: 'Downgrade available', ko: '다운그레이드 가능', ja: 'ダウングレード可能',
+  relationInstalledVersion: {
+    'zh-CN': '已装 {version}', 'zh-TW': '已裝 {version}', en: 'Installed: {version}',
+    ko: '설치됨: {version}', ja: 'インストール済み: {version}',
   },
   goUpdate: {
     'zh-CN': '去更新', 'zh-TW': '前往更新', en: 'Go to update', ko: '업데이트로 이동', ja: '更新へ進む',
@@ -145,23 +131,7 @@ export const toolsUiRelations: DomainMessages = {
     ko: '대상 의존 모드 버전이 현재 캐시에 없습니다. 버전 정보를 새로 고친 뒤 다시 선택하세요.',
     ja: '対象の依存バージョンは現在のキャッシュにありません。バージョン情報を更新して選び直してください。',
   },
-  // conflicts 关系未命中（对方不在冲突区间内）
-  noConflict: {
-    'zh-CN': '无冲突',
-    'zh-TW': '無衝突',
-    en: 'No conflict',
-    ko: '충돌 없음',
-    ja: '競合なし',
-  },
-  // compatible 关系满足
-  compatible: {
-    'zh-CN': '兼容',
-    'zh-TW': '相容',
-    en: 'Compatible',
-    ko: '호환',
-    ja: '互換',
-  },
-  // compatible 关系不满足
+  // 原因：兼容关系不满足
   incompatible: {
     'zh-CN': '不兼容',
     'zh-TW': '不相容',

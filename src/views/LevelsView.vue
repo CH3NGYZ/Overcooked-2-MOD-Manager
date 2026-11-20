@@ -20,8 +20,8 @@ import { useFocusHighlight, useLocalModLink, useMapLink, useModRepositoryLink } 
 import { useListVisibility } from '../composables/useListVisibility'
 import { bulkSwitchValue as bulkSwitchValueOf } from '../listVisibility'
 import { cachedInstallRelease } from '../repositoryAssets'
-import { dependencyRowFromStatus, levelSetDependencyRows } from '../dependencyRows'
-import { dependencyRepairStatus, unmetRelations } from '../modRelations'
+import { dependencyRowFromStatus, dependencyTagTitle, levelSetDependencyRows } from '../dependencyRows'
+import { dependencyRepairStatus, type RelationStatus } from '../modRelations'
 import { useDependencyNavigation } from '../composables/useDependencyNavigation'
 import { buildLevelSetGroups } from '../levelSetGroups'
 import {
@@ -30,7 +30,6 @@ import {
   summarizeLevelSetTags,
   summarizeLevelSetToggleStatus,
 } from '../levelSetStatusSummary'
-import { formatVersionSpec } from '../versionSpec'
 import { modRepositoryIsAvailable } from '../repositoryAvailability'
 import { describeRefreshOutcome } from '../refreshOutcomeText'
 import { markDialogBusy } from '../dialogBusy'
@@ -530,7 +529,7 @@ async function runCardAction(set: LevelSetInfo) {
   const action = actionOf(set)
   if (!action) return
   if (action.kind === 'review-conflict') {
-    // 冲突的是一个装错版本的 MOD：能定位到它绑定的仓库就高亮那张卡，
+    // 排斥关系指向另一个已安装的 MOD：能定位到其绑定仓库就高亮那张卡，
     // 没绑仓库的只能落到 MOD 管理页让用户自己找 —— 仍比点了没反应好。
     if (action.repositoryId) linkToLocalMods(action.repositoryId)
     else void router.push({ name: 'mods-local' })
@@ -559,30 +558,14 @@ async function runCardAction(set: LevelSetInfo) {
   }
 }
 
-/**
- * 标签悬停提示：标签本身很短，把「为什么」放在 title 里。
- *
- * - 缺依赖：列出**这条声明链**里没满足的 GUID 与版本要求（绑定的在线地图优先，
- *   没有就退回本地快照 —— 与依赖表、标签本身同一条来源）；
- * - 有更新（可点）：说明点下去会去哪儿，避免用户以为是就地更新。
- */
-function tagTitle(set: LevelSetInfo, tag: LevelSetCardTag): string | undefined {
-  if (tag.kind === 'dependency') {
-    const list = unmetRelations(levelSetRelationStatuses(set, maps.value, mods.value, repositories.value))
-      .filter((status) => (status.relation.kind ?? 'requires') === 'requires')
-      .map((status) => {
-        const spec = formatVersionSpec(status.relation.version ?? '')
-        return `${status.relation.guid}${spec ? ` ${spec}` : ''}`
-      })
-      .join(' · ')
-    return list ? t('levelSet.frameworksNotMet', { list }) : undefined
-  }
+function tagTitle(tag: LevelSetCardTag): string | undefined {
+  if (tag.dependency) return dependencyTagTitle(dependencyRow(tag.dependency))
   if (tag.mapId) return t('levelSet.viewInMapDownload')
   return undefined
 }
 
 function onTagClick(set: LevelSetInfo, tag: LevelSetCardTag) {
-  if ((tag.repositoryId || tag.dependency?.repair) && tag.dependency) {
+  if (tag.clickable) {
     dependencyNavigation.request(() => {
       const current = sets.value.find(entry => entry.dir_name === set.dir_name)
       const latest = current && tagsOf(current).find(entry => levelSetTagKey(entry) === levelSetTagKey(tag))
@@ -605,18 +588,6 @@ function hintOf(set: LevelSetInfo): string {
   return ''
 }
 
-/**
- * 依赖表行。
- *
- * 名称、状态文案与色调全部由 `dependencyRows.ts` 统一构造（四个页面共用
- * 一份口径）：名称按「在线 MOD 仓库卡片名 → 本地已装 MOD 的包标题 → GUID」
- * 解析，满足时只写「已满足」——版本写在「要求」列，状态列只回答「现在
- * 行不行」。声明来源也由它决定：绑定的地图还在配置里就用它的在线声明
- * （`relations`），地图源下线后才退回安装清单里的快照。
- *
- * 未满足时与 MOD 侧同一套结论：线上有满足区间的版本写「可安装 / 可更新」
- * 并带跳转，没有来源才写「缺依赖」。
- */
 function dependencyRows(set: LevelSetInfo): DependencyRow[] {
   return levelSetDependencyRows(set, {
     maps: maps.value,
@@ -633,7 +604,7 @@ function openDependencyJump(row: DependencyRow) {
 }
 
 const dependencyNavigation = useDependencyNavigation(openDependencyJump)
-function dependencyRow(status: import('../modRelations').RelationStatus): DependencyRow {
+function dependencyRow(status: RelationStatus): DependencyRow {
   return dependencyRowFromStatus(status, { mods: mods.value, repositories: repositories.value,
     translate: t, pickName: pickI18n, jumpToRepository: true })
 }

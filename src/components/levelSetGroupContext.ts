@@ -57,7 +57,7 @@ export interface LevelSetGroupContext {
   toggle(set: LevelSetInfo, enabled: boolean): void | Promise<void>
   activate(set: LevelSetInfo, card?: HTMLElement): void | Promise<void>
   tagsOf(set: LevelSetInfo): LevelSetCardTag[]
-  tagTitle(set: LevelSetInfo, tag: LevelSetCardTag): string | undefined
+  tagTitle(tag: LevelSetCardTag): string | undefined
   onTagClick(set: LevelSetInfo, tag: LevelSetCardTag): void
   /** 卡片状态区的更新 / 冲突快捷动作；依赖修复独立展示。 */
   actionOf(set: LevelSetInfo): LevelSetCardAction | undefined

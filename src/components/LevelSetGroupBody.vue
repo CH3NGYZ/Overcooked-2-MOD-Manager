@@ -99,8 +99,8 @@ function actionsOf(set: LevelSetInfo) {
         <span class="tag-group">
           <n-tag v-for="tag in ctx.tagsOf(set)" :key="levelSetTagKey(tag)" size="tiny"
             :bordered="false" class="state-tag"
-            :class="{ 'state-tag--link': !!(tag.repositoryId || tag.mapId || tag.dependency?.repair) }"
-            :color="tagColorForAny(tag.tone)" :title="ctx.tagTitle(set, tag)"
+            :class="{ 'state-tag--link': !!(tag.mapId || tag.clickable) }"
+            :color="tagColorForAny(tag.tone)" :title="ctx.tagTitle(tag)"
             @click.stop="ctx.onTagClick(set, tag)">
             {{ t(tag.text) }}
           </n-tag>

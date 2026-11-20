@@ -5,6 +5,7 @@ import test from 'node:test'
 import { compileScript, parse } from '@vue/compiler-sfc'
 import { createRenderer, h, nextTick, shallowRef } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { evaluationSnapshot, clearEvaluation } from './helpers/mod-change-evaluations.mjs'
 
 // Run production setup, watchers, route transitions and computed selections.
 // Only visual rendering, README/IPC and translation are isolated from Node.
@@ -43,6 +44,7 @@ registerHooks({
 })
 
 const { useDependencyInstallGuide } = await import('../src/composables/useDependencyInstallGuide.ts')
+const { useMapReleaseDetail } = await import('../src/composables/useMapReleaseDetail.ts')
 const { expectPageScroll, endNavigation } = await import('../src/pageTransition.ts')
 const { default: ModRepositoryDetail } = await import('../src/components/ModRepositoryDetail.vue')
 const { default: ReleaseDetailPanel } = await import('../src/components/ReleaseDetailPanel.vue')
@@ -356,6 +358,59 @@ test('explicit version changes cancel the old guide and select the chosen versio
   assert.equal(state.selectedRelease.tag_name, 'v3.10.2')
   state.installSelected('v3.10.2', 'v3.10.2.zip')
   assert.deepEqual(installs, [['v3.10.2', 'v3.10.2.zip']])
+})
+
+test('MOD detail shows the selected Release verdict and leaves declarations unassessed with no selection', async t => {
+  const relations = [{ kind: 'requires', guid: 'dev.loader', version: '>=2' }]
+  evaluationSnapshot([
+    { id: 'mod:runtime', repo: 'runtime', dlls: ['Runtime.dll'], rows: [{ relation: relations[0], state: 'disabled' }] },
+    { id: 'subject:runtime:v4.0.0', repo: 'runtime', tag: 'v4.0.0', enabled: false, rows: [{ relation: relations[0], state: 'satisfied' }] },
+    { id: 'subject:runtime:v3.10.2', repo: 'runtime', tag: 'v3.10.2', enabled: false,
+      candidates: [{ id: 'release:runtime:v3.10.2', tag: 'v3.10.2' }], rows: [{ relation: relations[0], state: 'missing' }] },
+  ])
+  t.after(clearEvaluation)
+  const { props, state } = mountedComponent(t, ModRepositoryDetail, { repo: { ...repository(), relations } })
+  assert.equal(state.dependencyRows[0]?.status, 'tools.relationPassed')
+  assert.equal(state.dependencyRows[0]?.jump, undefined)
+  state.selectVersion('v3.10.2')
+  await nextTick()
+  assert.equal(state.dependencyRows[0]?.reason, 'modChanges.relation.missing')
+  assert.deepEqual(state.dependencyRows[0]?.jump?.repair, { node_id: 'mod:runtime', candidate_id: 'release:runtime:v3.10.2' })
+  props.value = { repo: { ...repository('runtime', ['v4.0.0']), relations }, installGuide: target() }
+  await nextTick()
+  assert.equal(state.selectedRelease, null)
+  assert.equal(state.dependencyRows[0]?.requirement, '>=2')
+  assert.equal(state.dependencyRows[0]?.status, undefined)
+  assert.equal(state.dependencyRows[0]?.jump, undefined)
+})
+
+test('map detail switches between exact Release assessments and does not use the installed or latest verdict without selection', async t => {
+  const relations = [{ kind: 'requires', guid: 'dev.loader', version: '>=2' }]
+  const repo = { ...repository('map'), relations, latest_tag: 'v4.0.0' }
+  evaluationSnapshot([
+    { id: 'map:Installed', kind: 'map', dir: 'Installed', map: repo.id, rows: [{ relation: relations[0], state: 'disabled' }] },
+    { id: 'subject:map:v4.0.0', kind: 'map', map: repo.id, tag: 'v4.0.0', enabled: false,
+      rows: [{ relation: relations[0], state: 'satisfied' }] },
+    { id: 'subject:map:v3.10.2', kind: 'map', map: repo.id, tag: 'v3.10.2', enabled: false,
+      rows: [{ relation: relations[0], state: 'unknown', reason: 'relation_metadata_unknown' }] },
+  ])
+  t.after(clearEvaluation)
+  const maps = shallowRef([repo])
+  const { state } = mountedComponent(t, { setup: () => useMapReleaseDetail({
+    maps, detailId: repo.id, mods: [], repositories: [], mapName: entry => entry.id,
+  }) }, {})
+  assert.equal(state.detailDependencies[0]?.status, 'tools.relationPassed')
+  state.detailSelectedTag = 'v3.10.2'
+  await nextTick()
+  assert.equal(state.detailDependencies[0]?.status, 'tools.relationUnconfirmed')
+  assert.equal(state.detailDependencies[0]?.reason, 'modChanges.reason.metadata')
+  assert.equal(state.detailDependencies[0]?.jump, undefined)
+  maps.value = [{ ...repo, cached_releases: [] }]
+  await nextTick()
+  assert.equal(state.detailRelease, null)
+  assert.equal(state.detailDependencies[0]?.requirement, '>=2')
+  assert.equal(state.detailDependencies[0]?.status, undefined)
+  assert.equal(state.detailDependencies[0]?.jump, undefined)
 })
 
 test('panel waits for drawer readiness, opens the install tab and focuses the primary action without installation', async t => {

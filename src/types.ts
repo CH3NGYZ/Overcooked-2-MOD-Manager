@@ -511,7 +511,7 @@ export interface ZipLevelSet {
 }
 
 export interface GameInfo { path?: string; steam_library?: string; steam_root?: string; wine_prefix?: string; game_exists: boolean; bepinex: BepInExInfo; kitchen_running: boolean; winhttp_state: WinhttpState }
-export type InstalledModStatusLabel = 'update_available' | 'latest' | 'not_release_asset' | 'unbound' | 'bound_repository_missing' | 'repository_unavailable' | 'refreshing' | 'unknown' | 'duplicate' | 'duplicate_lower_version' | 'load_warning' | 'disabled' | 'dependency' | 'missing_dependency' | 'dependency_conflict' | 'dependency_installable' | 'dependency_disabled' | 'dependency_mismatch'
+export type InstalledModStatusLabel = 'update_available' | 'latest' | 'not_release_asset' | 'unbound' | 'bound_repository_missing' | 'repository_unavailable' | 'refreshing' | 'unknown' | 'duplicate' | 'duplicate_lower_version' | 'load_warning' | 'disabled' | 'dependency' | import('./modRelations').RelationCardKey
 export interface InstalledMod {
   repository_id?: string
   repository_ids?: string[]
@@ -860,12 +860,8 @@ export interface MapInfo {
    */
   release_relations?: ReleaseRelationOverride[]
   /**
-   * 这些依赖里当前没满足的那几条。
-   *
-   * 由**前端**用 Dashboard 里已经扫好的 MOD 判定（`resolveRelations` 与
-   * MOD 侧共用一份实现）。地图页以前让后端再全量扫一遍 `BepInEx/plugins`
-   * 只为拿 GUID → 版本，加载时间因此被浪费。字段保留兼容，但 `get_maps`
-   * 不再填充。
+   * 旧接口返回的未满足框架依赖，仅兼容读取；`get_maps` 不再填充。
+   * 当前结论由整链后端按真实库存评估，前端按已装目录或所选 Release 读取。
    */
   unmet_frameworks?: RequiredFramework[]
 }

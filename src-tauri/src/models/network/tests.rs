@@ -6,11 +6,11 @@ fn old_network_settings_use_new_defaults_without_reusing_legacy_timeout() {
         toml::from_str("timeout_seconds = 50\ndownload_threads = 4\nmax_retry_count = 3\n")
             .unwrap();
     assert_eq!(settings.timeout_seconds, 50);
-    assert_eq!(settings.race_min_speed_kbps, 64);
-    assert_eq!(settings.race_minimum_speed(), 64 * 1024);
+    assert_eq!(settings.race_min_speed_kbps, 256);
+    assert_eq!(settings.race_minimum_speed(), 256 * 1024);
     assert_eq!(settings.race_window().as_secs(), 10);
-    assert_eq!(settings.api_timeout().as_secs(), 10);
-    assert_eq!(settings.first_byte_timeout().as_secs(), 10);
+    assert_eq!(settings.api_timeout().as_secs(), 20);
+    assert_eq!(settings.first_byte_timeout().as_secs(), 20);
 }
 
 #[test]
@@ -28,9 +28,9 @@ fn all_speed_choices_convert_to_bytes_and_invalid_values_use_default() {
             race_min_speed_kbps: speed,
             ..Default::default()
         };
-        assert_eq!(settings.race_minimum_speed(), 64 * 1024);
+        assert_eq!(settings.race_minimum_speed(), 256 * 1024);
         assert!(settings.normalize());
-        assert_eq!(settings.race_min_speed_kbps, 64);
+        assert_eq!(settings.race_min_speed_kbps, 256);
         assert!(!settings.normalize());
     }
 }

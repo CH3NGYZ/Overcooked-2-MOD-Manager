@@ -5,6 +5,8 @@ use std::net::{Shutdown, TcpListener};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+mod adaptive;
+
 fn candidate(id: usize) -> DownloadCandidate {
     DownloadCandidate {
         route: DownloadRoute::Proxy,
@@ -12,7 +14,7 @@ fn candidate(id: usize) -> DownloadCandidate {
     }
 }
 
-fn source(bytes: u64, now: Instant) -> ActiveSource {
+fn source(bytes: u64) -> ActiveSource {
     let reporter = Arc::new(DownloadReporter::new("test"));
     let mut progress = DownloadProgress::connecting("test");
     progress.downloaded = bytes;
@@ -22,9 +24,7 @@ fn source(bytes: u64, now: Instant) -> ActiveSource {
         candidate: candidate(0),
         reporter,
         abort,
-        started: now,
-        samples: VecDeque::from([(now, 0)]),
-        speed: 0,
+        speed: SourceSpeed::default(),
     }
 }
 
@@ -32,7 +32,7 @@ fn policy() -> RacePolicy {
     RacePolicy {
         parallelism: 3,
         window: Duration::from_millis(40),
-        minimum_speed: 1024,
+        reference_speed: 1024,
         tick: Duration::from_millis(2),
         terminal_error: None,
     }
@@ -40,8 +40,7 @@ fn policy() -> RacePolicy {
 
 #[test]
 fn progress_keeps_the_leader_until_another_file_overtakes_it() {
-    let now = Instant::now();
-    let mut sources = HashMap::from([(0, source(100, now)), (1, source(90, now))]);
+    let mut sources = HashMap::from([(0, source(100)), (1, source(90))]);
     assert_eq!(leading_source(&sources, None), Some(0));
     let mut progress = DownloadProgress::connecting("test");
     progress.downloaded = 100;
@@ -58,7 +57,7 @@ fn progress_keeps_the_leader_until_another_file_overtakes_it() {
 fn default_policy_uses_network_defaults() {
     let policy = RacePolicy::default();
     assert_eq!(policy.window, Duration::from_secs(10));
-    assert_eq!(policy.minimum_speed, 64 * 1024);
+    assert_eq!(policy.reference_speed, 256 * 1024);
     assert_eq!(policy.parallelism, 3);
     assert_eq!(policy.tick, Duration::from_millis(250));
     assert_eq!(policy.terminal_error, None);
@@ -74,7 +73,7 @@ fn configured_policy_converts_every_speed_choice_to_bytes_per_second() {
                 ..NetworkConfig::default()
             };
             let policy = RacePolicy::from_network(&network);
-            assert_eq!(policy.minimum_speed, speed * 1024);
+            assert_eq!(policy.reference_speed, speed * 1024);
             assert_eq!(policy.window, Duration::from_secs(window));
             assert_eq!(policy.parallelism, 3);
         }
@@ -82,7 +81,7 @@ fn configured_policy_converts_every_speed_choice_to_bytes_per_second() {
 }
 
 #[test]
-fn configured_window_gives_new_sources_a_full_warmup() {
+fn configured_window_excludes_first_byte_wait_and_gives_new_sources_a_full_warmup() {
     let now = Instant::now();
     for window in [5, 10, 20] {
         let network = NetworkConfig {
@@ -90,11 +89,20 @@ fn configured_window_gives_new_sources_a_full_warmup() {
             ..NetworkConfig::default()
         };
         let policy = RacePolicy::from_network(&network);
-        for activation in [now, now + Duration::from_secs(100)] {
-            let mut source = source(0, activation);
-            assert!(!source.sample(activation + policy.window - Duration::from_nanos(1), policy));
-            assert!(source.sample(activation + policy.window, policy));
-        }
+        let mut speed = SourceSpeed::default();
+        let received = now + Duration::from_secs(100);
+        speed.sample(now, 0, policy.window);
+        speed.sample(received - Duration::from_millis(1), 0, policy.window);
+        assert_eq!(speed.comparable_speed(), None);
+        speed.sample(received, 1024, policy.window);
+        speed.sample(
+            received + policy.window - Duration::from_nanos(1),
+            1024,
+            policy.window,
+        );
+        assert_eq!(speed.comparable_speed(), None);
+        speed.sample(received + policy.window, 1024, policy.window);
+        assert_eq!(speed.comparable_speed(), Some(0));
     }
 }
 
@@ -107,19 +115,30 @@ fn speed_uses_the_configured_rolling_window() {
             ..NetworkConfig::default()
         };
         let policy = RacePolicy::from_network(&network);
-        let mut source = source(0, now);
-        source.reporter.received(policy.minimum_speed * window / 2);
-        assert!(!source.sample(now + Duration::from_secs(1), policy));
-        assert!(source.sample(now + policy.window, policy));
-        source.reporter.received(10 * 1024 * 1024);
-        assert!(!source.sample(now + policy.window + Duration::from_secs(1), policy));
-        assert!(source.sample(now + policy.window * 2 + Duration::from_secs(1), policy));
-        assert_eq!(source.speed, 0);
+        let mut speed = SourceSpeed::default();
+        let early = 1 + policy.reference_speed * window / 2;
+        let late = early + 10 * 1024 * 1024;
+        speed.sample(now, 1, policy.window);
+        speed.sample(now + Duration::from_secs(1), early, policy.window);
+        speed.sample(now + policy.window, early, policy.window);
+        assert_eq!(speed.comparable_speed(), Some(policy.reference_speed / 2));
+        speed.sample(
+            now + policy.window + Duration::from_secs(1),
+            late,
+            policy.window,
+        );
+        assert_eq!(speed.comparable_speed(), Some(10 * 1024 * 1024 / window));
+        speed.sample(
+            now + policy.window * 2 + Duration::from_secs(1),
+            late,
+            policy.window,
+        );
+        assert_eq!(speed.comparable_speed(), Some(0));
     }
 }
 
 #[test]
-fn configured_policy_only_replaces_sources_strictly_below_the_speed_floor() {
+fn relative_speed_does_not_override_the_configured_reference() {
     let now = Instant::now();
     for speed in [32, 64, 128, 256, 512, 1024, 2048] {
         for window in [5, 10, 20] {
@@ -129,15 +148,25 @@ fn configured_policy_only_replaces_sources_strictly_below_the_speed_floor() {
                 ..NetworkConfig::default()
             };
             let policy = RacePolicy::from_network(&network);
+            let fastest = policy.reference_speed * 4;
             for (actual, replace) in [
-                (policy.minimum_speed - 1, true),
-                (policy.minimum_speed, false),
-                (policy.minimum_speed + 1, false),
+                (policy.reference_speed - 1, true),
+                (policy.reference_speed, false),
+                (policy.reference_speed + 1, false),
             ] {
-                let mut source = source(0, now);
-                source.reporter.received(actual * window);
-                assert_eq!(source.sample(now + policy.window, policy), replace);
-                assert_eq!(source.speed, actual);
+                let measured = |rate| {
+                    let mut source = source(1 + rate * window);
+                    source.speed.sample(now, 1, policy.window);
+                    source
+                        .speed
+                        .sample(now + policy.window, 1 + rate * window, policy.window);
+                    source
+                };
+                let sources = HashMap::from([(0, measured(fastest)), (1, measured(actual))]);
+                assert_eq!(
+                    switching_candidate(&sources, Some(0), None, policy.reference_speed),
+                    replace.then_some((1, fastest))
+                );
             }
         }
     }
@@ -152,8 +181,7 @@ fn unknown_or_zero_size_stays_unknown_until_a_source_reports_a_positive_size() {
         file_name: None,
         expected_size: None,
     };
-    let now = Instant::now();
-    let first = source(50, now);
+    let first = source(50);
     let mut known_total = None;
     let mut snapshot = first.reporter.snapshot();
     snapshot.total = Some(0);
@@ -167,7 +195,7 @@ fn unknown_or_zero_size_stays_unknown_until_a_source_reports_a_positive_size() {
         source_progress(&context, &first, 0, 3, &mut known_total).total,
         Some(200)
     );
-    let next = source(100, now);
+    let next = source(100);
     let progress = source_progress(&context, &next, 1, 3, &mut known_total);
     assert_eq!(progress.total, Some(200));
     assert_eq!(progress.downloaded, 100);
@@ -337,7 +365,7 @@ async fn failed_sources_are_replaced_without_exceeding_three_downloads() {
 }
 
 #[tokio::test]
-async fn slow_sources_release_slots_and_exhausted_candidates_can_still_finish() {
+async fn first_byte_timeouts_release_slots_and_exhausted_candidates_can_still_finish() {
     let result = race_candidates(
         (0..4).map(candidate).collect(),
         || false,
@@ -346,7 +374,9 @@ async fn slow_sources_release_slots_and_exhausted_candidates_can_still_finish() 
                 tokio::time::sleep(Duration::from_millis(8)).await;
                 Ok(vec![3])
             } else {
-                std::future::pending::<Result<Vec<u8>, String>>().await
+                tokio::time::timeout(Duration::from_millis(50), std::future::pending())
+                    .await
+                    .unwrap_or_else(|_| Err("download.firstByteTimeout".into()))
             }
         },
         None,
@@ -372,9 +402,11 @@ async fn slow_sources_release_slots_and_exhausted_candidates_can_still_finish() 
     assert_eq!(result, vec![0]);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn slow_proxy_rotation_preserves_total_size_and_reports_the_actual_leading_file() {
     let mut events = Vec::new();
+    let mut started = Vec::new();
+    let size = 100_000;
     let race = race_candidates(
         (0..7).map(candidate).collect(),
         || false,
@@ -389,18 +421,23 @@ async fn slow_proxy_rotation_preserves_total_size_and_reports_the_actual_leading
                 .trim_end_matches(".example")
                 .parse::<usize>()
                 .unwrap();
-            // Seed each stage before polling, independent of timer granularity.
-            let mut progress = DownloadProgress::connecting("test");
-            progress.downloaded = (id as u64 + 1) * 100;
-            reporter.received(progress.downloaded);
-            reporter.update(progress.clone());
+            started.push((id, Instant::now()));
             async move {
-                if id < 6 {
-                    std::future::pending::<Result<Vec<u8>, String>>().await
-                } else {
-                    progress.downloaded = 1000;
-                    reporter.update(progress);
-                    Ok(vec![42])
+                let mut progress = DownloadProgress::connecting("test");
+                let chunk = match id {
+                    0 => 1024,
+                    4 => size / 5,
+                    _ => 16,
+                };
+                // The first line leads until the second replacement overtakes it.
+                loop {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    progress.downloaded += chunk;
+                    reporter.received(chunk);
+                    reporter.update(progress.clone());
+                    if id == 4 && progress.downloaded == size {
+                        return Ok(vec![42]);
+                    }
                 }
             }
         },
@@ -409,19 +446,13 @@ async fn slow_proxy_rotation_preserves_total_size_and_reports_the_actual_leading
             app: None,
             label: "test",
             file_name: None,
-            expected_size: Some(1000),
+            expected_size: Some(size),
         }),
         RacePolicy {
-            minimum_speed: RacePolicy::default().minimum_speed,
+            reference_speed: RacePolicy::default().reference_speed,
             ..policy()
         },
-        |progress| {
-            // Reproduce a scheduler stall longer than the test's 40 ms window.
-            if events.is_empty() {
-                std::thread::sleep(Duration::from_millis(80));
-            }
-            events.push(progress);
-        },
+        |progress| events.push(progress),
     );
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(2), race)
@@ -434,17 +465,38 @@ async fn slow_proxy_rotation_preserves_total_size_and_reports_the_actual_leading
         .iter()
         .filter(|event| event.downloaded > 0 && !event.finished)
         .collect::<Vec<_>>();
-    assert!(transferring.iter().any(|event| event.attempt == Some(3)));
-    assert!(transferring.iter().any(|event| event.attempt == Some(6)));
-    assert!(transferring.iter().any(|event| event.attempt == Some(7)));
+    assert!(transferring.iter().any(|event| event.attempt == Some(1)));
+    assert!(transferring.iter().any(|event| event.attempt == Some(5)));
     for event in transferring {
         assert_eq!(event.phase, DownloadPhase::Downloading);
-        assert_eq!(event.total, Some(1000));
-        assert_eq!(event.downloaded, event.attempt.unwrap() as u64 * 100);
+        assert_eq!(event.total, Some(size));
+        assert_eq!(
+            event.downloaded
+                % if event.attempt == Some(1) {
+                    1024
+                } else {
+                    size / 5
+                },
+            0
+        );
         assert!(event.parallel_sources.unwrap() <= 3);
     }
     assert_eq!(events.iter().filter(|event| event.finished).count(), 1);
-    assert_eq!(events.last().unwrap().downloaded, 1000);
+    assert_eq!(events.last().unwrap().downloaded, size);
+    assert_eq!(events.last().unwrap().attempt, Some(5));
+    assert!(started.len() >= 5, "both test replacements must start");
+    assert!(
+        started
+            .iter()
+            .enumerate()
+            .all(|(index, (id, _))| index == *id)
+    );
+    assert!(
+        started[3..]
+            .windows(2)
+            .all(|pair| { pair[1].1.duration_since(pair[0].1) >= policy().window }),
+        "each spare must get a full window before rotating another line: {started:?}"
+    );
 }
 
 #[derive(Clone, Copy)]
@@ -453,7 +505,7 @@ enum ResponseKind {
     Empty,
     Truncated,
     WrongDigest,
-    Slow,
+    Slow(usize),
     Chunked,
 }
 
@@ -483,6 +535,7 @@ impl TestServer {
                             // mode. Read the full request in blocking mode.
                             socket.set_nonblocking(false).unwrap();
                             socket.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+                            socket.set_write_timeout(Some(Duration::from_secs(1))).unwrap();
                             socket.set_nodelay(true).unwrap();
                             let mut request = Vec::new();
                             while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
@@ -517,8 +570,8 @@ impl TestServer {
                                     }
                                     let _ = socket.write_all(b"0\r\n\r\n");
                                 }
-                                ResponseKind::Slow => {
-                                    for chunk in payload.chunks(1024) {
+                                ResponseKind::Slow(chunk_size) => {
+                                    for chunk in payload.chunks(chunk_size) {
                                         if stop.load(Ordering::Relaxed) || socket.write_all(chunk).is_err() { break; }
                                         std::thread::sleep(Duration::from_millis(10));
                                     }
@@ -574,7 +627,7 @@ async fn real_downloads_reject_empty_truncated_and_bad_hash_files_and_clean_lose
             ResponseKind::Empty,
             ResponseKind::Truncated,
             ResponseKind::WrongDigest,
-            ResponseKind::Slow,
+            ResponseKind::Slow(1024),
             ResponseKind::Valid,
         ],
         payload.clone(),
@@ -692,7 +745,7 @@ async fn chunked_proxy_without_content_length_publishes_real_percentages_from_me
 
 #[tokio::test]
 async fn cancellation_interrupts_pending_streams_and_removes_all_partial_files() {
-    let server = TestServer::new(vec![ResponseKind::Slow; 3], vec![42; 64 * 1024]);
+    let server = TestServer::new(vec![ResponseKind::Slow(1024); 3], vec![42; 64 * 1024]);
     let cache = std::env::temp_dir().join(format!("oc2-cancel-test-{}", uuid::Uuid::new_v4()));
     let client = reqwest::Client::builder()
         .no_proxy()

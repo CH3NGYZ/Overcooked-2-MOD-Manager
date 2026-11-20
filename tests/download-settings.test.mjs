@@ -6,6 +6,7 @@ import { compileScript, parse } from '@vue/compiler-sfc'
 import { createRenderer, h, nextTick, ref, shallowRef } from 'vue'
 import { settings } from '../src/locale/settings.ts'
 import { download } from '../src/locale/installPipeline.ts'
+import downloadDefaults from '../src/downloadDefaults.json' with { type: 'json' }
 
 const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 const boundary = globalThis.__downloadSettingsBoundary = {
@@ -53,7 +54,7 @@ registerHooks({
       '/src/i18n.ts': `export const t=(key,args)=>{
         const b=globalThis.__downloadSettingsBoundary
         return (b.messages[key.replace(/^settings\\./,'')]?.[b.locale.value]??key)
-          .replace('{seconds}',String(args?.seconds??''))
+          .replace(/\{(seconds|value)\}/g,(_,param)=>String(args?.[param]??''))
       }`,
     }
     for (const [suffix, source] of Object.entries(modules)) if (url.endsWith(suffix)) return fake(source)
@@ -81,8 +82,7 @@ function findAll(node, tag) {
   return [...(node.tag === tag ? [node] : []), ...(node.children?.flatMap(child => findAll(child, tag)) ?? [])]
 }
 const fields = ['race_min_speed_kbps', 'race_window_seconds', 'api_timeout_seconds', 'first_byte_timeout_seconds']
-const defaultNetwork = { timeout_seconds: 270, download_threads: 4, max_retry_count: 3,
-  race_min_speed_kbps: 64, race_window_seconds: 10, api_timeout_seconds: 10, first_byte_timeout_seconds: 10 }
+const defaultNetwork = { timeout_seconds: 270, download_threads: 4, max_retry_count: 3, ...downloadDefaults }
 const makeConfig = (network = {}) => ({ region: 'global', data_provider: 'github', network: { ...defaultNetwork, ...network } })
 function mounted(t, initial = makeConfig()) {
   boundary.calls.length = boundary.snapshots.length = boundary.notices.length = 0
@@ -121,9 +121,9 @@ test('download group follows Data sources and precedes Performance with real row
   }
 })
 
-test('seven speed options and sixteen integer-second options use independent 64/10 defaults', t => {
+test('seven speed options and sixteen integer-second options use the bundled defaults', t => {
   const { selects } = mounted(t)
-  assert.deepEqual(selects().map(node => node.props.value), [64, 10, 10, 10])
+  assert.deepEqual(selects().map(node => node.props.value), [256, 10, 20, 20])
   assert.deepEqual(selects()[0].props.options, [32, 64, 128, 256, 512, 1024, 2048].map(value => ({ value, label: `${value} KB/s` })))
   for (const select of selects().slice(1)) assert.deepEqual(select.props.options.map(option => option.value), Array.from({ length: 16 }, (_, index) => index + 5))
   assert.deepEqual(boundary.calls, [])
@@ -132,7 +132,7 @@ test('seven speed options and sixteen integer-second options use independent 64/
 test('old frontend fixtures missing individual network fields fall back without reusing legacy timeout_seconds', t => {
   const config = makeConfig(); config.network = { timeout_seconds: 300, download_threads: 4, max_retry_count: 3 }
   const { selects } = mounted(t, config)
-  assert.deepEqual(selects().map(node => node.props.value), [64, 10, 10, 10])
+  assert.deepEqual(selects().map(node => node.props.value), [256, 10, 20, 20])
 })
 
 test('each select sends only its flat patch and applies the returned normalized config to shared state', async t => {
@@ -154,8 +154,8 @@ test('a pending save locks all four controls and rejects concurrent writes until
   change(state.selects()[0], 32); await nextTick()
   assert.deepEqual(state.busy, [true])
   assert.ok(state.selects().every(node => node.props.disabled && node.props.loading))
-  assert.equal(state.selects()[0].props.value, 64)
-  change(state.selects()[1], 5); change(state.selects()[2], 20)
+  assert.equal(state.selects()[0].props.value, 256)
+  change(state.selects()[1], 5); change(state.selects()[2], 19)
   assert.deepEqual(boundary.calls, [{ race_min_speed_kbps: 32 }])
   const result = { ...before, network: { ...before.network, race_min_speed_kbps: 32 } }
   request.resolve(result); await flush()
@@ -168,15 +168,15 @@ test('a pending save locks all four controls and rejects concurrent writes until
 test('failed saves preserve all values, translate the error, unlock, and allow retry', async t => {
   const { selects, props, saved, busy } = mounted(t), before = props.value.config
   boundary.save = async () => { throw new Error('config.saveFailed') }
-  change(selects()[2], 20); await flush()
+  change(selects()[2], 19); await flush()
   assert.strictEqual(props.value.config, before)
-  assert.deepEqual(selects().map(node => node.props.value), [64, 10, 10, 10])
+  assert.deepEqual(selects().map(node => node.props.value), [256, 10, 20, 20])
   assert.deepEqual(saved, []); assert.deepEqual(boundary.snapshots, [])
   assert.deepEqual(boundary.notices, [['error', 'translated:config.saveFailed']])
   assert.ok(selects().every(node => !node.props.disabled && !node.props.loading))
   boundary.save = async patch => ({ ...before, network: { ...before.network, ...patch } })
-  change(selects()[2], 20); await flush()
-  assert.equal(selects()[2].props.value, 20)
+  change(selects()[2], 19); await flush()
+  assert.equal(selects()[2].props.value, 19)
   assert.deepEqual(busy, [true, false, true, false])
 })
 
@@ -190,13 +190,13 @@ test('tutorial, missing config and an active provider switch disable controls an
   change(selects()[1], 5)
   props.value = { config: null, disabled: false }; await nextTick()
   assert.ok(selects().every(node => node.props.disabled))
-  change(selects()[2], 20)
+  change(selects()[2], 19)
   assert.deepEqual(boundary.calls, [])
 })
 
 test('unchanged values and values outside the seven speeds or 5..20 integers never write', async t => {
   const { selects } = mounted(t)
-  for (const [index, value] of [64, 10, 10, 10].entries()) change(selects()[index], value)
+  for (const [index, value] of [256, 10, 20, 20].entries()) change(selects()[index], value)
   for (const value of [0, 63, 65, 4096, NaN, 32.5]) change(selects()[0], value)
   for (const select of selects().slice(1)) for (const value of [4, 21, 10.5, NaN]) change(select, value)
   await flush()
@@ -204,7 +204,7 @@ test('unchanged values and values outside the seven speeds or 5..20 integers nev
 })
 
 test('the real options and labels update for all five locales and all new keys have every language', async t => {
-  const { selects } = mounted(t)
+  const { root, selects } = mounted(t)
   const keys = ['downloadSettings', 'downloadMinSpeed', 'downloadMinSpeedHint', 'downloadRaceWindow', 'downloadRaceWindowHint',
     'downloadApiTimeout', 'downloadApiTimeoutHint', 'downloadFirstByteTimeout', 'downloadFirstByteTimeoutHint', 'downloadSeconds']
   for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
@@ -213,6 +213,10 @@ test('the real options and labels update for all five locales and all new keys h
     assert.equal(selects()[0].props['aria-label'], settings.downloadMinSpeed[locale])
     assert.equal(selects()[1].props.options[0].label, settings.downloadSeconds[locale].replace('{seconds}', '5'))
     assert.equal(selects()[3].props.options.at(-1).label, settings.downloadSeconds[locale].replace('{seconds}', '20'))
+    const hints = findAll(root, 'small')
+    assert.deepEqual(hints.map(node => node.props.title),
+      ['MinSpeed', 'RaceWindow', 'ApiTimeout', 'FirstByteTimeout'].map((key, index) =>
+        settings[`download${key}Hint`][locale].replace('{value}', String(defaultNetwork[fields[index]]))))
   }
 })
 
@@ -245,7 +249,7 @@ test('a mounted delayed save merges only its setting into a newer shared region/
   const state = mounted(t), request = deferred()
   boundary.save = () => request.promise
   change(state.selects()[3], 5)
-  const newer = { ...makeConfig({ api_timeout_seconds: 20 }), region: 'cn', data_provider: 'gitcode', repository_sources: [{ id: 'new-source' }] }
+  const newer = { ...makeConfig({ api_timeout_seconds: 19 }), region: 'cn', data_provider: 'gitcode', repository_sources: [{ id: 'new-source' }] }
   boundary.sharedConfig.value = newer
   request.resolve(makeConfig({ first_byte_timeout_seconds: 5 })); await flush()
   assert.deepEqual(boundary.sharedConfig.value, { ...newer, network: { ...newer.network, first_byte_timeout_seconds: 5 } })
@@ -256,9 +260,9 @@ test('a later shared change to the same field wins over an older save response',
   const state = mounted(t), request = deferred()
   boundary.save = () => request.promise
   change(state.selects()[2], 5)
-  const newer = makeConfig({ api_timeout_seconds: 20 })
+  const newer = makeConfig({ api_timeout_seconds: 19 })
   boundary.sharedConfig.value = newer
   request.resolve(makeConfig({ api_timeout_seconds: 5 })); await flush()
-  assert.equal(boundary.sharedConfig.value.network.api_timeout_seconds, 20)
-  assert.equal(state.selects()[2].props.value, 20)
+  assert.equal(boundary.sharedConfig.value.network.api_timeout_seconds, 19)
+  assert.equal(state.selects()[2].props.value, 19)
 })

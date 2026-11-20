@@ -29,9 +29,7 @@ async fn retained_sources(count: usize) {
                 let current = live.fetch_add(1, Ordering::SeqCst) + 1;
                 max_live.fetch_max(current, Ordering::SeqCst);
                 let _guard = Live(live.clone());
-                // The first three stay below the speed floor for multiple windows.
-                // Four candidates must replace just one connection, not all three.
-                let winner = if count == 4 { 3 } else { count - 1 };
+                let winner = count - 1;
                 if candidate.url == format!("https://source{winner}.example/file") {
                     tokio::time::sleep(Duration::from_millis(150)).await;
                     observed.lock().unwrap().push(live.load(Ordering::SeqCst));
@@ -70,7 +68,57 @@ async fn final_one_two_and_three_sources_survive_multiple_slow_windows() {
     }
 }
 
-#[tokio::test]
-async fn four_candidates_replace_only_one_slow_source_and_keep_the_final_three() {
-    retained_sources(4).await;
+#[tokio::test(start_paused = true)]
+async fn four_candidates_replace_only_one_laggard_and_keep_the_final_three() {
+    let started = AtomicUsize::new(0);
+    let active = Arc::new(AtomicUsize::new(0));
+    let race = race_candidates(
+        (0..4)
+            .map(|id| DownloadCandidate {
+                route: DownloadRoute::Proxy,
+                url: format!("https://source{id}.example/file"),
+            })
+            .collect(),
+        || false,
+        |candidate, reporter| {
+            started.fetch_add(1, Ordering::SeqCst);
+            let active = active.clone();
+            async move {
+                let alive = active.fetch_add(1, Ordering::SeqCst) + 1;
+                let _guard = Live(active.clone());
+                assert!(alive <= 3);
+                if candidate.url.contains("source3") {
+                    reporter.received(1);
+                    // Even after a full window, the last spare must not leave
+                    // another slot empty or abort the now-stalled replacement.
+                    tokio::time::sleep(Duration::from_millis(120)).await;
+                    assert_eq!(active.load(Ordering::SeqCst), 3);
+                    return Ok(vec![42]);
+                }
+                let bytes = if candidate.url.contains("source0") {
+                    8192
+                } else {
+                    16
+                };
+                loop {
+                    reporter.received(bytes);
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+        },
+        None,
+        RacePolicy {
+            window: Duration::from_millis(30),
+            tick: Duration::from_millis(2),
+            ..RacePolicy::default()
+        },
+        |_| {},
+    );
+    let winner = tokio::time::timeout(Duration::from_secs(2), race)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(winner, [42]);
+    assert_eq!(started.load(Ordering::SeqCst), 4);
+    assert_eq!(active.load(Ordering::SeqCst), 0);
 }

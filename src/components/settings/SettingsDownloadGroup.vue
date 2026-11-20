@@ -7,6 +7,7 @@ import { useDashboard } from '../../composables/useDashboardStore'
 import { backendMessageOf } from '../../locale/backend'
 import { demoActive } from '../../tutorial/demo'
 import { useNotify } from '../../useNotify'
+import downloadDefaults from '../../downloadDefaults.json' with { type: 'json' }
 import type { PublicConfig } from '../../types'
 import SettingsGroup from './SettingsGroup.vue'
 import SettingsRow from './SettingsRow.vue'
@@ -26,19 +27,22 @@ const secondOptions = computed(() => Array.from({ length: 16 }, (_, index) => {
   return { value, label: t('settings.downloadSeconds', { seconds: value }) }
 }))
 const rows = [
-  { key: 'race_min_speed_kbps', title: 'settings.downloadMinSpeed', hint: 'settings.downloadMinSpeedHint', fallback: 64 },
-  { key: 'race_window_seconds', title: 'settings.downloadRaceWindow', hint: 'settings.downloadRaceWindowHint', fallback: 10 },
-  { key: 'api_timeout_seconds', title: 'settings.downloadApiTimeout', hint: 'settings.downloadApiTimeoutHint', fallback: 10 },
-  { key: 'first_byte_timeout_seconds', title: 'settings.downloadFirstByteTimeout', hint: 'settings.downloadFirstByteTimeoutHint', fallback: 10 },
+  { key: 'race_min_speed_kbps', title: 'settings.downloadMinSpeed', hint: 'settings.downloadMinSpeedHint' },
+  { key: 'race_window_seconds', title: 'settings.downloadRaceWindow', hint: 'settings.downloadRaceWindowHint' },
+  { key: 'api_timeout_seconds', title: 'settings.downloadApiTimeout', hint: 'settings.downloadApiTimeoutHint' },
+  { key: 'first_byte_timeout_seconds', title: 'settings.downloadFirstByteTimeout', hint: 'settings.downloadFirstByteTimeoutHint' },
 ] as const
 type DownloadSetting = typeof rows[number]['key']
+const localizedRows = computed(() => rows.map(row => ({
+  key: row.key, title: t(row.title), hint: t(row.hint, { value: downloadDefaults[row.key] }),
+})))
 
-function currentValue(key: DownloadSetting, fallback: number) {
-  return props.config?.network[key] ?? fallback
+function currentValue(key: DownloadSetting) {
+  return props.config?.network[key] ?? downloadDefaults[key]
 }
 
-async function save(key: DownloadSetting, value: number, fallback: number) {
-  if (disposed || disabled.value || currentValue(key, fallback) === value) return
+async function save(key: DownloadSetting, value: number) {
+  if (disposed || disabled.value || currentValue(key) === value) return
   if (!Number.isInteger(value) || (key === 'race_min_speed_kbps' ? !speedValues.includes(value) : value < 5 || value > 20)) return
   const originalValue = props.config?.network[key]
   saving.value = true
@@ -68,12 +72,12 @@ onBeforeUnmount(() => { disposed = true; emit('saving', false) })
 
 <template>
   <SettingsGroup :title="t('settings.downloadSettings')" data-testid="download-settings">
-    <SettingsRow v-for="row in rows" :key="row.key" :title="t(row.title)" :description="t(row.hint)" :description-title="t(row.hint)">
+    <SettingsRow v-for="row in localizedRows" :key="row.key" :title="row.title" :description="row.hint" :description-title="row.hint">
       <template #right>
-        <n-select :value="currentValue(row.key, row.fallback)" :options="row.key === 'race_min_speed_kbps' ? speedOptions : secondOptions"
+        <n-select :value="currentValue(row.key)" :options="row.key === 'race_min_speed_kbps' ? speedOptions : secondOptions"
           style="width: 304px; max-width: 100%" :loading="saving" :disabled="disabled"
-          :aria-label="t(row.title)" :data-testid="`download-${row.key}`"
-          @update:value="(value: number) => save(row.key, value, row.fallback)" />
+          :aria-label="row.title" :data-testid="`download-${row.key}`"
+          @update:value="(value: number) => save(row.key, value)" />
       </template>
     </SettingsRow>
   </SettingsGroup>

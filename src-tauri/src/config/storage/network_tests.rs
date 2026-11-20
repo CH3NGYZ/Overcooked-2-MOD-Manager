@@ -22,10 +22,10 @@ fn old_config_gets_download_defaults_and_preserves_legacy_fields() {
     let service = ConfigService::open(root.path().into()).unwrap();
     let config = service.load().unwrap();
     assert_eq!(config.network.timeout_seconds, 50);
-    assert_eq!(config.network.race_min_speed_kbps, 64);
+    assert_eq!(config.network.race_min_speed_kbps, 256);
     assert_eq!(config.network.race_window_seconds, 10);
-    assert_eq!(config.network.api_timeout_seconds, 10);
-    assert_eq!(config.network.first_byte_timeout_seconds, 10);
+    assert_eq!(config.network.api_timeout_seconds, 20);
+    assert_eq!(config.network.first_byte_timeout_seconds, 20);
 }
 
 #[test]
@@ -47,8 +47,8 @@ fn download_settings_survive_save_cache_public_projection_and_restart() {
     assert_eq!(disk.network, config.network);
     let restarted = ConfigService::open(root.path().into()).unwrap();
     assert_eq!(restarted.load().unwrap().network, config.network);
-    assert_eq!(running_operation.race_minimum_speed(), 64 * 1024);
-    assert_eq!(running_operation.api_timeout().as_secs(), 10);
+    assert_eq!(running_operation.race_minimum_speed(), 256 * 1024);
+    assert_eq!(running_operation.api_timeout().as_secs(), 20);
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn invalid_download_settings_are_normalized_and_written_back_once() {
     .unwrap();
     let service = ConfigService::open(root.path().into()).unwrap();
     let network = service.load().unwrap().network;
-    assert_eq!(network.race_min_speed_kbps, 64);
+    assert_eq!(network.race_min_speed_kbps, 256);
     assert_eq!(network.race_window_seconds, 5);
     assert_eq!(network.api_timeout_seconds, 20);
     assert_eq!(network.first_byte_timeout_seconds, 5);

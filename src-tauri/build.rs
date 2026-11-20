@@ -4,11 +4,41 @@ fn main() {
         matches!(target_os.as_str(), "windows" | "macos"),
         "OC2 MOD Manager only supports Windows and macOS (target OS: {target_os})"
     );
+    embed_download_defaults();
     embed_repository_sources();
     embed_publish_config();
     embed_gitcode_oauth();
     link_windows_test_manifest();
     tauri_build::build()
+}
+
+fn embed_download_defaults() {
+    let source = "../src/downloadDefaults.json";
+    println!("cargo:rerun-if-changed={source}");
+    let json = std::fs::read_to_string(source).expect("read shared download defaults");
+    let values: serde_json::Value =
+        serde_json::from_str(&json).expect("parse shared download defaults");
+    let mut generated = String::new();
+    for key in [
+        "race_min_speed_kbps",
+        "race_window_seconds",
+        "api_timeout_seconds",
+        "first_byte_timeout_seconds",
+    ] {
+        use std::fmt::Write as _;
+        let value = values[key]
+            .as_u64()
+            .unwrap_or_else(|| panic!("invalid download default: {key}"));
+        writeln!(
+            generated,
+            "const {}: u64 = {value};",
+            key.to_ascii_uppercase()
+        )
+        .unwrap();
+    }
+    let output = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    std::fs::write(output.join("download_defaults.rs"), generated)
+        .expect("write shared download defaults");
 }
 
 fn embed_gitcode_oauth() {

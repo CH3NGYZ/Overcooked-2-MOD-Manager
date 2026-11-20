@@ -91,34 +91,44 @@ pub struct NetworkConfig {
     pub max_retry_count: u32,
     #[serde(default = "default_race_min_speed_kbps")]
     pub race_min_speed_kbps: u64,
-    #[serde(default = "default_network_seconds")]
+    #[serde(default = "default_race_window_seconds")]
     pub race_window_seconds: u64,
-    #[serde(default = "default_network_seconds")]
+    #[serde(default = "default_api_timeout_seconds")]
     pub api_timeout_seconds: u64,
-    #[serde(default = "default_network_seconds")]
+    #[serde(default = "default_first_byte_timeout_seconds")]
     pub first_byte_timeout_seconds: u64,
 }
 
 impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
-            timeout_seconds: default_network_seconds(),
+            timeout_seconds: 10,
             download_threads: 32,
             max_retry_count: 3,
             race_min_speed_kbps: default_race_min_speed_kbps(),
-            race_window_seconds: default_network_seconds(),
-            api_timeout_seconds: default_network_seconds(),
-            first_byte_timeout_seconds: default_network_seconds(),
+            race_window_seconds: default_race_window_seconds(),
+            api_timeout_seconds: default_api_timeout_seconds(),
+            first_byte_timeout_seconds: default_first_byte_timeout_seconds(),
         }
     }
 }
 
 const RACE_SPEED_OPTIONS_KBPS: [u64; 7] = [32, 64, 128, 256, 512, 1024, 2048];
+
+// Built from the same defaults used by the settings UI and tutorial.
+include!(concat!(env!("OUT_DIR"), "/download_defaults.rs"));
+
 const fn default_race_min_speed_kbps() -> u64 {
-    64
+    RACE_MIN_SPEED_KBPS
 }
-const fn default_network_seconds() -> u64 {
-    10
+const fn default_race_window_seconds() -> u64 {
+    RACE_WINDOW_SECONDS
+}
+const fn default_api_timeout_seconds() -> u64 {
+    API_TIMEOUT_SECONDS
+}
+const fn default_first_byte_timeout_seconds() -> u64 {
+    FIRST_BYTE_TIMEOUT_SECONDS
 }
 
 impl NetworkConfig {

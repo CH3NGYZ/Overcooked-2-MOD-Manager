@@ -6,10 +6,14 @@ use futures_util::stream::FuturesUnordered;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tauri::AppHandle;
+use tokio::time::Instant;
 
 pub(crate) mod planning;
+mod race_speed;
+
+use race_speed::{SourceSpeed, switching_candidate};
 
 #[cfg(test)]
 mod race_tests;
@@ -96,7 +100,7 @@ impl<T: DownloadOutput> Drop for CompletedDownload<T> {
 struct RacePolicy {
     parallelism: usize,
     window: Duration,
-    minimum_speed: u64,
+    reference_speed: u64,
     tick: Duration,
     terminal_error: Option<&'static str>,
 }
@@ -106,7 +110,7 @@ impl RacePolicy {
         Self {
             parallelism: 3,
             window: network.race_window(),
-            minimum_speed: network.race_minimum_speed(),
+            reference_speed: network.race_minimum_speed(),
             tick: Duration::from_millis(250),
             terminal_error: None,
         }
@@ -123,24 +127,7 @@ struct ActiveSource {
     candidate: DownloadCandidate,
     reporter: Arc<DownloadReporter>,
     abort: AbortHandle,
-    started: Instant,
-    samples: VecDeque<(Instant, u64)>,
-    speed: u64,
-}
-
-impl ActiveSource {
-    fn sample(&mut self, now: Instant, policy: RacePolicy) -> bool {
-        let bytes = self.reporter.transferred();
-        self.samples.push_back((now, bytes));
-        // Retain the sample at the beginning of the configured rolling window.
-        while self.samples.len() > 1 && now.duration_since(self.samples[1].0) >= policy.window {
-            self.samples.pop_front();
-        }
-        let (beginning, previous) = self.samples.front().copied().unwrap();
-        let seconds = now.duration_since(beginning).as_secs_f64();
-        self.speed = (bytes.saturating_sub(previous) as f64 / seconds.max(0.001)) as u64;
-        now.duration_since(self.started) >= policy.window && self.speed < policy.minimum_speed
-    }
+    speed: SourceSpeed,
 }
 
 fn leading_source(
@@ -187,7 +174,7 @@ fn source_progress(
     }
     progress.downloaded = snapshot.downloaded;
     progress.total = *known_total;
-    progress.speed_bytes = source.speed;
+    progress.speed_bytes = source.speed.bytes_per_second;
     // A source can still be undergoing validation after receiving its bytes.
     // Completion belongs to the coordinator once the entire callback succeeds.
     if snapshot.downloaded > 0 {
@@ -247,7 +234,7 @@ where
         }
         policy.parallelism = execution.max_parallelism as usize;
         if !execution.race {
-            policy.minimum_speed = 0;
+            policy.reference_speed = 0;
         }
     }
     race_candidates(
@@ -314,10 +301,12 @@ where
     let mut retiring = HashSet::new();
     let mut leader = None;
     let mut last_error = None;
-    let mut known_total = context
+    let mut last_switch = None;
+    let expected_size = context
         .as_ref()
         .and_then(|context| context.expected_size)
         .filter(|total| *total > 0);
+    let mut known_total = expected_size;
     let mut ticker = tokio::time::interval(policy.tick);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -334,7 +323,6 @@ where
             let reporter = Arc::new(DownloadReporter::new(
                 context.as_ref().map(|ctx| ctx.label).unwrap_or(""),
             ));
-            let now = Instant::now();
             let (abort, registration) = AbortHandle::new_pair();
             if let Some(context) = &context {
                 let progress =
@@ -355,9 +343,7 @@ where
                     candidate,
                     reporter,
                     abort,
-                    started: now,
-                    samples: VecDeque::from([(now, 0)]),
-                    speed: 0,
+                    speed: SourceSpeed::default(),
                 },
             );
             active.push(async move {
@@ -422,22 +408,24 @@ where
             _ = ticker.tick() => {
                 if is_cancelled() { return Err("download.cancelled".into()); }
                 let now = Instant::now();
-                let mut slow = sources.iter_mut().filter_map(|(id, source)| source.sample(now, policy).then_some(*id))
-                    .collect::<Vec<_>>();
-                // A slow connection is only worth dropping when an unstarted
-                // candidate can replace it. Reserve slots already being retired
-                // so repeated ticks cannot spend the same replacement twice.
-                slow.sort_unstable_by_key(|id| {
-                    let source = &sources[id];
-                    (source.speed, source.reporter.snapshot().downloaded, *id)
-                });
-                let replacements = pending.len().saturating_sub(retiring.len());
-                for id in slow.into_iter().take(replacements) {
-                    if let Some(source) = sources.remove(&id) {
-                        log::info!("下载源最近{}秒速度过低，释放下载槽：候选序号={}，速度={}B/s，最低速度={}B/s", policy.window.as_secs(), id + 1, source.speed, policy.minimum_speed);
-                        retiring.insert(id);
-                        source.abort.abort();
-                    }
+                for source in sources.values_mut() {
+                    source.speed.sample(now, source.reporter.transferred(), policy.window);
+                }
+                // Switch at most once per window, only with a spare route.
+                // Failed requests free their slots immediately, outside this cooldown.
+                if policy.reference_speed > 0
+                    && pending.len() > retiring.len()
+                    && last_switch.is_none_or(|last| now.duration_since(last) >= policy.window)
+                    && let Some((id, fastest)) = switching_candidate(
+                        &sources, leading_source(&sources, leader), expected_size, policy.reference_speed,
+                    )
+                {
+                    let source = sources.remove(&id).unwrap();
+                    log::info!("下载线路明显落后，尝试备用线路：候选序号={}，速度={}B/s，最快={}B/s，换线参考速度={}B/s",
+                        id + 1, source.speed.bytes_per_second, fastest, policy.reference_speed);
+                    last_switch = Some(now);
+                    retiring.insert(id);
+                    source.abort.abort();
                 }
             }
         }

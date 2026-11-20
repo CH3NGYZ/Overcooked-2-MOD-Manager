@@ -12,15 +12,16 @@ function owner(files, declaration, expected) {
   assert.deepEqual(found, [resolve(root, expected)], declaration)
 }
 
-test('Download root keeps the deep race coordinator and externalizes only its tests', () => {
+test('Download root owns the race coordinator; speed sampling and source comparison have one owner', () => {
   const download = read('download.rs')
   const tests = read('download/tests.rs')
   assert.ok(download.split('\n').length < 500)
   assert.match(download, /^pub\(crate\) mod planning;$/m)
+  assert.match(download, /^mod race_speed;$/m)
   assert.match(download, /^#\[cfg\(test\)\]\s*mod tests;$/m)
   assert.doesNotMatch(download, /^\s*#\[(?:tokio::)?test\]/m)
   assert.match(tests, /^use super::\*;/m)
-  assert.equal([...tests.matchAll(/#\[(?:tokio::)?test\]/g)].length, 17)
+  assert.equal([...tests.matchAll(/#\[(?:tokio::)?test(?:\([^\n]*\))?\]/g)].length, 17)
   const files = [
     [resolve(root, 'download.rs'), read('download.rs')],
     ...sourceFiles(resolve(root, 'download'), ['.rs']).map(path => [path, readText(path)]),
@@ -32,15 +33,18 @@ test('Download root keeps the deep race coordinator and externalizes only its te
   ]) owner(files, declaration, 'download.rs')
   owner(files, 'fn progress_keeps_the_leader_until_another_file_overtakes_it', 'download/tests.rs')
   owner(files, 'fn cancellation_interrupts_pending_streams_and_removes_all_partial_files', 'download/tests.rs')
+  owner(files, 'struct SourceSpeed', 'download/race_speed.rs')
+  owner(files, 'fn switching_candidate', 'download/race_speed.rs')
 })
 
 test('Download race invariants and shared callers remain on the existing seam', () => {
   const download = read('download.rs')
   assert.match(download, /parallelism: 3/)
   assert.match(download, /window: network\.race_window\(\)/)
-  assert.match(download, /minimum_speed: network\.race_minimum_speed\(\)/)
-  assert.match(download, /if !execution\.race \{\s*policy\.minimum_speed = 0;/)
-  assert.match(download, /let replacements = pending\.len\(\)\.saturating_sub\(retiring\.len\(\)\)/)
+  assert.match(download, /reference_speed: network\.race_minimum_speed\(\)/)
+  assert.match(download, /if !execution\.race \{\s*policy\.reference_speed = 0;/)
+  assert.match(download, /pending\.len\(\) > retiring\.len\(\)/)
+  assert.match(download, /let Some\(\(id, fastest\)\) = switching_candidate\(/)
   assert.match(download, /terminal_error == Some\(error\.as_str\(\)/)
   assert.match(download, /value\.discard\(\)/)
   for (const file of [
@@ -63,5 +67,4 @@ test('Download entrypoints receive explicit network snapshots including calls wi
   assert.match(download, /let mut policy = RacePolicy::from_network\(network\)/)
   assert.match(download, /terminal_error: Some\(terminal_error\),\s*\.\.RacePolicy::from_network\(network\)/)
   assert.match(download, /impl Default for RacePolicy[\s\S]*?Self::from_network\(&NetworkConfig::default\(\)\)/)
-  assert.match(download, /now\.duration_since\(self\.started\) >= policy\.window && self\.speed < policy\.minimum_speed/)
 })

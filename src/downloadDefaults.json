@@ -1,0 +1,6 @@
+{
+  "race_min_speed_kbps": 256,
+  "race_window_seconds": 10,
+  "api_timeout_seconds": 20,
+  "first_byte_timeout_seconds": 20
+}

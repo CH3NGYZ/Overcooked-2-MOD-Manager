@@ -57,7 +57,7 @@ test('shared source state clears only descendants and keeps failed empty declara
   assert.equal(state.nodes.value[1].error,null)
   const tree = buildSourceGroupTree([{sourceId:'sibling',group:'',item:repo('map','sibling')}], {
     order: state.nodes.value.map(n=>({id:n.id,parentId:n.parent_id,label:n.label,status:n.status})),
-    preserveEmpty:true,ungrouped:{id:'none',label:'none'},
+    ungrouped:{id:'none',label:'none'},
   })
   assert.equal(tree.find(n=>n.id==='root').count,1)
   assert.equal(tree.find(n=>n.id==='child').groups.length,0)
@@ -655,7 +655,7 @@ test('MOD refreshed declarations reach the displayed tree in TOML order across a
   const displayedOrder = () => buildSourceGroupTree(
     f.dashboard.config.value.repositories.map(item => ({ sourceId: item.source_id, sourceLabel: '', group: '', groupLabel: '', item })),
     { order: f.dashboard.config.value.repository_sources.map(source => ({ id: source.id, parentId: source.parent_id, label: source.nickname })),
-      preserveEmpty: true, ungrouped: { id: '__none__', label: '未分类' } },
+      ungrouped: { id: '__none__', label: '未分类' } },
   ).filter(node => node.parentId === f.ids.root).map(node => node.id)
 
   assert.deepEqual(await f.engine.refreshEverything(), [])

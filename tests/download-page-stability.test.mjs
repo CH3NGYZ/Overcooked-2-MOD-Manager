@@ -27,7 +27,7 @@ registerHooks({
       import { h } from 'vue'
       const leaf = tag => ({props:['name'],setup:(props,{slots}) => () => h(tag,{name:props.name},[slots.header?.(),slots.default?.()])})
       export const NCollapse=leaf('collapse'),NCollapseItem=leaf('collapse-item'),NButton=leaf('button'),
-        NTag=leaf('tag'),NAlert=leaf('alert'),NProgress=leaf('progress')`)
+        NTag=leaf('tag'),NAlert=leaf('alert'),NProgress=leaf('progress'),NSpin=leaf('spin')`)
     if (url.endsWith('/src/services/tauri.ts')) return module(`
       const state=globalThis.__downloadPageBoundary
       export const watchDownloadProgress=async listener => {state.listener=listener;await state.registration;return () => state.unlistens++}
@@ -44,6 +44,7 @@ registerHooks({
 
 const { default: DownloadStrip } = await import('../src/components/DownloadStrip.vue')
 const { default: SourceDirectory } = await import('../src/components/SourceDirectory.vue')
+const { buildSourceGroupTree } = await import('../src/composables/useSourceGroupTree.ts')
 const { beginDownloadTask, endDownloadTask, downloadTaskState, updateDownloadProgress } = await import('../src/downloadTask.ts')
 const { appUpdateState } = await import('../src/appUpdateState.ts')
 DownloadStrip.render = () => null
@@ -166,33 +167,39 @@ test('the overlay delegates cancellation without hiding a caller-owned download 
 
 test('both official index roots omit the entire heading while child sources and root errors remain reactive', async () => {
   for (const rootId of ['official-map-index', 'official-repository-index']) {
-    const nodes = shallowRef([
-      { id: rootId, label: 'Index heading to omit', count: 1, groups: [], status: 'ready' },
-      { id: 'author', parentId: rootId, label: 'Author source', count: 1, groups: [{ items: ['map'] }] },
-      { id: 'nested', parentId: 'author', label: 'Nested source', count: 0, groups: [] },
-      { id: 'community', label: 'Community source', count: 0, groups: [] },
+    const order = shallowRef([
+      { id: rootId, label: 'Index heading to omit', status: 'ready' },
+      { id: 'author', parentId: rootId, label: 'Author source', status: 'ready' },
+      { id: 'nested', parentId: 'author', label: 'Nested source', status: 'loading' },
+      { id: 'empty', parentId: rootId, label: 'Empty source', status: 'ready' },
     ])
+    const cards = shallowRef([{ sourceId: 'author', group: 'maps', groupLabel: 'Maps', item: 'map' }])
     const root = { children: [] }
     const app = renderer.createApp({ setup: () => () => h(SourceDirectory,
-      { nodes: nodes.value, transparentRoot: rootId, expanded: ['author', 'nested', 'community'], busy: () => false },
+      { nodes: buildSourceGroupTree(cards.value, { order: order.value, ungrouped: { id: 'none', label: 'Other' } }),
+        transparentRoot: rootId, expanded: ['author', 'nested'], busy: () => false },
       { default: ({ node }) => h('source-items', { id: node.id }, node.groups.flatMap(group => group.items ?? []).join(',')) }) })
     app.mount(root)
     try {
-      assert.deepEqual(all(root, node => node.tag === 'collapse-item').map(node => node.props.name), ['author', 'nested', 'community'])
+      assert.deepEqual(all(root, node => node.tag === 'collapse-item').map(node => node.props.name), ['author', 'nested'])
       assert.equal(textOf(root).includes('Index heading to omit'), false)
       assert.equal(textOf(root).includes('map'), true)
       const author = all(root, node => node.tag === 'collapse-item' && node.props.name === 'author')[0]
-      nodes.value = nodes.value.map(node => node.id === rootId ? { ...node, error: 'root offline' } : node)
+      order.value = order.value.map(node => node.id === rootId ? { ...node, status: 'error', error: 'root offline' } : node)
       await nextTick()
-      assert.equal(all(root, node => node.tag === 'alert').map(textOf).join(''), 'root offline')
+      assert.equal(all(root, node => node.tag === 'alert').map(textOf).join(''), 'root offlinecommon.action.retry')
       assert.strictEqual(all(root, node => node.tag === 'collapse-item' && node.props.name === 'author')[0], author)
-      nodes.value = [{ id: rootId, label: 'Index heading to omit', status: 'ready', count: 1, groups: [{ items: ['direct root item'] }] }]
+      order.value = [{ id: rootId, label: 'Index heading to omit', status: 'loading' }]
+      cards.value = [{ sourceId: rootId, group: 'root', groupLabel: 'Root', item: 'direct root item' }]
       await nextTick()
       assert.equal(all(root, node => node.tag === 'collapse-item').length, 0)
-      assert.equal(textOf(root), 'direct root item')
-      nodes.value = [{ ...nodes.value[0], count: 0, groups: [] }]
+      assert.equal(textOf(root), 'common.loadingdirect root item')
+      order.value = [{ ...order.value[0], status: 'ready' }]
       await nextTick()
-      assert.equal(textOf(root), 'source.noVisibleRepositories')
+      assert.equal(textOf(root), 'direct root item')
+      cards.value = []
+      await nextTick()
+      assert.equal(textOf(root), '')
     } finally { app.unmount() }
   }
 })

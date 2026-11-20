@@ -1,6 +1,6 @@
 <script setup lang="ts" generic="T">
 import { computed } from 'vue'
-import { NCollapse, NCollapseItem, NButton, NTag, NAlert } from 'naive-ui'
+import { NCollapse, NCollapseItem, NButton, NTag, NAlert, NSpin } from 'naive-ui'
 import { RefreshOutline } from '@vicons/ionicons5'
 import SourceTitle from './SourceTitle.vue'
 import SourceGroupSlot from './SourceGroupSlot.vue'
@@ -40,9 +40,15 @@ const children = computed(() => {
 <template>
   <div class="source-directory">
   <SourceGroupSlot v-if="root" :get-tree="getTree" :source-id="root.id" v-slot="{ node }">
-    <n-alert v-if="node.error" type="error" :show-icon="true" class="source-error">{{ backendMessageOf(node.error) }}</n-alert>
-    <p v-else-if="node.status === 'ready' && node.count === 0 && !children.length"
-      class="source-empty">{{ t('source.noVisibleRepositories') }}</p>
+    <n-alert v-if="node.error || node.status === 'error'" type="error" :show-icon="true" class="source-error">
+      <div class="source-feedback">
+        <span v-if="node.error">{{ backendMessageOf(node.error) }}</span>
+        <n-button size="tiny" :disabled="disabled" @click="emit('refresh', node)">{{ t('common.action.retry') }}</n-button>
+      </div>
+    </n-alert>
+    <div v-else-if="node.status === 'pending' || node.status === 'loading'" class="source-feedback source-loading" role="status">
+      <n-spin size="small" aria-hidden="true" />{{ t('common.loading') }}
+    </div>
     <slot v-if="node.groups.length" :node="node" />
   </SourceGroupSlot>
   <n-collapse v-if="children.length" class="source-collapse" :expanded-names="expanded" @update:expanded-names="emit('update:expanded', $event)">
@@ -61,8 +67,6 @@ const children = computed(() => {
       </template>
       <SourceGroupSlot :get-tree="getTree" :source-id="entry.id" v-slot="{ node }">
         <n-alert v-if="node.error" type="error" :show-icon="true" class="source-error">{{ backendMessageOf(node.error) }}</n-alert>
-        <p v-else-if="node.status === 'ready' && node.count === 0 && !currentNodes.some(child => child.parentId === node.id)"
-          class="source-empty">{{ t('source.noVisibleRepositories') }}</p>
         <slot v-if="node.groups.length" :node="node" />
       </SourceGroupSlot>
       <SourceDirectory :nodes="currentNodes" :get-tree="getTree" :expanded="expanded" :parent-id="entry.id" :disabled="disabled" :busy="busy"
@@ -81,5 +85,6 @@ const children = computed(() => {
 .source-collapse .source-collapse:empty { display: none; }
 .source-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .source-error { margin: 10px 0; }
-.source-empty { margin: 8px 0; color: var(--oc2-text-3); font-size: 13px; }
+.source-feedback { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; overflow-wrap: anywhere; }
+.source-loading { margin: 8px 0; color: var(--oc2-text-3); font-size: 13px; }
 </style>

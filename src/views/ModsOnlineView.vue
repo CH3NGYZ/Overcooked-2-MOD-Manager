@@ -426,16 +426,17 @@ const treeEntries = computed<SourceGroupEntry<ModRepository>[]>(() =>
 )
 
 /** 源顺序 = `config.repository_sources` 的持久化顺序（读取顺序 = 展示顺序）。 */
-const sourceOrder = computed<SourceGroupOrder[]>(() =>
-  sources.value.filter(source => !COMMUNITY_IDS.has(source.id)).map((source) => ({
+const sourceOrder = computed<SourceGroupOrder[]>(() => {
+  const feedback = new Map((demoActive.value ? [] : engine.sourceNodes.value).map(node => [node.id, node]))
+  return sources.value.filter(source => !COMMUNITY_IDS.has(source.id)).map((source) => ({
     id: source.id,
     label: pickI18n(source.nickname_i18n, source.nickname),
     note_i18n: source.note_i18n,
     parentId: source.parent_id, url: source.url,
-    status: engine.sourceNodes.value.find(node => node.id === source.id)?.status,
-    error: engine.sourceNodes.value.find(node => node.id === source.id)?.error,
-  })),
-)
+    status: feedback.get(source.id)?.status,
+    error: feedback.get(source.id)?.error,
+  }))
+})
 
 const {
   tree,
@@ -447,7 +448,6 @@ const {
   () => treeEntries.value,
   () => ({
     order: sourceOrder.value,
-    preserveEmpty: !query.value,
     ungrouped: { id: '__none__', label: t('dialogs.uncategorizedRepositories') },
     /* 社区仓库统一视为未分组：单组、无分类标题，直接平铺卡片。 */
     flat: (sourceId: string) => COMMUNITY_IDS.has(sourceId),

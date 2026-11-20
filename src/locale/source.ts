@@ -49,13 +49,6 @@ export const source: DomainMessages = {
     ko: '브라우저 인증 다운로드 주소가 올바르지 않습니다. 다음 데이터 소스를 시도합니다.',
     ja: 'ブラウザー認証によるダウンロード先が無効です。次のデータソースを試します。',
   },
-  noVisibleRepositories: {
-    'zh-CN': '此源已读取，当前环境下没有可显示的仓库。',
-    'zh-TW': '此來源已讀取，目前環境下沒有可顯示的倉庫。',
-    en: 'This source has loaded. No repositories are available in the current environment.',
-    ko: '소스를 불러왔습니다. 현재 환경에서 표시할 저장소가 없습니다.',
-    ja: 'ソースを読み込みました。現在の環境で表示できるリポジトリはありません。',
-  },
   // ===== 源本身 =====
   addressExists: {
     'zh-CN': '仓库源地址已存在',

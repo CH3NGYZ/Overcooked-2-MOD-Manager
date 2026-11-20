@@ -271,7 +271,6 @@ const { tree, setOpenSources, setOpenGroups, sourcesExpanded, groupsExpanded } =
   () => ({
     order: sourceNodes.value.map(node => ({ id: node.id, parentId: node.parent_id,
       label: pickI18n(node.label_i18n, node.label), note_i18n: node.note_i18n, url: node.url, status: node.status, error: node.error })),
-    preserveEmpty: !query.value,
     // Document declarations include pending and failed sources.
     ungrouped: { id: '__none__', label: t('levelSet.uncategorizedMapSource') },
   }),

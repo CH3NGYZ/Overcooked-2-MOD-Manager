@@ -73,7 +73,6 @@ export interface SourceGroupTreeOptions {
    * 地图页没有持久化源树，顺序本来就只能从条目顺序读出来。
    */
   order?: SourceGroupOrder[]
-  preserveEmpty?: boolean
   /** 没有源归属的条目的桶。 */
   ungrouped: { id: string; label: string }
   /** 该源只有一组且不显示分类标题（社区仓库）。 */
@@ -133,23 +132,23 @@ export function buildSourceGroupTree<T>(
     else buckets.set(id, [entry])
   }
 
-  // Search retains the ancestor titles of matching cards.
-  const required = new Set(buckets.keys())
-  let added = true
-  while (added) {
-    added = false
-    for (const node of options.order ?? []) {
-      if (required.has(node.id) && node.parentId && !required.has(node.parentId)) {
-        required.add(node.parentId); added = true
-      }
+  // This is only a view: retain card-bearing or unfinished sources and the
+  // ancestors that connect them, including while a search is active.
+  const declarations = new Map(options.order?.map(node => [node.id, node]))
+  const required = new Set<string>()
+  function keep(id: string) {
+    for (let next: string | null | undefined = id; next && !required.has(next); next = declarations.get(next)?.parentId) {
+      required.add(next)
     }
   }
-  const declaredLabels = new Map<string, string>()
+  for (const id of buckets.keys()) keep(id)
+  for (const node of options.order ?? []) {
+    if (node.status === 'pending' || node.status === 'loading' || node.status === 'error' || node.error) keep(node.id)
+  }
   const ids: string[] = []
   const seen = new Set<string>()
   for (const declared of options.order ?? []) {
-    if (declared.label) declaredLabels.set(declared.id, declared.label)
-    if ((!options.preserveEmpty && !required.has(declared.id)) || seen.has(declared.id)) continue
+    if (declared.id === ungroupedId || !required.has(declared.id) || seen.has(declared.id)) continue
     seen.add(declared.id)
     ids.push(declared.id)
   }
@@ -163,6 +162,7 @@ export function buildSourceGroupTree<T>(
 
   const tree = ids.map((id) => {
     const items = buckets.get(id) ?? []
+    const declaration = declarations.get(id)
     /*
      * 源名的兜底顺序：声明昵称 → 条目上带的源名 → 源 ID。
      * 最后一级是给「有归属但没有名字」的源用的（老配置、源文档没写昵称），
@@ -170,14 +170,11 @@ export function buildSourceGroupTree<T>(
      */
     const label = id === ungroupedId
       ? options.ungrouped.label
-      : declaredLabels.get(id)
-        ?? items.find((entry) => !!entry.sourceLabel)?.sourceLabel
-        ?? id
+      : declaration?.label || items.find((entry) => !!entry.sourceLabel)?.sourceLabel || id
     const flat = id !== ungroupedId && flatOf(id)
     const groups = flat
-      ? [{ key: `${id}::flat`, label: '', items: items.map((entry) => entry.item) }]
+      ? (items.length ? [{ key: `${id}::flat`, label: '', items: items.map((entry) => entry.item) }] : [])
       : buildLeaves(id, items)
-    const declaration = options.order?.find(node => node.id === id)
     return { ...declaration, id, label, count: items.length, flat, groups }
   })
   const ownCounts = new Map(tree.map(node => [node.id, node.count]))

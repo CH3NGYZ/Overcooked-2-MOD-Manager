@@ -96,6 +96,28 @@ test('order 里声明了但没有条目的源不出现（不产生空标题）',
   assert.deepEqual(tree.map((node) => node.id), ['src-a'])
 })
 
+test('completed empty branches disappear but visible descendants, loading and failed sources retain all their ancestors', () => {
+  const order = [
+    { id: 'root', label: 'Root', status: 'ready' },
+    { id: 'empty', label: 'Empty', parentId: 'root', status: 'ready' },
+    { id: 'parent', label: 'Parent', parentId: 'root', status: 'ready' },
+    { id: 'leaf', label: 'Leaf', parentId: 'parent', status: 'ready' },
+    { id: 'loading', label: 'Loading', parentId: 'root', status: 'loading' },
+    { id: 'pending', label: 'Pending', parentId: 'loading', status: 'pending' },
+    { id: 'error-parent', label: 'Error parent', parentId: 'root', status: 'ready' },
+    { id: 'error', label: 'Error', parentId: 'error-parent', status: 'error', error: 'offline' },
+  ]
+  const cards = [entry({ sourceId: 'leaf' })]
+  const build = entries => buildSourceGroupTree(entries, { order, flat: id => id === 'loading', ungrouped: { id: 'none', label: 'Other' } })
+  const visible = build(cards)
+  assert.deepEqual(visible.map(node => [node.id, node.count, node.groups.length]), [
+    ['root', 1, 0], ['parent', 1, 0], ['leaf', 1, 1], ['loading', 0, 0], ['pending', 0, 0], ['error-parent', 0, 0], ['error', 0, 0],
+  ])
+  assert.deepEqual(sourceKeysOf(build([])), ['root', 'loading', 'pending', 'error-parent', 'error'])
+  assert.deepEqual(sourceKeysOf(build(cards)), sourceKeysOf(visible))
+  assert.equal(order.length, 8, 'search projection must not remove source declarations')
+})
+
 test('source notes belong to each declaration, including empty parents, and never fall back to card notes', () => {
   const notes = { 'zh-CN': '源说明', en: 'Source note', ja: 'ソース説明' }
   const tree = buildSourceGroupTree([

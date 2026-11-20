@@ -111,6 +111,7 @@ fn cached_release_selection_never_substitutes_another_requested_version() {
         "v1.0.0"
     );
     assert!(select_cached_release(&releases, Some("missing"), None).is_none());
+    assert!(select_cached_release(&releases, Some("v1"), None).is_none());
     assert!(select_cached_release(&releases, Some("missing"), Some("v1.0.0")).is_none());
     assert_eq!(
         select_cached_release(&releases, None, Some("1.0.0"))

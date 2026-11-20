@@ -277,7 +277,7 @@ fn push_version(
 
 /// 版本号里的数字段，用于排序。
 ///
-/// 只按数字段比：`0.10` > `0.9`，`1.7.0` > `1.7`。段数不一致是常态（作者手写
+/// 只按数字段比：`0.10` > `0.9`，`1.7.0` = `1.7`。段数不一致是常态（作者手写
 /// 的文件名），纯字符串比较会把 `0.10` 排到 `0.9` 前面，更错。
 fn version_parts(version: &str) -> Vec<u64> {
     version
@@ -289,7 +289,5 @@ fn version_parts(version: &str) -> Vec<u64> {
 
 /// 新的排前面（降序）。
 fn newest_first(left: &str, right: &str) -> std::cmp::Ordering {
-    version_parts(right)
-        .cmp(&version_parts(left))
-        .then_with(|| right.cmp(left))
+    crate::releases::compare_version_segments(&version_parts(right), &version_parts(left))
 }

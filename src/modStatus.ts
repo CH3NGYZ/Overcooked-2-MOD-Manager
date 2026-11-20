@@ -143,7 +143,7 @@ export function isPrereleaseVersion(
  *
  * 为什么不能截断到三段：显示要和 Release tag 逐字对上。用户看到 `1.8.7`
  * 而 tag 其实是 `1.8.7.23` 时，会以为管理器读错了版本，也无法对照 tag
- * 排查问题。比较时第 4 段按标准 semver 不参与，但显示必须忠实。
+ * 排查问题。比较时第 4 段按历史 beta 序号处理，显示仍与原始版本一致。
  *
  * 至少保留两段（`1.0` 不会被压成 `1`），无法解析时原样返回。
  */
@@ -161,16 +161,24 @@ export function formatVersion(value: string | null | undefined): string {
   return match[3] ? `${prefix}${core}-${match[3]}` : `${prefix}${core}`
 }
 
+/** 数字段逐段比较，短版本缺少的尾段都按 0。 */
+export function compareVersionSegments(left: readonly number[], right: readonly number[]): -1 | 0 | 1 {
+  const length = Math.max(left.length, right.length)
+  for (let index = 0; index < length; index += 1) {
+    const a = left[index] ?? 0
+    const b = right[index] ?? 0
+    if (a !== b) return a > b ? 1 : -1
+  }
+  return 0
+}
+
 /** 比较版本：左新于右返回 1，相等 0，左旧于右 -1；任一方无法解析返回 null。 */
 export function compareVersions(left: string | null | undefined, right: string | null | undefined): number | null {
   const a = parseVersion(left)
   const b = parseVersion(right)
   if (!a || !b) return null
-  const length = Math.max(a.numbers.length, b.numbers.length)
-  for (let index = 0; index < length; index += 1) {
-    const delta = (a.numbers[index] ?? 0) - (b.numbers[index] ?? 0)
-    if (delta !== 0) return delta > 0 ? 1 : -1
-  }
+  const order = compareVersionSegments(a.numbers, b.numbers)
+  if (order) return order
   // 数字段相同：正式版高于预发布版；两个预发布版按 semver 标识符逐段比较。
   if (!a.prerelease.length && !b.prerelease.length) return 0
   if (!a.prerelease.length) return 1

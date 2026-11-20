@@ -22,7 +22,9 @@ pub(crate) use fetch::{fetch_releases, fetch_repository_default_branch};
 pub(crate) use projection::filter_channel;
 pub(crate) use projection::project_mod_releases;
 pub(crate) use version::resolve_prerelease;
-pub(crate) use version::{compare_release_versions, is_prerelease_version, parse_version};
+pub(crate) use version::{
+    compare_release_versions, compare_version_segments, is_prerelease_version,
+};
 
 #[cfg(test)]
 pub(crate) use assets::asset_matches;
@@ -30,5 +32,7 @@ pub(crate) use assets::asset_matches;
 pub(crate) use projection::parse_release_json;
 #[cfg(test)]
 pub(crate) use transport::fetch_release_api;
+#[cfg(test)]
+pub(crate) use version::parse_version;
 #[cfg(test)]
 mod test_support;

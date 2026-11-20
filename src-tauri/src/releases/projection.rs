@@ -1,4 +1,5 @@
 use super::error::ReleaseError;
+use super::version::SegmentVersion;
 use super::version::is_strict_semver;
 use super::version::parse_version;
 use super::version::resolve_prerelease;
@@ -46,14 +47,12 @@ pub fn filter_channel(mut releases: Vec<ReleaseInfo>, channel: &Channel) -> Vec<
                 Channel::All => true,
             }
     });
-    releases.sort_by(|a, b| {
-        match (
-            a.version.as_deref().and_then(parse_version),
-            b.version.as_deref().and_then(parse_version),
-        ) {
-            (Some(left), Some(right)) => right.cmp(&left),
-            _ => b.published_at.cmp(&a.published_at),
-        }
+    // Sorting the display projection loses the fourth (beta) segment. Use
+    // the complete tag first; old named tags can still have a version projection.
+    releases.sort_by_cached_key(|release| {
+        let version = SegmentVersion::parse(&release.tag_name)
+            .or_else(|| release.version.as_deref().and_then(SegmentVersion::parse));
+        std::cmp::Reverse((version, release.published_at.clone()))
     });
     log::debug!(
         "Release 渠道筛选完成: channel={:?} before={} after={}",

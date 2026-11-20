@@ -106,6 +106,41 @@ fn versions_and_channels_are_supported() {
 }
 
 #[test]
+fn sort_uses_complete_versions_and_preserves_exact_tags_on_equal_precedence() {
+    let releases = parse_release_json(
+        &serde_json::json!([
+            {"tag_name":"v0.99", "published_at":"2026-10-01"},
+            {"tag_name":"Kitchen2", "published_at":"2026-11-01"},
+            {"tag_name":"1.0.0.9", "published_at":"2026-11-01"},
+            {"tag_name":"v1.0.0-beta10", "published_at":"2026-10-01"},
+            {"tag_name":"1.0-beta.11", "published_at":"2026-09-01"},
+            {"tag_name":"v1", "published_at":"2026-09-01"},
+            {"tag_name":"1.0.0", "published_at":"2026-08-01"}
+        ]),
+        &Provider::Github,
+    )
+    .unwrap();
+    assert!(releases[1].version.is_none());
+    assert_eq!(releases[5].version.as_deref(), Some("1.0.0"));
+    let tags = filter_channel(releases, &Channel::All)
+        .into_iter()
+        .map(|release| release.tag_name)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tags,
+        [
+            "v1",
+            "1.0.0",
+            "1.0-beta.11",
+            "v1.0.0-beta10",
+            "1.0.0.9",
+            "v0.99",
+            "Kitchen2"
+        ]
+    );
+}
+
+#[test]
 fn release_id_and_missing_asset_size_are_parsed() {
     let value = serde_json::json!([{
         "id": "42",

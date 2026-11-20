@@ -343,6 +343,32 @@ fn two_assets_that_yield_the_same_version_are_rejected() {
 }
 
 #[test]
+fn legacy_asset_order_treats_zero_padding_as_a_tie_without_rewriting_asset_ids() {
+    let map = tag_entry("tag = \"maps\"");
+    let releases = synthesize_releases(
+        &map,
+        "maps",
+        &[release(
+            "maps",
+            &[
+                "rw_v1.92.zip",
+                "rw_v1.0.0.1.zip",
+                "rw_v1.92.0.zip",
+                "rw_v1.9.2.zip",
+                "rw_v1.zip",
+            ],
+        )],
+    )
+    .unwrap();
+    assert_eq!(
+        tag_names(&releases),
+        ["1.92", "1.92.0", "1.9.2", "1.0.0.1", "1"]
+    );
+    assert_eq!(releases[0].assets[0].name, "rw_v1.92.zip");
+    assert_eq!(releases[1].assets[0].name, "rw_v1.92.0.zip");
+}
+
+#[test]
 fn a_declared_latest_version_must_exist_in_the_tag() {
     // 声明了一个不存在的版本：界面会把幽灵版本标成最新，点安装找不到资产
     let map = tag_entry("tag = \"maps\"\nlatest_version = \"9.9\"");

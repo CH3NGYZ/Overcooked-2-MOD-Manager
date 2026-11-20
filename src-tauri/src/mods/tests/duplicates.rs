@@ -151,6 +151,12 @@ fn same_version_duplicates_keep_updates_and_raw_keeps_its_source_status() {
 
 #[test]
 fn mod_version_comparison_fills_missing_components_with_zero() {
+    for (left, right) in [("1", "1.0"), ("1.0", "1.0.0"), ("1.92", "1.92.0")] {
+        assert_eq!(
+            super::compare_mod_versions(left, right),
+            Some(std::cmp::Ordering::Equal)
+        );
+    }
     assert_eq!(
         super::compare_mod_versions("1.8.5.03", "1.8.5"),
         Some(std::cmp::Ordering::Greater)

@@ -173,7 +173,13 @@ test('从附件名反解版本号（与后端同名规则）', () => {
 test('版本比较与取最新', () => {
   assert.ok(compareMapVersions('1.10.0', '1.9.9') > 0)
   assert.equal(compareMapVersions('1.2', '1.2.0'), 0)
+  assert.equal(compareMapVersions('1', '1.0.0'), 0)
+  assert.equal(compareMapVersions('v1.92', '1.92.0'), 0)
+  assert.ok(compareMapVersions('1.92.0', '1.9.2') > 0)
+  assert.ok(compareMapVersions('1.0.0.1', '1') > 0, 'map package revision, not a MOD beta number')
   assert.equal(latestVersionOf(['gaoda-1.2.0.zip', 'gaoda-1.10.0.zip', 'map.zip']), '1.10.0')
+  assert.equal(latestVersionOf(['gaoda-1.92.zip', 'gaoda-1.92.0.zip']), '1.92')
+  assert.equal(latestVersionOf(['gaoda-0.zip']), '0')
   assert.equal(latestVersionOf(['map.zip']), '')
   assert.equal(latestVersionOf([]), '')
 })

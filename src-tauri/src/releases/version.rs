@@ -1,8 +1,10 @@
 use regex::Regex;
+use std::cmp::Ordering;
+use std::sync::LazyLock;
 
 /// 版本号解析：把各种宽写 tag 归一到三段 semver。
 ///
-///   - 不足三段补 0：`0.4` → `0.4.0`；
+///   - 不足三段补 0：`0.4` → `0.4.0`，`1` → `1.0.0`；
 ///   - 第 4 段及以后丢弃（semver 只能表达三段）：
 ///     `0.4.0.5`、`0.4.0.0` → `0.4.0`；
 ///   - 保留 `-`/`+` 后缀作为预发布/构建元数据。
@@ -12,8 +14,14 @@ use regex::Regex;
 pub fn parse_version(tag: &str) -> Option<semver::Version> {
     let cleaned = tag.trim().trim_start_matches(['v', 'V']);
     semver::Version::parse(cleaned).ok().or_else(|| {
-        let re = Regex::new(r"(\d+(?:\.\d+){1,7}(?:[-+][0-9A-Za-z.-]+)?)").ok()?;
-        let value = re.captures(cleaned)?.get(1)?.as_str();
+        // A bare single segment is a version; a digit embedded in a named
+        // tag (e.g. a map's transport ID `Kitchen2`) must not stand in for one.
+        static PROJECTION_VERSION: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"^([0-9]+(?:[-+][0-9A-Za-z.-]+)?)$|([0-9]+(?:\.[0-9]+){1,7}(?:[-+][0-9A-Za-z.-]+)?)")
+                .expect("fixed release version projection pattern")
+        });
+        let captures = PROJECTION_VERSION.captures(cleaned)?;
+        let value = captures.get(1).or_else(|| captures.get(2))?.as_str();
         let numeric = value.split(['-', '+']).next()?;
         let mut parts = numeric
             .split('.')
@@ -23,6 +31,7 @@ pub fn parse_version(tag: &str) -> Option<semver::Version> {
         let suffix = value.get(numeric.len()..).unwrap_or_default();
         parts.truncate(3);
         let normalized = match parts.as_slice() {
+            [major] => format!("{major}.0.0{suffix}"),
             [major, minor] => format!("{major}.{minor}.0{suffix}"),
             [major, minor, patch] => format!("{major}.{minor}.{patch}{suffix}"),
             _ => return None,
@@ -34,8 +43,8 @@ pub fn parse_version(tag: &str) -> Option<semver::Version> {
 /// 保留 DLL 四段号与 Release beta tag 的等价关系，而非只比较显示用三段号。
 /// 前三段缺位补零；其余非全零数字段并入预发布序列，
 /// 因此 1.8.7 > 1.8.7.23 > 1.8.7.21，尾部全零仍等于正式版。
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SegmentVersion {
+#[derive(Debug, Clone)]
+pub(super) struct SegmentVersion {
     numbers: Vec<u64>,
     prerelease: Vec<String>,
 }
@@ -98,8 +107,10 @@ fn split_alpha_numeric(part: &str) -> Vec<String> {
 /// 共用宽写版本语法：贪婪读取数字段，余下部分保留 -beta1、.beta4 等写法。
 fn version_parts(value: &str) -> Option<(Vec<u64>, &str)> {
     let cleaned = value.trim().trim_start_matches(['v', 'V']);
-    let re = Regex::new(r"^(\d+(?:\.\d+)*)(.*)$").ok()?;
-    let caps = re.captures(cleaned)?;
+    static VERSION_PARTS: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"^([0-9]+(?:\.[0-9]+)*)(.*)$").expect("fixed release version pattern")
+    });
+    let caps = VERSION_PARTS.captures(cleaned)?;
     let parts = caps
         .get(1)?
         .as_str()
@@ -111,7 +122,7 @@ fn version_parts(value: &str) -> Option<(Vec<u64>, &str)> {
 }
 
 impl SegmentVersion {
-    fn parse(value: &str) -> Option<Self> {
+    pub(super) fn parse(value: &str) -> Option<Self> {
         let (parts, rest) = version_parts(value)?;
         let numbers = parts.iter().take(3).copied().collect::<Vec<_>>();
         let suffix = suffix_identifiers(rest);
@@ -142,18 +153,20 @@ impl SegmentVersion {
     }
 }
 
+/// Compare numeric fields with implicit zeroes in missing trailing positions.
+/// Callers choose which fields belong to the numeric core before comparing it.
+pub(crate) fn compare_version_segments(left: &[u64], right: &[u64]) -> Ordering {
+    (0..left.len().max(right.len()))
+        .map(|i| left.get(i).unwrap_or(&0).cmp(right.get(i).unwrap_or(&0)))
+        .find(|order| !order.is_eq())
+        .unwrap_or(Ordering::Equal)
+}
+
 impl Ord for SegmentVersion {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        use std::cmp::Ordering;
-        // 三段比较，缺的段按 0：0.4 == 0.4.0
-        let length = self.numbers.len().max(other.numbers.len());
-        for index in 0..length {
-            let left = self.numbers.get(index).copied().unwrap_or(0);
-            let right = other.numbers.get(index).copied().unwrap_or(0);
-            match left.cmp(&right) {
-                Ordering::Equal => continue,
-                ordering => return ordering,
-            }
+    fn cmp(&self, other: &Self) -> Ordering {
+        let order = compare_version_segments(&self.numbers, &other.numbers);
+        if !order.is_eq() {
+            return order;
         }
         // 数字段相同：正式版高于预发布；两个预发布按标识符逐段比较
         // （第 4 段已并入预发布，所以 beta.23 > beta.21 在这里判定）
@@ -165,6 +178,14 @@ impl Ord for SegmentVersion {
         }
     }
 }
+
+impl PartialEq for SegmentVersion {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for SegmentVersion {}
 
 impl PartialOrd for SegmentVersion {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {

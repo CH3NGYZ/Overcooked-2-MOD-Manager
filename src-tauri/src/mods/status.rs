@@ -96,13 +96,14 @@ pub(super) fn repository_update_state(
         return (false, "repository_unavailable");
     }
     let remote = repository_remote_version(repo);
-    match (
-        installed_version.and_then(crate::releases::parse_version),
-        remote.as_deref().and_then(crate::releases::parse_version),
-    ) {
-        (Some(local), Some(remote)) if remote > local => (true, "update_available"),
-        (Some(_), Some(_)) => (false, "latest"),
-        _ => (false, "unknown"),
+    match remote
+        .as_deref()
+        .zip(installed_version)
+        .and_then(|(remote, local)| crate::releases::compare_release_versions(remote, local))
+    {
+        Some(Ordering::Greater) => (true, "update_available"),
+        Some(_) => (false, "latest"),
+        None => (false, "unknown"),
     }
 }
 

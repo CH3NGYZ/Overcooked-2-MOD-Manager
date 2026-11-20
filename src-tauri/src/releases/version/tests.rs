@@ -409,6 +409,48 @@ fn version_comparison_counts_every_segment() {
     );
 }
 
+#[test]
+fn short_numeric_versions_keep_their_semantic_range_boundaries() {
+    use crate::version_range::VersionRange;
+
+    for (version, equivalent) in [
+        ("v0.10", "0.10.0"),
+        ("1", "1.0"),
+        ("1.0", "1.0.0"),
+        ("1.92", "1.92.0"),
+    ] {
+        assert_eq!(
+            SegmentVersion::parse(version),
+            SegmentVersion::parse(equivalent)
+        );
+        for (op, expected) in [
+            ("==", true),
+            (">=", true),
+            ("<=", true),
+            ("!=", false),
+            (">", false),
+            ("<", false),
+        ] {
+            assert_eq!(
+                VersionRange::parse(&format!("{op}{equivalent}"))
+                    .unwrap()
+                    .matches(version, compare_release_versions),
+                expected
+            );
+        }
+    }
+    assert!(
+        !VersionRange::parse(">=0.10.0")
+            .unwrap()
+            .matches("0.9", compare_release_versions)
+    );
+    assert!(
+        VersionRange::parse(">1.9.2")
+            .unwrap()
+            .matches("1.92.0", compare_release_versions)
+    );
+}
+
 /*
  * 同一个版本号，无论从哪个字段读，预发布结论必须一致。
  *

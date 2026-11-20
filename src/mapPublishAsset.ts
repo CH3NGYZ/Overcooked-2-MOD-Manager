@@ -18,6 +18,8 @@
  * import，发布页与 composable 共用同一份渲染规则。
  */
 
+import { compareVersionSegments } from './modStatus.ts'
+
 /** 管理器认的版本号形状；与 `map_note` 里版本捕获组的形状一致。 */
 const MAP_VERSION_PATTERN = /^[0-9]+(?:\.[0-9]+)*$/
 
@@ -109,17 +111,10 @@ export function versionFromAssetName(name: string): string {
   return picked ? trim(picked) : ''
 }
 
-/** 版本号比较（按点分段，缺段当 0）；`a` 新于 `b` 返回正数。 */
+/** 未登记附件的数字回退顺序；登记后以作者给的版本表为准。 */
 export function compareMapVersions(left: string, right: string): number {
-  const toParts = (version: string) => version.split('.').map((part) => Number.parseInt(part, 10) || 0)
-  const first = toParts(left)
-  const second = toParts(right)
-  const size = Math.max(first.length, second.length)
-  for (let index = 0; index < size; index += 1) {
-    const diff = (first[index] ?? 0) - (second[index] ?? 0)
-    if (diff !== 0) return diff
-  }
-  return 0
+  const numericParts = (version: string) => (version.match(/[0-9]+/g) ?? []).map(Number).filter(Number.isFinite)
+  return compareVersionSegments(numericParts(left), numericParts(right))
 }
 
 /** 一组附件名里最新的版本号；一个带版本的都没有时返回空串。 */
@@ -127,7 +122,7 @@ export function latestVersionOf(names: string[]): string {
   return names
     .map(versionFromAssetName)
     .filter((version) => isMapVersion(version))
-    .reduce((latest, version) => (compareMapVersions(version, latest) > 0 ? version : latest), '')
+    .reduce((latest, version) => (!latest || compareMapVersions(version, latest) > 0 ? version : latest), '')
 }
 
 /** 文件名里的最后一段；带目录的入参（POSIX 或 Windows 分隔符）都只看文件名本身。 */

@@ -65,3 +65,12 @@ test('旧的两端写法可以折成 version', () => {
   assert.equal(foldVersionBounds('1.0', '1.0'), '==1.0')
   assert.equal(foldVersionBounds('1.0', '2.0'), '>=1.0,<=2.0')
 })
+test('all range operators accept short numeric spellings without changing numeric order', () => {
+  assert.equal(versionMatches('>=0.10.0', 'v0.10'), true)
+  assert.equal(versionMatches('>=0.10.0', '0.9'), false)
+  for (const [local, bound] of [['1', '1.0'], ['1.0', '1.0.0'], ['1.92', '1.92.0']]) {
+    for (const op of ['==', '>=', '<=']) assert.equal(versionMatches(`${op}${bound}`, local), true)
+    for (const op of ['!=', '>', '<']) assert.equal(versionMatches(`${op}${bound}`, local), false)
+  }
+  assert.equal(versionMatches('==1.9.2', '1.92.0'), false)
+})

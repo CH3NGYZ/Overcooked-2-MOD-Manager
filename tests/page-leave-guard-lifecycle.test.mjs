@@ -250,10 +250,10 @@ test('page replacement invalidates native confirmation; App disposal settles it 
   assert.equal(fixture.listeners.size, 0)
 })
 
-test('batch preparation and execution block native close before any exit IPC',async t=>{
+test('batch preparation, displaying completion and execution block native close until the apply review',async t=>{
  const fixture=await setup(t,{dirty:false})
- for(const phase of ['preparing','executing']){globalThis.__guardChangeState={phase};await fixture.emitClose().pending;assert.equal(fixture.state.exits,0)}
- globalThis.__guardChangeState={phase:'confirming'};await fixture.emitClose().pending;assert.equal(fixture.state.exits,1)
+ for(const phase of ['preparing','prepared','executing']){globalThis.__guardChangeState={phase};await fixture.emitClose().pending;assert.equal(fixture.state.exits,0,phase)}
+ globalThis.__guardChangeState={phase:'reconfirming'};await fixture.emitClose().pending;assert.equal(fixture.state.exits,1)
  globalThis.__guardChangeState=null
 })
 

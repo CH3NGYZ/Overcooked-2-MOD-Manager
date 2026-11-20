@@ -13,6 +13,7 @@ import { changePlanLabels, preparationCompletion } from './presentation'
 import { activeDownloadProgress } from '../downloadTask'
 import { appUpdateState } from '../appUpdateState'
 import { isPackageAction } from './types'
+import { isChangePlanLocked } from './workflow'
 const changes = useModChanges()
 useModChangesLifecycle()
 const state = changes.state
@@ -24,7 +25,7 @@ const currentProgress = computed(() => (state.value?.phase === 'preparing'
 const completion = computed(() => preparationCompletion(preparation.value))
 const working = computed(() => ['planning', 'preparing', 'executing'].includes(state.value?.phase ?? ''))
 const completedPreparation = computed(() => state.value?.phase === 'prepared')
-const canCancel = computed(() => !['preparing', 'prepared', 'executing'].includes(state.value?.phase ?? ''))
+const canCancel = computed(() => !isChangePlanLocked(state.value?.phase))
 const applyReview = computed(() => state.value?.applyReview)
 const needsPreparation = computed(() => !applyReview.value && plan.value?.actions.some(isPackageAction))
 const confirmLabel = computed(() => applyReview.value === 'changed' && plan.value?.prepared ? 'modChanges.reconfirm'

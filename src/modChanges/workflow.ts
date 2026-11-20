@@ -9,6 +9,10 @@ export interface ChangeWorkflowState {
   applyReview?: 'prepared' | 'changed'
 }
 
+export function isChangePlanLocked(phase?: ChangePhase) {
+  return phase === 'preparing' || phase === 'prepared' || phase === 'executing'
+}
+
 /** Only skip the UI when the trusted plan has no change outside the requested switch. */
 function canApplyDirectly(request: ChangeRequest, plan: ChangePlan) {
   const root = request.roots[0]
@@ -107,7 +111,7 @@ export function createChangeWorkflow(backend: ChangeBackend, publish: (state: Ch
   }
 
   async function cancel() {
-    if (current?.phase === 'executing' || current?.phase === 'preparing' || current?.phase === 'prepared') return
+    if (isChangePlanLocked(current?.phase)) return
     const plan = current?.plan
     generation += 1
     finish(null)

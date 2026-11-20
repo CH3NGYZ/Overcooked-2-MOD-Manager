@@ -41,6 +41,8 @@ for (const kind of ['install', 'upgrade', 'downgrade', 'replace']) test(`unchang
   await tick()
   assert.equal(f.state.phase, 'prepared')
   await f.confirm()
+  await f.cancel()
+  assert.equal(f.state.phase, 'prepared')
   assert.deepEqual(f.calls, [])
   presentation.resolve()
   await staging

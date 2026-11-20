@@ -18,7 +18,7 @@ test('shared confirmation delegates the single action table and only connects tr
 })
 test('blocked and busy plans cannot confirm; failure can only replan; preparation and execution cannot cancel',()=>{
  assert.match(dialog,/state\?\.phase === 'failed'/);assert.match(dialog,/plan\?\.status !== 'ready'/)
- assert.match(dialog,/\['preparing', 'prepared', 'executing'\]\.includes/);assert.match(dialog,/:disabled="!canCancel"/)
+ assert.match(dialog,/!isChangePlanLocked\(state\.value\?\.phase\)/);assert.match(dialog,/:disabled="!canCancel"/)
  assert.match(dialog,/@click="changes\.confirm"/)
  assert.match(dialog,/@click="changes\.retry"/)
 })

@@ -3,6 +3,7 @@ import type { LevelSetAuthorNames, LevelSetCardAction, LevelSetCardTag } from '.
 import type { LevelSetGroupNode } from '../levelSetGroups'
 import type { DependencyRow } from './DependencyTable.vue'
 import type { StatusActionSpec } from '../statusActions'
+import type { RelationStatus } from '../modRelations'
 import type { ModGroupNode, ModPackageNode } from '../localModGroups'
 import type { InstalledMod, LevelSetInfo, LevelSetPlugin, MapInfo } from '../types'
 
@@ -58,13 +59,15 @@ export interface LevelSetGroupContext {
   tagsOf(set: LevelSetInfo): LevelSetCardTag[]
   tagTitle(set: LevelSetInfo, tag: LevelSetCardTag): string | undefined
   onTagClick(set: LevelSetInfo, tag: LevelSetCardTag): void
-  /** 卡片状态区的一键动作（可更新 / 缺依赖 / 依赖版本冲突）。 */
+  /** 卡片状态区的更新 / 冲突快捷动作；依赖修复独立展示。 */
   actionOf(set: LevelSetInfo): LevelSetCardAction | undefined
   /** 这一个动作正在执行（按钮转圈）。 */
   actionBusy(set: LevelSetInfo): boolean
   /** 别的导入 / 更新占着安装链路，按钮禁用。 */
   actionDisabled(set: LevelSetInfo): boolean
   runCardAction(set: LevelSetInfo): void | Promise<void>
+  repairOf(set: LevelSetInfo): RelationStatus | undefined
+  repairDependencies(set: LevelSetInfo): void
   authorNamesOf(set: LevelSetInfo): LevelSetAuthorNames
   bindingOf(set: LevelSetInfo): { map: MapInfo; name: string; tag: string } | undefined
   updateSourcesOf(set: LevelSetInfo): { mapId: string; name: string; tag: string }[]
@@ -106,6 +109,11 @@ export interface ModGroupContext {
   onCardClick(event: MouseEvent, mod: InstalledMod, packageKey?: string): void
   runCardAction(mod: InstalledMod): void | Promise<void>
   runPackageAction(pkg: ModPackageNode): void | Promise<void>
+  packageAction(pkg: ModPackageNode): StatusActionSpec | undefined
+  canRepairMod(mod: InstalledMod): boolean
+  canRepairPackage(pkg: ModPackageNode): boolean
+  repairModDependencies(mod: InstalledMod): void
+  repairPackageDependencies(pkg: ModPackageNode): void
   openLogs(mod: InstalledMod): void | Promise<void>
   editConfig(mod: InstalledMod): void
   openLocation(mod: InstalledMod): void | Promise<void>

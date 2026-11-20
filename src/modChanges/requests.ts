@@ -1,6 +1,13 @@
 import { useDashboard } from '../composables/useDashboardStore'
 import { useModChanges } from './store'
-import type { ChangeExecutionResult, RootIntent } from './types'
+import type { ChangeExecutionResult, DependencyRepairTarget, RootIntent } from './types'
+
+/** Exact release previews still request that release, unlike an installed owner's dependency action. */
+export function requestDependencyRepair(target: DependencyRepairTarget) {
+  return useModChanges().run(target.candidate_id == null
+    ? { repair_dependencies_of: target.node_id }
+    : { roots: [{ ...target, enabled: true }] })
+}
 
 export interface ToggleTargets {
   dllFiles?: readonly string[]

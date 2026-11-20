@@ -420,6 +420,18 @@ test('依赖冲突优先于缺依赖，且两者都只出一条', () => {
   assert.deepEqual(tags.map((t) => t.key), ['dependency_conflict', 'missing_dependency', 'latest'])
 })
 
+test('包标题同时汇总依赖禁用、依赖不符和可更新，每种依赖问题只出现一次', () => {
+  const tags = packageStatuses([
+    mod({ dll_file: 'Core.dll', labels: ['dependency_disabled', 'dependency_mismatch', 'update_available'] }),
+    mod({ dll_file: 'Companion.dll', release_companion: true, labels: ['dependency_disabled', 'latest'] }),
+  ])
+  assert.deepEqual(tags.map(tag => [tag.key, tag.text, tag.count]), [
+    ['dependency_disabled', 'modChanges.card.dependencyDisabled', undefined],
+    ['dependency_mismatch', 'modChanges.card.dependencyMismatch', undefined],
+    ['update_available', 'tools.update', undefined],
+  ])
+})
+
 test('包标题认得「可安装」，且与缺依赖同位置、中档色', () => {
   /*
    * 兼容关系差一个版本时，单 MOD 卡与地图卡都改口说「可安装」。包标题必须

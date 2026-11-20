@@ -32,7 +32,7 @@ import {
   type RelationStatus,
 } from './modRelations.ts'
 import type { EvaluationSubject } from './modChanges/types'
-import type { RootIntent } from './modChanges/types'
+import type { DependencyRepairTarget } from './modChanges/types'
 import { compareVersions, isPrereleaseVersion, localVersion, repositoryForMod } from './modStatus.ts'
 import { mapForLevelSet, mapReleaseVersion } from './levelSetStatus.ts'
 import { formatVersionSpec } from './versionSpec.ts'
@@ -50,7 +50,7 @@ import type {
  */
 export interface DependencyJump {
   /** Solving this owner includes every required version and cascading disable. */
-  repair?: RootIntent
+  repair?: DependencyRepairTarget
   /** 目标仓库卡片的 `data-focus-id`（安装页据此高亮）。 */
   id: string
   /** 悬停说明（已翻译），说清点了会跳到哪。 */
@@ -330,14 +330,6 @@ export function dependencyRowFromStatus(status: RelationStatus, options: Depende
   }
 
   return row
-}
-
-/** 关系快捷按钮只投影已有跳转的方向，不另判版本或选择 Release。 */
-export function dependencyActionLabel(jump: DependencyJump | undefined): string {
-  if (jump?.repair) return 'modChanges.reviewSelection'
-  return jump?.versionChange
-    ? jump.versionChange.direction === 'downgrade' ? 'tools.goDowngrade' : 'tools.goUpdate'
-    : 'overview.browse'
 }
 
 /**

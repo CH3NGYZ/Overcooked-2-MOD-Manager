@@ -3,7 +3,11 @@
 use super::{
     inventory::*, model::*, mutations::file_conflict, session::PlanSession, transaction::*,
 };
-use crate::{app_state::AppState, archive, level_sets, models::MapInstallOrigin};
+use crate::{
+    app_state::AppState,
+    archive, level_sets,
+    models::{DllRole, MapInstallOrigin},
+};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -25,6 +29,8 @@ pub(crate) struct MapBatch {
     pub source_path: PathBuf,
     pub source_fingerprint: Fingerprint,
     pub node_ids: BTreeSet<String>,
+    /// Candidate-specific roles for the staged maps and their registered DLLs.
+    pub(super) member_roles: BTreeMap<String, BTreeMap<String, DllRole>>,
     maps: Vec<StagedMap>,
     external: Vec<StagedExternal>,
     extra_files: Vec<String>,
@@ -142,6 +148,7 @@ pub(crate) fn attach(state: &AppState, session: &mut PlanSession) -> Result<(), 
         source_path: source,
         source_fingerprint,
         node_ids: BTreeSet::new(),
+        member_roles: BTreeMap::new(),
         maps: vec![],
         external: vec![],
         extra_files: vec![],

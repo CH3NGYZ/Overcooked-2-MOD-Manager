@@ -36,7 +36,7 @@ for (const [state, text] of [['missing', 'modsOnline.missingDep'], ['disabled', 
     assert.equal(row.status, text)
     assert.equal(row.jump?.targetVersion, undefined)
     assert.equal(row.jump?.versionChange, undefined)
-    assert.deepEqual(row.jump?.repair, ['satisfied', 'unknown'].includes(state) ? undefined : { node_id: 'mod:owner', enabled: true })
+    assert.deepEqual(row.jump?.repair, ['satisfied', 'unknown'].includes(state) ? undefined : { node_id: 'mod:owner' })
     clearEvaluation()
   })
 }
@@ -60,7 +60,7 @@ test('an exact online tag never borrows the installed owner evaluation', () => {
       rows: [{ relation, state: 'missing' }] }])
   const old = dependencyRowsFor([], { ...options, ownerRepository: online, version: 'v1' })[0]
   assert.equal(old.status, 'modsOnline.missingDep')
-  assert.deepEqual(old.jump.repair, { node_id: 'mod:repo', candidate_id: 'release:repo:v1', enabled: true })
+  assert.deepEqual(old.jump.repair, { node_id: 'mod:repo', candidate_id: 'release:repo:v1' })
   const absent = dependencyRowsFor([relation], { ...options, ownerRepository: online, version: 'v0' })[0]
   assert.equal(absent.status, undefined)
   assert.equal(absent.jump, undefined)

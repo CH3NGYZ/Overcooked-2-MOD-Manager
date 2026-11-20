@@ -43,6 +43,7 @@ pub(crate) use paths::levels_root;
 pub(crate) use paths::migrate_legacy_disabled_root;
 pub(crate) use plugin_registry::LEVEL_SET_PLUGIN_REGISTRY;
 pub(crate) use plugin_registry::RegisteredLevelSetPlugin;
+pub(crate) use plugin_registry::checked_registered_plugins;
 pub(crate) use plugin_registry::read_registered_plugins;
 pub use plugin_registry::registered_plugin_paths;
 pub use requirements::runtime_relation;

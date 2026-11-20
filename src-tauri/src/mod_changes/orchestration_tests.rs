@@ -6,6 +6,8 @@ use std::{collections::BTreeMap, fs, path::Path};
 
 #[path = "orchestration_tests/apply_order.rs"]
 mod apply_order;
+#[path = "orchestration_tests/declared_mod_bundle.rs"]
+mod declared_mod_bundle;
 #[path = "orchestration_tests/disable_fallback.rs"]
 mod disable_fallback;
 #[path = "orchestration_tests/duplicate_release_target.rs"]
@@ -16,6 +18,8 @@ mod install_notes;
 mod installed_relations;
 #[path = "orchestration_tests/map_runtime_duplicate.rs"]
 mod map_runtime_duplicate;
+#[path = "orchestration_tests/repair_cycle.rs"]
+mod repair_cycle;
 #[path = "orchestration_tests/repository_preparation.rs"]
 mod repository_preparation;
 #[path = "orchestration_tests/retired_members.rs"]

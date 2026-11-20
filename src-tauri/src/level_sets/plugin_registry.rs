@@ -91,9 +91,21 @@ fn normalize_registered_dll(dll: &str) -> Option<String> {
 /// 文件不存在、解析失败、版本比当前新都返回空表：登记表只影响「哪些 DLL 归
 /// 地图」，坏掉时退回「都算 MOD」的旧行为，不能让整次扫描失败。
 pub fn read_registered_plugins(manifests_dir: &Path) -> Vec<RegisteredLevelSetPlugin> {
+    checked_registered_plugins(manifests_dir, false).unwrap_or_default()
+}
+
+/// A malformed or unreadable registry cannot establish absence of a file claim.
+pub(crate) fn checked_registered_plugins(
+    manifests_dir: &Path,
+    strict: bool,
+) -> Result<Vec<RegisteredLevelSetPlugin>, String> {
     let path = registry_path(manifests_dir);
-    let Ok(text) = fs::read_to_string(&path) else {
-        return Vec::new();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !path.is_symlink() => {
+            return Ok(Vec::new());
+        }
+        Err(error) => return Err(error.to_string()),
     };
     let parsed: LevelSetPluginRegistryFile = match serde_json::from_str(&text) {
         Ok(parsed) => parsed,
@@ -103,7 +115,7 @@ pub fn read_registered_plugins(manifests_dir: &Path) -> Vec<RegisteredLevelSetPl
                 path.display(),
                 error
             );
-            return Vec::new();
+            return Err("modChanges.ambiguousOwnership".into());
         }
     };
     if parsed.version > LEVEL_SET_PLUGIN_REGISTRY_VERSION {
@@ -112,23 +124,23 @@ pub fn read_registered_plugins(manifests_dir: &Path) -> Vec<RegisteredLevelSetPl
             path.display(),
             parsed.version
         );
-        return Vec::new();
+        return Err("modChanges.ambiguousOwnership".into());
     }
     let mut seen = HashSet::new();
-    parsed
-        .entries
-        .into_iter()
-        .filter_map(|entry| {
-            let dll = normalize_registered_dll(&entry.dll)?;
-            if !seen.insert(dll.to_lowercase()) {
-                return None;
+    let mut entries = Vec::new();
+    for entry in parsed.entries {
+        match normalize_registered_dll(&entry.dll) {
+            Some(dll) if seen.insert(dll.to_lowercase()) => {
+                entries.push(RegisteredLevelSetPlugin {
+                    dll,
+                    owner: entry.owner,
+                });
             }
-            Some(RegisteredLevelSetPlugin {
-                dll,
-                owner: entry.owner,
-            })
-        })
-        .collect()
+            _ if strict => return Err("modChanges.ambiguousOwnership".into()),
+            _ => {}
+        }
+    }
+    Ok(entries)
 }
 
 /// 写登记表（先写临时文件再改名，与安装清单同一手法：中途失败不会留下半个 JSON）。

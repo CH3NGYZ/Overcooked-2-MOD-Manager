@@ -91,7 +91,7 @@ fn conflicts_report_every_installed_copy_in_both_roots() {
     ];
     let sets = vec![imported(
         "RW_LevelSet",
-        metadata("RW_LevelSet", None, "RW", "0.73"),
+        metadata("RW_LevelSet", None, "RW", "v0.73.0"),
     )];
 
     let conflicts = conflicts_with_installed(&installed, &sets);
@@ -100,7 +100,7 @@ fn conflicts_report_every_installed_copy_in_both_roots() {
     assert_eq!(conflicts[0].name, "RW_LevelSet");
     assert_eq!(conflicts[0].version, "0.73");
     assert!(conflicts[0].enabled);
-    assert!(conflicts[0].same_version);
+    assert!(conflicts[0].same_version, "0.73 与 v0.73.0 应提示重装");
     assert_eq!(conflicts[1].handle, "RW_LevelSet_copy");
     assert!(!conflicts[1].enabled);
     assert!(!conflicts[1].same_version, "0.71 不是 0.73");

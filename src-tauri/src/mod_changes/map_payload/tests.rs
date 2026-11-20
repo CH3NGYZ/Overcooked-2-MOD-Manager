@@ -43,6 +43,7 @@ fn loose_loader_input_never_escapes_the_graph() {
         node_ids: BTreeSet::new(),
         maps: vec![],
         external: vec![],
+        member_roles: Default::default(),
         extra_files: vec![],
     };
     assert_eq!(
@@ -181,6 +182,7 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
         installed_mods: Default::default(),
         duplicate_releases: Default::default(),
         duplicate_release_safe_nodes: Default::default(),
+        declared_bundle_switch_members: Default::default(),
     };
     let zip_path = staging.join("map.zip");
     let mut writer = zip::ZipWriter::new(fs::File::create(&zip_path).unwrap());
@@ -275,6 +277,7 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
         staging,
         payload_fingerprints: HashMap::new(),
         mutations: None,
+        residue_adoptions: Default::default(),
         created: Instant::now(),
     };
     let mut batch = MapBatch {
@@ -285,6 +288,7 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
         node_ids: BTreeSet::new(),
         maps: vec![],
         external: vec![],
+        member_roles: Default::default(),
         extra_files: vec![],
     };
     projection::merge(
@@ -678,6 +682,7 @@ fn framework_directory_change_and_map_update_commit_with_all_map_and_member_swit
                 name_i18n: Default::default(),
                 map_name_zh: None,
                 kind: NodeKind::Map,
+                presentation_kind: None,
                 enabled: was_enabled,
                 repository_id: None,
                 package_id: None,
@@ -687,6 +692,7 @@ fn framework_directory_change_and_map_update_commit_with_all_map_and_member_swit
                     dll_file: member.clone(),
                     enabled: was_enabled,
                     guid: Some(format!("fixture-{name}")),
+                    role: None,
                 }],
                 map_dir_name: Some(name.into()),
                 map_id: None,
@@ -732,6 +738,7 @@ fn framework_directory_change_and_map_update_commit_with_all_map_and_member_swit
                 name_i18n: Default::default(),
                 map_name_zh: None,
                 kind: NodeKind::Mod,
+                presentation_kind: None,
                 enabled: true,
                 repository_id: None,
                 package_id: Some("framework".into()),
@@ -741,6 +748,7 @@ fn framework_directory_change_and_map_update_commit_with_all_map_and_member_swit
                     dll_file: old_dll,
                     enabled: true,
                     guid: Some(crate::mods::plugin_target::DIYLEVEL_GUID.into()),
+                    role: None,
                 }],
                 map_dir_name: None,
                 map_id: None,
@@ -780,6 +788,7 @@ fn framework_directory_change_and_map_update_commit_with_all_map_and_member_swit
         "framework".into(),
         super::super::session::Payload {
             candidate: next,
+            member_roles: Default::default(),
             stage_fingerprint: Fingerprint::capture(&payload_root).unwrap(),
             stage_root: payload_root,
             release_files: None,

@@ -7,7 +7,7 @@ import { useDashboard } from '../composables/useDashboardStore'
 import { useModRepositoryRefresh } from '../composables/useModRepositoryRefresh'
 import { useModRepositoryLink } from '../crossLink'
 import { installedModTags } from '../statusTags'
-import { runtimeModStatus } from '../modRuntimeStatus'
+import { modRelationForTag, runtimeModStatus } from '../modRuntimeStatus'
 import { relationJumpRepositoryId } from '../modRelations'
 import { repositoryForMod } from '../modStatus'
 import { isDependencyTag, tagTargetId, tagTargetTitle } from '../tagTargets'
@@ -66,18 +66,19 @@ function targetOf(tagKey: string): string | undefined {
   return tagTargetId(
     tagKey,
     repositoryForMod(repositories.value, current)?.id,
-    relationJumpRepositoryId(status.value?.issue),
+    relationJumpRepositoryId(modRelationForTag(status.value?.relationTags, tagKey)),
   )
 }
 
 function titleOf(tagKey: string) {
+  if (modRelationForTag(status.value?.relationTags, tagKey)?.repair) return t('modChanges.repairDependencies')
   return tagTargetTitle(tagKey, targetOf(tagKey))
 }
 
 function activate(tagKey: string) {
   if (isDependencyTag(tagKey)) {
     dependencyNavigation.request(() => {
-      const issue = status.value?.issue
+      const issue = modRelationForTag(status.value?.relationTags, tagKey)
       return issue ? dependencyRowFromStatus(issue, { mods: mods.value, repositories: repositories.value,
         translate: t, pickName: pickI18n, jumpToRepository: true }) : undefined
     })

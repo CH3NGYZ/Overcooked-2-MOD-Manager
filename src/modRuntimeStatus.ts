@@ -1,6 +1,6 @@
-import type { InstalledMod, InstalledModStatusLabel, ModRepository } from './types'
+import type { InstalledMod, ModRepository } from './types'
 import { repositoryForMod } from './modStatus.ts'
-import { primaryRelation, relationTagView, relationStatusesForSubject, type RelationStatus } from './modRelations.ts'
+import { localRelationTags, MOD_RELATION_LABELS, relationStatusesForSubject, type LocalRelationTag, type RelationStatus } from './modRelations.ts'
 import { modUpdateVerdict, replaceVersionConclusion } from './statusTags.ts'
 
 /**
@@ -70,35 +70,16 @@ export function repositoryRefreshing(
 export interface RuntimeModStatus {
   /** 合成后的 MOD：`labels` / `update_available` 已按当前缓存与刷新状态重算。 */
   mod: InstalledMod
-  /** 与其它插件的关系问题（缺依赖 / 冲突），与版本结论相互独立。 */
-  issue?: RelationStatus
+  /** 各类关系提醒及其对应的关系；版本结论独立显示。 */
+  relationTags: LocalRelationTag[]
   /** 绑定到的仓库是否正在刷新（卡片可以直接用它决定要不要显示「刷新中」）。 */
   refreshing: boolean
 }
 
-/** 关系类标签：一律由 `relationStatusLabel` 按当前关系重算，不沿用旧结论。 */
-const RELATION_LABELS = new Set<string>([
-  'missing_dependency',
-  'dependency_conflict',
-  'dependency_installable',
-])
+const RELATION_LABELS = new Set<string>(Object.values(MOD_RELATION_LABELS))
 
-/**
- * 关系问题该挂哪一枚标签。
- *
- * 与卡片标签（`modRelations.relationTagView` / `dependencyTagFor`）同一份
- * 口径：`requires` 缺了就是「缺依赖」（线上能不能补上不改变这件事）；
- * `compatible` 有满足区间的版本可换才是「可安装」；`conflicts` 是
- * 「有冲突」，唯一出路是卸载。
- */
-export function relationStatusLabel(
-  issue: RelationStatus | undefined,
-): InstalledModStatusLabel | undefined {
-  const view = relationTagView(issue)
-  if (!view) return undefined
-  if (view.kind === 'conflict') return 'dependency_conflict'
-  if (view.kind === 'installable') return 'dependency_installable'
-  return 'missing_dependency'
+export function modRelationForTag(tags: readonly LocalRelationTag[] | undefined, key: string): RelationStatus | undefined {
+  return tags?.find(tag => MOD_RELATION_LABELS[tag.kind] === key)?.dependency
 }
 
 /**
@@ -124,7 +105,7 @@ export function runtimeModStatus(
   state: RuntimeRefreshState,
 ): RuntimeModStatus {
   const repo = repositoryForMod([...repositories], mod)
-  const issue = mod.is_dependency ? undefined : primaryRelation(
+  const relationTags = mod.is_dependency ? [] : localRelationTags(
     relationStatusesForSubject({ dll_file: mod.dll_file }, mods))
   const refreshing = repositoryRefreshing(repo, state)
 
@@ -132,16 +113,14 @@ export function runtimeModStatus(
   const withRelation = (labels: InstalledMod['labels']): InstalledMod['labels'] => {
     const base = (labels as string[] | undefined)
       ?.filter((key) => !RELATION_LABELS.has(key)) ?? []
-    const label = relationStatusLabel(issue)
-    if (!label) return base as InstalledMod['labels']
-    return [label, ...base] as InstalledMod['labels']
+    return [...relationTags.map(tag => MOD_RELATION_LABELS[tag.kind]), ...base] as InstalledMod['labels']
   }
 
-  if (mod.release_companion) return { issue, refreshing, mod: { ...mod, labels: withRelation(mod.labels) } }
+  if (mod.release_companion) return { relationTags, refreshing, mod: { ...mod, labels: withRelation(mod.labels) } }
 
   if (refreshing) {
     return {
-      issue,
+      relationTags,
       refreshing,
       mod: {
         ...mod,
@@ -161,7 +140,7 @@ export function runtimeModStatus(
    */
   if (repo?.last_error) {
     return {
-      issue,
+      relationTags,
       refreshing,
       mod: {
         ...mod,
@@ -179,7 +158,7 @@ export function runtimeModStatus(
     if (verdict.source === 'newer_copy') {
       // 不把旧副本重算成「最新版」或「可更新」，也不抹掉独立的仓库错误、RAW 或关系标签。
       const labels = mod.labels?.filter(label => label !== 'latest' && label !== 'update_available')
-      return { issue, refreshing, mod: { ...mod, update_available: false, labels: withRelation(labels) } }
+      return { relationTags, refreshing, mod: { ...mod, update_available: false, labels: withRelation(labels) } }
     }
     /*
      * 用 `replaceVersionConclusion` 而不是自己拼数组：旧实现只过滤
@@ -187,7 +166,7 @@ export function runtimeModStatus(
      * 等旧结论留在原地，出现「最新版 + 仓库不可用」这种自相矛盾的组合。
      */
     return {
-      issue,
+      relationTags,
       refreshing,
       mod: {
         ...mod,
@@ -200,5 +179,5 @@ export function runtimeModStatus(
     }
   }
 
-  return { issue, refreshing, mod: { ...mod, labels: withRelation(mod.labels) } as InstalledMod }
+  return { relationTags, refreshing, mod: { ...mod, labels: withRelation(mod.labels) } as InstalledMod }
 }

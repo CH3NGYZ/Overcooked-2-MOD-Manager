@@ -395,7 +395,14 @@ fn cached_upgrade_reports_ambiguous_active_and_disabled_fastinit_copies() {
 fn repairing_installed_diylevel_preserves_its_version_and_can_upgrade_fastinit() {
     let f = scenario();
     let before = game_and_manifest_bytes(&f);
-    let plan = planning::create(&f.state, request(DIYLEVEL, None, true)).unwrap();
+    let plan = planning::create(
+        &f.state,
+        PlanRequest {
+            repair_dependencies_of: Some(format!("mod:{DIYLEVEL}")),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     assert_eq!(plan.result.status, SolveStatus::Ready, "{:?}", plan.result);
     assert_eq!(plan.roots[0].node_id, "mod:DIYLevel");
     assert!(plan.roots[0].tag.is_none());

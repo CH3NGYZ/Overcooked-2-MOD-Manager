@@ -1,6 +1,6 @@
 //! Failure witnesses are projected from evaluated branch states. They never
 //! participate in candidate selection, memoization, or transaction approval.
-use super::super::evaluate::runtime_relations;
+use super::super::evaluate::scoped_evaluations;
 use super::*;
 use std::collections::VecDeque;
 
@@ -26,6 +26,7 @@ impl FailureTraces {
         inventory: &Inventory,
         evaluations: &[NodeEvaluation],
         roots: &BTreeSet<usize>,
+        repair_owner: Option<usize>,
         owner: usize,
         edge: Option<(&OwnedRelation, &RelationEvaluation)>,
         unknown_reason: Option<&str>,
@@ -35,7 +36,7 @@ impl FailureTraces {
             return;
         }
         self.inspected += 1;
-        let mut trace = self.path_to_owner(inventory, evaluations, roots, owner);
+        let mut trace = self.path_to_owner(inventory, evaluations, roots, repair_owner, owner);
         let mut terminal = self.step(inventory, owner, edge, false);
         if let Some(reason) = unknown_reason {
             terminal.state = EvaluationState::Unknown;
@@ -68,6 +69,7 @@ impl FailureTraces {
         inventory: &Inventory,
         evaluations: &[NodeEvaluation],
         roots: &BTreeSet<usize>,
+        repair_owner: Option<usize>,
         owner: usize,
     ) -> Vec<DiagnosticStep> {
         if roots.contains(&owner) {
@@ -78,14 +80,17 @@ impl FailureTraces {
         let mut parents = vec![None; inventory.nodes.len()];
         for &root in roots {
             seen[root] = true;
-            if inventory.nodes[root].enabled {
+            if inventory.nodes[root].enabled || repair_owner == Some(root) {
                 queue.push_back(root);
             }
         }
         'walk: while let Some(index) = queue.pop_front() {
-            for (owned, edge) in
-                runtime_relations(&inventory.nodes[index]).zip(&evaluations[index].runtime)
-            {
+            let node = &inventory.nodes[index];
+            for (owned, edge) in scoped_evaluations(
+                node,
+                &evaluations[index],
+                repair_owner == Some(index) && !node.enabled,
+            ) {
                 if edge.relation.kind != RelationKind::Requires
                     || edge.state != EvaluationState::Satisfied
                 {

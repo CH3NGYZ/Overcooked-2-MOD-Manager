@@ -11,6 +11,7 @@ use std::{
 pub(crate) struct PlanRequest {
     #[serde(default)]
     pub roots: Vec<RootRequest>,
+    pub repair_dependencies_of: Option<String>,
     pub map_import: Option<MapImport>,
     pub toggle_scope: Option<ToggleScope>,
     #[serde(default)]
@@ -80,6 +81,8 @@ pub(crate) struct Payload {
     pub release_files: Option<Arc<HashMap<String, Fingerprint>>>,
     pub files: Vec<String>,
     pub manifest: Option<crate::archive::InstallManifest>,
+    /// DLL roles read alongside the verified candidate, keyed by its physical member keys.
+    pub member_roles: BTreeMap<String, crate::models::DllRole>,
 }
 
 pub(crate) struct PlanSession {
@@ -95,6 +98,8 @@ pub(crate) struct PlanSession {
     pub staging: PathBuf,
     /// Exact staged bytes, checked again before applying anything to the game.
     pub payload_fingerprints: HashMap<PathBuf, super::transaction::Fingerprint>,
+    /// Exact selected Release claims over previously unowned live files.
+    pub(super) residue_adoptions: super::mutations::ResidueAdoptions,
     /// Frozen under preparation; execute must not recapture changed live targets.
     pub(super) mutations: Option<Vec<super::application_progress::OwnedMutation>>,
     pub created: std::time::Instant,
@@ -253,16 +258,16 @@ pub(crate) fn presentation(
         roots: request
             .roots
             .iter()
-            .map(|r| RootSummary {
-                node_id: r.node_id.clone(),
+            .map(|root| (&root.node_id, root.candidate_id.as_ref()))
+            .chain(request.repair_dependencies_of.iter().map(|id| (id, None)))
+            .map(|(node_id, candidate_id)| RootSummary {
+                node_id: node_id.clone(),
                 label: trusted
                     .files
-                    .get(&r.node_id)
+                    .get(node_id)
                     .map(|f| f.summary.label.clone())
-                    .unwrap_or_else(|| r.node_id.clone()),
-                tag: r
-                    .candidate_id
-                    .as_ref()
+                    .unwrap_or_else(|| node_id.clone()),
+                tag: candidate_id
                     .and_then(|id| {
                         trusted
                             .inventory

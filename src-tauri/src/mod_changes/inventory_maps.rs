@@ -79,7 +79,8 @@ pub(crate) fn append_at(
             }
         }
         require_framework(&mut info.relations);
-        let internal = internal_members(root, &set.path, config.mod_metadata_concurrency)?;
+        let (internal, member_roles) =
+            internal_members(root, &set.path, config.mod_metadata_concurrency)?;
         let mut relationships = owned(info.relations.clone(), None);
         let mut known = set.error.is_none();
         for member in &internal {
@@ -134,6 +135,7 @@ pub(crate) fn append_at(
                     name_i18n: BTreeMap::new(),
                     map_name_zh: info.name_zh,
                     kind: NodeKind::Map,
+                    presentation_kind: None,
                     enabled: set.enabled,
                     repository_id: None,
                     package_id: None,
@@ -145,6 +147,7 @@ pub(crate) fn append_at(
                         .into_iter()
                         .filter_map(|plugin| {
                             Some(MemberSummary {
+                                role: member_roles.get(plugin.member_key.as_ref()?).copied(),
                                 key: plugin.member_key.clone()?,
                                 dll_file: plugin.member_key?,
                                 enabled: plugin.enabled,
@@ -307,6 +310,7 @@ fn append_external(
                 name_i18n: BTreeMap::new(),
                 map_name_zh: None,
                 kind: NodeKind::Mod,
+                presentation_kind: Some(details.role.into()),
                 enabled,
                 repository_id: None,
                 package_id: None,
@@ -316,6 +320,7 @@ fn append_external(
                     dll_file: dll.into(),
                     enabled,
                     guid: details.guid,
+                    role: Some(details.role),
                 }],
                 map_dir_name: None,
                 map_id,
@@ -330,11 +335,13 @@ fn append_external(
     Ok(())
 }
 
+type InternalMembers = (Vec<ProvidedPlugin>, BTreeMap<String, DllRole>);
+
 fn internal_members(
     root: &Path,
     directory: &Path,
     concurrency: u32,
-) -> Result<Vec<ProvidedPlugin>, String> {
+) -> Result<InternalMembers, String> {
     let entries = walkdir::WalkDir::new(directory)
         .follow_links(false)
         .into_iter()
@@ -364,25 +371,28 @@ fn internal_members(
         crate::concurrency::workers_from(concurrency),
         &|_, _| {},
     );
-    paths
-        .iter()
-        .zip(outcomes)
-        .map(|(entry, outcome)| {
-            let path = relative(root, entry.path())?;
-            Ok(ProvidedPlugin {
-                member_key: Some(key(&crate::mods::canonical_dll_name(&path))),
-                guid: outcome
-                    .mod_dll()
-                    .and_then(|metadata| metadata.guid.clone())
-                    .unwrap_or_default(),
-                version: outcome
-                    .value
-                    .as_ref()
-                    .and_then(crate::metadata_read::MetadataValue::version)
-                    .map(str::to_string),
-                prerelease: None,
-                enabled: !path.to_ascii_lowercase().ends_with(".disabled"),
-            })
-        })
-        .collect()
+    let mut members = Vec::with_capacity(paths.len());
+    let mut roles = BTreeMap::new();
+    for (entry, outcome) in paths.iter().zip(outcomes) {
+        let path = relative(root, entry.path())?;
+        let key = key(&crate::mods::canonical_dll_name(&path));
+        let details = outcome.mod_dll();
+        if let Some(details) = details {
+            roles.insert(key.clone(), details.role);
+        }
+        members.push(ProvidedPlugin {
+            member_key: Some(key),
+            guid: details
+                .and_then(|metadata| metadata.guid.clone())
+                .unwrap_or_default(),
+            version: outcome
+                .value
+                .as_ref()
+                .and_then(crate::metadata_read::MetadataValue::version)
+                .map(str::to_string),
+            prerelease: None,
+            enabled: !path.to_ascii_lowercase().ends_with(".disabled"),
+        });
+    }
+    Ok((members, roles))
 }

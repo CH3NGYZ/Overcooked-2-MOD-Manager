@@ -17,7 +17,7 @@ import {
 import { matchesLocalSearch, modSearchText } from '../localItemSearch'
 import { api } from '../services/tauri'
 import { repositoryForMod } from '../modStatus'
-import type { RelationStatus } from '../modRelations'
+import { dependencyRepairStatus, relationJumpRepositoryId, type LocalRelationTag, type RelationStatus } from '../modRelations'
 import { modRepositoryIsAvailable } from '../repositoryAvailability'
 import { installedModTags } from '../statusTags'
 import {
@@ -28,13 +28,13 @@ import {
   summarizeLocalModStatuses,
 } from '../localModGroups'
 import { statusActionFor, type StatusActionSpec } from '../statusActions'
-import { dependencyActionLabel, dependencyRowFromStatus, installedModDependencyRows, mergedModDependencyRows } from '../dependencyRows'
+import { dependencyRowFromStatus, installedModDependencyRows, mergedModDependencyRows } from '../dependencyRows'
 import { useDependencyNavigation } from '../composables/useDependencyNavigation'
 import type { DependencyRow } from '../dependencyRows'
 import { useFocusHighlight, useModRepositoryLink } from '../crossLink'
 import { useListVisibility } from '../composables/useListVisibility'
 import { bulkSwitchValue as bulkSwitchValueOf } from '../listVisibility'
-import { runtimeModStatus } from '../modRuntimeStatus'
+import { modRelationForTag, runtimeModStatus } from '../modRuntimeStatus'
 import { isDependencyTag, tagTargetTitle } from '../tagTargets'
 import { describeRefreshOutcome } from '../refreshOutcomeText'
 import { markDialogBusy } from '../dialogBusy'
@@ -57,7 +57,6 @@ import {
 import ModConfigEditor from '../components/ModConfigEditor.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
 import PageLoading from '../components/PageLoading.vue'
-import RefreshResultTag from '../components/RefreshResultTag.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
 import { useFileDrop } from '../composables/useFileDrop'
 import { takePendingDrop, useDropRouting } from '../composables/useDropRouting'
@@ -204,7 +203,7 @@ async function checkUpdates() {
     const summary = await refreshBoundRepositories([...targets.values()])
     summary.errors.forEach((error) => message.error(error))
     /*
-     * 结果文案与页头那枚「上次检查」标签共用 `describeRefreshOutcome`：
+     * 检查结果通过共享文案汇报：
      * 同一批数据在两处永远说同一句话。
      *
      * 只有真的刷到了仓库才报数量：这些仓库可能刚好都在刷新中（例如刚在
@@ -297,14 +296,8 @@ const effectiveMods = computed(() => runtimeStatuses.value.map((entry) => entry.
  * 模板、动作处理与卡片标签组件都要读它（判断标签、决定卸载哪个 MOD、
  * 找可安装仓库），关系判定已经算在 `runtimeStatuses` 里，这里只做索引。
  */
-const relationIssueByDll = computed<Record<string, RelationStatus>>(() => {
-  const map: Record<string, RelationStatus> = {}
-  for (const mod of mods.value) {
-    const entry = runtimeStatuses.value.find((item) => item.mod.dll_file === mod.dll_file)
-    if (entry?.issue) map[mod.dll_file] = entry.issue
-  }
-  return map
-})
+const relationTagsByDll = computed<Record<string, LocalRelationTag[]>>(() =>
+  Object.fromEntries(runtimeStatuses.value.map(({ mod, relationTags }) => [mod.dll_file, relationTags])))
 
 /* ===== 搜索 =====
  *
@@ -474,8 +467,6 @@ const groups = computed<ModGroupNode[]>(() => buildLocalModGroups({
   },
   pickI18n,
   displayTitle,
-  actionFor: (statusKeys, representative) =>
-    actionContext(statusKeys, representative)?.action,
 }))
 
 const allGroupKeys = computed(() => visibleGroups.value.map((node) => node.key))
@@ -598,7 +589,6 @@ function bindingRepositoryId(mod: InstalledMod): string | undefined {
 function actionContext(labels: readonly string[] | undefined, mod: InstalledMod): {
   action: StatusActionSpec
   repository?: ModRepository
-  dependency?: DependencyRow
   /** 冲突要卸载的目标：可能是别的 MOD，不一定是当前这张卡片。 */
   conflictMod?: InstalledMod
 } | undefined {
@@ -620,30 +610,13 @@ function actionContext(labels: readonly string[] | undefined, mod: InstalledMod)
       // 刷新针对仓库而不是某个 DLL，解析不出仓库就不给按钮
       if (!repository) return undefined
       return { action, repository }
-    case 'install-dependency': {
-      /*
-       * 「去安装」要跳到**依赖的**仓库，不是这个 MOD 自己的仓库。
-       *
-       * 之前这里用的是 `repositoryForMod(mod)` —— 当前卡片的仓库，
-       * 于是点了「去安装」，安装页高亮的却是这张本身有问题的 MOD，
-       * 用户在那里找不到要装的东西。
-       *
-       * 关系解析不出可安装来源时不给按钮：那说明线上没有这个 GUID，
-       * 跳过去也无处可去，只留「缺依赖」标签说明情况。
-       */
-      const dependency = relationIssueByDll.value[mod.dll_file]
-      if (!dependency?.repository && !dependency?.repair) return undefined
-      const row = dependencyRow(dependency)
-      return { action: { ...action, label: dependencyActionLabel(row.jump) },
-        repository: dependency.repository ?? repository, dependency: row }
-    }
     case 'uninstall-conflict': {
       /*
        * 冲突要卸的是**对方**，不一定是当前卡片这一项：
        * A 声明「与 B 1.x 冲突」时，用户看的是 A 的卡片，要卸的是 B。
        * 解析不出具体目标就不给按钮 —— 一个不知道该卸什么的按钮没意义。
        */
-      const conflictMod = relationIssueByDll.value[mod.dll_file]?.installedMod
+      const conflictMod = modRelationForTag(relationTagsByDll.value[mod.dll_file], 'dependency_conflict')?.installedMod
       if (!conflictMod) return undefined
       return { action, repository, conflictMod }
     }
@@ -668,26 +641,15 @@ const actionByDll = computed<Record<string, StatusActionSpec>>(() => {
   return map
 })
 
-/**
- * 包内携带依赖关系声明的成员（可能不存在）。
- *
- * 依赖关系挂在仓库上，包内只有绑了仓库的那个 DLL 才解析得出 `relationIssue`。
- * 缺依赖 / 冲突的标签、按钮和跳转都必须按这个成员来，否则代表成员恰好是
- * 那个没有仓库身份的 DLL 时，标签在、动作和跳转却解析不出来。
- */
-function relationOwnerMod(pkg: ModPackageNode): InstalledMod | undefined {
-  return pkg.mods.find((mod) => relationIssueByDll.value[mod.dll_file])
-}
-
 /** 包标题的快捷动作：用包对外公开的状态集合判断。 */
 function packageAction(pkg: ModPackageNode) {
   const keys = pkg.statuses.map((entry) => entry.key)
-  const base = pkg.mods.find((mod) => !mod.is_dependency) ?? pkg.mods[0]
+  const base = keys.includes('dependency_conflict')
+    ? pkg.mods.find(mod => modRelationForTag(relationTagsByDll.value[mod.dll_file], 'dependency_conflict')?.installedMod)
+    : pkg.coreMods.find(mod => repositoryForMod(repositories.value, mod)) ?? pkg.coreMods[0]
   if (!base) return undefined
-  // 依赖类动作按「真正部署了关系的那一个成员」解析
-  const needsRelation = keys.some((key) => isDependencyTag(key))
   // Only member cards can unambiguously identify the duplicate DLL to remove.
-  return actionContext(keys.filter((key) => key !== 'duplicate_lower_version'), (needsRelation ? relationOwnerMod(pkg) : undefined) ?? base)
+  return actionContext(keys.filter((key) => key !== 'duplicate_lower_version'), base)
 }
 
 /**
@@ -696,7 +658,6 @@ function packageAction(pkg: ModPackageNode) {
  * 三个动作走的是不同链路，这是它们唯一的分歧点：
  *   - update：预下载 → 安装详情弹窗 → 用户确认（与仓库卡片安装同一套）
  *   - refresh：只重拉这一条仓库的 Release，不下载任何文件
- *   - install-dependency：跳到 MOD 安装页并定位到该仓库卡片
  *   - uninstall-conflict：把关系里指名的那个 MOD 交给统一卸载确认链
  */
 function runCardAction(mod: InstalledMod) {
@@ -707,12 +668,6 @@ function runCardAction(mod: InstalledMod) {
     removeOlderCopy(mod)
   } else if (context.action.kind === 'update' && context.repository) {
     void previewModRepository(context.repository)
-  } else if (context.action.kind === 'install-dependency' && context.dependency) {
-    // 缺依赖：跳到 MOD 安装页并定位到该仓库卡片，由那边给出「安装依赖」
-    dependencyNavigation.request(() => {
-      const current = effectiveMods.value.find(entry => entry.dll_file === mod.dll_file)
-      return current ? cardAction(current)?.dependency : undefined
-    })
   } else if (context.action.kind === 'uninstall-conflict' && context.conflictMod) {
     // 冲突目标是对方 MOD；复用右侧垃圾桶的完整确认、整包确认、忙碌与刷新流程。
     remove(context.conflictMod)
@@ -743,11 +698,7 @@ function runPackageAction(pkg: ModPackageNode) {
     remove(context.conflictMod)
     return
   }
-  if (context.action.kind === 'install-dependency') dependencyNavigation.request(() => {
-    const current = groups.value.flatMap(group => group.packages).find(entry => entry.key === pkg.key)
-    return current ? packageAction(current)?.dependency : undefined
-  })
-  else if (context.repository && context.action.kind === 'update') void previewModRepository(context.repository)
+  if (context.repository && context.action.kind === 'update') void previewModRepository(context.repository)
   else if (context.repository) void refreshModRepository(context.repository)
 }
 
@@ -797,24 +748,52 @@ const visibleUnitCount = computed(() => visiblePackageKeys.value.size)
  * 与单 MOD 同一套规则，只是「依赖类标签」要取**包内任一成员**解析出的
  * 依赖仓库 —— 包是多个 DLL 的聚合，缺依赖的可能是其中某一个。
  */
+function packageRelationTag(pkg: ModPackageNode, tagKey: string): RelationStatus | undefined {
+  return pkg.mods.map(mod => modRelationForTag(relationTagsByDll.value[mod.dll_file], tagKey))
+    .find(issue => !!relationJumpRepositoryId(issue))
+}
+
 function packageTagTargetId(pkg: ModPackageNode, tagKey: string): string | undefined {
-  if (isDependencyTag(tagKey)) {
-    for (const mod of pkg.mods) {
-        const issue = relationIssueByDll.value[mod.dll_file]
-        if (issue?.repair) return issue.repair.node_id
-        if (issue?.repository) return issue.repository.id
-    }
-    return undefined
+  return isDependencyTag(tagKey) ? relationJumpRepositoryId(packageRelationTag(pkg, tagKey)) : pkg.repositoryId
+}
+
+function currentPackage(key: string): ModPackageNode | undefined {
+  return groups.value.flatMap(group => group.packages).find(entry => entry.key === key)
+}
+
+function modRepairStatus(mod: InstalledMod) {
+  return dependencyRepairStatus((relationTagsByDll.value[mod.dll_file] ?? []).map(tag => tag.dependency))
+}
+
+function packageRepairStatus(pkg: ModPackageNode) {
+  for (const mod of pkg.mods) {
+    const issue = modRepairStatus(mod)
+    if (issue) return issue
   }
-  return pkg.repositoryId
+  return undefined
+}
+
+function repairModDependencies(mod: InstalledMod) {
+  dependencyNavigation.request(() => {
+    const current = effectiveMods.value.find(entry => entry.dll_file === mod.dll_file)
+    const issue = current && modRepairStatus(current)
+    return issue && dependencyRow(issue)
+  })
+}
+
+function repairPackageDependencies(pkg: ModPackageNode) {
+  dependencyNavigation.request(() => {
+    const current = currentPackage(pkg.key)
+    const issue = current && packageRepairStatus(current)
+    return issue && dependencyRow(issue)
+  })
 }
 
 function openPackageTag(pkg: ModPackageNode, tagKey: string) {
   if (isDependencyTag(tagKey)) {
     dependencyNavigation.request(() => {
-      const current = groups.value.flatMap(group => group.packages).find(entry => entry.key === pkg.key)
-      const owner = current && relationOwnerMod(current)
-      const issue = owner && relationIssueByDll.value[owner.dll_file]
+      const current = currentPackage(pkg.key)
+      const issue = current && packageRelationTag(current, tagKey)
       return issue ? dependencyRow(issue) : undefined
     })
     return
@@ -825,6 +804,7 @@ function openPackageTag(pkg: ModPackageNode, tagKey: string) {
 
 /** 包标签的悬停提示：与单 MOD 卡片同一套文案（依赖类单独说明）。 */
 function packageTagTitle(pkg: ModPackageNode, tagKey: string): string | undefined {
+  if (isDependencyTag(tagKey) && packageRelationTag(pkg, tagKey)?.repair) return t('modChanges.repairDependencies')
   return tagTargetTitle(tagKey, packageTagTargetId(pkg, tagKey))
 }
 
@@ -1110,6 +1090,11 @@ provide(
     onCardClick,
     runCardAction,
     runPackageAction,
+    packageAction: (pkg) => packageAction(pkg)?.action,
+    canRepairMod: (mod) => !!modRepairStatus(mod),
+    canRepairPackage: (pkg) => !!packageRepairStatus(pkg),
+    repairModDependencies,
+    repairPackageDependencies,
     openLogs,
     editConfig,
     openLocation,
@@ -1162,17 +1147,6 @@ visibility.reconcileStatuses(computed(() => [...statusTagsPrimary.value, ...stat
         {{ entry.count }} {{ t(entry.text) }}
       </n-tag>
     </span>
-    <!--
-      「上次检查」摘要：刷新结果原来只以 toast 出现，一闪就没了，
-      用户过几分钟再看列表分不清「这些结论是刚刷的还是昨晚的」。
-      这里把它常驻，悬停能看到完成时间与失败原因。
-    -->
-    <template v-if="outcome">
-      <span class="header-tag-divider" />
-      <span class="header-tag-group">
-        <RefreshResultTag :outcome="outcome" domain="repositories" />
-      </span>
-    </template>
   </Teleport>
 
   <!--

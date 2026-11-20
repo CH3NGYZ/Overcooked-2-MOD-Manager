@@ -63,12 +63,13 @@ const find = (node, match) => [...(match(node) ? [node] : []), ...(node.children
 const text = node => (node.text ?? '') + (node.children?.map(text).join('') ?? '')
 const bodyRows = root => find(root, node => node.tag === 'tbody').flatMap(body => body.children.filter(node => node.tag === 'tr'))
 const cells = row => row.children.filter(node => node.tag === 'td' || node.tag === 'th')
-const statuses = row => find(cells(row)[1], node => node.props?.['data-change-stage'])
+const category = row => cells(row)[1].props['data-change-category']
+const statuses = row => find(cells(row)[2], node => node.props?.['data-change-stage'])
 const stage = row => statuses(row)[0]?.props['data-change-stage']
 const icon = row => statuses(row)[0]?.props['data-change-icon']
 const action = (id, kind, extra = {}) => ({ node_id: id, kind, reason: '', caused_by: [], ...extra })
 const plan = { plan_id: 'one', status: 'ready', prepared: false, blockers: [], impacts: [], roots: [], evaluations: [], install_notes: [],
-  nodes: [{ node_id: 'web', label: 'Web 前置', dll_files: [], candidates: [] }, { node_id: 'level', label: 'DIYLevel 框架', dll_files: [], candidates: [] }],
+  nodes: [{ node_id: 'web', kind: 'mod', label: 'Web 前置', dll_files: [], candidates: [] }, { node_id: 'level', kind: 'mod', label: 'DIYLevel 框架', dll_files: [], candidates: [] }],
   actions: [action('web', 'downgrade', { from_tag: 'v4.0.0', to_tag: 'v3.10.2' }), action('level', 'replace', { from_tag: 'v0.10', to_tag: 'v0.10' })] }
 function mounted(t) {
   fixture.state.value = { phase: 'confirming', plan, error: null }; fixture.preparation.value = null
@@ -162,7 +163,7 @@ test('a completed cache or local payload paints a check, and the new apply dialo
   assert.match(text(find(root, n => n.tag === 'footer')[0]), /确认并应用/)
 })
 
-test('the only view is a five-column table with separate actions, version changes, and readable reasons', async t => {
+test('the only view is a six-column table with separate actions, version changes, and readable reasons', async t => {
   const root = mounted(t)
   fixture.state.value = { phase: 'confirming', plan: { ...plan, impacts: ['mod:opaque'], actions: [
     action('web', 'disable', { from_tag: 'v4.0.0', to_tag: 'v4.0.0', reason: 'disable_conflict_or_dependent',
@@ -174,14 +175,14 @@ test('the only view is a five-column table with separate actions, version change
   const [modal] = find(root, n => n.tag === 'modal')
   assert.equal(modal.props.maxWidth, '90%'); assert.equal(modal.props.maxHeight, '90%'); assert.ok(!modal.props.fill)
   assert.equal(find(root, n => n.tag === 'table').length, 1)
-  assert.deepEqual(find(root, n => n.props?.scope === 'col').map(text), ['操作', '状态', '项目', '版本', '变更原因'])
+  assert.deepEqual(find(root, n => n.props?.scope === 'col').map(text), ['操作', '标识', '状态', '项目', '版本', '变更原因'])
   assert.equal(find(root, n => n.tag === 'article' || n.tag === 'details').length, 0)
   const rows = bodyRows(root)
   assert.equal(rows.length, 2)
-  assert.deepEqual(cells(rows[0]).slice(0, 4).map(text), ['禁用', '', 'Web 前置', ''])
-  assert.match(text(cells(rows[0])[4]), /与 DIYLevel 框架 冲突.*冲突版本 >=0\.11.*仅预发布版/)
-  assert.equal(text(cells(rows[1])[3]), 'v3.10.2 → v4.0.0')
-  assert.match(text(cells(rows[1])[4]), /DIYLevel 框架 依赖此项.*要求 >=4/)
+  assert.deepEqual(cells(rows[0]).slice(0, 5).map(text), ['禁用', 'MOD', '', 'Web 前置', ''])
+  assert.match(text(cells(rows[0])[5]), /与 DIYLevel 框架 冲突.*冲突版本 >=0\.11.*仅预发布版/)
+  assert.equal(text(cells(rows[1])[4]), 'v3.10.2 → v4.0.0')
+  assert.match(text(cells(rows[1])[5]), /DIYLevel 框架 依赖此项.*要求 >=4/)
   assert.doesNotMatch(text(root), /disable_conflict_or_dependent|mod:opaque/)
 })
 
@@ -193,8 +194,8 @@ test('a manual map selection remains visible by name and version when no action 
   await nextTick()
   const [row] = bodyRows(root)
   assert.equal(bodyRows(root).length, 1)
-  assert.match(text(cells(row)[2]), /羊的回合/)
-  assert.equal(text(cells(row)[3]), '0.8')
+  assert.match(text(cells(row)[3]), /羊的回合/)
+  assert.equal(text(cells(row)[4]), '0.8')
   assert.doesNotMatch(text(root), /temporary-id/)
 })
 
@@ -217,7 +218,7 @@ test('blocked plans show tried versions and actual failures without exposing any
     ] }, error: null }
   await nextTick()
   const rows = bodyRows(root)
-  assert.deepEqual(rows.map(row => [text(cells(row)[0]), text(cells(row)[2]), text(cells(row)[3]), stage(row)]), [
+  assert.deepEqual(rows.map(row => [text(cells(row)[0]), text(cells(row)[3]), text(cells(row)[4]), stage(row)]), [
     ['', 'Web 前置', 'v4.0.0', undefined], ['', 'DIYLevel 框架', '0.11.1', undefined], ['', 'com.example.fastinit', '—', 'blocked'],
     ['', 'DIYLevel 框架', '0.11.0', undefined], ['', 'com.example.fastinit', '1.6.4', 'blocked'], ['', 'com.example.fastinit', '', 'blocked'],
     ['', '未命名项目', '2.0', 'blocked'],
@@ -266,8 +267,8 @@ test('verified files never get an execution check before changes actually run', 
   assert.deepEqual(rows.map(stage), ['queued', 'downloading'])
   assert.match(text(rows[0]), /禁用.*Web 前置/)
   assert.doesNotMatch(text(rows[0]), /准备完成|文件已就绪|执行完毕|已禁用|✓/)
-  assert.equal(text(cells(rows[0])[3]), '')
-  assert.equal(text(cells(rows[1])[3]), 'v0.10 → v0.11.1')
+  assert.equal(text(cells(rows[0])[4]), '')
+  assert.equal(text(cells(rows[1])[4]), 'v0.10 → v0.11.1')
   assert.deepEqual(fixture.calls, [])
 })
 
@@ -283,8 +284,8 @@ test('execution icons follow exact member writes, and a rolled-back write loses 
   await nextTick()
   const rows = bodyRows(root)
   assert.equal(rows.length, 3)
-  assert.match(text(cells(rows[0])[2]), /Web 前置.*A\.dll/)
-  assert.match(text(cells(rows[1])[2]), /Web 前置.*B\.dll/)
+  assert.match(text(cells(rows[0])[3]), /Web 前置.*A\.dll/)
+  assert.match(text(cells(rows[1])[3]), /Web 前置.*B\.dll/)
   assert.deepEqual(rows.map(stage), ['applying', 'queued', 'queued'])
   assert.equal(statuses(rows[0])[0].props.title, '正在处理')
   assert.equal(find(statuses(rows[0])[0], node => node.tag === 'spin').length, 1)
@@ -316,11 +317,11 @@ test('a release upgrade shows each old copy before approval and gives it indepen
   fixture.state.value = { phase: 'confirming', plan: activePlan, error: null }
   await nextTick()
   const rows = bodyRows(root)
-  assert.deepEqual(rows.map(row => [text(cells(row)[0]), text(cells(row)[3]), row.props['data-change-parent']]), [
+  assert.deepEqual(rows.map(row => [text(cells(row)[0]), text(cells(row)[4]), row.props['data-change-parent']]), [
     ['升级', 'v1.9.5 → v1.9.6', undefined], ['卸载', '1.3', id], ['卸载', '1.4', id],
   ])
-  assert.equal(find(cells(rows[2])[2], node => node.props?.title === second.dll_file).length, 1)
-  assert.match(text(cells(rows[1])[4]), /同一 MOD 的旧副本/)
+  assert.equal(find(cells(rows[2])[3], node => node.props?.title === second.dll_file).length, 1)
+  assert.match(text(cells(rows[1])[5]), /同一 MOD 的旧副本/)
   assert.deepEqual(fixture.calls, [])
   fixture.execution.set(changeStatusKey(id), 'applying')
   fixture.execution.set(changeStatusKey(id, first.member_key), 'processed')
@@ -345,8 +346,8 @@ test('the rows for a bundled DLL stay with its map and show the map transaction 
   const rows = bodyRows(root)
   assert.equal(rows.length, 3)
   assert.deepEqual(rows.map(stage), ['processed', 'processed', 'queued'])
-  assert.deepEqual(rows.map(row => text(cells(row)[2]).trim()), ['Web 前置', 'Addon.dll', 'DIYLevel 框架'])
-  assert.match(text(cells(rows[1])[4]), /随包.*禁用/)
+  assert.deepEqual(rows.map(row => text(cells(row)[3]).trim()), ['Web 前置', 'Addon.dll', 'DIYLevel 框架'])
+  assert.match(text(cells(rows[1])[5]), /随包.*禁用/)
   fixture.execution.set(changeStatusKey('web'), 'applied')
   fixture.execution.set(changeStatusKey('level'), 'applied')
   await nextTick()
@@ -369,13 +370,13 @@ test('names switch with the UI for sources, local maps, actions and reasons and 
     { node_id: 'mod', label: 'Raw DLL progress label', stage: 'verifying' },
   ] }
   await nextTick()
-  assert.deepEqual(bodyRows(root).map(row => text(cells(row)[2])), ['本地地图', '仓库卡片名称', '在线地图卡片'])
-  assert.match(text(cells(bodyRows(root)[1])[4]), /在线地图卡片 依赖此项/)
+  assert.deepEqual(bodyRows(root).map(row => text(cells(row)[3])), ['本地地图', '仓库卡片名称', '在线地图卡片'])
+  assert.match(text(cells(bodyRows(root)[1])[5]), /在线地图卡片 依赖此项/)
   assert.doesNotMatch(text(root), /Raw DLL progress label|Stale fallback/)
   fixture.locale.value = 'en'
   await nextTick()
-  assert.deepEqual(bodyRows(root).map(row => text(cells(row)[2])), ['Local Map', 'Repository card name', 'Online map card'])
-  assert.match(text(cells(bodyRows(root)[1])[4]), /Online map card requires this item/)
+  assert.deepEqual(bodyRows(root).map(row => text(cells(row)[3])), ['Local Map', 'Repository card name', 'Online map card'])
+  assert.match(text(cells(bodyRows(root)[1])[5]), /Online map card requires this item/)
 })
 
 test('the missing edge and blocker notes use the source title while retaining the exact failing row', async t => {
@@ -389,11 +390,46 @@ test('the missing edge and blocker notes use the source title while retaining th
     blockers: [{ code: 'relation_has_no_solution', traces: [[step]] }, { code: 'relation_has_no_solution', owner_id: 'owner', target_guid: guid }],
   } }
   await nextTick()
-  assert.deepEqual(bodyRows(root).map(row => [text(cells(row)[2]), icon(row)]), [['本地地图', undefined], ['依赖仓库卡片', 'error']])
-  assert.match(text(cells(bodyRows(root)[1])[4]), /本地地图 \(1\.0\) 依赖此项/)
+  assert.deepEqual(bodyRows(root).map(row => [text(cells(row)[3]), icon(row)]), [['本地地图', undefined], ['依赖仓库卡片', 'error']])
+  assert.deepEqual(bodyRows(root).map(category), ['map', undefined])
+  assert.match(text(cells(bodyRows(root)[1])[5]), /本地地图 \(1\.0\) 依赖此项/)
   assert.match(text(root), /无法找到同时满足.*本地地图.*依赖仓库卡片/)
   assert.doesNotMatch(text(root), /Example\.Plugin/)
   fixture.locale.value = 'en'
   await nextTick()
-  assert.deepEqual(bodyRows(root).map(row => text(cells(row)[2])), ['Local Map', 'Dependency card'])
+  assert.deepEqual(bodyRows(root).map(row => text(cells(row)[3])), ['Local Map', 'Dependency card'])
+})
+
+test('verified package roles distinguish bundled DLLs from other MODs in the dependency chain', async t => {
+  const root = mounted(t)
+  const pack = { ...plan.nodes[0], presentation_kind: 'mod_package', members: [
+    { key: 'plugin', dll_file: 'Package/A.dll', enabled: true, role: 'mod' },
+    { key: 'library', dll_file: 'Package/B.dll', enabled: true, role: 'dependency' },
+    { key: 'unknown', dll_file: 'Package/C.dll', enabled: true },
+  ] }
+  const other = { ...plan.nodes[1], members: pack.members }
+  const map = { ...plan.nodes[1], node_id: 'map', kind: 'map' }
+  const activePlan = { ...plan, nodes: [pack, other, map], actions: [
+    action('web', 'upgrade'), action('level', 'enable', { reason_details: [{ kind: 'required_by', related_node_ids: ['web'] }] }),
+    action('map', 'enable'),
+  ] }
+  fixture.state.value = { phase: 'executing', plan: activePlan, error: null }
+  fixture.execution.set(changeStatusKey('web'), 'applying')
+  await nextTick()
+  const rows = bodyRows(root)
+  assert.deepEqual(rows.map(category), ['mod_package', 'plugin', 'dependency', undefined, 'mod', 'map'])
+  assert.deepEqual(rows.map(row => text(cells(row)[1])), ['MOD 包', '插件', '依赖', '', 'MOD', '地图'])
+  assert.deepEqual(rows.map(stage), ['applying', 'applying', 'applying', 'applying', 'queued', 'queued'])
+  fixture.locale.value = 'en'
+  await nextTick()
+  assert.deepEqual(rows.map(row => text(cells(row)[1])), ['MOD Pack', 'Plugin', 'Dependency', '', 'MOD', 'Map'])
+  fixture.state.value = { phase: 'confirming', error: null, plan: { ...activePlan, status: 'unsatisfiable',
+    roots: [{ node_id: 'web', label: 'Web 前置', tag: 'v4.0.0' }], blockers: [{ code: 'relation_has_no_solution', traces: [[
+      { owner_id: 'web', owner_version: 'v4.0.0', relation: { guid: 'com.example.level', version: '>=2' },
+        targets: [{ node_id: 'level', version: '1.0', enabled: true }], state: 'version_mismatch', reason: 'required_version_mismatch' },
+    ]] }],
+  } }
+  await nextTick()
+  assert.deepEqual(bodyRows(root).map(category), ['mod_package', 'mod'])
+  assert.deepEqual(bodyRows(root).map(icon), [undefined, 'error'])
 })

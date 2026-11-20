@@ -248,12 +248,26 @@ fn evaluate_relation(
     }
 }
 
-pub(super) fn runtime_relations(node: &ChangeNode) -> impl Iterator<Item = &OwnedRelation> {
+pub(super) fn scoped_relations(
+    node: &ChangeNode,
+    readiness: bool,
+) -> impl Iterator<Item = &OwnedRelation> {
     node.current.iter().flat_map(move |candidate| {
-        candidate
-            .relations
-            .iter()
-            .filter(move |owned| node.enabled && relation_active(candidate, owned, false))
+        candidate.relations.iter().filter(move |owned| {
+            (readiness || node.enabled) && relation_active(candidate, owned, readiness)
+        })
+    })
+}
+
+pub(super) fn scoped_evaluations<'a>(
+    node: &'a ChangeNode,
+    evaluation: &'a NodeEvaluation,
+    readiness: bool,
+) -> impl Iterator<Item = (&'a OwnedRelation, &'a RelationEvaluation)> {
+    scoped_relations(node, readiness).zip(if readiness {
+        &evaluation.readiness
+    } else {
+        &evaluation.runtime
     })
 }
 
@@ -263,31 +277,19 @@ pub(crate) fn evaluate(inventory: &Inventory) -> Vec<NodeEvaluation> {
     inventory
         .nodes
         .iter()
-        .map(|node| {
-            let runtime = runtime_relations(node)
+        .map(|node| NodeEvaluation {
+            node_id: node.id.clone(),
+            enabled: node.enabled,
+            runtime: scoped_relations(node, false)
                 .map(|owned| evaluate_relation(inventory, node, owned, RelationScope::Runtime))
-                .collect();
-            let mut readiness = Vec::new();
-            if let Some(candidate) = &node.current {
-                for owned in &candidate.relations {
-                    readiness.push(evaluate_relation(
-                        inventory,
-                        node,
-                        owned,
-                        RelationScope::Readiness,
-                    ));
-                }
-            }
-            NodeEvaluation {
-                node_id: node.id.clone(),
-                enabled: node.enabled,
-                runtime,
-                readiness,
-                metadata_known: node
-                    .current
-                    .as_ref()
-                    .is_none_or(|candidate| candidate.relations_known),
-            }
+                .collect(),
+            readiness: scoped_relations(node, true)
+                .map(|owned| evaluate_relation(inventory, node, owned, RelationScope::Readiness))
+                .collect(),
+            metadata_known: node
+                .current
+                .as_ref()
+                .is_none_or(|candidate| candidate.relations_known),
         })
         .collect()
 }

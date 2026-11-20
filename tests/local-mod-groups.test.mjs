@@ -37,7 +37,6 @@ const options = (overrides = {}) => ({
   categoryTexts: { ungrouped: 'Ungrouped', localInstall: 'Local install', unbound: 'Unbound' },
   pickI18n: (map, fallback) => map?.en || map?.['zh-CN'] || fallback,
   displayTitle: (item) => item.title,
-  actionFor: () => undefined,
   ...overrides,
 })
 
@@ -62,6 +61,7 @@ test('MOD package projection keeps complete operations while search filters visi
   assert.equal(pkg.grouped, true)
   assert.deepEqual(pkg.mods.map((item) => item.dll_file), ['Main.dll', 'Library.dll'])
   assert.deepEqual(pkg.visibleMods.map((item) => item.dll_file), ['Library.dll'])
+  assert.deepEqual(pkg.coreMods.map((item) => item.dll_file), ['Main.dll'])
   assert.equal(pkg.repositoryId, 'repo-main')
 })
 
@@ -122,6 +122,7 @@ test('declared loose plugins follow the real core for grouping, status and switc
   assert.equal(loose.canRemovePackage, false)
   assert.deepEqual(loose.mods.map((item) => item.dll_file), ['Main.dll', helper.dll_file])
   assert.deepEqual(loose.visibleMods, [helper])
+  assert.deepEqual(loose.coreMods, [core])
   assert.deepEqual(loose.statuses.map(({ key }) => key), ['latest', 'load_warning'])
 
   const recordedCore = { ...core, package_id: 'manifest', repository_binding: { tag: 'v4.0' } }
@@ -130,6 +131,8 @@ test('declared loose plugins follow the real core for grouping, status and switc
   assert.equal(mixed.version, 'v4.0')
   assert.equal(mixed.canRemovePackage, false)
   assert.equal(project([{ ...helper, bundled_with_dll: undefined, package_id: 'manifest' }, recordedCore]).canRemovePackage, true)
+  const recordedCompanion = { ...helper, bundled_with_dll: undefined, release_companion: true, package_id: 'manifest' }
+  assert.deepEqual(project([recordedCompanion, recordedCore]).coreMods, [recordedCore])
   assert.equal(project([helper]).grouped, false)
 })
 

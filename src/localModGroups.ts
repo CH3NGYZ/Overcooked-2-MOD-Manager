@@ -7,7 +7,6 @@ import {
   type StatusSummary,
   type StatusUnit,
 } from './statusTags.ts'
-import type { StatusActionSpec } from './statusActions'
 import type { InstalledMod, ModRepository } from './types'
 
 export interface ModPackageNode {
@@ -15,13 +14,14 @@ export interface ModPackageNode {
   label: string
   mods: InstalledMod[]
   visibleMods: InstalledMod[]
+  /** Keep the core details visible even when the search found a bundled DLL. */
+  coreMods: InstalledMod[]
   grouped: boolean
   canRemovePackage: boolean
   version?: string
   enabled: boolean
   partial: boolean
   statuses: PackageStatus[]
-  action?: StatusActionSpec
   repositoryId?: string
 }
 
@@ -49,7 +49,6 @@ export interface LocalModGroupOptions {
   categoryTexts: LocalModCategoryTexts
   pickI18n(map: Record<string, string> | undefined, fallback: string): string
   displayTitle(mod: InstalledMod): string
-  actionFor(statusKeys: readonly string[], representative: InstalledMod): StatusActionSpec | undefined
 }
 
 export interface LocalModStatusUnit {
@@ -121,7 +120,7 @@ export function localModCategory(
  * Search narrows visible members only; package operations retain the full member list.
  */
 export function buildLocalModGroups(options: LocalModGroupOptions): ModGroupNode[] {
-  const { mods, repositories, matchedDllFiles, categoryTexts, pickI18n, displayTitle, actionFor } = options
+  const { mods, repositories, matchedDllFiles, categoryTexts, pickI18n, displayTitle } = options
   const byDll = new Map(mods.map((mod) => [mod.dll_file, mod]))
   const anchors = new Set<string>()
   const packagesByKey = new Map<string, InstalledMod[]>()
@@ -171,13 +170,13 @@ export function buildLocalModGroups(options: LocalModGroupOptions): ModGroupNode
       label: ordered[0] ? displayTitle(ordered[0]) : '',
       mods: ordered,
       visibleMods: ordered.filter((mod) => matchedDllFiles === null || matchedDllFiles.has(mod.dll_file)),
+      coreMods: ordered.filter(mod => !mod.is_dependency && !mod.bundled_with_dll && !mod.release_companion),
       grouped: ordered.length >= 2,
       canRemovePackage: ordered.every((mod) => !!mod.package_id && mod.package_id === ordered[0]?.package_id),
       version: ordered.length >= 2 ? localPackageVersion(ordered) : undefined,
       enabled: enabledCount === ordered.length,
       partial: enabledCount > 0 && enabledCount < ordered.length,
       statuses,
-      action: actionFor(statuses.map((status) => status.key), packageRepresentative),
       repositoryId: repo?.id,
     }
   }

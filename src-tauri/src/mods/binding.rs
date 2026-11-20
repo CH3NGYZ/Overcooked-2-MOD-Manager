@@ -158,6 +158,12 @@ pub(super) fn inherit_repository_from_sibling(mods: &mut [InstalledMod]) {
 
     // 先收集每个目录里第一个能绑定仓库的成员，作为该目录的代表。
     let mut by_dir: HashMap<String, (String, Vec<String>)> = HashMap::new();
+    let diylevel_dirs = mods
+        .iter()
+        .filter(|item| is_diylevel_core(item))
+        .filter(|item| legacy_diylevel_core_directory(&item.dll_file).is_some())
+        .filter_map(|item| parent_dir(&item.dll_file))
+        .collect::<HashSet<_>>();
     for item in mods.iter() {
         if item.is_dependency || item.repository_ids.is_empty() {
             continue;
@@ -165,6 +171,11 @@ pub(super) fn inherit_repository_from_sibling(mods: &mut [InstalledMod]) {
         let Some(dir) = parent_dir(&item.dll_file) else {
             continue;
         };
+        if diylevel_dirs.contains(&dir) {
+            // DIYLevel has one known GUID-less sibling. Do not convert all
+            // other libraries in the directory into duplicate repository copies.
+            continue;
+        }
         by_dir.entry(dir).or_insert_with(|| {
             (
                 item.repository_id.clone().unwrap_or_default(),
@@ -205,6 +216,30 @@ pub(super) fn inherit_repository_from_sibling(mods: &mut [InstalledMod]) {
             repository_ids.first()
         );
     }
+}
+
+fn is_diylevel_core(item: &InstalledMod) -> bool {
+    item.guid.as_deref().is_some_and(|guid| {
+        guid.trim()
+            .eq_ignore_ascii_case(super::plugin_target::DIYLEVEL_GUID)
+    })
+}
+
+/// Legacy DIYLevel ships a GUID-less LevelEditorStub directly beside its core.
+/// This structural evidence is for grouping/switches; replacement must also
+/// prove the selected asset contains identical bytes at the exact member path.
+pub(crate) fn legacy_diylevel_stub(core: &str, member: &str) -> bool {
+    let member = member.replace('\\', "/").to_ascii_lowercase();
+    legacy_diylevel_core_directory(core)
+        .is_some_and(|dir| member.rsplit_once('/') == Some((dir.as_str(), "leveleditorstub.dll")))
+}
+
+fn legacy_diylevel_core_directory(core: &str) -> Option<String> {
+    let core = core.replace('\\', "/").to_ascii_lowercase();
+    let Some((dir, "oc2diylevel.dll")) = core.rsplit_once('/') else {
+        return None;
+    };
+    dir.starts_with("bepinex/plugins/").then(|| dir.to_string())
 }
 
 pub(super) fn repository_matches_mod(
@@ -420,13 +455,6 @@ pub(super) fn bind_declared_package_members(
     for item in mods.iter_mut() {
         item.bundled_with_dll = None;
     }
-    if !config
-        .repositories
-        .iter()
-        .any(|repo| !repo.bundled_plugin_guids.is_empty())
-    {
-        return;
-    }
     let guid_key = |guid: &str| (!guid.trim().is_empty()).then(|| guid.trim().to_ascii_lowercase());
     let local_guid = |item: &InstalledMod| item.guid.as_deref().and_then(guid_key);
     let mut counts = HashMap::new();
@@ -446,6 +474,19 @@ pub(super) fn bind_declared_package_members(
         .filter_map(|repo| guid_key(&repo.plugin_guid))
         .collect::<HashSet<_>>();
     let mut claims = HashMap::<String, Option<String>>::new();
+    let diylevel = (counts.get(super::plugin_target::DIYLEVEL_GUID) == Some(&1))
+        .then(|| {
+            let core = mods.iter().find(|item| is_diylevel_core(item))?;
+            let repo = repositories.get(core.repository_id.as_deref()?)?;
+            (core.repository_identity_match == Some(RepositoryIdentityMatch::Guid)
+                && repo
+                    .plugin_guid
+                    .trim()
+                    .eq_ignore_ascii_case(super::plugin_target::DIYLEVEL_GUID)
+                && crate::config::mod_repository_is_available(config, repo, &config.region))
+            .then(|| core.dll_file.clone())
+        })
+        .flatten();
     for core in mods
         .iter()
         .filter(|item| item.repository_identity_match == Some(RepositoryIdentityMatch::Guid))
@@ -480,6 +521,19 @@ pub(super) fn bind_declared_package_members(
             && item.repository_ids.is_empty()
     }) {
         let Some(guid) = local_guid(item) else {
+            if let Some(core) = &diylevel
+                && legacy_diylevel_stub(core, &item.dll_file)
+                && !config.repositories.iter().any(|repo| {
+                    repository_matches_identity(
+                        repo,
+                        item.guid.as_deref(),
+                        item.product_name.as_deref(),
+                        item.original_filename.as_deref(),
+                    )
+                })
+            {
+                item.bundled_with_dll = Some(core.clone());
+            }
             continue;
         };
         if counts.get(&guid) == Some(&1) && !primary_guids.contains(&guid) {

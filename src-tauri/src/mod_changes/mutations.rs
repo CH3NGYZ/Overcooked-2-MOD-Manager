@@ -18,6 +18,7 @@ mod physical;
 mod release_ownership;
 mod retirements;
 mod roots;
+pub(super) use release_ownership::ResidueAdoptions;
 pub(super) use roots::{final_framework_package, final_package};
 
 pub(super) fn file_conflict(owner: &str, relative: &str) -> String {
@@ -32,6 +33,7 @@ pub(super) struct Builder<'a> {
     pub moves: Vec<OwnedMutation>,
     pub ownership: BTreeMap<String, BTreeSet<String>>,
     ownership_paths: BTreeSet<String>,
+    external_claims: BTreeSet<String>,
     pub protected_maps: Vec<String>,
     pub map_paths: Vec<(String, String)>,
 }
@@ -66,19 +68,12 @@ pub(super) fn assemble(
         // The generic replacement must never remove a copy absent from the confirmed list.
         return Err(MULTIPLE_INSTALLED_COPIES.into());
     }
-    let mut builder = Builder {
-        roots: transaction_roots,
-        session,
-        writes: BTreeMap::new(),
-        moves: Vec::new(),
-        ownership: BTreeMap::new(),
-        ownership_paths: BTreeSet::new(),
-        protected_maps: Vec::new(),
-        map_paths: Vec::new(),
-    };
-    builder.index_ownership()?;
+    let mut builder = Builder::indexed(session, transaction_roots, solved)?;
     let migration = roots::prepare(&mut builder, solved)?;
     for node in &solved.nodes {
+        if session.residue_adoptions.consumes(&node.id) {
+            continue;
+        }
         if session
             .map_payload
             .as_ref()
@@ -118,15 +113,7 @@ pub(super) fn assemble(
                     .ok_or("modChanges.targetChanged")?;
                 let enabled = node.enabled && member.enabled;
                 if before.enabled != enabled {
-                    let from = builder.physical(&node.id, key)?;
-                    let canonical = mods::canonical_dll_name(&from);
-                    let to = if enabled {
-                        canonical
-                    } else {
-                        mods::disabled_dll_file(&canonical)
-                    };
-                    builder.ensure_owner(&from, &node.id)?;
-                    builder.add_move(&node.id, Some(key), &from, &to)?;
+                    builder.switch_member(&node.id, key, enabled)?;
                 }
             }
         }
@@ -144,15 +131,28 @@ pub(super) fn assemble(
 }
 
 impl Builder<'_> {
-    fn index_ownership(&mut self) -> Result<(), String> {
-        if let Some(package) = self
-            .session
-            .solved
-            .as_ref()
-            .map(final_package)
-            .transpose()?
-            .flatten()
-        {
+    fn indexed<'a>(
+        session: &'a PlanSession,
+        roots: TransactionRoots,
+        solved: &Inventory,
+    ) -> Result<Builder<'a>, String> {
+        let mut builder = Builder {
+            roots,
+            session,
+            writes: BTreeMap::new(),
+            moves: Vec::new(),
+            ownership: BTreeMap::new(),
+            ownership_paths: BTreeSet::new(),
+            external_claims: BTreeSet::new(),
+            protected_maps: Vec::new(),
+            map_paths: Vec::new(),
+        };
+        builder.index_ownership(solved)?;
+        Ok(builder)
+    }
+
+    fn index_ownership(&mut self, solved: &Inventory) -> Result<(), String> {
+        if let Some(package) = final_package(solved)? {
             self.protected_maps.push(format!("{package}/levels"));
         }
         if let Some(package) = self.session.trusted.level_roots.package_root() {
@@ -199,6 +199,7 @@ impl Builder<'_> {
                             .entry(inventory::key(&mods::canonical_dll_name(&file)))
                             .or_default()
                             .insert(owner.clone());
+                        self.external_claims.insert(file.clone());
                         self.ownership_paths.insert(file);
                     }
                 }
@@ -436,10 +437,38 @@ impl Builder<'_> {
             );
             for relative in files {
                 let canonical = mods::canonical_dll_name(&relative);
-                if copies
-                    .iter()
-                    .any(|copy| copy.member_key == inventory::key(&canonical))
+                let member_key = inventory::key(&canonical);
+                if self
+                    .session
+                    .trusted
+                    .declared_bundle_switch_members
+                    .get(&node.id)
+                    .is_some_and(|members| members.contains(&member_key))
                 {
+                    if !payload
+                        .candidate
+                        .provides
+                        .iter()
+                        .any(|member| member.member_key.as_deref() == Some(member_key.as_str()))
+                    {
+                        let final_member = current
+                            .provides
+                            .iter()
+                            .find(|member| {
+                                member.member_key.as_deref() == Some(member_key.as_str())
+                            })
+                            .ok_or("modChanges.targetChanged")?;
+                        self.switch_member(
+                            &node.id,
+                            &member_key,
+                            node.enabled && final_member.enabled,
+                        )?;
+                    }
+                    // Declaration-only files never enter the generic removals.
+                    // Matching Release files go through the narrower write gate below.
+                    continue;
+                }
+                if copies.iter().any(|copy| copy.member_key == member_key) {
                     continue;
                 }
                 if migration.is_some_and(|migration| within(&relative, &migration.from))
@@ -487,7 +516,7 @@ impl Builder<'_> {
             let canonical = mods::canonical_dll_name(source_relative);
             let member_key = inventory::key(&canonical);
             let is_dll = canonical.to_ascii_lowercase().ends_with(".dll");
-            let destination = if is_dll {
+            let mut destination = if is_dll {
                 let member = current
                     .provides
                     .iter()
@@ -514,24 +543,63 @@ impl Builder<'_> {
                 return Err("modChanges.pathCollision".into());
             }
             let ownership_key = inventory::key(&mods::canonical_dll_name(&destination));
+            let residue = self.session.residue_adoptions.get(&node.id, &ownership_key);
             let owners = self.ownership.get(&ownership_key);
-            if owners.is_some_and(|owners| owners.len() != 1 || !owners.contains(&node.id)) {
+            let unowned = owners.is_none();
+            if residue.is_none()
+                && owners.is_some_and(|owners| owners.len() != 1 || !owners.contains(&node.id))
+            {
                 return Err(file_conflict(&node.id, &destination));
             }
-            if is_dll {
+            if is_dll && residue.is_none() {
                 let canonical = mods::canonical_dll_name(&destination);
                 for variant in [&canonical, &mods::disabled_dll_file(&canonical)] {
                     if Fingerprint::capture(&game(variant).resolve(&self.roots)?)?
                         != Fingerprint::Missing
-                        && owners.is_none()
+                        && unowned
                     {
                         return Err(file_conflict(&node.id, variant));
                     }
                 }
             }
-            let target = game(&destination);
-            let target_path = target.resolve(&self.roots)?;
-            let expected = Fingerprint::capture(&target_path)?;
+            let release_stamp = payload
+                .release_files
+                .as_ref()
+                .and_then(|files| files.get(&path_key(Path::new(source_relative))));
+            let declared = self.verify_declared_bundle_write(
+                &node.id,
+                &member_key,
+                &destination,
+                release_stamp,
+            )?;
+            let (target, expected, guarded) = if let Some(residue) = residue {
+                let expected = if inventory::key(&residue.relative) == inventory::key(&destination)
+                {
+                    destination.clone_from(&residue.relative);
+                    residue.expected.clone()
+                } else {
+                    self.write(
+                        &node.id,
+                        Some(ItemKey::new(&node.id, None)),
+                        FileChange {
+                            target: game(&residue.relative),
+                            source: None,
+                            expected: residue.expected.clone(),
+                            require_single_link: true,
+                        },
+                    )?;
+                    Fingerprint::Missing
+                };
+                let guarded = expected != Fingerprint::Missing;
+                (game(&destination), expected, guarded)
+            } else if let Some((physical, expected)) = declared {
+                destination = physical;
+                (game(&destination), expected, true)
+            } else {
+                let target = game(&destination);
+                let expected = Fingerprint::capture(&target.resolve(&self.roots)?)?;
+                (target, expected, false)
+            };
             let path = game(source_relative).resolve(&source_roots)?;
             let source = if let Some(files) = &payload.release_files {
                 let fingerprint = files
@@ -544,7 +612,7 @@ impl Builder<'_> {
             } else {
                 StagedFile::capture(path)?
             };
-            let adopting = expected != Fingerprint::Missing && owners.is_none();
+            let adopting = expected != Fingerprint::Missing && unowned && residue.is_none();
             if adopting {
                 let identical_resource = !is_dll
                     && matches!(expected, Fingerprint::File { .. })
@@ -553,7 +621,9 @@ impl Builder<'_> {
                         .get_or_init(|| self.release_directory(&node.id, payload, &manifest))
                         .as_ref()
                         .is_some_and(|directory| {
-                            self.release_path_unclaimed(&destination, &target_path, directory)
+                            target.resolve(&self.roots).is_ok_and(|path| {
+                                self.release_path_unclaimed(&destination, &path, directory)
+                            })
                         });
                 if !identical_resource {
                     return Err(file_conflict(&node.id, &destination));
@@ -571,7 +641,7 @@ impl Builder<'_> {
                     target,
                     source: Some(source),
                     expected,
-                    require_single_link: adopting,
+                    require_single_link: adopting || guarded,
                 },
             )?;
             self.ownership

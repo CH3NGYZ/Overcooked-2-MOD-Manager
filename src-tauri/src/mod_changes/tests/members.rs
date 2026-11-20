@@ -176,6 +176,7 @@ fn solved_inventory_preserves_exact_member_enablement_and_failed_solve_has_none(
             enabled: true,
             member_key: Some("other.dll".into()),
         }],
+        ..Default::default()
     };
     let (result, solved) = super::solve_with_inventory(&inventory, &request);
     assert_eq!(result.status, SolveStatus::Ready);

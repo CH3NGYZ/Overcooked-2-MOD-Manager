@@ -1,9 +1,17 @@
 //! Depth-first search preserves local uncertainty before accepting disable fallbacks.
-use super::super::evaluate::{DUPLICATE_ENABLED_PROVIDERS, runtime_relations};
+use super::super::evaluate::{DUPLICATE_ENABLED_PROVIDERS, scoped_evaluations};
 use super::*;
 
 impl Search<'_> {
     pub(super) fn find_solution(&mut self, state: &SearchState) -> Result<SearchState, bool> {
+        let active = self.find_active_solution(state);
+        self.try_activation_repair(active, state)
+    }
+
+    pub(super) fn find_active_solution(
+        &mut self,
+        state: &SearchState,
+    ) -> Result<SearchState, bool> {
         let mut limit = 0;
         while !self.prefer_newest && self.preference_remaining > 0 {
             let result = self.run_pass(SearchPass::LimitReplacements(limit), state.clone());
@@ -84,7 +92,7 @@ impl Search<'_> {
         let changed_guids = self.changed_guids(&state);
         let evaluations = evaluate(&state.inventory);
         for (index, node) in state.inventory.nodes.iter().enumerate() {
-            if node.enabled
+            if (node.enabled || self.readiness(index, node))
                 && (protected.contains(&index) || changed(self.original, &state.inventory, index))
                 && node
                     .current
@@ -95,6 +103,7 @@ impl Search<'_> {
                     &state.inventory,
                     &evaluations,
                     &self.roots,
+                    self.repair_owner,
                     index,
                     None,
                     Some("candidate_relations_unknown"),
@@ -105,8 +114,8 @@ impl Search<'_> {
         }
         let mut issues = Vec::new();
         for (index, evaluation) in evaluations.iter().enumerate() {
-            for (owned, issue) in
-                runtime_relations(&state.inventory.nodes[index]).zip(&evaluation.runtime)
+            let node = &state.inventory.nodes[index];
+            for (owned, issue) in scoped_evaluations(node, evaluation, self.readiness(index, node))
             {
                 if issue.state.is_issue()
                     && self.relevant(&state, index, &issue.relation, &protected, &changed_guids)
@@ -118,7 +127,7 @@ impl Search<'_> {
         // A switch or installed repair is finished once the affected graph is
         // compatible. Only an exact-version request optimizes a satisfied chain.
         if issues.is_empty() && !self.prefer_newest {
-            return Ok(state);
+            return self.finish_activation_repair(state);
         }
         let distances = self.order(&state);
         issues.sort_by_key(|(index, _, issue)| {
@@ -144,6 +153,7 @@ impl Search<'_> {
             }
         });
         if let Some((owner, owned, issue)) = next_issue {
+            self.note_disabled_repair_provider(&state, issue);
             let missing_history = state.inventory.nodes.iter().any(|node| {
                 !node.candidates_complete
                     && (node
@@ -171,6 +181,7 @@ impl Search<'_> {
                     &state.inventory,
                     &evaluations,
                     &self.roots,
+                    self.repair_owner,
                     *owner,
                     Some((owned, issue)),
                     Some("candidate_relations_unknown"),
@@ -210,6 +221,7 @@ impl Search<'_> {
                     &state.inventory,
                     &evaluations,
                     &self.roots,
+                    self.repair_owner,
                     *owner,
                     Some((owned, issue)),
                     (issue.state == EvaluationState::Missing
@@ -241,7 +253,7 @@ impl Search<'_> {
             }
             let mut incomplete = false;
             let reason = reasons::compatible_upgrade(&state.inventory, index, &protected);
-            for candidate in ordered_candidates(node, false) {
+            for candidate in ordered_candidates(self.trusted, node, false) {
                 if node
                     .current
                     .as_ref()

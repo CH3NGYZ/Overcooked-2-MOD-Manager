@@ -4,7 +4,6 @@ import { NButton, NCollapseTransition, NSwitch, NTag } from 'naive-ui'
 import {
   ArrowUpCircleOutline,
   DocumentTextOutline,
-  DownloadOutline,
   FolderOpenOutline,
   RefreshOutline,
   SettingsOutline,
@@ -18,6 +17,7 @@ import LocalItemCard from './LocalItemCard.vue'
 import ModDetailGrid from './ModDetailGrid.vue'
 import ModPackageBody from './ModPackageBody.vue'
 import ModStatusTags from './ModStatusTags.vue'
+import RepairDependenciesButton from './RepairDependenciesButton.vue'
 import { MOD_GROUP_CTX, TOOL_BUTTON_WIDTH, TOOL_GAP } from './levelSetGroupContext'
 
 /**
@@ -36,6 +36,7 @@ const ctx = inject(MOD_GROUP_CTX)!
 const packages = computed(
   () => ctx.groups.find((group) => group.key === props.groupKey)?.packages ?? [],
 )
+const packageActions = computed(() => Object.fromEntries(packages.value.map(pkg => [pkg.key, ctx.packageAction(pkg)])))
 </script>
 
 <template>
@@ -84,13 +85,13 @@ const packages = computed(
               :loading="!!ctx.busy[mod.dll_file] || !!ctx.previewing[ctx.bindingRepositoryId(mod) ?? ''] || !!ctx.refreshing[ctx.bindingRepositoryId(mod) ?? '']"
               @click.stop="ctx.runCardAction(mod)">
               <ArrowUpCircleOutline v-if="ctx.actionByDll[mod.dll_file].kind === 'update'" width="14" height="14" />
-              <DownloadOutline v-else-if="ctx.actionByDll[mod.dll_file].kind === 'install-dependency'" width="14" height="14" />
               <TrashOutline v-else-if="ctx.actionByDll[mod.dll_file].kind.startsWith('uninstall-')" width="14" height="14" />
               <RefreshOutline v-else width="14" height="14" />
               {{ t(ctx.actionByDll[mod.dll_file].label) }}
             </n-button>
-            <span class="tool-divider" />
           </template>
+          <RepairDependenciesButton v-if="ctx.canRepairMod(mod)" @repair="ctx.repairModDependencies(mod)" />
+          <span v-if="ctx.actionByDll[mod.dll_file] || ctx.canRepairMod(mod)" class="tool-divider" />
 
           <!--
             状态标签组：宽度按内容自适应，整体贴住分割线左侧。
@@ -191,19 +192,19 @@ const packages = computed(
               包是一个整体，动作针对的是这个包绑定的仓库，
               不是包内某个 DLL。
             -->
-            <template v-if="pkg.action">
-              <n-button size="tiny" :style="buttonColorFor(pkg.action.tone, 'soft')"
-                :title="t(pkg.action.label)"
+            <template v-if="packageActions[pkg.key]">
+              <n-button size="tiny" :style="buttonColorFor(packageActions[pkg.key]!.tone, 'soft')"
+                :title="t(packageActions[pkg.key]!.label)"
                 :loading="!!ctx.previewing[pkg.repositoryId ?? ''] || !!ctx.refreshing[pkg.repositoryId ?? '']"
                 @click.stop="ctx.runPackageAction(pkg)">
-                <ArrowUpCircleOutline v-if="pkg.action.kind === 'update'" width="14" height="14" />
-                <DownloadOutline v-else-if="pkg.action.kind === 'install-dependency'" width="14" height="14" />
-                <TrashOutline v-else-if="pkg.action.kind === 'uninstall-conflict'" width="14" height="14" />
+                <ArrowUpCircleOutline v-if="packageActions[pkg.key]?.kind === 'update'" width="14" height="14" />
+                <TrashOutline v-else-if="packageActions[pkg.key]?.kind === 'uninstall-conflict'" width="14" height="14" />
                 <RefreshOutline v-else width="14" height="14" />
-                {{ t(pkg.action.label) }}
+                {{ t(packageActions[pkg.key]!.label) }}
               </n-button>
-              <span class="package-divider" />
             </template>
+            <RepairDependenciesButton v-if="ctx.canRepairPackage(pkg)" @repair="ctx.repairPackageDependencies(pkg)" />
+            <span v-if="packageActions[pkg.key] || ctx.canRepairPackage(pkg)" class="package-divider" />
 
             <!--
               包状态标签：以包为主体。版本结论（最新版 / 可更新 / 刷新中…）

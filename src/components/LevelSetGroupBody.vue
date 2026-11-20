@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { computed, inject } from 'vue'
 import { NButton, NTag } from 'naive-ui'
-import { ImagesOutline, AlertCircleOutline, ArrowUpCircleOutline, DownloadOutline, FolderOpenOutline, TrashOutline } from '@vicons/ionicons5'
+import { ImagesOutline, AlertCircleOutline, ArrowUpCircleOutline, FolderOpenOutline, TrashOutline } from '@vicons/ionicons5'
 import { t, locale } from '../i18n'
 import { formatVersion } from '../modStatus'
 import { translateBackendMessage } from '../locale/backend'
 import { buttonColorFor, tagColorForAny } from '../theme'
-import { levelSetDisplayName, type LevelSetCardAction } from '../levelSetStatus'
+import { levelSetDisplayName } from '../levelSetStatus'
+import { levelSetTagKey } from '../levelSetStatusSummary'
 import LocalItemCard from './LocalItemCard.vue'
 import DependencyTable from './DependencyTable.vue'
+import RepairDependenciesButton from './RepairDependenciesButton.vue'
 import { LEVEL_SET_GROUP_CTX, TOOL_BUTTON_WIDTH, TOOL_GAP } from './levelSetGroupContext'
 import type { LevelSetInfo } from '../types'
 
@@ -34,9 +36,8 @@ const sets = computed(
 )
 
 /** 图标按动作类型取；模板里据此渲染唯一那颗按钮。 */
-const ACTION_ICONS: Record<LevelSetCardAction['kind'], typeof DownloadOutline> = {
+const ACTION_ICONS = {
   update: ArrowUpCircleOutline,
-  'install-dependency': DownloadOutline,
   'review-conflict': AlertCircleOutline,
 }
 
@@ -45,7 +46,7 @@ const ACTION_ICONS: Record<LevelSetCardAction['kind'], typeof DownloadOutline> =
  * `ctx.actionOf` 并顺带拿到类型收窄（`v-if="ctx.actionOf(set)"` 不会把
  * 后面的 `action.tone` 变窄成非空）。
  */
-function actionsOf(set: LevelSetInfo): LevelSetCardAction[] {
+function actionsOf(set: LevelSetInfo) {
   const action = ctx.actionOf(set)
   return action ? [action] : []
 }
@@ -82,10 +83,7 @@ function actionsOf(set: LevelSetInfo): LevelSetCardAction[] {
       @activate="(card: HTMLElement) => ctx.activate(set, card)">
       <!--
         状态区：快捷动作 + 标签组。
-        与 MOD 管理页同一规则（`levelSetCardAction`）：依赖版本冲突 →「处理
-        冲突」跳 MOD 页；地图可更新 →「更新」就地走安装前检查 + 下载导入；
-        缺依赖且线上有能补上的仓库卡片 →「去安装」跳那张卡。没有可执行目标
-        就不出按钮 —— 一个点了没反应的按钮比没有更糟。
+        依赖修复与更新或冲突快捷操作独立展示。
       -->
       <template #status>
         <template v-for="action in actionsOf(set)" :key="action.kind">
@@ -95,10 +93,11 @@ function actionsOf(set: LevelSetInfo): LevelSetCardAction[] {
             <component :is="ACTION_ICONS[action.kind]" width="14" height="14" />
             {{ t(action.label) }}
           </n-button>
-          <span class="tool-divider" />
         </template>
+        <RepairDependenciesButton v-if="ctx.repairOf(set)" @repair="ctx.repairDependencies(set)" />
+        <span v-if="ctx.actionOf(set) || ctx.repairOf(set)" class="tool-divider" />
         <span class="tag-group">
-          <n-tag v-for="tag in ctx.tagsOf(set)" :key="tag.kind + tag.text" size="tiny"
+          <n-tag v-for="tag in ctx.tagsOf(set)" :key="levelSetTagKey(tag)" size="tiny"
             :bordered="false" class="state-tag"
             :class="{ 'state-tag--link': !!(tag.repositoryId || tag.mapId || tag.dependency?.repair) }"
             :color="tagColorForAny(tag.tone)" :title="ctx.tagTitle(set, tag)"

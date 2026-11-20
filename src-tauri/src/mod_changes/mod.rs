@@ -23,6 +23,7 @@ pub(crate) mod transaction;
 pub(crate) use evaluate::evaluate;
 #[cfg(test)]
 pub(crate) use solve::solve;
+#[cfg(test)]
 pub(crate) use solve::solve_with_inventory;
 
 #[cfg(test)]

@@ -20,12 +20,13 @@ import { useFocusHighlight, useLocalModLink, useMapLink, useModRepositoryLink } 
 import { useListVisibility } from '../composables/useListVisibility'
 import { bulkSwitchValue as bulkSwitchValueOf } from '../listVisibility'
 import { cachedInstallRelease } from '../repositoryAssets'
-import { dependencyActionLabel, dependencyRowFromStatus, levelSetDependencyRows } from '../dependencyRows'
-import { unmetRelations } from '../modRelations'
+import { dependencyRowFromStatus, levelSetDependencyRows } from '../dependencyRows'
+import { dependencyRepairStatus, unmetRelations } from '../modRelations'
 import { useDependencyNavigation } from '../composables/useDependencyNavigation'
 import { buildLevelSetGroups } from '../levelSetGroups'
 import {
   levelSetStatusKeys,
+  levelSetTagKey,
   summarizeLevelSetTags,
   summarizeLevelSetToggleStatus,
 } from '../levelSetStatusSummary'
@@ -37,7 +38,6 @@ import PageLoading from '../components/PageLoading.vue'
 import HeaderIconAction from '../components/HeaderIconAction.vue'
 import HeaderSearch from '../components/HeaderSearch.vue'
 import HeaderBulkSwitch from '../components/HeaderBulkSwitch.vue'
-import RefreshResultTag from '../components/RefreshResultTag.vue'
 import type { DependencyRow } from '../components/DependencyTable.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
 import InstallDetailDialog from '../components/InstallDetailDialog.vue'
@@ -486,15 +486,24 @@ const toggleSummary = computed(() => summarizeLevelSetToggleStatus(sortedSets.va
 /**
  * 卡片状态区的一键动作。
  *
- * 规则全部由 `levelSetCardAction` 决定（纯函数，Node 直接测）：依赖版本冲突 >
- * 可更新 > 缺依赖。本页只负责把动作执行出来。
+ * 冲突和更新沿用 `levelSetCardAction`；「去处理」独立于版本动作。
  */
 function actionOf(set: LevelSetInfo): LevelSetCardAction | undefined {
-  const action = levelSetCardAction(set, maps.value, mods.value, gameProbed.value, repositories.value, refreshingHint.value)
-  if (action?.kind === 'install-dependency' && action.dependency) {
-    return { ...action, label: dependencyActionLabel(dependencyRow(action.dependency).jump) }
-  }
-  return action
+  return levelSetCardAction(set, maps.value, mods.value, gameProbed.value, repositories.value, refreshingHint.value)
+}
+
+function repairOf(set: LevelSetInfo) {
+  return gameProbed.value && !set.error
+    ? dependencyRepairStatus(levelSetRelationStatuses(set, maps.value, mods.value, repositories.value))
+    : undefined
+}
+
+function repairDependencies(set: LevelSetInfo) {
+  dependencyNavigation.request(() => {
+    const current = sets.value.find(entry => entry.dir_name === set.dir_name)
+    const issue = current && repairOf(current)
+    return issue && dependencyRow(issue)
+  })
 }
 
 /** 这张卡的动作正在执行（按钮转圈）。 */
@@ -521,15 +530,6 @@ function actionDisabled(set: LevelSetInfo) {
 async function runCardAction(set: LevelSetInfo) {
   const action = actionOf(set)
   if (!action) return
-  if (action.kind === 'install-dependency') {
-    dependencyNavigation.request(() => {
-      const current = sets.value.find(entry => entry.dir_name === set.dir_name)
-      const currentAction = current && actionOf(current)
-      return currentAction?.kind === 'install-dependency' && currentAction.dependency
-        ? dependencyRow(currentAction.dependency) : undefined
-    })
-    return
-  }
   if (action.kind === 'review-conflict') {
     // 冲突的是一个装错版本的 MOD：能定位到它绑定的仓库就高亮那张卡，
     // 没绑仓库的只能落到 MOD 管理页让用户自己找 —— 仍比点了没反应好。
@@ -583,12 +583,10 @@ function tagTitle(set: LevelSetInfo, tag: LevelSetCardTag): string | undefined {
 }
 
 function onTagClick(set: LevelSetInfo, tag: LevelSetCardTag) {
-  // 缺依赖：跳到**依赖的**仓库（与 MOD 管理页同一个落点）；没有来源时
-  // 标签不带 repositoryId，也就不会走到这里。
-    if ((tag.repositoryId || tag.dependency?.repair) && tag.dependency) {
+  if ((tag.repositoryId || tag.dependency?.repair) && tag.dependency) {
     dependencyNavigation.request(() => {
       const current = sets.value.find(entry => entry.dir_name === set.dir_name)
-      const latest = current && tagsOf(current).find(entry => entry.kind === tag.kind)
+      const latest = current && tagsOf(current).find(entry => levelSetTagKey(entry) === levelSetTagKey(tag))
       return latest?.dependency ? dependencyRow(latest.dependency) : undefined
     })
   }
@@ -866,7 +864,7 @@ async function checkUpdates() {
     // 逐条弹错：一次刷几十张图时合并成一句会把「哪张失败了」吞掉
     summary.errors.forEach((error) => message.error(error))
     /*
-     * 结果文案与页头那枚「上次检查」标签共用 `describeRefreshOutcome`。
+     * 检查结果通过共享文案汇报。
      * 只有真的刷到了地图才报数量：这些图可能刚好都在刷新中（例如下载页
      * 正在刷同一批），此时队列为空、既没成功也没失败，
      * 弹一句「已检查 0 张地图」只会让人以为哪里坏了。
@@ -908,6 +906,8 @@ provide(
     actionBusy,
     actionDisabled,
     runCardAction,
+    repairOf,
+    repairDependencies,
     removeSet: remove,
     openDir: openDirectory,
     preview: set => levelPreview.value?.open(set),
@@ -951,13 +951,6 @@ visibility.reconcileStatuses(computed(() => [...statusSummary.value, ...toggleSu
         {{ entry.count }} {{ t(entry.text) }}
       </n-tag>
     </span>
-    <!-- 「上次检查」摘要：与 MOD 管理页同一枚组件、同一套文案 -->
-    <template v-if="outcome">
-      <span class="header-tag-divider" />
-      <span class="header-tag-group">
-        <RefreshResultTag :outcome="outcome" domain="maps" />
-      </span>
-    </template>
   </Teleport>
 
   <!--

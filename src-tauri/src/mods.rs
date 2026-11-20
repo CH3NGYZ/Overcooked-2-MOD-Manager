@@ -18,7 +18,7 @@ mod tests;
 pub(crate) mod watch;
 
 pub(crate) use binding::{
-    installed_prerelease, rebind_installed_mods, repository_matches_identity,
+    installed_prerelease, legacy_diylevel_stub, rebind_installed_mods, repository_matches_identity,
 };
 pub(crate) use file_state::{canonical_dll_name, disabled_dll_file, manifest_dll_key};
 pub(crate) use identity::{

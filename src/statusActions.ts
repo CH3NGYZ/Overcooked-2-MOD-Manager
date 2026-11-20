@@ -17,7 +17,6 @@ import type { TagTone } from './theme'
 export type StatusActionKind =
   | 'update'
   | 'refresh'
-  | 'install-dependency'
   | 'uninstall-conflict'
   | 'uninstall-duplicate'
 
@@ -54,16 +53,6 @@ const STATUS_ACTIONS: Record<string, StatusActionSpec> = {
   refresh_failed: { kind: 'refresh', label: 'common.action.refresh', tone: 'moderate' },
   bound_repository_missing: { kind: 'refresh', label: 'common.action.refresh', tone: 'critical' },
   /*
-   * 缺依赖 → 「去安装」。色调用 critical，与「缺依赖」标签同档 ——
-   * 用户看到的标签与按钮是同一种颜色，不需要额外解释它们是一回事。
-   */
-  missing_dependency: { kind: 'install-dependency', label: 'overview.browse', tone: 'critical' },
-  /*
-   * 兼容关系差一个版本、线上有可换的版本（「可安装」）→ 同样是「去安装」，
-   * 色调用 moderate：对应的标签是中档，按钮跟着中档，才看得出「这件事有解」。
-   */
-  dependency_installable: { kind: 'install-dependency', label: 'overview.browse', tone: 'moderate' },
-  /*
    * 冲突 → 「去卸载」。与「冲突」标签同档同色。
    *
    * 冲突不能靠安装解决 —— 装什么都不会让「你不该装它」变成「该装」，
@@ -81,14 +70,13 @@ const STATUS_ACTIONS: Record<string, StatusActionSpec> = {
  *
  *   uninstall-conflict 冲突可能已经让游戏崩溃，先解决它
  *   update            用户本来就想做的事，做完可能连依赖也一起换了
- *   install-dependency 让 MOD 能跑起来，比刷新更接近「解决问题」
  *   refresh           只是重新取数据，不直接改变可用性
+ * 依赖修复独立展示，不能被更新或冲突按钮盖住。
  */
 const ACTION_PRIORITY: StatusActionKind[] = [
   'uninstall-conflict',
   'uninstall-duplicate',
   'update',
-  'install-dependency',
   'refresh',
 ]
 

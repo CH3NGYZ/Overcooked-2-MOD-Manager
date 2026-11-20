@@ -179,6 +179,85 @@ fn map_and_single_mod_start_only_after_conflict_and_dependency_writes() {
 }
 
 #[test]
+fn dependency_repair_of_disabled_map_or_mod_keeps_its_files_and_switch() {
+    for map in [true, false] {
+        let mut test = scenario(map);
+        test.request = serde_json::from_value(serde_json::json!({
+            "repair_dependencies_of": test.id,
+        }))
+        .unwrap();
+        let before = Fingerprint::capture(&test.from).unwrap();
+        let owner_manifest =
+            archive::read_manifest(&test.f.state.config.manifests_dir(), "ATarget");
+        let mut session = test.prepared();
+        assert_eq!(session.plan.roots[0].node_id, test.id);
+        let actions = &session.plan.result.actions;
+        assert_eq!(actions.len(), 2, "{actions:?}");
+        assert!(actions.iter().all(|action| action.node_id != test.id));
+        let evaluation = session
+            .plan
+            .result
+            .evaluations
+            .iter()
+            .find(|evaluation| evaluation.node_id == test.id)
+            .unwrap();
+        assert!(!evaluation.enabled && evaluation.runtime.is_empty());
+        assert!(
+            evaluation
+                .readiness
+                .iter()
+                .any(|edge| edge.relation.guid == DEP_GUID)
+        );
+        assert!(
+            evaluation
+                .readiness
+                .iter()
+                .all(|edge| !edge.state.is_issue())
+        );
+        let check_target = || {
+            test.assert_target_untouched();
+            assert_eq!(Fingerprint::capture(&test.from).unwrap(), before);
+        };
+        check_target();
+        super::super::execution::commit(&test.f.state, &mut session, |_| check_target()).unwrap();
+        check_target();
+        test.assert_conflict_disabled();
+        assert_eq!(
+            fs::read(test.f.game.join(&test.dependency)).unwrap(),
+            mods::plugin_blob(DEP_GUID, DEP, "2.0.0")
+        );
+        assert_eq!(
+            serde_json::to_value(archive::read_manifest(
+                &test.f.state.config.manifests_dir(),
+                "ATarget"
+            ))
+            .unwrap(),
+            serde_json::to_value(owner_manifest).unwrap()
+        );
+    }
+}
+
+#[test]
+fn a_repair_cannot_be_combined_with_a_target_switch_or_choose_an_uninstalled_owner() {
+    let test = scenario(false);
+    let mut mixed = test.request.clone();
+    mixed.repair_dependencies_of = Some(test.id.into());
+    assert_eq!(
+        planning::create(&test.f.state, mixed).unwrap_err(),
+        "modChanges.installationBlocked"
+    );
+    let nonexistent = PlanRequest {
+        repair_dependencies_of: Some("mod:Unavailable".into()),
+        ..Default::default()
+    };
+    assert_eq!(
+        planning::create(&test.f.state, nonexistent).unwrap_err(),
+        "modChanges.targetChanged"
+    );
+    test.assert_target_untouched();
+}
+
+#[test]
 fn failed_dependency_write_never_reaches_map_or_mod_and_restores_prerequisites() {
     for map in [true, false] {
         let test = scenario(map);

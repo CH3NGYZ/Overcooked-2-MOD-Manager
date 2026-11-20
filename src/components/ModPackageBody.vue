@@ -9,7 +9,7 @@ import LocalItemCard from './LocalItemCard.vue'
 import ModDetailGrid from './ModDetailGrid.vue'
 import { MOD_GROUP_CTX, TOOL_BUTTON_WIDTH, TOOL_GAP } from './levelSetGroupContext'
 
-// 折叠过渡会缓存插槽；包内成员必须在自己的渲染 effect 中读取过滤后的数据。
+// 折叠过渡会缓存插槽；由本组件订阅包主体与依赖表。
 const props = defineProps<{ groupKey: string; packageKey: string }>()
 const ctx = inject(MOD_GROUP_CTX)!
 const pkg = computed(() => ctx.groups.find(group => group.key === props.groupKey)
@@ -18,28 +18,20 @@ const pkg = computed(() => ctx.groups.find(group => group.key === props.groupKey
 <template>
   <div v-if="pkg" class="package-body">
     <!--
-      包内子 DLL 行不是独立单元：不加定位锚点，也不参与状态高亮。
-      状态结论属于整个包，高亮只画在外壳上（见 package-shell）。
-      外壳仍由 LocalItemCard 提供；这些行没有状态标签，
-      所以不传 #status，组件会自己补 1px 隐形占位保持按钮列对齐。
-      顺序是「主 MOD → 它带的依赖 DLL」：标题后带版本号，依赖项多一个
-      灰色「随包依赖」标签（排序见 toPackage）。
-      依赖 DLL 随包启停，独立禁用会让主 MOD 缺失运行库。
+      这里只保留核心 DLL 的详情和原有工具。已确认随附的 DLL 不展示成成员卡；
+      所有成员都用包标题的一个开关，避免单独禁用后留下半启用的包。
     -->
-    <LocalItemCard v-for="mod in pkg.visibleMods" :key="mod.dll_file"
+    <LocalItemCard v-for="mod in pkg.coreMods" :key="mod.dll_file"
       :data-dll-file="mod.dll_file"
-      :switchable="!mod.is_dependency"
+      :switchable="false"
       :enabled="mod.enabled"
-      :toggle-loading="!!ctx.busy[mod.dll_file]"
       :title="ctx.modTitle(mod)"
       :version="formatVersion(mod.version) || undefined"
-      :title-tag="mod.is_dependency ? t('modsLocal.bundledDependency') : undefined"
       :disabled="!mod.enabled"
       :expanded="ctx.expansion.isInnerOpen(pkg.key, mod.dll_file)"
       :tools-min-width="ctx.toolsMinWidth"
       :tool-gap="TOOL_GAP"
       :tool-button-width="TOOL_BUTTON_WIDTH"
-      @toggle="(value: boolean) => ctx.toggle(mod, value)"
       @click="ctx.onCardClick($event, mod, pkg.key)">
       <!--
         状态标签统一在包标题行，子卡工具只处理当前 DLL。
@@ -72,12 +64,7 @@ const pkg = computed(() => ctx.groups.find(group => group.key === props.groupKey
           :status-summary="ctx.statusSummary(mod)" :package-count-text="ctx.packageCountText(mod)" />
       </template>
     </LocalItemCard>
-    <!--
-      整包共用一份依赖声明（关系挂在仓库上），所以只出一张表。
-      放整批子卡片**之后**：先看包里有什么（本体与它带的依赖），
-      再看这个包对外要求什么；和地图管理页「信息 → 随包插件 →
-      依赖声明」同一顺序，两页不用记两套版式。
-    -->
+    <!-- 整包的依赖声明照常汇总全部成员。 -->
     <div v-if="ctx.packageDependencyRows(pkg).length" class="detail-section detail-section--table">
       <DependencyTable :rows="ctx.packageDependencyRows(pkg)" @jump="ctx.openDependencyJump" />
     </div>

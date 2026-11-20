@@ -44,8 +44,8 @@ export function useDependencyNavigation(navigate: (row: DependencyRow) => void) 
     const row = resolve()
     if (!row?.jump) return
     if (row.jump.repair) {
-      const root = { ...row.jump.repair }
-      void import('../modChanges/store').then(({ useModChanges }) => useModChanges().run({ roots: [root] }))
+      const target = { ...row.jump.repair }
+      void import('../modChanges/requests').then(({ requestDependencyRepair }) => requestDependencyRepair(target))
         .catch(reason => { void import('../locale/backend').then(({ backendMessageOf }) => message.error(backendMessageOf(reason))) })
       return
     }

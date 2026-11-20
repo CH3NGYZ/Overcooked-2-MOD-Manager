@@ -96,6 +96,7 @@ function describeCondition(reason: Reason) {
     <thead>
       <tr>
         <th scope="col" class="details-operation">{{ t('modChanges.column.operation') }}</th>
+        <th scope="col" class="details-category">{{ t('modChanges.column.category') }}</th>
         <th scope="col" class="plan-row-status">{{ t('modChanges.column.status') }}</th>
         <th scope="col">{{ t('modChanges.column.item') }}</th>
         <th scope="col" class="details-version">{{ t('modChanges.column.version') }}</th>
@@ -109,6 +110,9 @@ function describeCondition(reason: Reason) {
         :data-change-parent="row.bundled || row.retired ? row.nodeId : undefined" :data-change-retired="row.retired">
         <td class="details-operation">
           <NTag v-if="row.kind" size="small" :type="row.kind === 'retire' ? 'error' : row.kind === 'disable' ? 'warning' : 'info'">{{ t(`modChanges.action.${row.kind}`) }}</NTag>
+        </td>
+        <td class="details-category" :data-change-category="row.category">
+          <span v-if="row.category" class="details-category-label">{{ t(`modChanges.category.${row.category}`) }}</span>
         </td>
         <td class="plan-row-status">
           <span v-if="row.status" class="row-status-icon" role="img" :aria-label="row.status.label"
@@ -170,8 +174,8 @@ function describeCondition(reason: Reason) {
 .details-table thead th { background: var(--oc2-sunken); color: var(--oc2-text-2); font-size: 12px; font-weight: 600; }
 .details-table tbody th, .details-table tbody td { border-top: 1px solid var(--oc2-row-line); }
 .details-table tbody th { font-weight: 600; }
-.details-operation, .details-table .plan-row-status { width: 1%; white-space: nowrap; }
-.details-table .plan-row-status { text-align: center; padding-inline: 8px; }
+.details-table :is(.details-operation, .details-category, .plan-row-status) { width: 1%; white-space: nowrap; text-align: center; padding-inline: 8px; }
+.details-category-label { color: var(--oc2-text-2); font-size: 12px; }
 .details-version { font-variant-numeric: tabular-nums; color: var(--oc2-text-2); }
 .details-member { color: var(--oc2-text-2); font-weight: 400; }
 .details-item strong + .details-member { margin-inline-start: 8px; }

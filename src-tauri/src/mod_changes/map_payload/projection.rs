@@ -142,6 +142,14 @@ pub(super) fn merge(
         let target_prefix = format!("{package}/levels/{name}");
         let mut candidate = node.current.take().ok_or("modChanges.targetChanged")?;
         candidate.id = format!("map-import:{}:{id}", session.plan.plan_id);
+        let mut roles = BTreeMap::new();
+        for member in &files.summary.members {
+            if let Some(role) = member.role {
+                let mut target_key = Some(member.key.clone());
+                remap_key(&mut target_key, &stage_path, &target_prefix)?;
+                roles.extend(target_key.map(|key| (key, role)));
+            }
+        }
         for plugin in &mut candidate.provides {
             remap_key(&mut plugin.member_key, &stage_path, &target_prefix)?;
         }
@@ -175,14 +183,17 @@ pub(super) fn merge(
             .provides
             .iter()
             .filter_map(|plugin| {
+                let key = plugin.member_key.as_ref()?;
                 Some(MemberSummary {
-                    key: plugin.member_key.clone()?,
-                    dll_file: plugin.member_key.clone()?,
+                    key: key.clone(),
+                    dll_file: key.clone(),
                     enabled: plugin.enabled,
                     guid: (!plugin.guid.is_empty()).then(|| plugin.guid.clone()),
+                    role: roles.get(key).copied(),
                 })
             })
             .collect();
+        batch.member_roles.insert(candidate.id.clone(), roles);
         files.summary.dll_files = files
             .summary
             .members
@@ -269,6 +280,15 @@ pub(super) fn merge(
             .unwrap_or_else(|| node.id.clone());
         let mut candidate = node.current.take().ok_or("modChanges.targetChanged")?;
         candidate.id = format!("map-import:{}:{id}", session.plan.plan_id);
+        batch.member_roles.insert(
+            candidate.id.clone(),
+            files
+                .summary
+                .members
+                .iter()
+                .filter_map(|member| Some((member.key.clone(), member.role?)))
+                .collect(),
+        );
         if let Some(old) = session
             .trusted
             .inventory

@@ -1,5 +1,6 @@
 use super::actions::ActionReasons;
-use super::evaluate::{evaluate, matches, owned_targets, relation_active, same_guid, targets};
+use super::evaluate::{evaluate, matches, owned_targets, same_guid, scoped_relations, targets};
+use super::inventory::TrustedInventory;
 use super::model::*;
 use crate::models::{RelationKind, RepositoryRelation};
 use std::cmp::Ordering;
@@ -35,11 +36,17 @@ enum SearchPass {
 
 struct Search<'a> {
     original: &'a Inventory,
+    trusted: Option<&'a TrustedInventory>,
     /// The adapter proved a specific replacement of these groups, not switches
     /// on their old DLLs or permission to upgrade already satisfied edges.
     replacement_only: BTreeSet<usize>,
     fixed: BTreeSet<usize>,
     roots: BTreeSet<usize>,
+    repair_owner: Option<usize>,
+    /// A fixed, disabled repair owner was needed as a provider on a failed branch.
+    activation_probe_needed: bool,
+    /// A separate search with that owner enabled proves readiness, not runtime.
+    probing_activation: bool,
     visited: BTreeMap<String, bool>,
     baseline: BTreeSet<String>,
     failure: Option<Diagnostic>,
@@ -52,7 +59,9 @@ struct Search<'a> {
     preference_pruned: bool,
 }
 
+mod activation_repair;
 mod diagnostics;
+mod package_switches;
 mod reasons;
 mod visit;
 
@@ -78,6 +87,18 @@ fn provides(candidate: &Candidate, guid: &str) -> bool {
         .any(|plugin| same_guid(&plugin.guid, guid))
 }
 
+fn required_provider(inventory: &Inventory, relation: &RepositoryRelation) -> Option<usize> {
+    if relation.kind == RelationKind::Requires
+        && !relation.optional
+        && let [(index, plugin)] = targets(inventory, &relation.guid, true).as_slice()
+        && matches(relation, plugin) == Some(true)
+    {
+        Some(*index)
+    } else {
+        None
+    }
+}
+
 fn preserves_package_identity(current: &Candidate, candidate: &Candidate) -> bool {
     candidate.verification_pending
         // Historical versions can predate optional bundled plugins. The trusted
@@ -96,12 +117,16 @@ fn preserves_package_identity(current: &Candidate, candidate: &Candidate) -> boo
             .all(|plugin| provides(candidate, &plugin.guid))
 }
 
-fn ordered_candidates(node: &ChangeNode, prefer_installed: bool) -> Vec<Candidate> {
+fn ordered_candidates(
+    trusted: Option<&TrustedInventory>,
+    node: &ChangeNode,
+    prefer_installed: bool,
+) -> Vec<Candidate> {
     let mut candidates = node
         .candidates
         .iter()
         .filter(|candidate| candidate.installable && !candidate.raw)
-        .cloned()
+        .map(|candidate| package_switches::replacement_candidate(trusted, node, candidate.clone()))
         .collect::<Vec<_>>();
     if let Some(current) = &node.current {
         if !candidates
@@ -138,6 +163,10 @@ fn ordered_candidates(node: &ChangeNode, prefer_installed: bool) -> Vec<Candidat
 }
 
 impl Search<'_> {
+    fn readiness(&self, index: usize, node: &ChangeNode) -> bool {
+        self.repair_owner == Some(index) && !node.enabled
+    }
+
     fn order(&self, state: &SearchState) -> BTreeMap<usize, usize> {
         let mut distances = self
             .roots
@@ -242,29 +271,19 @@ impl Search<'_> {
             .roots
             .iter()
             .copied()
-            .filter(|index| state.inventory.nodes[*index].enabled)
+            .filter(|index| {
+                state.inventory.nodes[*index].enabled || self.repair_owner == Some(*index)
+            })
             .collect::<BTreeSet<_>>();
         loop {
             let previous = protected.len();
             for index in protected.clone() {
                 let node = &state.inventory.nodes[index];
-                let Some(candidate) = &node.current else {
-                    continue;
-                };
-                for owned in &candidate.relations {
-                    if owned.relation.kind != RelationKind::Requires
-                        || owned.relation.optional
-                        || !relation_active(candidate, owned, false)
-                    {
-                        continue;
-                    }
+                for owned in scoped_relations(node, self.readiness(index, node)) {
                     // As in evaluation, a required edge is only satisfied by
                     // a unique enabled provider, regardless of version matches.
-                    if let [(target, plugin)] =
-                        targets(&state.inventory, &owned.relation.guid, true).as_slice()
-                        && matches(&owned.relation, plugin) == Some(true)
-                    {
-                        protected.insert(*target);
+                    if let Some(target) = required_provider(&state.inventory, &owned.relation) {
+                        protected.insert(target);
                     }
                 }
             }
@@ -351,12 +370,25 @@ impl Search<'_> {
                 }
             }
         }
+        let node = &state.inventory.nodes[index];
         if let Some(relation) = relation {
-            for plugin in &mut candidate.provides {
-                if same_guid(&plugin.guid, &relation.guid)
-                    && matches(relation, plugin) == Some(true)
-                {
-                    plugin.enabled = true;
+            if relation.kind == RelationKind::Requires && self.whole_mod_package(node) {
+                if !node.enabled {
+                    // Re-activating a stopped package enables all its members,
+                    // even when a candidate kept their pre-switch logical states.
+                    for member in &mut candidate.provides {
+                        member.enabled = true;
+                    }
+                } else {
+                    self.enable_required_members(index, node, &mut candidate, relation);
+                }
+            } else {
+                for plugin in &mut candidate.provides {
+                    if same_guid(&plugin.guid, &relation.guid)
+                        && matches(relation, plugin) == Some(true)
+                    {
+                        plugin.enabled = true;
+                    }
                 }
             }
         }
@@ -391,7 +423,7 @@ impl Search<'_> {
             return Vec::new();
         }
         let proven_upgrade = self.replacement_only.contains(&index);
-        ordered_candidates(node, false)
+        ordered_candidates(self.trusted, node, false)
             .into_iter()
             .filter(|candidate| {
                 node.current.as_ref().is_none_or(|current| {
@@ -418,6 +450,11 @@ impl Search<'_> {
         if self.fixed.contains(&index) || !node.mutable || self.replacement_only.contains(&index) {
             return None;
         }
+        let guid = if self.whole_mod_package(node) {
+            None
+        } else {
+            guid
+        };
         let mut next = state.clone();
         let target = &mut next.inventory.nodes[index];
         let candidate = target.current.as_mut()?;
@@ -449,14 +486,8 @@ impl Search<'_> {
             }
             for owner_index in protected {
                 let owner = &state.inventory.nodes[*owner_index];
-                let Some(candidate) = &owner.current else {
-                    continue;
-                };
-                for owned in &candidate.relations {
-                    if owned.relation.kind != RelationKind::Requires
-                        || owned.relation.optional
-                        || !relation_active(candidate, owned, false)
-                    {
+                for owned in scoped_relations(owner, self.readiness(*owner_index, owner)) {
+                    if owned.relation.kind != RelationKind::Requires || owned.relation.optional {
                         continue;
                     }
                     let before = targets(&state.inventory, &owned.relation.guid, true)
@@ -492,14 +523,8 @@ impl Search<'_> {
         let mut incompatible_nodes = Vec::new();
         if is_conflict_edge {
             let owner_node = &state.inventory.nodes[owner];
-            let active_targets = owner_node
-                .current
-                .iter()
-                .flat_map(|candidate| {
-                    candidate.relations.iter().filter(move |owned| {
-                        owned.relation == *relation && relation_active(candidate, owned, false)
-                    })
-                })
+            let active_targets = scoped_relations(owner_node, self.readiness(owner, owner_node))
+                .filter(|owned| owned.relation == *relation)
                 .flat_map(|owned| owned_targets(&state.inventory, owner_node, owned, true));
             for (index, plugin) in active_targets {
                 let incompatible = match relation.kind {
@@ -577,28 +602,16 @@ impl Search<'_> {
             let node = &state.inventory.nodes[index];
             // Deciding a package fixes its version, not every sibling's switch.
             // Later requirements may still enable members of that exact candidate.
-            if !self.replacement_only.contains(&index)
+            if self.repair_owner != Some(index)
+                && !self.replacement_only.contains(&index)
                 && (self.fixed.contains(&index) || (state.decided.contains(&index) && node.mutable))
                 && relation.kind == RelationKind::Requires
                 && node.enabled
             {
-                if let Some(current) = &node.current {
+                if node.current.is_some() {
                     let mut next = state.clone();
                     let actual = next.inventory.nodes[index].current.as_mut().unwrap();
-                    let mut switched = false;
-                    for (member_index, member) in current.provides.iter().enumerate() {
-                        if !member.enabled
-                            && same_guid(&member.guid, &relation.guid)
-                            && matches(relation, member) == Some(true)
-                            && member.member_key.as_ref().is_none_or(|key| {
-                                !self.fixed_members.contains(&(index, key.clone()))
-                            })
-                        {
-                            actual.provides[member_index].enabled = true;
-                            switched = true;
-                        }
-                    }
-                    if switched {
+                    if self.enable_required_members(index, node, actual, relation) {
                         next.reasons.record(
                             index,
                             node,
@@ -621,7 +634,7 @@ impl Search<'_> {
             // provider before downloading a replacement. Mismatches still try
             // compatible releases from newest to oldest.
             let mut reason = None;
-            for candidate in ordered_candidates(node, !self.prefer_newest) {
+            for candidate in ordered_candidates(self.trusted, node, !self.prefer_newest) {
                 // Consolidation supplies one candidate, already authorized by
                 // physical Release evidence. Its verified core can have a wholly
                 // different GUID; the solver still checks actual providers.
@@ -710,17 +723,18 @@ pub(crate) fn solve(inventory: &Inventory, request: &ChangeRequest) -> SolveResu
 
 /// Execution adapters consume the exact solved package/member states, never replay
 /// presentation actions to reconstruct a subtly different installed inventory.
+#[cfg(test)]
 pub(crate) fn solve_with_inventory(
     inventory: &Inventory,
     request: &ChangeRequest,
 ) -> (SolveResult, Option<Inventory>) {
-    solve_with_policy(inventory, request, |_| false)
+    solve_with_policy(inventory, request, None)
 }
 
 pub(super) fn solve_with_policy(
     inventory: &Inventory,
     request: &ChangeRequest,
-    replacement_only: impl Fn(&str) -> bool,
+    trusted: Option<&TrustedInventory>,
 ) -> (SolveResult, Option<Inventory>) {
     let failure = |blocker: Diagnostic| SolveResult {
         status: if blocker.incomplete {
@@ -733,7 +747,7 @@ pub(super) fn solve_with_policy(
         blockers: vec![blocker],
         impacts: Vec::new(),
     };
-    match solve_inner(inventory, request, replacement_only) {
+    match solve_inner(inventory, request, trusted) {
         Ok((result, solved)) => (result, Some(solved)),
         Err(blocker) => (failure(blocker), None),
     }
@@ -742,8 +756,11 @@ pub(super) fn solve_with_policy(
 fn solve_inner(
     inventory: &Inventory,
     request: &ChangeRequest,
-    replacement_only: impl Fn(&str) -> bool,
+    trusted: Option<&TrustedInventory>,
 ) -> Result<(SolveResult, Inventory), Diagnostic> {
+    let replacement_only = |id: &str| {
+        trusted.is_some_and(|trusted| trusted.duplicate_releases.upgrades.contains_key(id))
+    };
     let mut state = SearchState {
         inventory: inventory.clone(),
         decided: BTreeSet::new(),
@@ -753,6 +770,24 @@ fn solve_inner(
         reasons: ActionReasons::default(),
     };
     let mut roots = BTreeSet::new();
+    // The owner never changes in a committed repair. Search checks its outgoing
+    // relations even if it is disabled.
+    let repair_owner = match request.repair_dependencies_of.as_deref() {
+        Some(id) => {
+            if !request.roots.is_empty() {
+                return Err(diagnostic("contradictory_roots", Some(id), false));
+            }
+            let index = inventory
+                .nodes
+                .iter()
+                .position(|node| node.id == id && node.current.is_some())
+                .ok_or_else(|| diagnostic("root_missing", Some(id), true))?;
+            roots.insert(index);
+            state.decided.insert(index);
+            Some(index)
+        }
+        None => None,
+    };
     let mut seen_roots = BTreeMap::new();
     let requested = reasons::requested();
     for root in &request.roots {
@@ -777,13 +812,15 @@ fn solve_inner(
         }
         let node = &mut state.inventory.nodes[index];
         let before = node.clone();
-        if (replacement_only(&node.id)
-            && (!root.enabled
-                || root.member_key.is_some()
-                || !node
-                    .candidates
-                    .iter()
-                    .any(|candidate| Some(&candidate.id) == root.candidate_id.as_ref())))
+        if (root.member_key.is_some()
+            && trusted.is_some_and(|trusted| trusted.atomic_mod_package(&node.id)))
+            || (replacement_only(&node.id)
+                && (!root.enabled
+                    || root.member_key.is_some()
+                    || !node
+                        .candidates
+                        .iter()
+                        .any(|candidate| Some(&candidate.id) == root.candidate_id.as_ref())))
             || !node.mutable
                 && (root.candidate_id.is_some()
                     || node.enabled != root.enabled
@@ -813,7 +850,9 @@ fn solve_inner(
                     true,
                 ));
             }
-            node.current = Some(candidate);
+            node.current = Some(package_switches::replacement_candidate(
+                trusted, node, candidate,
+            ));
         }
         let Some(candidate) = node.current.as_mut() else {
             return Err(diagnostic("root_candidate_missing", Some(&node.id), true));
@@ -907,6 +946,7 @@ fn solve_inner(
     let prefer_newest = request.roots.iter().any(|root| root.candidate_id.is_some());
     let mut search = Search {
         original: inventory,
+        trusted,
         replacement_only: inventory
             .nodes
             .iter()
@@ -915,6 +955,9 @@ fn solve_inner(
             .collect(),
         fixed: roots.clone(),
         roots,
+        repair_owner,
+        activation_probe_needed: false,
+        probing_activation: false,
         fixed_members,
         visited: BTreeMap::new(),
         baseline,

@@ -115,14 +115,13 @@ test('MOD 页：按键找卡片复用 expandScroll 的 cardByExpandKey（不自�
     '按键找卡片只许用 expandScroll.cardByExpandKey，页面里再写一遍就是第二份实现')
 })
 
-test('MOD 页：包内子卡与随包依赖带包 key，落进内层状态而不是外层', () => {
-  // 模板：包体里的每一张子卡（含 is_dependency 的依赖行）都把 pkg.key 传给点击处理。
+test('MOD 页：包内只展示核心卡，携带包 key 展开详情，不另设开关', () => {
   assert.match(modPackageBody, /@click="ctx\.onCardClick\(\$event, mod, pkg\.key\)"/)
   assert.match(modPackageBody, /:expanded="ctx\.expansion\.isInnerOpen\(pkg\.key, mod\.dll_file\)"/)
   assert.match(modsLocal, /expansion\.openInner\(packageKey, mod\.dll_file\)/)
   assert.match(modsLocal, /expansion\.closeInner\(packageKey, mod\.dll_file\)/)
-  // 依赖行与子 MOD 同一张卡片、同一条路径，只是关掉开关与标签文案。
-  assert.match(modPackageBody, /:switchable="!mod\.is_dependency"/)
+  assert.match(modPackageBody, /<LocalItemCard v-for="mod in pkg\.coreMods"/)
+  assert.match(modPackageBody, /:switchable="false"/)
 })
 
 test('MOD 页：收起外壳连带清内层，点空白只收独立卡与内层、不许收盘外壳', () => {

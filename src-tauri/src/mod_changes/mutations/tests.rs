@@ -67,6 +67,7 @@ fn fixture() -> Fixture {
         installed_mods: Default::default(),
         duplicate_releases: Default::default(),
         duplicate_release_safe_nodes: Default::default(),
+        declared_bundle_switch_members: Default::default(),
     };
     let session = PlanSession {
         trusted,
@@ -96,6 +97,7 @@ fn fixture() -> Fixture {
         staging,
         payload_fingerprints: HashMap::new(),
         mutations: None,
+        residue_adoptions: Default::default(),
         created: Instant::now(),
     };
     Fixture {
@@ -149,6 +151,7 @@ fn add_mod(fixture: &mut Fixture, id: &str, provides: Vec<ProvidedPlugin>, owned
                 name_i18n: Default::default(),
                 map_name_zh: None,
                 kind: NodeKind::Mod,
+                presentation_kind: None,
                 enabled: node.enabled,
                 repository_id: None,
                 package_id: Some(id.into()),
@@ -163,6 +166,7 @@ fn add_mod(fixture: &mut Fixture, id: &str, provides: Vec<ProvidedPlugin>, owned
                         dll_file: member.member_key.clone().unwrap(),
                         enabled: member.enabled,
                         guid: Some(member.guid.clone()),
+                        role: None,
                     })
                     .collect(),
                 map_dir_name: None,
@@ -197,6 +201,7 @@ fn payload(fixture: &mut Fixture, id: &str, path: &str, enabled: bool) {
         id.into(),
         Payload {
             candidate: actual,
+            member_roles: Default::default(),
             stage_fingerprint: Fingerprint::capture(&stage).unwrap(),
             stage_root: stage,
             release_files: None,
@@ -489,6 +494,7 @@ fn map_with_member(f: &mut Fixture, id: &str, path: &str, enabled: bool, member_
                 name_i18n: Default::default(),
                 map_name_zh: None,
                 kind: NodeKind::Map,
+                presentation_kind: None,
                 enabled,
                 repository_id: None,
                 package_id: None,
@@ -498,6 +504,7 @@ fn map_with_member(f: &mut Fixture, id: &str, path: &str, enabled: bool, member_
                     dll_file: key,
                     enabled: member_enabled,
                     guid: Some("fixture-map".into()),
+                    role: None,
                 }],
                 map_dir_name: Some(path.rsplit('/').next().unwrap().into()),
                 map_id: None,

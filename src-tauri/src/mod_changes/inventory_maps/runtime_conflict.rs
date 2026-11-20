@@ -99,14 +99,14 @@ pub(in crate::mod_changes) fn solve_toggle(
         return Ok(None);
     }
     let (mut result, solved) = if conflicts.is_empty() {
-        crate::mod_changes::solve_with_inventory(original, &session.request)
+        super::super::solve::solve_with_policy(original, &session.request, Some(trusted))
     } else {
         let mut input = original.clone();
         if let Some(current) = &mut input.nodes[map_index].current {
             current.relations.extend(conflicts);
         }
         let (mut result, mut solved) =
-            crate::mod_changes::solve_with_inventory(&input, &session.request);
+            super::super::solve::solve_with_policy(&input, &session.request, Some(trusted));
         // The map root fixes its candidate, so only its switches may differ.
         if let Some(current) = solved
             .as_mut()

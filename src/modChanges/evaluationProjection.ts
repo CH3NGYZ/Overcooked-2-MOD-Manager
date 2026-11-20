@@ -1,4 +1,4 @@
-import type { EvaluationSnapshot, EvaluationSubject, RelationEvaluation, RootIntent } from './types'
+import type { DependencyRepairTarget, EvaluationSnapshot, EvaluationSubject, RelationEvaluation } from './types'
 import type { InstalledMod, RepositoryRelation } from '../types'
 
 // Pure consumers keep their Node entry point. The app supplies its reactive snapshot.
@@ -6,14 +6,14 @@ let readSnapshot: () => EvaluationSnapshot | null = () => null
 export function setEvaluationSnapshotReader(reader: () => EvaluationSnapshot | null) { readSnapshot = reader }
 export function evaluationSnapshot() { return readSnapshot() }
 
-export function repairRoot(ownerId: string): RootIntent | undefined {
+export function repairTarget(ownerId: string): DependencyRepairTarget | undefined {
   const node = readSnapshot()?.nodes.find(entry => entry.node_id === ownerId)
   if (!node) return undefined
-  if (!node.subject_tag) return { node_id: node.node_id, enabled: true }
+  if (!node.subject_tag) return node.dll_files.length || node.map_dir_name ? { node_id: node.node_id } : undefined
   if (node.kind === 'map') return undefined
   if (!node.repository_id) return undefined
   const candidate = node.candidates.find(entry => entry.tag === node.subject_tag)
-  return candidate ? { node_id: `mod:${node.repository_id}`, candidate_id: candidate.id, enabled: true } : undefined
+  return candidate ? { node_id: `mod:${node.repository_id}`, candidate_id: candidate.id } : undefined
 }
 
 export function sameRelation(left: RepositoryRelation, right: RepositoryRelation) {

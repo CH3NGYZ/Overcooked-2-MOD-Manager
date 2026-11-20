@@ -1,5 +1,6 @@
 import type { InstalledMod, InstalledModStatusLabel, ModRepository } from './types'
 import { compareVersions, isPrereleaseVersion, localVersion, modsForRepository, repositoryForMod } from './modStatus.ts'
+import { LOCAL_RELATION_TEXT } from './modRelations.ts'
 
 /**
  * MOD 状态标签：两页共用同一套「文案 + 语义色」，避免两边各写一份。
@@ -91,6 +92,8 @@ export const STATUS_META: Record<string, { text: string; tone: StatusTone }> = {
    * `modRelations` 判定，没有可安装来源时只显示标签。
    */
   missing_dependency: { text: 'modsOnline.missingDep', tone: 'critical' },
+  dependency_disabled: { text: LOCAL_RELATION_TEXT.dependencyDisabled, tone: 'critical' },
+  dependency_mismatch: { text: LOCAL_RELATION_TEXT.dependencyMismatch, tone: 'critical' },
   /**
    * 兼容关系差一个版本：线上有落在兼容区间里的 Release 可换。
    *
@@ -215,6 +218,8 @@ const WITHIN_TONE_ORDER: string[] = [
   'load_warning',
   'dependency_conflict',
   'missing_dependency',
+  'dependency_disabled',
+  'dependency_mismatch',
   'bound_repository_missing',
   'repository_unavailable',
   'dependency_installable',
@@ -324,11 +329,13 @@ const MEMBER_LEVEL_LABELS = new Set(['duplicate', 'duplicate_lower_version', 'lo
  *
  * 依赖声明来自仓库的 `[[repositories.relations]]`，整包共用一份：只要包内
  * 任一成员判定出问题，整个包就不可用，结论属于包而不是某个 DLL。
- * 因此包标题只出一条、不带数量 —— 与单 MOD 卡片上的「缺依赖」同义。
+ * 每类问题只出一条、不带数量；不同类可以同时出现。
  */
 const PACKAGE_DEPENDENCY_LABELS = [
   'dependency_conflict',
   'missing_dependency',
+  'dependency_disabled',
+  'dependency_mismatch',
   'dependency_installable',
 ] as const
 

@@ -85,6 +85,9 @@ pub struct RootIntent {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChangeRequest {
     pub roots: Vec<RootIntent>,
+    /// Check this installed node's requirements without changing its candidate or switches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair_dependencies_of: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

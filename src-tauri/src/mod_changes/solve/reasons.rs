@@ -1,5 +1,6 @@
 //! Trace the exact edge selected by the search. These reasons describe the
 //! winning branch only, and must not affect admission or candidate ordering.
+use super::super::evaluate::relation_active;
 use super::*;
 use std::sync::Arc;
 

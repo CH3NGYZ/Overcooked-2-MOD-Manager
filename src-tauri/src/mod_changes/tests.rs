@@ -61,6 +61,7 @@ fn intent(node_id: &str, candidate_id: Option<String>, enabled: bool) -> ChangeR
             enabled,
             member_key: None,
         }],
+        ..Default::default()
     }
 }
 

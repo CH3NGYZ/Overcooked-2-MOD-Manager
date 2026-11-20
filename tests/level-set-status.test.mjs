@@ -558,6 +558,22 @@ test('卡片标签：停用且缺依赖时两条都显示（重新启用前就�
   assert.deepEqual(tags.map((tag) => tag.text), ['modsOnline.missingDep', 'modsLocal.disabled'])
 })
 
+test('地图就绪检查的依赖禁用和依赖不符分别计数和筛选', () => {
+  const target = map({ required_frameworks: [
+    { guid: 'com.rw.diylevel', version: '>=2' }, { guid: 'com.rw.loader' }, { guid: 'com.rw.debug' },
+  ] })
+  const local = set({ enabled: false })
+  backendRelations(target, ['version_mismatch', 'disabled', 'disabled'], [], false)
+  const tags = levelSetCardTags(local, [target], [], true)
+  assert.deepEqual(tags.map(tag => tag.text), ['modChanges.card.dependencyMismatch', 'modChanges.card.dependencyDisabled', 'modsLocal.disabled'])
+  assert.deepEqual(tags.slice(0, 2).map(tag => tag.dependency.relation.guid), ['com.rw.diylevel', 'com.rw.loader'])
+  assert.deepEqual(levelSetStatusKeys(local, tags).slice(0, 2), [
+    'tag:dependency:modChanges.card.dependencyMismatch', 'tag:dependency:modChanges.card.dependencyDisabled',
+  ])
+  assert.deepEqual(summarizeLevelSetTags([local], () => tags).map(tag => tag.count), [1, 1])
+  clearEvaluation()
+})
+
 test('卡片标签：绑定地图（或它所在的地图源）在刷新时显示「刷新中」，不再显示旧结论', () => {
   const target = map({ latest_tag: 'v0.74', source_id: 'rw' })
 

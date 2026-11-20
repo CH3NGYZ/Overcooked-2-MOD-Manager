@@ -1,8 +1,11 @@
-//! A verified upgrade may claim identical loose files in its own plugin directory.
+//! Selected Release assets can claim matching loose files under narrow rules.
 use super::*;
 use crate::mod_changes::session::Payload;
 use same_file::Handle;
 use std::io::ErrorKind;
+
+mod residues;
+pub(in crate::mod_changes) use residues::ResidueAdoptions;
 
 impl Builder<'_> {
     pub(super) fn release_path_unclaimed(
@@ -28,13 +31,28 @@ impl Builder<'_> {
             .to_ascii_lowercase()
             .ends_with(".dll")
             || !real_path.starts_with(directory)
-            || self.protected_maps.iter().any(|map| {
-                game(map)
-                    .resolve(&self.roots)
-                    .and_then(|path| crate::game::resolve_existing_ancestor(&path))
-                    .map_or(true, |path| real_path.starts_with(path))
-            })
         {
+            return false;
+        }
+        self.physically_unclaimed(
+            relative,
+            &real_path,
+            self.ownership_paths.iter().map(String::as_str),
+        )
+    }
+
+    fn physically_unclaimed<'a>(
+        &self,
+        relative: &str,
+        real_path: &Path,
+        claims: impl Iterator<Item = &'a str>,
+    ) -> bool {
+        if self.protected_maps.iter().any(|map| {
+            game(map)
+                .resolve(&self.roots)
+                .and_then(|path| crate::game::resolve_existing_ancestor(&path))
+                .map_or(true, |path| real_path.starts_with(path))
+        }) {
             return false;
         }
         let Ok(target) = Handle::from_path(real_path) else {
@@ -54,15 +72,19 @@ impl Builder<'_> {
                 Err(error) => error.kind() == ErrorKind::NotFound,
             }
         };
-        self.ownership_paths.iter().all(|claim| {
+        let key = path_key(Path::new(&mods::canonical_dll_name(relative)));
+        claims.into_iter().all(|claim| {
+            let canonical = mods::canonical_dll_name(claim);
+            if path_key(Path::new(&canonical)) == key {
+                return false;
+            }
             if !excludes_target(claim) {
                 return false;
             }
-            let canonical = mods::canonical_dll_name(claim);
             if !canonical.to_ascii_lowercase().ends_with(".dll") {
                 return true;
             }
-            let other = if canonical == *claim {
+            let other = if canonical == claim {
                 mods::disabled_dll_file(&canonical)
             } else {
                 canonical

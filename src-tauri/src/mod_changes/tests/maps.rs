@@ -147,14 +147,14 @@ fn enabling_map_can_choose_older_missing_dependency_to_keep_compatible_installed
 
     let result = solve(&inventory, &intent("dmm-kitchen", None, true));
     assert_eq!(result.status, SolveStatus::Ready, "{result:?}");
-    assert_eq!(result.actions.len(), 3, "{:?}", result.actions);
+    assert_eq!(result.actions.len(), 2, "{:?}", result.actions);
     assert_eq!(
         action_for(&result, "helper", ActionKind::Install)
             .to_tag
             .as_deref(),
         Some("v1.0")
     );
-    action_for(&result, "helper", ActionKind::Enable);
+    // Installing the new provider already enables it; the map still has its own switch.
     action_for(&result, "dmm-kitchen", ActionKind::Enable);
 
     // User-selected versions still choose the newest compatible dependency chain.

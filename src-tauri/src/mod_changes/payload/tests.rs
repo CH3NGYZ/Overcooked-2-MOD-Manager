@@ -41,6 +41,7 @@ fn trusted(game: &Path, provides: Vec<ProvidedPlugin>) -> TrustedInventory {
                     name_i18n: Default::default(),
                     map_name_zh: None,
                     kind: NodeKind::Mod,
+                    presentation_kind: None,
                     enabled: true,
                     repository_id: None,
                     package_id: Some("original-package".into()),
@@ -65,6 +66,7 @@ fn trusted(game: &Path, provides: Vec<ProvidedPlugin>) -> TrustedInventory {
         installed_mods: Default::default(),
         duplicate_releases: Default::default(),
         duplicate_release_safe_nodes: Default::default(),
+        declared_bundle_switch_members: Default::default(),
     }
 }
 
@@ -98,7 +100,12 @@ fn real_metadata_and_unique_guid_preserve_disabled_member_after_directory_change
         &mods::plugin_blob("test-primary", "Primary", "2.0.0"),
     );
     let mut files = vec!["BepInEx/plugins/new/Primary.dll".into()];
-    let members = read_members(&trusted, "fixture", &root, &mut files, false, None).unwrap();
+    let (members, roles) =
+        read_members(&trusted, "fixture", &root, &mut files, false, None).unwrap();
+    assert_eq!(
+        roles.get(members[0].member_key.as_ref().unwrap()),
+        Some(&DllRole::Mod)
+    );
     assert!(!members[0].enabled);
     assert_eq!(members[0].version.as_deref(), Some("2.0.0"));
     assert!(files[0].ends_with(".dll.disabled"));
@@ -121,7 +128,7 @@ fn new_member_keeps_asset_state_and_duplicate_variants_are_rejected() {
     let bytes = mods::plugin_blob("test-primary", "Primary", "2.0.0");
     write(&root, "Primary.dll.disabled", &bytes);
     let mut files = vec!["Primary.dll.disabled".into()];
-    let members = read_members(&trusted, "fixture", &root, &mut files, true, None).unwrap();
+    let (members, _) = read_members(&trusted, "fixture", &root, &mut files, true, None).unwrap();
     assert!(!members[0].enabled);
     assert_eq!(members[0].prerelease, Some(true));
     write(&root, "Primary.dll", &bytes);

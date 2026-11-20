@@ -37,6 +37,11 @@ fn for_each_change(before: &ChangeNode, after: &ChangeNode, mut visit: impl FnMu
     let package_changed = from.map(|candidate| &candidate.id) != to.map(|candidate| &candidate.id);
     if package_changed {
         visit(ChangeKey::Package);
+        if from.is_none() && to.is_some() {
+            // A fresh install writes the final state directly. It has no old
+            // DLL to switch, and is reported through one package action.
+            return;
+        }
     }
     let singleton = before.kind == NodeKind::Mod
         && from.is_some_and(|c| c.provides.len() == 1)

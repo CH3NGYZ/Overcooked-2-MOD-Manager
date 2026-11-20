@@ -3,7 +3,7 @@ import test from 'node:test'
 import { readFileSync } from 'node:fs'
 
 const read = path => readFileSync(new URL('../' + path, import.meta.url), 'utf8')
-test('搜索展示只读命中成员，完整包仍用于操作；地图同样先逐卡筛选再分组', () => {
+test('搜索可命中隐藏成员，包内仅展示核心详情；地图逐卡筛选且保留随包插件', () => {
   const mods = read('src/views/ModsLocalView.vue')
   assert.match(mods, /searchMatchedDllFiles/)
   const modProjection = read('src/localModGroups.ts')
@@ -16,7 +16,9 @@ test('搜索展示只读命中成员，完整包仍用于操作；地图同样�
   const members = read('src/components/ModPackageBody.vue')
   assert.match(members, /ctx.groups.find/)
   assert.match(members, /packages.find/)
-  assert.match(members, /v-for="mod in pkg.visibleMods"/)
+  assert.match(members, /v-for="mod in pkg.coreMods"/)
+  assert.match(members, /:switchable="false"/)
+  assert.doesNotMatch(members, /@toggle=/)
   assert.doesNotMatch(members, /v-for="mod in pkg.mods"/)
   assert.doesNotMatch(body, /v-for="mod in pkg.mods"/)
   assert.match(body, /ctx.togglePackageEnabled\(pkg, value\)/)
@@ -24,7 +26,9 @@ test('搜索展示只读命中成员，完整包仍用于操作；地图同样�
   assert.match(maps, /filter\(\(set\) => matchesLocalSearch/)
   assert.match(maps, /buildLevelSetGroups\(/)
   assert.match(read('src/levelSetGroups.ts'), /for \(const set of sets\)/)
-  assert.match(read('src/components/LevelSetGroupBody.vue'), /ctx.groups.find/)
+  const mapBody = read('src/components/LevelSetGroupBody.vue')
+  assert.match(mapBody, /ctx.groups.find/)
+  assert.match(mapBody, /v-for="plugin in set.plugins"/)
 })
 
 test('在线两页的源、分组与社区插槽按稳定身份响应式取节点，不捕获旧过滤结果', () => {

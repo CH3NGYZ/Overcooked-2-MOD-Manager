@@ -2,7 +2,7 @@ import type { RelationSubject } from './modRelations'
 import { aggregateLevelSetVersion, isSameLevelSet, mapUpdateState, mapVersionRef, type MapVersionRef } from './mapVersion.ts'
 export { aggregateLevelSetVersion, isSameLevelSet, mapsForLevelSet, mapUpdateState, type MapVersionRef, type MapVersionOrder } from './mapVersion.ts'
 import {
-  dependencyTagFor, primaryRelation, relationsForMapRelease, relationStatusesForSubject, unmetRelations,
+  localRelationTags, relationsForMapRelease, relationStatusesForSubject, unmetRelations,
   type RelationStatus,
 } from './modRelations.ts'
 import type { InstalledMod, LevelSetInfo, MapInfo, ModRepository } from './types'
@@ -385,9 +385,8 @@ export function levelSetIsRefreshing(
  * 顺序与 MOD 卡片一致：先「缺依赖」这类关系提醒，再版本结论 ——
  * 关系提醒说的是「装上能不能跑」，比「有没有新版」更该先被看到。
  *
- * 依赖提醒与 MOD 卡片共用 `dependencyTagFor` 一条规则：文案是「缺依赖」，
- * 线上有可安装来源就带上仓库 id（标签可点，跳过去就能补上），没有来源就
- * 只是纯文字。只在**能判定**（游戏已探测）时出现；停用的地图仍然显示，
+ * 依赖提醒与 MOD 卡片共用 `localRelationTags`，各类问题分别显示。
+ * 只在**能判定**（游戏已探测）时出现；停用的地图仍然显示，
  * 因为用户重新启用前就该知道它还缺东西。
  *
  * 版本结论与「刷新中」互斥：刷新的那一刻旧的「有更新 / 最新版」就是过期
@@ -409,14 +408,13 @@ export function levelSetCardTags(
   if (gameProbed) {
     // 与依赖表同一条声明链：绑定的在线地图优先，没有就退回本地快照
     const statuses = levelSetRelationStatuses(set, maps, mods, repositories)
-    const dependency = dependencyTagFor(statuses, true)
-    if (dependency) {
+    for (const tag of localRelationTags(statuses)) {
       tags.push({
-        text: dependency.text,
-        tone: dependency.tone,
+        text: tag.text,
+        tone: tag.tone,
         kind: 'dependency',
-        repositoryId: dependency.repositoryId,
-        dependency: primaryRelation(statuses),
+        repositoryId: tag.repositoryId,
+        dependency: tag.dependency,
       })
     }
   }
@@ -437,7 +435,7 @@ export function levelSetCardTags(
 }
 
 /** 地图管理卡片上的一键动作类型。 */
-export type LevelSetCardActionKind = 'update' | 'install-dependency' | 'review-conflict'
+export type LevelSetCardActionKind = 'update' | 'review-conflict'
 
 /**
  * 地图管理卡片状态区的一键动作。
@@ -455,30 +453,14 @@ export interface LevelSetCardAction {
   mapId?: string
   /** `update` 捕获的实际安装 tag。 */
   tag?: string
-  /** `install-dependency` / `review-conflict` 要跳转的 MOD 仓库 id。 */
+  /** `review-conflict` 要跳转的 MOD 仓库 id。 */
   repositoryId?: string
   /** `review-conflict` 命中的 GUID，用来在提示里说清是哪一个依赖。 */
   guid?: string
-  dependency?: RelationStatus
 }
 
 /**
- * 一张地图卡片当前该给哪个一键动作。
- *
- * 优先序与 MOD 管理页一致（`statusActions.ts` 的 `ACTION_PRIORITY`）：
- * 冲突 > 可更新 > 依赖待补。理由相同 —— 冲突会让整张图跑不起来，比「有没有
- * 新版」更紧急；而「去安装」只是跳转，用户随时能点，不该盖住真正的修复入口。
- *
- * 最后那一档是依赖待补（见 `modRelations.relationTagView`）：必须依赖缺了
- * 是「缺依赖」、兼容关系缺了是「可安装」，两者的去处相同——跳到能提供依赖的
- * 仓库装/升级那个插件，所以按钮文案统一按中档处理。
- *
- * 不给出动作的情况：
- *   · info 解析失败或刷新中：尚不能确定更新来源；
- *   · 停用地图仅保留更新动作，依赖操作等重新启用后再处理；
- *   · 可更新但没有绑定到在线地图：没有可下载的来源；
- *   · 线上没有满足区间的仓库（真·缺依赖）：按钮点了没反应，比没有按钮更糟
- *     （`dependencyTagFor` 只给有候选仓库的项 `repositoryId`）。
+ * 冲突优先于更新；依赖修复有独立入口，不受这两个动作的优先级影响。
  */
 export function levelSetCardAction(
   set: LevelSetInfo,
@@ -515,18 +497,6 @@ export function levelSetCardAction(
     }
   }
 
-  if (!set.enabled) return undefined
-  const dependency = dependencyTagFor(statuses, true)
-  const repair = primaryRelation(statuses)
-  if (dependency?.repositoryId || repair?.repair) {
-    return {
-      kind: 'install-dependency',
-      label: 'overview.browse',
-      tone: 'moderate',
-      repositoryId: dependency?.repositoryId,
-      dependency: repair,
-    }
-  }
   return undefined
 }
 

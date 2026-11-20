@@ -1,4 +1,4 @@
-import type { ChangeAction, ChangeActionKind, ChangeActionReason, ChangeLabel, ChangePlan, ChangePreparationItem, ChangePreparationProgress, DiagnosticStep } from './types'
+import type { ChangeAction, ChangeActionKind, ChangeActionReason, ChangeLabel, ChangeNode, ChangePlan, ChangePreparationItem, ChangePreparationProgress, ChangePresentationKind, DiagnosticStep } from './types'
 import type { DeepReadonly } from 'vue'
 import { levelSetDisplayName } from '../levelSetStatus.ts'
 import { isPackageAction } from './types.ts'
@@ -59,6 +59,7 @@ interface ChangePlanDetailRow {
   nodeId: string
   statusKey?: string
   kind?: ChangeActionKind | 'retire'
+  category?: ChangePresentationKind | 'mod' | 'map'
   label?: string
   member?: ReturnType<typeof namedPlugin>
   memberOnly?: boolean
@@ -82,6 +83,15 @@ interface ChangePlanDetailRow {
   }
 }
 
+function nodeCategory(node?: DeepReadonly<ChangeNode>): ChangePlanDetailRow['category'] {
+  return node?.presentation_kind ?? (node?.kind === 'map' || node?.kind === 'mod' ? node.kind : undefined)
+}
+
+function memberCategory(member?: DeepReadonly<NonNullable<ChangeNode['members']>[number]>): ChangePlanDetailRow['category'] {
+  if (member?.role === 'dependency') return 'dependency'
+  if (member?.role === 'mod' || member?.guid?.trim()) return 'plugin'
+}
+
 type FailureStep = DeepReadonly<DiagnosticStep>
 interface DiagnosticBranch {
   step: FailureStep
@@ -96,7 +106,7 @@ function diagnosticEdgeKey({ owner_id, owner_version, relation, targets, state, 
   ])
 }
 
-function diagnosticDetails(plan: DeepReadonly<ChangePlan>, { nodes: labels, dependency }: ReturnType<typeof changePlanLabels>) {
+function diagnosticDetails(plan: DeepReadonly<ChangePlan>, nodes: ReadonlyMap<string, DeepReadonly<ChangeNode>>, { nodes: labels, dependency }: ReturnType<typeof changePlanLabels>) {
   const starts = new Map<string, { step: FailureStep; children: Map<string, DiagnosticBranch> }>()
   let witness = 0
   for (const blocker of plan.blockers) {
@@ -131,7 +141,7 @@ function diagnosticDetails(plan: DeepReadonly<ChangePlan>, { nodes: labels, depe
       const branchPath = children.size > 1 ? `${path}.${position}` : path
       const diagnostic = { depth, path: children.size > 1 ? branchPath : undefined, terminal }
       if (!step.relation) {
-        diagnosticRows.push({ key, nodeId: step.owner_id, label: labels.get(step.owner_id),
+        diagnosticRows.push({ key, nodeId: step.owner_id, label: labels.get(step.owner_id), category: nodeCategory(nodes.get(step.owner_id)),
           version: versionPair(undefined, step.owner_version), diagnostic })
       } else {
         const { guid } = step.relation
@@ -139,6 +149,7 @@ function diagnosticDetails(plan: DeepReadonly<ChangePlan>, { nodes: labels, depe
         const providers = step.targets.map(target => ({ label: labels.get(target.node_id) ?? dependencyLabel, version: target.version, enabled: target.enabled }))
         const only = providers.length === 1 ? providers[0] : undefined
         diagnosticRows.push({ key, nodeId: only ? step.targets[0]!.node_id : step.owner_id, label: only?.label ?? dependencyLabel,
+          category: only ? nodeCategory(nodes.get(step.targets[0]!.node_id)) : undefined,
           version: versionPair(undefined, only?.version), diagnostic: { ...diagnostic, edge: { step, ownerLabel: labels.get(step.owner_id) }, providers } })
       }
       appendBranches(branch.children, key, branchPath, depth + 1)
@@ -156,12 +167,13 @@ function diagnosticDetails(plan: DeepReadonly<ChangePlan>, { nodes: labels, depe
     const path = String(++startNumber)
     const key = `path:${path}`
     const standalone = children.size === 1 && !first.relation && [...children.values()][0]?.terminal
-    diagnosticRows.push({ key, nodeId: first.owner_id, label: labels.get(first.owner_id), selected: !!coveredRoots.length,
+    diagnosticRows.push({ key, nodeId: first.owner_id, label: labels.get(first.owner_id), category: nodeCategory(nodes.get(first.owner_id)), selected: !!coveredRoots.length,
       version: versionPair(undefined, ownerVersion), diagnostic: { start: true, path, terminal: standalone ? first : undefined } })
     if (!standalone) appendBranches(children, key, path, 1)
   }
   const roots: ChangePlanDetailRow[] = plan.roots.flatMap((root, index) => selected.has(root) ? [] : ({
-    key: `selected:${index}`, nodeId: root.node_id, label: labels.get(root.node_id), version: versionPair(undefined, root.tag), selected: true,
+    key: `selected:${index}`, nodeId: root.node_id, label: labels.get(root.node_id), category: nodeCategory(nodes.get(root.node_id)),
+    version: versionPair(undefined, root.tag), selected: true,
   }))
   return { rows: [...roots, ...diagnosticRows] }
 }
@@ -170,8 +182,8 @@ function diagnosticDetails(plan: DeepReadonly<ChangePlan>, { nodes: labels, depe
 export function changePlanDetails(plan: DeepReadonly<ChangePlan>, progress?: DeepReadonly<ChangePreparationProgress> | null,
   names = changePlanLabels(plan, progress)) {
   const labels = names.nodes
-  if (plan.status !== 'ready') return diagnosticDetails(plan, names)
   const nodes = new Map(plan.nodes.map(node => [node.node_id, node]))
+  if (plan.status !== 'ready') return diagnosticDetails(plan, nodes, names)
   const items = new Map(progress?.items.map(item => [item.node_id, item]))
   const actions = progress?.actions.length ? progress.actions : plan.actions
   const coveredNodes = new Set<string>()
@@ -195,14 +207,15 @@ export function changePlanDetails(plan: DeepReadonly<ChangePlan>, progress?: Dee
     // A switch may carry a version in the DTO, but it leaves that version installed.
     const version = changesVersion ? versionPair(action.from_tag, item?.tag || action.to_tag) : undefined
     const node = nodes.get(nodeId)
-    const member = memberKey && node?.members?.find(member => member.key === memberKey)
+    const member = memberKey ? node?.members?.find(member => member.key === memberKey) : undefined
     const plugin = memberKey ? (member ? namedPlugin(member.dll_file) : undefined) ?? namedPlugin(memberKey) : undefined
     const reasons = describeReasons(action.reason_details ?? [], nodeId, names)
     const causes = reasons.length ? [] : relatedLabels(action.caused_by, nodeId, labels)
     const statusKey = changeStatusKey(nodeId, memberKey)
     coveredNodes.add(nodeId)
     if (version?.to) coveredTags.set(nodeId, version.to)
-    return { key: JSON.stringify([nodeId, kind, memberKey ?? null]), nodeId, statusKey, kind, label: labels.get(nodeId),
+    const category = memberKey && (node?.kind === 'map' || node?.presentation_kind === 'mod_package') ? memberCategory(member) : nodeCategory(node)
+    return { key: JSON.stringify([nodeId, kind, memberKey ?? null]), nodeId, statusKey, kind, category, label: labels.get(nodeId),
       member: plugin, memberOnly: !!memberKey, bundled, reason: action.reason, reasons, causes, version,
       preparationStage: changesVersion ? item?.stage : undefined, waitsForPackage: changesVersion }
   }
@@ -219,7 +232,7 @@ export function changePlanDetails(plan: DeepReadonly<ChangePlan>, progress?: Dee
       for (const copy of plan.retired_mod_copies?.[nodeId] ?? []) {
         const statusKey = changeStatusKey(nodeId, copy.member_key)
         const file = namedPlugin(copy.dll_file)
-        rows.push({ key: `retire:${statusKey}`, nodeId, statusKey, kind: 'retire', retired: copy.member_key,
+        rows.push({ key: `retire:${statusKey}`, nodeId, statusKey, kind: 'retire', category: 'mod', retired: copy.member_key,
           label: labels.get(nodeId) || copy.label.trim() || file?.name, member: file, version: versionPair(undefined, copy.version) })
       }
     }
@@ -231,14 +244,14 @@ export function changePlanDetails(plan: DeepReadonly<ChangePlan>, progress?: Dee
     const changesVersion = isPackageAction(action)
     const previousMembers = plan.previous_enabled_members?.[nodeId]
     const includedBeforeDisable = previousMembers && new Set(previousMembers)
-    if (node?.kind === 'map' || children.length > 1) {
+    if (node?.kind === 'map' || node?.presentation_kind === 'mod_package') {
       for (const child of children) {
         const file = namedPlugin(child.dll_file)
         const childKey = changeStatusKey(nodeId, child.key)
         const affected = kind === 'disable' && includedBeforeDisable ? includedBeforeDisable.has(child.key) : child.enabled
         if (!file || explicitMembers.has(childKey) || (!changesVersion && !affected)) continue
         explicitMembers.add(childKey)
-        rows.push({ key: childKey, nodeId, statusKey: row.statusKey, member: file, bundled: true,
+        rows.push({ key: childKey, nodeId, statusKey: row.statusKey, member: file, bundled: true, category: memberCategory(child),
           kind: changesVersion ? undefined : kind, bundleReason: changesVersion ? 'included' : kind === 'enable' ? 'enabled' : 'disabled',
           preparationStage: row.preparationStage, waitsForPackage: row.waitsForPackage })
       }
@@ -246,14 +259,14 @@ export function changePlanDetails(plan: DeepReadonly<ChangePlan>, progress?: Dee
     for (const memberAction of memberActions.get(nodeId) ?? []) rows.push(actionRow(memberAction, true))
   }
   for (const [nodeId, item] of items) {
-    if (!coveredNodes.has(nodeId)) rows.push({ key: `pending:${nodeId}`, nodeId, label: labels.get(nodeId),
+    if (!coveredNodes.has(nodeId)) rows.push({ key: `pending:${nodeId}`, nodeId, label: labels.get(nodeId), category: nodeCategory(nodes.get(nodeId)),
       version: versionPair(undefined, item.tag), preparationStage: item.stage })
   }
   for (const root of plan.roots) {
     const nodeId = root.node_id
     if (!labels.has(nodeId) || (coveredNodes.has(nodeId) && (!root.tag || root.tag === coveredTags.get(nodeId)))
       || (!coveredNodes.has(nodeId) && items.has(nodeId) && (!root.tag || root.tag === items.get(nodeId)?.tag))) continue
-    rows.push({ key: `selected:${nodeId}`, nodeId, label: labels.get(nodeId), version: versionPair(undefined, root.tag), selected: true })
+    rows.push({ key: `selected:${nodeId}`, nodeId, label: labels.get(nodeId), category: nodeCategory(nodes.get(nodeId)), version: versionPair(undefined, root.tag), selected: true })
   }
   return { rows }
 }

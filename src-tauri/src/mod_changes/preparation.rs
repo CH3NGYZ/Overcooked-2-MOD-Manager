@@ -253,6 +253,7 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
     ensure_fresh(state, &session.trusted.revision)?;
     verify_fingerprints(&session.payload_fingerprints)?;
     if let Some(solved) = &session.solved {
+        session.residue_adoptions.verify(state, session, solved)?;
         inventory::validate_solution(
             &session.trusted,
             &session.request,

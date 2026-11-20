@@ -87,11 +87,17 @@ pub(super) fn commit(
         return Err("modChanges.recoveryRequired".into());
     }
     super::guard::ensure_recovered(state)?;
+    let solved = session.solved.as_ref().ok_or("modChanges.notPrepared")?;
+    if root != session.trusted.game_root {
+        return Err("modChanges.targetChanged".into());
+    }
+    if !session.residue_adoptions.is_empty() {
+        session.residue_adoptions.verify(state, session, solved)?;
+    }
     if inventory::revision(state, &root, &config)? != session.trusted.revision {
         return Err("modChanges.targetChanged".into());
     }
     preparation::verify_fingerprints(&session.payload_fingerprints)?;
-    let solved = session.solved.as_ref().ok_or("modChanges.notPrepared")?;
     inventory::validate_solution(
         &session.trusted,
         &session.request,

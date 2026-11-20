@@ -59,12 +59,15 @@ pub(super) fn conflicts_with_installed(
             if !reported.insert(candidate.dir_name.to_lowercase()) {
                 continue;
             }
+            let local = metadata.version.trim();
+            let incoming = set.metadata.version.trim();
             conflicts.push(InstallConflict {
                 name: level_set_display_name(metadata),
-                version: metadata.version.trim().to_string(),
+                version: local.to_string(),
                 handle: candidate.dir_name.clone(),
                 enabled: candidate.enabled,
-                same_version: metadata.version.trim() == set.metadata.version.trim(),
+                same_version: crate::releases::compare_release_versions(local, incoming)
+                    .map_or(local == incoming, |order| order.is_eq()),
             });
         }
     }

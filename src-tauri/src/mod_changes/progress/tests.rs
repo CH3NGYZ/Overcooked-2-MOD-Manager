@@ -97,6 +97,7 @@ fn session(candidate_id: &str) -> PlanSession {
             installed_mods: Default::default(),
             duplicate_releases: Default::default(),
             duplicate_release_safe_nodes: Default::default(),
+            declared_bundle_switch_members: Default::default(),
         },
         request: ChangeRequest::default(),
         wire_request: PlanRequest::default(),
@@ -135,6 +136,7 @@ fn session(candidate_id: &str) -> PlanSession {
         staging: PathBuf::new(),
         payload_fingerprints: HashMap::new(),
         mutations: None,
+        residue_adoptions: Default::default(),
         created: Instant::now(),
     }
 }

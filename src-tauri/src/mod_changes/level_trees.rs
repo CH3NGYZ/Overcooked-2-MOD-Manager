@@ -15,7 +15,7 @@ use std::{
 };
 
 mod bundled;
-pub(crate) use bundled::{bundled_level_root, payload_level_root};
+pub(crate) use bundled::{bundled_level_root, payload_level_root, selected_bundled_level_root};
 
 pub(crate) struct Replacement {
     pub node_id: String,

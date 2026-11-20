@@ -1,4 +1,5 @@
 import { t } from './i18n'
+import { MOD_RELATION_LABELS } from './modRelations'
 
 /**
  * 状态标签「点了会跳到哪」的唯一实现（MOD 卡片与包标题共用）。
@@ -18,11 +19,7 @@ import { t } from './i18n'
  * 跳到自己绑定仓库只会看到一张没问题的卡。`dependency_conflict` 同理
  * （要卸的是对方）。
  */
-const DEPENDENCY_TAGS = new Set([
-  'missing_dependency',
-  'dependency_conflict',
-  'dependency_installable',
-])
+const DEPENDENCY_TAGS = new Set<string>(Object.values(MOD_RELATION_LABELS))
 
 /** 这枚标签是不是「依赖类」（决定跳转目标与提示文案，见上）。 */
 export function isDependencyTag(tagKey: string): boolean {

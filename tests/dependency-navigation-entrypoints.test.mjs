@@ -5,9 +5,11 @@ import test from 'node:test'
 import { parse } from '@vue/compiler-sfc'
 import ts from 'typescript'
 import { effectScope } from 'vue'
-import { dependencyActionLabel, dependencyRowFromStatus, levelSetDependencyRows } from '../src/dependencyRows.ts'
+import { dependencyRowFromStatus } from '../src/dependencyRows.ts'
 import { levelSetCardAction, levelSetCardTags, levelSetForMap, levelSetRelationStatuses } from '../src/levelSetStatus.ts'
-import { dependencyTagFor, primaryRelation, relationJumpRepositoryId, relationStatusFromEvaluation, resolveRelations, unmetRelations } from '../src/modRelations.ts'
+import { levelSetTagKey } from '../src/levelSetStatusSummary.ts'
+import { dependencyRepairStatus, dependencyTagFor, primaryRelation, relationJumpRepositoryId, resolveRelations, unmetRelations } from '../src/modRelations.ts'
+import { modRelationForTag, runtimeModStatus } from '../src/modRuntimeStatus.ts'
 import { repositoryForMod } from '../src/modStatus.ts'
 import { evaluationSnapshot, clearEvaluation } from './helpers/mod-change-evaluations.mjs'
 import { statusActionFor } from '../src/statusActions.ts'
@@ -21,15 +23,18 @@ registerHooks({
   },
   load(url, context, next) {
     if (url.endsWith('/src/modChanges/store.ts')) return { format:'module',shortCircuit:true,source:'export const useModChanges=()=>({run:async request=>{globalThis.__repairRequests.push(request);return null}})' }
+    if (url.endsWith('/src/composables/useDashboardStore.ts')) return { format:'module',shortCircuit:true,
+      source:'export const useDashboard=()=>{throw new Error("Repair must not run the toggle path")}' }
     if (url.endsWith('/src/i18n.ts')) return { format: 'module', shortCircuit: true, source: 'export const t = key => key' }
     if (url.endsWith('/src/useNotify.ts')) return { format: 'module', shortCircuit: true,
-      source: 'export const useNotify=()=>({warning:()=>{}})' }
+      source: 'export const useNotify=()=>({warning:()=>{},error:value=>{throw new Error(value)}})' }
     return next(url, context)
   },
 })
 const { useDependencyNavigation, dependencyNavigationOpen: open, pendingDependencyNavigation: pending,
   confirmDependencyNavigation: confirm, cancelDependencyNavigation: cancel, afterDependencyNavigationLeave: leave,
 } = await import('../src/composables/useDependencyNavigation.ts')
+const { isDependencyTag } = await import('../src/tagTargets.ts')
 
 function handlers(path, names, bindings) {
   const { descriptor } = parse(readFileSync(new URL(path, import.meta.url), 'utf8'))
@@ -46,15 +51,18 @@ function handlers(path, names, bindings) {
   `)}\nreturn { ${names.join(',')} }`)
 }
 const createMap = handlers('../src/views/LevelsView.vue', [
-  'actionOf', 'dependencyRow', 'runCardAction', 'onTagClick', 'openDependencyJump',
+  'actionOf', 'dependencyRow', 'repairOf', 'repairDependencies', 'onTagClick', 'openDependencyJump',
 ], ['mods', 'maps', 'sets', 'repositories', 'gameProbed', 'refreshingHint', 'tagsOf',
-  'levelSetCardAction', 'dependencyActionLabel', 'dependencyRowFromStatus', 'useDependencyNavigation',
+  'levelSetCardAction', 'dependencyRepairStatus', 'levelSetRelationStatuses', 'levelSetTagKey',
+  'dependencyRowFromStatus', 'useDependencyNavigation',
   'linkToModRepository', 'linkToMap', 't', 'pickI18n'])
 const createMod = handlers('../src/views/ModsLocalView.vue', [
-  'actionContext', 'cardAction', 'relationOwnerMod', 'packageAction', 'runCardAction', 'runPackageAction',
+  'actionContext', 'cardAction', 'packageAction', 'packageRelationTag', 'currentPackage',
+  'modRepairStatus', 'packageRepairStatus', 'repairModDependencies', 'repairPackageDependencies',
   'packageTagTargetId', 'openPackageTag', 'dependencyRow', 'openDependencyJump',
-], ['mods', 'effectiveMods', 'repositories', 'groups', 'relationIssueByDll', 'statusActionFor',
-  'repositoryForMod', 'dependencyActionLabel', 'dependencyRowFromStatus', 'useDependencyNavigation',
+], ['mods', 'effectiveMods', 'repositories', 'groups', 'relationTagsByDll', 'statusActionFor',
+  'repositoryForMod', 'dependencyRepairStatus', 'modRelationForTag', 'relationJumpRepositoryId',
+  'dependencyRowFromStatus', 'useDependencyNavigation',
   'linkToModRepository', 'isDependencyTag', 't', 'pickI18n'])
 const createOnlineMap = handlers('../src/views/MapsOnlineView.vue', [
   'mapDependencyStatuses', 'dependencyOf', 'jumpToDependency', 'openDependencyJump',
@@ -66,14 +74,14 @@ const createOnlineMod = handlers('../src/views/ModsOnlineView.vue', [
 ], ['mods', 'repositories', 'dependencyTagFor', 'primaryRelation', 'relationJumpRepositoryId', 'resolveRelations',
   'hasLocalInstall', 'relationTagTitle', 'dependencyRowFromStatus', 'useDependencyNavigation', 'focusRepository', 't', 'pickI18n'])
 const createModTags = handlers('../src/components/ModStatusTags.vue', ['activate'], [
-  'status', 'mods', 'repositories', 'isDependencyTag', 'dependencyRowFromStatus', 'useDependencyNavigation',
+  'status', 'mods', 'repositories', 'isDependencyTag', 'modRelationForTag', 'dependencyRowFromStatus', 'useDependencyNavigation',
   'openDependencyJump', 'targetOf', 'linkToModRepository', 't', 'pickI18n',
 ])
 const release = tag => ({ tag_name: tag, version: tag, name: tag, body: '', assets: [], prerelease: false, draft: false })
 const repo = (id, guid, tags) => ({ id, name: id, plugin_guid: guid, download_mode: 'release', cached_releases: tags.map(release) })
 const installed = (guid, version) => ({ guid, version, name: guid, dll_file: `${guid}.dll`, enabled: true,
   labels: ['missing_dependency'] })
-const isDependencyTag = key => ['missing_dependency', 'dependency_conflict', 'dependency_installable'].includes(key)
+const modTagKeys = { conflict: 'dependency_conflict', disabled: 'dependency_disabled', version_mismatch: 'dependency_mismatch', missing: 'missing_dependency' }
 
 function fixture(t, currentVersion = '4.0', targetVersion = 'v3.10.2', issueState = 'version_mismatch') {
   cancel(); leave()
@@ -84,48 +92,81 @@ function fixture(t, currentVersion = '4.0', targetVersion = 'v3.10.2', issueStat
   mods.value.push(owner)
   const set = { dir_name: 'Map', name: 'Map', version: '1.0', enabled: true, relations: [relation] }
   const sets = { value: [set] }, jumps = [], scope = effectScope()
-  const snapshot = evaluationSnapshot([
+  evaluationSnapshot([
     {id:'map:Map',kind:'map',dir:'Map',rows:[{relation,state:issueState}]},
     {id:'mod:owner',dlls:[owner.dll_file],rows:[{relation,state:issueState}]},
   ])
-  const issues = { get value() { return { [owner.dll_file]: relationStatusFromEvaluation(snapshot.evaluations[1].runtime[0], mods.value) } } }
+  const ownerRuntime = () => runtimeModStatus(owner, mods.value, repositories.value, { refreshing: {}, queued: {}, sourceRefreshing: {}, entryStateUnavailable: false })
+  const relationTagsByDll = { get value() { return { [owner.dll_file]: ownerRuntime().relationTags } } }
   globalThis.__repairRequests=[]
-  const pkg = { key: 'pkg:owner', mods: [owner], statuses: [{ key: 'missing_dependency' }] }
-  const environment = { mods, maps, repositories, sets, effectiveMods: mods, groups: { value: [{ packages: [pkg] }] },
-    gameProbed: { value: true }, refreshingHint: { value: undefined }, relationIssueByDll: issues,
+  const pkg = { key: 'pkg:owner', mods: [owner], coreMods: [owner], statuses: [{ key: modTagKeys[issueState] }] }
+  const effectiveMods = { get value() { return mods.value.map(mod => mod === owner ? ownerRuntime().mod : mod) } }
+  const environment = { mods, maps, repositories, sets, effectiveMods, groups: { value: [{ packages: [pkg] }] },
+    gameProbed: { value: true }, refreshingHint: { value: undefined }, relationTagsByDll,
     tagsOf: current => levelSetCardTags(current, maps.value, mods.value, true, repositories.value),
-    levelSetCardAction, dependencyActionLabel, dependencyRowFromStatus, useDependencyNavigation,
-    statusActionFor, repositoryForMod, isDependencyTag,
+    levelSetCardAction, dependencyRepairStatus, levelSetRelationStatuses, levelSetTagKey,
+    dependencyRowFromStatus, useDependencyNavigation, modRelationForTag,
+    statusActionFor, repositoryForMod, isDependencyTag, relationJumpRepositoryId,
     linkToModRepository: (...args) => jumps.push(args), linkToMap: () => assert.fail('must target a MOD'),
     t: key => key, pickI18n: (messages, fallback) => fallback }
   const map = scope.run(() => createMap(environment)), mod = scope.run(() => createMod(environment))
   t.after(() => { scope.stop(); cancel(); leave(); clearEvaluation() })
-  return { mods, maps, repositories, sets, set, owner, pkg, jumps, map, mod, relation, issues }
+  return { mods, maps, repositories, sets, set, owner, ownerRuntime, pkg, jumps, map, mod, relation }
 }
 
 for (const entry of ['map-action', 'map-tag', 'mod-action', 'package-action', 'package-tag']) {
   test(`${entry} sends its owner to the shared whole-chain repair plan`, async t => {
     const f = fixture(t)
-    if (entry === 'map-action') await f.map.runCardAction(f.set)
+    if (entry === 'map-action') f.map.repairDependencies(f.set)
     if (entry === 'map-tag') f.map.onTagClick(f.set, levelSetCardTags(f.set, [], f.mods.value, true, f.repositories.value)[0])
-    if (entry === 'mod-action') f.mod.runCardAction(f.owner)
-    if (entry === 'package-action') f.mod.runPackageAction(f.pkg)
-    if (entry === 'package-tag') f.mod.openPackageTag(f.pkg, 'missing_dependency')
+    if (entry === 'mod-action') f.mod.repairModDependencies(f.owner)
+    if (entry === 'package-action') f.mod.repairPackageDependencies(f.pkg)
+    if (entry === 'package-tag') f.mod.openPackageTag(f.pkg, 'dependency_mismatch')
     await new Promise(resolve=>setImmediate(resolve))
     assert.equal(open.value, false, 'the only confirmation belongs to the complete change plan')
     assert.deepEqual(f.jumps, [])
-    assert.deepEqual(globalThis.__repairRequests, [{roots:[{node_id:entry.startsWith('map')?'map:Map':'mod:owner',enabled:true}]}])
+    assert.deepEqual(globalThis.__repairRequests, [{ repair_dependencies_of: entry.startsWith('map') ? 'map:Map' : 'mod:owner' }])
   })
 }
 
 test('card repair does not freeze a dependency release chosen from stale frontend caches', async t => {
   const f=fixture(t)
   f.repositories.value=[repo('runtime-source','web.runtime',['v999.0'])]
-  assert.equal(f.map.actionOf(f.set).label,'modChanges.reviewSelection')
-  assert.equal(f.mod.cardAction(f.owner).action.label,'modChanges.reviewSelection')
-  f.mod.runCardAction(f.owner)
+  assert.equal(f.map.repairOf(f.set).relation.guid, 'web.runtime')
+  assert.equal(f.mod.modRepairStatus(f.owner).relation.guid, 'web.runtime')
+  f.mod.repairModDependencies(f.owner)
   await new Promise(resolve=>setImmediate(resolve))
-  assert.deepEqual(globalThis.__repairRequests,[{roots:[{node_id:'mod:owner',enabled:true}]}])
+  assert.deepEqual(globalThis.__repairRequests, [{ repair_dependencies_of: 'mod:owner' }])
+})
+
+test('disabled map and MOD with updates can repair both kinds of unmet dependency', async t => {
+  const f = fixture(t)
+  f.set.enabled = f.owner.enabled = false
+  const ownerRepo = { ...repo('owner', 'owner', ['2.0']), latest_tag: '2.0' }
+  f.repositories.value.push(ownerRepo)
+  f.owner.repository_id = ownerRepo.id
+  f.owner.labels = ['update_available']
+  const online = { id: 'map-online', name: 'Map', level_set_name: 'Map', author: 'Author', latest_tag: '2.0', latest_info_version: '2.0',
+    cached_releases: [release('2.0')] }
+  f.set.author = 'Author'
+  f.maps.value = [online]
+  const rows = [{ relation: f.relation, state: 'version_mismatch' }, { relation: { guid: 'extra' }, state: 'disabled' }]
+  evaluationSnapshot([
+    { id: 'map:Map', kind: 'map', dir: 'Map', enabled: false, rows },
+    { id: 'mod:owner', repo: ownerRepo.id, dlls: [f.owner.dll_file], enabled: false, rows },
+  ])
+  f.pkg.statuses = [{ key: 'update_available' }, { key: 'dependency_disabled' }, { key: 'dependency_mismatch' }]
+  assert.equal(f.map.actionOf(f.set)?.kind, 'update')
+  assert.equal(f.mod.packageAction(f.pkg)?.action.kind, 'update')
+  assert.equal(f.map.repairOf(f.set)?.state, 'version_mismatch')
+  assert.equal(f.mod.packageRepairStatus(f.pkg)?.state, 'version_mismatch')
+  assert.equal(f.mod.packageRelationTag(f.pkg, 'dependency_disabled')?.relation.guid, 'extra')
+  const tags = levelSetCardTags(f.set, f.maps.value, f.mods.value, true, f.repositories.value)
+  assert.equal(tags[1]?.text, 'modChanges.card.dependencyDisabled')
+  f.map.onTagClick(f.set, tags[1])
+  f.mod.repairPackageDependencies(f.pkg)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(globalThis.__repairRequests, [{ repair_dependencies_of: 'map:Map' }, { repair_dependencies_of: 'mod:owner' }])
 })
 
 for (const state of ['missing', 'disabled', 'version_mismatch', 'conflict']) {
@@ -159,7 +200,7 @@ for (const state of ['missing', 'disabled', 'version_mismatch', 'conflict']) {
     else view.jumpToRelationRepository(ownerRepo)
     await new Promise(resolve => setImmediate(resolve))
     assert.deepEqual(f.jumps, [], 'repair node IDs must never be treated as repository navigation IDs')
-    assert.deepEqual(globalThis.__repairRequests, [{ roots: [{ node_id: kind === 'map' ? 'map:Map' : 'mod:owner', enabled: true }] }])
+    assert.deepEqual(globalThis.__repairRequests, [{ repair_dependencies_of: kind === 'map' ? 'map:Map' : 'mod:owner' }])
   })
 }
 
@@ -181,20 +222,20 @@ test('both online card templates connect the visible dependency tag to their act
 for (const state of ['missing', 'disabled', 'version_mismatch', 'conflict']) {
   for (const entry of ['single-mod-tag', 'package-tag', 'local-map-tag']) test(`${entry} ${state} sends repair owners through the shared plan`, async t => {
     const f = fixture(t, '4.0', 'v3.10.2', state)
-    const tagKey = state === 'conflict' ? 'dependency_conflict' : 'missing_dependency'
+    const tagKey = modTagKeys[state]
     if (entry === 'package-tag') f.mod.openPackageTag(f.pkg, tagKey)
     else if (entry === 'local-map-tag') f.map.onTagClick(f.set, levelSetCardTags(f.set, [], f.mods.value, true, f.repositories.value)[0])
     else {
       const scope = effectScope()
       t.after(() => scope.stop())
-      const component = scope.run(() => createModTags({ status: { get value() { return { issue: f.issues.value[f.owner.dll_file] } } },
-        mods: f.mods, repositories: f.repositories, isDependencyTag, dependencyRowFromStatus, useDependencyNavigation,
+      const component = scope.run(() => createModTags({ status: { get value() { return f.ownerRuntime() } },
+        mods: f.mods, repositories: f.repositories, isDependencyTag, modRelationForTag, dependencyRowFromStatus, useDependencyNavigation,
         openDependencyJump: row => f.jumps.push(row.jump.id), targetOf: () => 'mod:owner',
         linkToModRepository: (...args) => f.jumps.push(args), t: key => key, pickI18n: (_messages, fallback) => fallback }))
       component.activate(tagKey)
     }
     await new Promise(resolve => setImmediate(resolve))
     assert.deepEqual(f.jumps, [])
-    assert.deepEqual(globalThis.__repairRequests, [{ roots: [{ node_id: entry === 'local-map-tag' ? 'map:Map' : 'mod:owner', enabled: true }] }])
+    assert.deepEqual(globalThis.__repairRequests, [{ repair_dependencies_of: entry === 'local-map-tag' ? 'map:Map' : 'mod:owner' }])
   })
 }

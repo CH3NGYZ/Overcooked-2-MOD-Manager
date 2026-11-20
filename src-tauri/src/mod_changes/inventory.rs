@@ -9,6 +9,7 @@ use std::{
     sync::Arc,
 };
 
+mod declared_bundles;
 mod duplicate_releases;
 pub(super) use duplicate_releases::{DuplicateReleaseUpgrade, DuplicateReleases};
 
@@ -18,6 +19,26 @@ pub(crate) struct MemberSummary {
     pub dll_file: String,
     pub enabled: bool,
     pub guid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<DllRole>,
+}
+
+/// UI category only. The solver's `kind` continues to describe mutation ownership.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PresentationKind {
+    ModPackage,
+    Plugin,
+    Dependency,
+}
+
+impl From<DllRole> for PresentationKind {
+    fn from(role: DllRole) -> Self {
+        match role {
+            DllRole::Mod => Self::Plugin,
+            DllRole::Dependency => Self::Dependency,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -43,6 +64,8 @@ pub(crate) struct NodeSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub map_name_zh: Option<String>,
     pub kind: NodeKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub presentation_kind: Option<PresentationKind>,
     pub enabled: bool,
     pub repository_id: Option<String>,
     pub package_id: Option<String>,
@@ -83,6 +106,8 @@ pub(crate) struct TrustedInventory {
     pub(super) installed_mods: Arc<[InstalledMod]>,
     /// Physical ownership checks separate from the missing repository alias.
     pub(super) duplicate_release_safe_nodes: BTreeSet<String>,
+    /// Scan-proved DLL companions with no install-manifest removal right.
+    pub(super) declared_bundle_switch_members: BTreeMap<String, BTreeSet<String>>,
     /// Filled only on the plan's private inventory, never in the scan cache.
     pub(super) duplicate_releases: DuplicateReleases,
 }
@@ -176,7 +201,9 @@ fn current_candidate(
         });
     let primary = items
         .iter()
-        .filter(|item| !item.is_dependency && !item.release_companion)
+        .filter(|item| {
+            !item.is_dependency && !item.release_companion && item.bundled_with_dll.is_none()
+        })
         .max_by_key(|item| match item.repository_identity_match {
             Some(RepositoryIdentityMatch::Guid) => 2,
             Some(RepositoryIdentityMatch::Metadata) => 1,
@@ -279,15 +306,7 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
             .entry(mods::manifest_dll_key(path))
             .or_default() += 1;
     }
-    let mut grouped: BTreeMap<String, Vec<InstalledMod>> = BTreeMap::new();
-    for item in installed {
-        let group = item
-            .package_id
-            .clone()
-            .map(|p| format!("package:{p}"))
-            .unwrap_or_else(|| format!("dll:{}", key(&item.dll_file)));
-        grouped.entry(group).or_default().push(item);
-    }
+    let grouped = declared_bundles::group_mods(installed);
     let mut repo_count: HashMap<String, usize> = HashMap::new();
     for items in grouped.values() {
         let ids = items
@@ -304,6 +323,7 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
     let mut files = BTreeMap::new();
     let mut toggle_unbound_nodes = BTreeSet::new();
     let mut duplicate_release_safe_nodes = BTreeSet::new();
+    let mut declared_bundle_switch_members = BTreeMap::new();
     for (fallback, items) in grouped {
         let ids = items
             .iter()
@@ -350,16 +370,18 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
             toggle_unbound_nodes.insert(id.clone());
         }
         let enabled = items.iter().any(|i| i.enabled);
-        let (label, name_i18n) = mod_label(repo, items.first());
+        let representative = items.iter().find(|item| item.bundled_with_dll.is_none());
+        let (label, name_i18n) = mod_label(repo, representative);
         let summary = NodeSummary {
             node_id: id.clone(),
             label,
             name_i18n,
             map_name_zh: None,
             kind: NodeKind::Mod,
+            presentation_kind: (items.len() > 1).then_some(PresentationKind::ModPackage),
             enabled,
             repository_id: repo.map(|r| r.id.clone()),
-            package_id: items.first().and_then(|i| i.package_id.clone()),
+            package_id: representative.and_then(|i| i.package_id.clone()),
             dll_files: items.iter().map(|i| i.dll_file.clone()).collect(),
             members: items
                 .iter()
@@ -368,6 +390,13 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
                     dll_file: i.dll_file.clone(),
                     enabled: i.enabled,
                     guid: i.guid.clone(),
+                    role: if i.is_dependency {
+                        Some(DllRole::Dependency)
+                    } else if i.guid.is_some() || i.plugin_name.is_some() || i.version.is_some() {
+                        Some(DllRole::Mod)
+                    } else {
+                        None
+                    },
                 })
                 .collect(),
             map_dir_name: None,
@@ -398,8 +427,14 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
                 safe = false;
             }
         }
+        let declared_members = items
+            .iter()
+            .filter(|item| item.bundled_with_dll.is_some())
+            .map(|item| key(&item.dll_file))
+            .collect::<BTreeSet<_>>();
         if safe
             && repo.is_some()
+            && declared_members.is_empty()
             && owned_manifests.iter().all(|manifest| {
                 manifest
                     .files
@@ -416,6 +451,9 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
             })
         {
             duplicate_release_safe_nodes.insert(id.clone());
+        }
+        if !declared_members.is_empty() {
+            declared_bundle_switch_members.insert(id.clone(), declared_members);
         }
         inventory.nodes.push(ChangeNode {
             id: id.clone(),
@@ -468,6 +506,7 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
                     name_i18n: repo.name_i18n.clone(),
                     map_name_zh: None,
                     kind: NodeKind::Mod,
+                    presentation_kind: None,
                     enabled: false,
                     repository_id: Some(repo.id.clone()),
                     package_id: None,
@@ -519,6 +558,7 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
         toggle_unbound_nodes,
         installed_mods,
         duplicate_release_safe_nodes,
+        declared_bundle_switch_members,
         duplicate_releases: DuplicateReleases::default(),
     })
 }
@@ -589,6 +629,13 @@ pub(crate) fn validate_solution(
 ) -> Result<(), String> {
     use super::evaluate::{matches, relation_active, targets};
     use std::collections::BTreeSet;
+    if let Some(id) = request.repair_dependencies_of.as_deref() {
+        let before = trusted.inventory.nodes.iter().find(|node| node.id == id);
+        let after = solved.nodes.iter().find(|node| node.id == id);
+        if before.is_none() || before != after {
+            return Err("modChanges.targetChanged".into());
+        }
+    }
     let mut affected = request
         .roots
         .iter()

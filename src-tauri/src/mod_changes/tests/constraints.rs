@@ -195,6 +195,7 @@ fn sibling_member_switch_does_not_pull_unrelated_baseline_version_errors() {
             enabled: true,
             member_key: Some("first.dll".into()),
         }],
+        ..Default::default()
     };
     let (result, solved) = super::solve_with_inventory(&inventory, &request);
     assert_eq!(result.status, SolveStatus::Ready, "{result:?}");

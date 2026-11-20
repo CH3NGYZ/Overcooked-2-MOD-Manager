@@ -206,10 +206,13 @@ test('刷新结果有统一结构，两个域都能回传摘要', () => {
     assert.match(refreshState, new RegExp(`\\b${symbol}\\b`), `RefreshOutcome 缺 ${symbol}`)
   }
   assert.match(releaseRefresh, /state\.publishOutcome\(outcome\)/, '两个域由共享流水线写结果')
-  // 摘要文案与页头标签共用同一套格式化
+  // 两个管理页仍使用统一结果通知，检查摘要不再常驻页头。
   const outcomeText = read('src/refreshOutcomeText.ts')
   assert.match(outcomeText, /export function describeRefreshOutcome/)
-  assert.match(read('src/components/RefreshResultTag.vue'), /describeRefreshOutcome\(/)
+  for (const [view, domain] of [[modsLocal, 'repositories'], [levelsView, 'maps']]) {
+    assert.match(view, new RegExp(`message\\.success\\(describeRefreshOutcome\\(outcome.value, '${domain}'\\)\\)`))
+    assert.doesNotMatch(view, /RefreshResultTag|v-if="outcome"/)
+  }
 })
 
 test('同一动作共享 pass，源准备和 Release 分阶段，只有浮动整批按钮 force', () => {

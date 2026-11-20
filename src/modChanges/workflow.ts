@@ -15,6 +15,7 @@ export function isChangePlanLocked(phase?: ChangePhase) {
 
 /** Only skip the UI when the trusted plan has no change outside the requested switch. */
 function canApplyDirectly(request: ChangeRequest, plan: ChangePlan) {
+  if (!request.roots) return false
   const root = request.roots[0]
   if (!root || request.roots.length !== 1 || request.map_import || root.candidate_id != null || root.asset_name != null
     || plan.status !== 'ready' || plan.blockers.length || plan.install_notes.length

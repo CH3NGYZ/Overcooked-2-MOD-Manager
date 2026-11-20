@@ -88,12 +88,12 @@ pub(super) fn attach_root(
 /// keep its identity; only other groups can be consolidated as dependencies.
 pub(super) fn attach_dependencies(
     trusted: &mut TrustedInventory,
-    root: &RootRequest,
+    owner_id: &str,
     data_root: &Path,
 ) {
     let root_repo = trusted
         .files
-        .get(&root.intent.node_id)
+        .get(owner_id)
         .and_then(|files| files.summary.repository_id.clone());
     let mut counts = BTreeMap::new();
     for (id, _) in installed_groups(trusted) {

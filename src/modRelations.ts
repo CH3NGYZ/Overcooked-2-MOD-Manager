@@ -5,13 +5,13 @@
 // 带 .ts 扩展名：Node 24 直接执行 TS 时靠它解析相对导入；
 // 该文件同时被 Vite 打包，两种加载方式都要能用（与 statusTags 的写法一致）。
 import { compareVersions, isPrereleaseVersion } from './modStatus.ts'
-import { relationForSubject, relationsForSubject, repairRoot, targetMod } from './modChanges/evaluationProjection.ts'
-import type { EvaluationSubject, RelationEvaluation, RootIntent } from './modChanges/types'
+import { relationForSubject, relationsForSubject, repairTarget, targetMod } from './modChanges/evaluationProjection.ts'
+import type { DependencyRepairTarget, EvaluationSubject, RelationEvaluation } from './modChanges/types'
 import { parseVersionSpec, versionMatches } from './versionSpec.ts'
 import type { TagTone } from './theme'
 import type {
   InstalledMod, MapInfo, ReleaseInfo, ReleaseRelationOverride, ModRepository,
-  RepositoryRelation,
+  RepositoryRelation, InstalledModStatusLabel,
 } from './types'
 
 export type RelationState = 'ok' | 'installable' | 'missing' | 'conflict' | 'unknown' | 'unassessed' | 'disabled' | 'version_mismatch'
@@ -32,7 +32,7 @@ export interface RelationStatus {
    * 「装它」根本解决不了依赖，必须提前判定为没有来源。
    */
   release?: ReleaseInfo
-  repair?: RootIntent
+  repair?: DependencyRepairTarget
 }
 
 /** GUID 比较忽略大小写与首尾空白。 */
@@ -154,7 +154,7 @@ export function relationStatusFromEvaluation(
   const state: RelationState = evaluation.state === 'satisfied' || evaluation.state === 'optional'
     ? 'ok' : evaluation.state
   return { relation: evaluation.relation, state, installedMod, installedVersion: installedMod?.version ?? null,
-    ...(state !== 'ok' && state !== 'unknown' ? { repair: repairRoot(evaluation.owner_id) } : {}) }
+    ...(state !== 'ok' && state !== 'unknown' ? { repair: repairTarget(evaluation.owner_id) } : {}) }
 }
 
 /** A declaration can be displayed before its exact subject has been evaluated. */
@@ -325,7 +325,7 @@ export function relationJumpRepositoryId(
 export function relationCardTag(
   status: RelationStatus | undefined,
   installed: boolean,
-): { kind: 'conflict' | 'missingDependency' | 'installable' } | undefined {
+): Pick<DependencyTagView, 'kind'> | undefined {
   if (!installed) return undefined
   const view = relationTagView(status)
   return view ? { kind: view.kind } : undefined
@@ -342,8 +342,7 @@ export interface DependencyTagView {
    * moderate —— 有办法解决的事不该比没救的事看起来更严重。
    */
   tone: Extract<TagTone, 'critical' | 'moderate'>
-  /** 判定来源：冲突 / 必须依赖缺了 / 兼容版本不在区间（可安装）。 */
-  kind: 'conflict' | 'missingDependency' | 'installable'
+  kind: 'conflict' | 'missingDependency' | 'installable' | 'dependencyDisabled' | 'dependencyMismatch'
   /**
    * 点标签该跳到的仓库卡片 id。
    *
@@ -357,7 +356,7 @@ export interface DependencyTagView {
  * 一条未满足的关系该显示成哪枚提醒。
  *
  * 卡片标签（`dependencyTagFor`）、MOD 卡片状态标签
- * （`modRuntimeStatus.relationStatusLabel`）、地图卡片（`levelSetStatus`）
+ * （`modRuntimeStatus`）、地图卡片（`levelSetStatus`）
  * 全部走这一处 —— 三处各写一套时，同一个依赖在不同页面会得到不同结论。
  *
  * 三种关系说三件不同的事（用户 2026-11-04 定的口径）：
@@ -374,8 +373,8 @@ export interface DependencyTagView {
  */
 export function relationTagView(status: RelationStatus | undefined): DependencyTagView | undefined {
   if (!status || !relationIsUnmet(status)) return undefined
-  if (status.state === 'disabled') return { text: 'modChanges.relation.disabled', tone: 'critical', kind: 'missingDependency' }
-  if (status.state === 'version_mismatch') return { text: 'modChanges.relation.versionMismatch', tone: 'critical', kind: 'missingDependency' }
+  if (status.state === 'disabled') return { text: 'modChanges.relation.disabled', tone: 'critical', kind: 'dependencyDisabled' }
+  if (status.state === 'version_mismatch') return { text: 'modChanges.relation.versionMismatch', tone: 'critical', kind: 'dependencyMismatch' }
   const kind = status.relation.kind ?? 'requires'
   /*
    * 先按 `kind` 分派，再看 `state`：`compatible` 不满足时 `resolveRelation`
@@ -422,4 +421,45 @@ export function dependencyTagFor(
 ): DependencyTagView | undefined {
   if (!installed) return undefined
   return relationTagView(primaryRelation(statuses))
+}
+
+export interface LocalRelationTag extends DependencyTagView {
+  dependency: RelationStatus
+}
+
+export const LOCAL_RELATION_TEXT = {
+  dependencyDisabled: 'modChanges.card.dependencyDisabled',
+  dependencyMismatch: 'modChanges.card.dependencyMismatch',
+} as const
+
+export const MOD_RELATION_LABELS = {
+  conflict: 'dependency_conflict',
+  missingDependency: 'missing_dependency',
+  installable: 'dependency_installable',
+  dependencyDisabled: 'dependency_disabled',
+  dependencyMismatch: 'dependency_mismatch',
+} as const satisfies Record<DependencyTagView['kind'], InstalledModStatusLabel>
+
+/** Local cards show each assessed issue kind once, preferring a clickable representative. */
+export function localRelationTags(statuses: readonly RelationStatus[]): LocalRelationTag[] {
+  const tags = new Map<DependencyTagView['kind'], LocalRelationTag>()
+  for (const dependency of statuses) {
+    const tag = relationTagView(dependency)
+    if (!tag) continue
+    const previous = tags.get(tag.kind)
+    if (!previous || (!relationJumpRepositoryId(previous.dependency) && relationJumpRepositoryId(dependency))) {
+      const text = tag.kind === 'dependencyDisabled' || tag.kind === 'dependencyMismatch'
+        ? LOCAL_RELATION_TEXT[tag.kind] : tag.text
+      tags.set(tag.kind, { ...tag, text, dependency })
+    }
+  }
+  return [...tags.values()]
+}
+
+/** One entry is sufficient: the planner reads every requirement of the installed owner. */
+export function dependencyRepairStatus(statuses: readonly RelationStatus[]): RelationStatus | undefined {
+  return statuses.find(status => {
+    const tag = relationTagView(status)
+    return tag && tag.kind !== 'conflict' && relationJumpRepositoryId(status)
+  })
 }

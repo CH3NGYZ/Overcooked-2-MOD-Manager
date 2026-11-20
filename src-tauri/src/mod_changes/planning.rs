@@ -134,6 +134,7 @@ fn add_subject(trusted: &mut TrustedInventory, subject: EvaluationSubject) -> Re
                 name_i18n,
                 map_name_zh: None,
                 kind,
+                presentation_kind: None,
                 enabled: false,
                 repository_id: source,
                 package_id: None,
@@ -153,8 +154,14 @@ fn add_subject(trusted: &mut TrustedInventory, subject: EvaluationSubject) -> Re
 }
 
 pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<ChangePlan, String> {
+    let repair = wire_request.repair_dependencies_of.as_deref();
     if wire_request.roots.len() > 1024
-        || (wire_request.roots.is_empty() && wire_request.map_import.is_none())
+        || (repair.is_none() && wire_request.roots.is_empty() && wire_request.map_import.is_none())
+        || (repair.is_some()
+            && (!wire_request.roots.is_empty()
+                || wire_request.map_import.is_some()
+                || wire_request.toggle_scope.is_some()
+                || wire_request.bulk_toggle))
     {
         return Err("modChanges.installationBlocked".into());
     }
@@ -165,6 +172,13 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
     }
     let trusted = (*inventory::cached(state)?).clone();
     ensure_toggle_scope(state, &trusted, &wire_request)?;
+    if let Some(id) = repair
+        && !trusted.files.get(id).is_some_and(|files| {
+            !files.summary.dll_files.is_empty() || files.summary.map_dir_name.is_some()
+        })
+    {
+        return Err("modChanges.targetChanged".into());
+    }
     game::ensure_game_stopped(&trusted.game_root)?;
     let data = state
         .config
@@ -183,6 +197,7 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
             .iter()
             .map(|root| root.intent.clone())
             .collect(),
+        repair_dependencies_of: wire_request.repair_dependencies_of.clone(),
     };
     let empty = SolveResult {
         status: SolveStatus::Incomplete,
@@ -210,6 +225,7 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
         payload_fingerprints: HashMap::new(),
         map_payload: None,
         mutations: None,
+        residue_adoptions: Default::default(),
         created: std::time::Instant::now(),
     };
     let result = (|| {
@@ -219,48 +235,35 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
             }
         }
         // Manual previews already changed session.trusted. Merge exact remote roots there too.
-        let duplicate_upgrade_root = match session.wire_request.roots.as_slice() {
+        let exact_upgrade = match session.wire_request.roots.as_slice() {
             [root]
                 if root.intent.enabled
                     && root.intent.member_key.is_none()
+                    && root
+                        .intent
+                        .candidate_id
+                        .as_deref()
+                        .is_some_and(|id| id.starts_with("release:"))
                     && session.wire_request.map_import.is_none()
                     && session.wire_request.toggle_scope.is_none()
                     && !session.wire_request.bulk_toggle =>
             {
-                Some(root)
+                Some(root.intent.node_id.as_str())
             }
             _ => None,
         };
-        let exact_upgrade = duplicate_upgrade_root.is_some_and(|root| {
-            root.intent
-                .candidate_id
-                .as_deref()
-                .is_some_and(|id| id.starts_with("release:"))
-        });
         for root in &session.wire_request.roots {
             if !root.intent.node_id.starts_with("preview:") {
                 attach_exact_root(
                     &mut session.trusted,
                     root,
-                    exact_upgrade.then_some(data.as_path()),
+                    exact_upgrade.map(|_| data.as_path()),
                 )?;
             }
         }
-        if let Some(root) = duplicate_upgrade_root {
-            // An explicit repair of an installed MOD keeps that root's actual
-            // version. Only its dependencies may gain an upgrade candidate.
-            let repair = root.intent.candidate_id.is_none()
-                && root.asset_name.is_none()
-                && session
-                    .trusted
-                    .files
-                    .get(&root.intent.node_id)
-                    .is_some_and(|files| {
-                        files.summary.kind == NodeKind::Mod && !files.summary.dll_files.is_empty()
-                    });
-            if exact_upgrade || repair {
-                duplicate_release::attach_dependencies(&mut session.trusted, root, &data);
-            }
+        if let Some(owner_id) = exact_upgrade.or(session.request.repair_dependencies_of.as_deref())
+        {
+            duplicate_release::attach_dependencies(&mut session.trusted, owner_id, &data);
         }
         if session.wire_request.map_import.is_some() {
             super::map_payload::attach(state, &mut session)?;
@@ -517,6 +520,7 @@ fn attach_preview(
                     name_i18n,
                     map_name_zh: None,
                     kind: NodeKind::Mod,
+                    presentation_kind: None,
                     enabled: false,
                     repository_id: None,
                     package_id: None,
@@ -585,17 +589,29 @@ pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(),
             }
         }
     }
-    let (mut result, mut solved) =
-        super::inventory_maps::runtime_conflict::solve_toggle(state, session, &input)?
-            .unwrap_or_else(|| {
-                super::solve::solve_with_policy(&input, &session.request, |node_id| {
-                    session
-                        .trusted
-                        .duplicate_releases
-                        .upgrades
-                        .contains_key(node_id)
-                })
-            });
+    let solve = |input: &Inventory| -> Result<_, String> {
+        Ok(
+            super::inventory_maps::runtime_conflict::solve_toggle(state, session, input)?
+                .unwrap_or_else(|| {
+                    super::solve::solve_with_policy(input, &session.request, Some(&session.trusted))
+                }),
+        )
+    };
+    let (mut result, mut solved) = solve(&input)?;
+    let adoptions = if let Some(proposal) = &solved {
+        super::mutations::ResidueAdoptions::collect(state, session, proposal)?
+    } else {
+        Default::default()
+    };
+    if adoptions.consumes_loose_nodes() {
+        // Solve again with the loose nodes removed from the graph. This keeps
+        // dependency providers and progress rows aligned with the final owners.
+        adoptions.project(input.to_mut());
+        (result, solved) = solve(&input)?;
+        if let Some(proposal) = &solved {
+            adoptions.verify(state, session, proposal)?;
+        }
+    }
     if !unbound.is_empty() {
         if let Some(solved) = &mut solved {
             for (node, installed) in solved.nodes.iter_mut().zip(&original.nodes) {
@@ -620,6 +636,7 @@ pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(),
         duplicate_release::explain_blockers(&session.trusted, &mut result);
         Default::default()
     };
+    session.residue_adoptions = adoptions;
     session.plan = presentation(
         &session.trusted,
         &session.request,
@@ -644,6 +661,42 @@ pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(),
             {
                 summary.enabled = node.enabled;
                 if let Some(candidate) = &node.current {
+                    let payload = session
+                        .verified_payloads
+                        .get(&(node.id.clone(), candidate.id.clone()))
+                        .or_else(|| {
+                            session
+                                .payloads
+                                .get(&node.id)
+                                .filter(|payload| payload.candidate.id == candidate.id)
+                        });
+                    let staged_roles = session
+                        .map_payload
+                        .as_ref()
+                        .and_then(|batch| batch.member_roles.get(&candidate.id));
+                    let roles = payload
+                        .map(|payload| &payload.member_roles)
+                        .or(staged_roles);
+                    if payload.is_some() && node.kind == NodeKind::Mod {
+                        summary.presentation_kind = (candidate
+                            .provides
+                            .iter()
+                            .filter(|member| member.member_key.is_some())
+                            .count()
+                            > 1)
+                        .then_some(PresentationKind::ModPackage);
+                    } else if let (Some(roles), [member]) =
+                        (staged_roles, candidate.provides.as_slice())
+                    {
+                        if node.kind == NodeKind::Mod {
+                            summary.presentation_kind = member
+                                .member_key
+                                .as_ref()
+                                .and_then(|key| roles.get(key))
+                                .copied()
+                                .map(Into::into);
+                        }
+                    }
                     summary.members = candidate
                         .provides
                         .iter()
@@ -651,7 +704,18 @@ pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(),
                             key: p.member_key.clone().unwrap_or_default(),
                             dll_file: p.member_key.clone().unwrap_or_default(),
                             enabled: node.enabled && p.enabled,
-                            guid: Some(p.guid.clone()),
+                            guid: (!p.guid.is_empty()).then(|| p.guid.clone()),
+                            role: p.member_key.as_ref().and_then(|key| {
+                                if let Some(roles) = roles {
+                                    roles.get(key).copied()
+                                } else {
+                                    summary
+                                        .members
+                                        .iter()
+                                        .find(|member| member.key == *key)
+                                        .and_then(|member| member.role)
+                                }
+                            }),
                         })
                         .collect();
                 }

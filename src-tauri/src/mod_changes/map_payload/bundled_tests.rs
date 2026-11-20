@@ -30,6 +30,7 @@ fn same_root_framework_bundle_and_map_update_keep_disjoint_tree_endpoints() {
                 name_i18n: Default::default(),
                 map_name_zh: None,
                 kind: NodeKind::Mod,
+                presentation_kind: None,
                 enabled: true,
                 repository_id: None,
                 package_id: Some("framework".into()),
@@ -39,6 +40,7 @@ fn same_root_framework_bundle_and_map_update_keep_disjoint_tree_endpoints() {
                     dll_file: dll.clone(),
                     enabled: true,
                     guid: Some(crate::mods::plugin_target::DIYLEVEL_GUID.into()),
+                    role: None,
                 }],
                 map_dir_name: None,
                 map_id: None,
@@ -75,6 +77,7 @@ fn same_root_framework_bundle_and_map_update_keep_disjoint_tree_endpoints() {
         "framework".into(),
         super::super::super::session::Payload {
             candidate: next,
+            member_roles: Default::default(),
             stage_fingerprint: Fingerprint::capture(&stage).unwrap(),
             stage_root: stage,
             release_files: None,

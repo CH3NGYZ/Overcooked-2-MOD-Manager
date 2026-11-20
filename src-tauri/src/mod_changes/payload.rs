@@ -286,7 +286,7 @@ fn stage_asset(
             .duplicate_releases
             .copies_for(node_id, &candidate.id);
         let primary = repo.map(|repo| repo.plugin_guid.as_str());
-        let mut provides = read_members(
+        let (mut provides, member_roles) = read_members(
             trusted,
             node_id,
             stage_root,
@@ -334,6 +334,13 @@ fn stage_asset(
                 !bundled
             });
         }
+        // Only an exact repository Release can replace a declaration-only
+        // member. A local preview is allowed to leave it in place.
+        trusted.verify_declared_bundle_overlaps(
+            node_id,
+            release_asset.is_some().then_some(repo).flatten(),
+            &provides,
+        )?;
         let mut actual = candidate.clone();
         actual.provides = provides;
         actual.verification_pending = false;
@@ -429,6 +436,7 @@ fn stage_asset(
             release_files,
             files,
             manifest: Some(manifest),
+            member_roles,
         })
     })();
     if result.is_err() {
@@ -465,6 +473,8 @@ fn create_sandbox(
     fs::create_dir(stage_root).map_err(|error| error.to_string())
 }
 
+type VerifiedMembers = (Vec<ProvidedPlugin>, BTreeMap<String, DllRole>);
+
 fn read_members(
     trusted: &TrustedInventory,
     node_id: &str,
@@ -472,7 +482,7 @@ fn read_members(
     files: &mut [String],
     prerelease: bool,
     retirement: Option<(&[inventory::RetiredModCopy], &str)>,
-) -> Result<Vec<ProvidedPlugin>, String> {
+) -> Result<VerifiedMembers, String> {
     let indices = files
         .iter()
         .enumerate()
@@ -507,6 +517,7 @@ fn read_members(
         .collect::<Vec<_>>();
     let mut keys = HashSet::new();
     let mut provides = Vec::new();
+    let mut roles = BTreeMap::new();
     for ((&index, request), outcome) in indices.iter().zip(&requests).zip(outcomes) {
         let details = outcome.mod_dll().ok_or("metadataRead.taskFailed")?;
         let canonical = mods::canonical_dll_name(&files[index]).to_string();
@@ -549,6 +560,7 @@ fn read_members(
             fs::rename(&request.path, target).map_err(|error| error.to_string())?;
             files[index] = destination;
         }
+        roles.insert(member_key.clone(), details.role);
         provides.push(ProvidedPlugin {
             member_key: Some(member_key),
             guid,
@@ -561,7 +573,7 @@ fn read_members(
             enabled,
         });
     }
-    Ok(provides)
+    Ok((provides, roles))
 }
 
 fn create_manifest(

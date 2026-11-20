@@ -56,6 +56,14 @@ pub(crate) fn bundled_level_root(
     if payload.candidate.id != current.id {
         return Ok(None);
     }
+    selected_bundled_level_root(solved, current, payload)
+}
+
+pub(crate) fn selected_bundled_level_root(
+    solved: &Inventory,
+    current: &Candidate,
+    payload: &crate::mod_changes::session::Payload,
+) -> Result<Option<String>, String> {
     let Some(levels) = payload_level_root(&current.provides)? else {
         return Ok(None);
     };

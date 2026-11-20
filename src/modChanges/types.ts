@@ -2,12 +2,20 @@ import type { DownloadProgress, MapInstallOrigin, RepositoryRelation } from '../
 
 /** Rust mod_changes/model.rs is the authority for relation and action semantics. */
 export interface RootIntent { node_id: string; candidate_id?: string; enabled: boolean; member_key?: string; asset_name?: string }
-export interface ChangeRequest {
+export type DependencyRepairTarget = Pick<RootIntent, 'node_id' | 'candidate_id'>
+export type ChangeRequest = {
   roots: RootIntent[]
+  repair_dependencies_of?: never
   map_import?: { zip_path: string; selected: string[]; origin?: MapInstallOrigin | null }
   /** Local scan seen at click and trusted inventory used to resolve its root. */
   toggle_scope?: { generation: number; revision: string }
   bulk_toggle?: boolean
+} | {
+  repair_dependencies_of: string
+  roots?: never
+  map_import?: never
+  toggle_scope?: never
+  bulk_toggle?: never
 }
 export type ChangeActionKind = 'install' | 'upgrade' | 'downgrade' | 'replace' | 'enable' | 'disable'
 /** These actions stage installation payloads, even when their files are already local. */
@@ -98,9 +106,11 @@ export interface EvaluationSnapshot {
   nodes: ChangeNode[]
   evaluations: NodeEvaluation[]
 }
+export type ChangePresentationKind = 'mod_package' | 'plugin' | 'dependency'
 export interface ChangeNode extends ChangeLabel {
   node_id: string
   kind: string
+  presentation_kind?: ChangePresentationKind
   map_name_zh?: string | null
   enabled: boolean
   repository_id?: string | null
@@ -109,7 +119,7 @@ export interface ChangeNode extends ChangeLabel {
   map_id?: string | null
   subject_tag?: string | null
   package_id?: string | null
-  members?: { key: string; dll_file: string; enabled: boolean; guid?: string | null }[]
+  members?: { key: string; dll_file: string; enabled: boolean; guid?: string | null; role?: import('../types').ModPreviewRole }[]
   candidates: { id: string; tag?: string | null }[]
 }
 export interface EvaluationSubject { repository_id?: string; tag?: string; map_id?: string; dll_file?: string; map_dir_name?: string }

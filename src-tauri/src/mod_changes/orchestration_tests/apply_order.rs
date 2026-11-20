@@ -3,13 +3,13 @@ use super::*;
 use crate::{asset_bundle::LevelSetMetadata, level_sets};
 
 const DEP: &str = "ZDependency";
-const DEP_GUID: &str = "fixture.dependency";
+const DEP_GUID: &str = "com.example.dependency";
 const CONFLICT: &str = "YConflict";
-const CONFLICT_GUID: &str = "fixture.conflict";
+const CONFLICT_GUID: &str = "com.example.conflict";
 const FRAMEWORK: &str = "DIYLevel";
 const MAP: &str = "map:Target";
 const MOD: &str = "mod:ATarget";
-const MOD_GUID: &str = "fixture.target";
+const MOD_GUID: &str = "com.example.target";
 
 struct Scenario {
     f: Fixture,

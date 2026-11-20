@@ -697,7 +697,7 @@ fn framework_root_migration_changes_internal_member_without_changing_map_gate() 
         .collect::<Vec<_>>();
     assert_eq!(
         tree_edits,
-        ["bepinex/plugins/old/levels", "bepinex/plugins/new/levels"]
+        ["BepInEx/plugins/old/levels", "BepInEx/plugins/new/levels"].map(inventory::key)
     );
     super::super::transaction::prepare(
         &f.roots.data_root.join("transactions"),

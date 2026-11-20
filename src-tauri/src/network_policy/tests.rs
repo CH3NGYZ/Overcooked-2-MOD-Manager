@@ -95,10 +95,25 @@ max_parallelism = 1
 #[test]
 fn bundled_typed_registry_and_plans_form_one_closed_snapshot() {
     let snapshot = NetworkPolicy::bundled().unwrap();
-    assert!(snapshot.proxies.len() >= 45);
     assert_eq!(snapshot.plans.len(), 5);
     let groups = snapshot.bundled_proxy_groups().unwrap();
-    assert_eq!(groups.release_proxies.len(), 30);
+    let release_source =
+        crate::repository_sources::SourceLocation::parse("proxies/proxies-release.toml").unwrap();
+    let release = parse::<ProxyDocument>(release_source.bundled_text().unwrap()).unwrap();
+    assert!(!groups.release_proxies.is_empty());
+    assert_eq!(
+        groups
+            .release_proxies
+            .iter()
+            .map(|proxy| &proxy.id)
+            .collect::<Vec<_>>(),
+        release
+            .proxies
+            .iter()
+            .filter(|proxy| proxy.enabled)
+            .map(|proxy| &proxy.id)
+            .collect::<Vec<_>>()
+    );
     assert_eq!(groups.raw_proxies.len(), 8);
     assert_eq!(groups.avatar_proxies[0].id, "cors-isteed-avatar");
     assert!(
@@ -122,6 +137,7 @@ fn bundled_typed_registry_and_plans_form_one_closed_snapshot() {
     }
     assert!(snapshot.plan("github-public", &Provider::Gitee).is_err());
     let mainland = snapshot.plan("github-mainland", &Provider::Github).unwrap();
+    assert_eq!(mainland.release.route.first(), Some(&Step::Direct));
     assert!(mainland.release.race);
     assert_eq!(mainland.release.max_parallelism, 3);
     assert!(!mainland.release.route.contains(&Step::Proxy {

@@ -79,7 +79,7 @@ impl ChefWatcher {
                 );
                 accepted
             },
-            move |paths| {
+            move |_, paths| {
                 let mut payload = payload.clone();
                 payload.resources_changed = paths
                     .iter()

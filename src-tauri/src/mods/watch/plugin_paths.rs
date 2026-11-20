@@ -1,4 +1,4 @@
-use crate::directory_watch::{RootScope, relative_path};
+use crate::directory_watch::{RootScope, relative_path, retain_topology};
 use notify::{
     Event, EventKind,
     event::{CreateKind, ModifyKind, RenameMode},
@@ -47,36 +47,31 @@ impl PluginPaths {
     }
 
     pub(super) fn accept(&mut self, scope: &RootScope, event: &mut Event) -> bool {
-        let topology = event.need_rescan()
-            || event
-                .paths
-                .iter()
-                .any(|path| scope.topology_changed(path, event.kind));
-        let mut accepted = false;
-        if !topology {
-            let mut map_info = HashMap::new();
-            for (index, path) in event.paths.iter().enumerate() {
-                if let Some(relative) = scope.content(path) {
-                    // Preserve the real registered plugin root when a parent watch
-                    // reports logical junction paths instead of resolved paths.
-                    let path = scope.root.join(relative);
-                    accepted |= self.changed(
-                        &path,
-                        relative,
-                        &scope.root,
-                        event.kind,
-                        index,
-                        &mut map_info,
-                    );
-                }
-            }
+        if retain_topology(event, std::slice::from_ref(scope)) {
+            return true;
         }
-        // The debounced batch needs only one marker for a root reattachment.
-        event.paths.clear();
-        if topology {
-            event.paths.push(PathBuf::new());
-        }
-        accepted || topology
+        let mut map_info = HashMap::new();
+        let mut index = 0;
+        event.paths.retain_mut(|path| {
+            let event_index = index;
+            index += 1;
+            let Some(relative) = scope.content(path) else {
+                return false;
+            };
+            // Preserve actual endpoints for a late read-back echo check.
+            let actual = scope.root.join(relative);
+            let matched = self.changed(
+                &actual,
+                relative,
+                &scope.root,
+                event.kind,
+                event_index,
+                &mut map_info,
+            );
+            *path = actual;
+            matched
+        });
+        !event.paths.is_empty()
     }
 
     fn changed(

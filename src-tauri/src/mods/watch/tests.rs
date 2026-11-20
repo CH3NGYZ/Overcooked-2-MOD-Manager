@@ -49,7 +49,7 @@ fn os_watch_refreshes_a_same_size_and_timestamp_replacement() {
     let scan_version = || scan()[0].version.clone();
     write_plugin(&dll, "1.0.0");
     let (sent, received) = mpsc::channel();
-    watcher.watch(&root, move |_, plugins, _| {
+    watcher.watch(&root, move |_, _, plugins, _| {
         metadata_read::invalidate_dll_details_under(plugins);
         let _ = sent.send(());
     });
@@ -111,7 +111,7 @@ fn os_watch_ignores_non_dll_and_both_diy_level_map_trees() {
     fs::write(regular.join("settings.cfg"), "ignored").unwrap();
     let watcher = LocalModWatcher::default();
     let (sent, received) = mpsc::channel();
-    watcher.watch(&root, move |_, _, _| {
+    watcher.watch(&root, move |_, _, _, _| {
         let _ = sent.send(());
     });
     let mut paths = ScannedPluginPaths::default();
@@ -182,12 +182,12 @@ fn returning_to_a_game_reloads_dlls_edited_while_its_watch_was_inactive() {
             .version
             .clone()
     };
-    watcher.watch(&previous, |_, _, _| {});
+    watcher.watch(&previous, |_, _, _, _| {});
     assert_eq!(scan_version().as_deref(), Some("1.0.0"));
 
-    watcher.watch(&other, |_, _, _| {});
+    watcher.watch(&other, |_, _, _, _| {});
     overwrite_preserving_metadata(&dll, "2.0.0");
-    watcher.watch(&previous, |_, _, _| {});
+    watcher.watch(&previous, |_, _, _, _| {});
     assert_eq!(scan_version().as_deref(), Some("2.0.0"));
 }
 
@@ -200,8 +200,8 @@ fn os_root_guard_catches_creation_and_same_name_replacement() {
     let watcher = LocalModWatcher::default();
     let register = || {
         let (sent, received) = mpsc::channel();
-        watcher.watch(&root, move |_, _, topology_changed| {
-            let _ = sent.send(topology_changed);
+        watcher.watch(&root, move |_, _, plugins, paths| {
+            let _ = sent.send(topology_changed(&[plugins.to_path_buf()], &paths));
         });
         received
     };
@@ -243,16 +243,9 @@ fn notification_revokes_inflight_scan_for_the_selected_root_only() {
     let _operation = state.operation.lock().unwrap();
     let in_flight = state.local_mod_snapshot.lock().unwrap().begin(Some(&root));
     let old_root = root.join("previous-game");
-    assert!(!invalidate_if_selected(
-        &state,
-        &old_root,
-        &old_root.join(PLUGINS_DIR)
-    ));
-    assert!(invalidate_if_selected(
-        &state,
-        &root,
-        &root.join(PLUGINS_DIR)
-    ));
+    assert!(!is_selected(&state, &old_root));
+    assert!(is_selected(&state, &root));
+    assert!(invalidate_content(&state, &root.join(PLUGINS_DIR)));
     let mut snapshots = state.local_mod_snapshot.lock().unwrap();
     assert!(
         snapshots
@@ -292,7 +285,7 @@ fn escaping_plugins_root_does_not_register_a_watcher() {
     }
     let watcher = LocalModWatcher::default();
     let (sent, received) = mpsc::channel();
-    watcher.watch(&root, move |_, _, _| {
+    watcher.watch(&root, move |_, _, _, _| {
         let _ = sent.send(());
     });
     #[cfg(windows)]

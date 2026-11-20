@@ -10,6 +10,8 @@ use std::time::Duration;
 
 mod scope;
 pub(crate) use scope::{RootScope, relative_path};
+mod committed;
+pub(crate) use committed::{CommittedPaths, CommittedWatchPaths};
 
 /// Wait for a burst of copy/install operations to settle before one read-back.
 pub(crate) const QUIET_WINDOW: Duration = Duration::from_millis(600);
@@ -46,7 +48,7 @@ impl<K: Eq> DirectoryWatcher<K> {
         roots: Vec<PathBuf>,
         guards: &[PathBuf],
         accept: impl FnMut(&mut Event) -> bool + Send + 'static,
-        emit: impl FnMut(Vec<PathBuf>) + Send + 'static,
+        emit: impl FnMut(&Arc<AtomicBool>, Vec<PathBuf>) + Send + 'static,
     ) -> bool {
         let plan = watch_plan(&roots, guards);
         let mut guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -135,7 +137,7 @@ impl Drop for WatchState {
 fn build_watch_state(
     plan: Vec<WatchTarget>,
     mut accept: impl FnMut(&mut Event) -> bool + Send + 'static,
-    mut emit: impl FnMut(Vec<PathBuf>) + Send + 'static,
+    mut emit: impl FnMut(&Arc<AtomicBool>, Vec<PathBuf>) + Send + 'static,
 ) -> Option<WatchState> {
     if plan.is_empty() {
         return None;
@@ -189,7 +191,7 @@ fn build_watch_state(
         .spawn(move || {
             debounce_loop(receiver, QUIET_WINDOW, move |paths| {
                 if running.load(Ordering::Acquire) {
-                    emit(paths);
+                    emit(&running, paths);
                 }
             })
         }) {
@@ -217,6 +219,47 @@ fn accepted_paths(
         return None;
     }
     Some(event.paths)
+}
+
+/// Keep the exact topology path for reattachment and retain any other affected
+/// paths in the same event. An overflow has no path to attribute to a commit.
+pub(crate) fn retain_topology(event: &mut Event, scopes: &[RootScope]) -> bool {
+    let mut paths = event
+        .paths
+        .iter()
+        .filter(|path| {
+            scopes
+                .iter()
+                .any(|scope| scope.topology_changed(path, event.kind))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if event.need_rescan() {
+        // A rescan flag can accompany a known path. Missing all changes on
+        // that assumption is worse than a conservative read.
+        paths = vec![PathBuf::new()];
+    } else if paths.is_empty() {
+        return false;
+    } else {
+        for path in &event.paths {
+            for scope in scopes {
+                if let Some(relative) = scope.content(path) {
+                    paths.push(scope.root.join(relative));
+                    break;
+                }
+            }
+        }
+    }
+    event.paths = paths;
+    true
+}
+
+pub(crate) fn topology_changed(roots: &[PathBuf], paths: &[PathBuf]) -> bool {
+    paths.iter().any(|path| {
+        !roots.iter().any(|root| {
+            relative_path(path, root).is_some_and(|relative| !relative.as_os_str().is_empty())
+        })
+    })
 }
 
 fn debounce_loop(

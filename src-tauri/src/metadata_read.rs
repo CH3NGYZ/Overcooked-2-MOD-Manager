@@ -31,9 +31,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::UNIX_EPOCH;
 
 use crate::asset_bundle::LevelSetMetadata;
+use crate::file_metadata::{NativeStamp, Stamp};
 use crate::mods::{DllDetails, read_dll_details};
 
 /// 解析地图 `info` 的默认并发上限。
@@ -217,8 +217,7 @@ fn canonical_key(path: &Path) -> PathBuf {
 
 /// DLL 元数据的进程内缓存条目。
 struct DllCacheEntry {
-    len: u64,
-    mtime_nanos: u128,
+    stamp: NativeStamp,
     details: DllDetails,
 }
 
@@ -245,26 +244,17 @@ pub(crate) fn invalidate_dll_details_under(root: &Path) {
 
 /// 带进程内缓存的 [`read_dll_details`]。
 ///
-/// 缓存指纹与 `level_sets` 的 `info` 缓存同一套：`(长度, mtime)` —— 文件被
-/// 替换（安装、覆盖、手改）时 mtime 通常会变；保留长度与 mtime 的覆盖由
-/// 插件目录通知失效。解析期间不持缓存锁。
+/// 跟地图 `info` 共用文件身份与系统变更时间。重命名替换或保留 mtime 的覆盖
+/// 都不会命中旧解析；解析期间不持缓存锁。
 fn read_dll_details_cached(path: &Path, display_name: &str) -> DllDetails {
     let key = canonical_key(path);
-    let fingerprint = fs::metadata(&key).ok().map(|metadata| {
-        let mtime_nanos = metadata
-            .modified()
-            .ok()
-            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-            .map(|delta| delta.as_nanos())
-            .unwrap_or(0);
-        (metadata.len(), mtime_nanos)
-    });
+    let stamp = Stamp::for_file(&key);
     let cache_key = (key.clone(), display_name.to_string());
     // Record the revision before reading bytes, with the same lock as lookup.
     let revision = if let Ok(cache) = dll_details_cache().lock() {
-        if let Some((len, mtime_nanos)) = fingerprint {
+        if let Some(stamp) = stamp.as_ref() {
             if let Some(entry) = cache.entries.get(&cache_key) {
-                if entry.len == len && entry.mtime_nanos == mtime_nanos {
+                if &entry.stamp == stamp {
                     return entry.details.clone();
                 }
             }
@@ -275,7 +265,7 @@ fn read_dll_details_cached(path: &Path, display_name: &str) -> DllDetails {
     };
 
     let details = read_dll_details(&key, display_name);
-    if let Some((len, mtime_nanos)) = fingerprint {
+    if let Some(stamp) = stamp {
         if let Ok(mut cache) = dll_details_cache().lock() {
             if Some(cache.revision) != revision {
                 return details;
@@ -286,8 +276,7 @@ fn read_dll_details_cached(path: &Path, display_name: &str) -> DllDetails {
             cache.entries.insert(
                 cache_key,
                 DllCacheEntry {
-                    len,
-                    mtime_nanos,
+                    stamp,
                     details: details.clone(),
                 },
             );

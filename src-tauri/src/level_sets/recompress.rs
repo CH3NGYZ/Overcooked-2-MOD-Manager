@@ -180,13 +180,13 @@ pub(crate) fn watch_selected(
     };
     let roots = crate::game::detect_game(&state.config.load_or_default())
         .path
-        .and_then(|game| crate::mods::snapshot::level_roots(state, Path::new(&game)).ok())
-        .map(|(_, roots)| watch_roots(&roots))
-        .unwrap_or_default();
-    state.level_watch.watch(app, roots, reattach);
+        .and_then(|game| crate::mods::snapshot::level_roots(state, Path::new(&game)).ok());
+    state
+        .level_watch
+        .watch(app, roots.as_ref().map(|(_, roots)| roots), reattach);
 }
 
-fn watch_roots(roots: &super::LevelSetRoots) -> Vec<crate::directory_watch::RootScope> {
+pub(crate) fn watch_roots(roots: &super::LevelSetRoots) -> Vec<crate::directory_watch::RootScope> {
     let disabled = super::disabled_root(roots.game_root());
     let enabled = roots
         .package_root()

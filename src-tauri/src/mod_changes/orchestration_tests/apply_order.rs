@@ -179,6 +179,118 @@ fn map_and_single_mod_start_only_after_conflict_and_dependency_writes() {
 }
 
 #[test]
+fn late_native_notifications_do_not_repeat_a_committed_chain() {
+    use crate::directory_watch::RootScope;
+    use std::{sync::mpsc, time::Duration};
+
+    let test = scenario(true);
+    let f = &test.f;
+    let enabled = test.to.parent().unwrap();
+    let disabled = test.from.parent().unwrap();
+    let mut session = test.prepared();
+    let (send, recv) = mpsc::channel();
+    let mod_send = send.clone();
+    let paths = f.state.committed_watch_paths.clone();
+    let operation = f.state.operation.clone();
+    f.state
+        .local_mod_watch
+        .watch(&f.game, move |_, _, _, events| {
+            let Some((_operation, external)) = paths.classify(&operation, events) else {
+                return;
+            };
+            if !external.is_empty() {
+                let _ = mod_send.send(("MOD", external));
+            }
+        });
+    let attach_maps = |reattach| {
+        let paths = f.state.committed_watch_paths.clone();
+        let operation = f.state.operation.clone();
+        let send = send.clone();
+        f.state.level_watch.watch_paths(
+            [enabled, disabled]
+                .into_iter()
+                .map(|path| RootScope::new(&f.game, path.to_path_buf(), path.to_path_buf()))
+                .collect(),
+            reattach,
+            move |_, _, events| {
+                if let Some((_operation, external)) = paths.classify(&operation, events)
+                    && !external.is_empty()
+                {
+                    let _ = send.send(("map", external));
+                }
+            },
+        );
+    };
+    attach_maps(false);
+
+    super::super::execution::commit(&f.state, &mut session, |_| {}).unwrap();
+    assert!(test.to.is_dir());
+    assert_eq!(
+        recv.recv_timeout(Duration::from_millis(1400)),
+        Err(mpsc::RecvTimeoutError::Timeout),
+        "the successful mixed-domain commit should not notify a second read-back"
+    );
+    attach_maps(true);
+
+    // External edits on paths from that very commit must still notify even if
+    // neither bytes-length nor mtime changed. The unrelated DLL is in the same
+    // burst and is not covered by the commit either.
+    let dll = f.game.join(&test.dependency);
+    let unrelated = f.game.join("BepInEx/plugins/External.dll");
+    let info = test.to.join("info");
+    level_sets::seed_info_metadata(
+        &info,
+        LevelSetMetadata {
+            name: "Target".into(),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        level_sets::read_info_metadata(&info).unwrap().name,
+        "Target"
+    );
+    let overwrite = |path: &Path, bytes: &[u8]| {
+        let before = path.metadata().unwrap();
+        assert_eq!(before.len(), bytes.len() as u64);
+        fs::write(path, bytes).unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(before.modified().unwrap())
+            .unwrap();
+        assert_eq!(
+            path.metadata().unwrap().modified().unwrap(),
+            before.modified().unwrap()
+        );
+    };
+    overwrite(&dll, &mods::plugin_blob(DEP_GUID, DEP, "3.0.0"));
+    overwrite(&info, b"altered info");
+    write(
+        &unrelated,
+        &mods::plugin_blob("com.example.external", "External", "1.0.0"),
+    );
+    let external = (0..2)
+        .map(|_| recv.recv_timeout(Duration::from_secs(5)).unwrap())
+        .collect::<BTreeMap<_, _>>();
+    assert!(external["MOD"].contains(&dll));
+    assert!(external["MOD"].contains(&unrelated));
+    assert!(external["map"].contains(&info));
+    assert!(level_sets::read_info_metadata(&info).is_err());
+    let current = mods::scan_mods_with_manifests(
+        &f.game,
+        &f.state.config.load_or_default(),
+        Some(&f.state.config.manifests_dir()),
+    );
+    assert!(current.iter().any(
+        |dll| dll.guid.as_deref() == Some(DEP_GUID) && dll.version.as_deref() == Some("3.0.0")
+    ));
+    eprintln!(
+        "native Windows/OS read-back notifications: commit=0, later external DLL and map edits=2"
+    );
+}
+
+#[test]
 fn dependency_repair_of_disabled_map_or_mod_keeps_its_files_and_switch() {
     for map in [true, false] {
         let mut test = scenario(map);

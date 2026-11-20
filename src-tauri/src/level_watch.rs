@@ -8,9 +8,21 @@
 //! 事件合并路径后将变化地图集加入后台转换队列，并提醒前端重读；扫描口径（两个根的第一层）、
 //! 排序与身份判定都在 `level_sets` 里，前端重读一次就能拿到完整一致的结果。
 
-use crate::directory_watch::{DirectoryWatcher, RootScope, relative_path};
+use crate::{
+    app_state::AppState,
+    directory_watch::{
+        DirectoryWatcher, RootScope, relative_path, retain_topology, topology_changed,
+    },
+    game, level_sets,
+};
 use notify::Event;
-use std::path::PathBuf;
+use std::{
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 use tauri::{AppHandle, Emitter, Manager};
 
 const LEVEL_SETS_CHANGED_EVENT: &str = "level-sets-changed";
@@ -22,39 +34,81 @@ pub struct LevelWatcher {
 }
 
 impl LevelWatcher {
-    pub(crate) fn watch(&self, app: &AppHandle, scopes: Vec<RootScope>, reattach: bool) {
+    pub(crate) fn watch(
+        &self,
+        app: &AppHandle,
+        selected: Option<&level_sets::LevelSetRoots>,
+        reattach: bool,
+    ) {
+        let Some(selected) = selected.cloned() else {
+            self.directory.stop();
+            return;
+        };
+        let scopes = level_sets::recompress::watch_roots(&selected);
         if scopes.is_empty() {
             self.directory.stop();
             return;
         }
         let emit_app = app.clone();
-        self.watch_paths(scopes, reattach, move |names| {
+        self.watch_paths(scopes, reattach, move |active, roots, paths| {
             let app = emit_app.clone();
+            let active = active.clone();
+            let roots = roots.to_vec();
+            let selected = selected.clone();
             tauri::async_runtime::spawn_blocking(move || {
-                if let Some(state) = app.try_state::<crate::app_state::AppState>() {
-                    if names.is_none() {
-                        // Rebuild away from the owned notification thread,
-                        // also when a replacement has the exact same name.
-                        crate::level_sets::recompress::watch_selected(&state, &app, true);
-                    }
-                    if let Err(error) = app.emit(LEVEL_SETS_CHANGED_EVENT, ()) {
-                        log::debug!("发送关卡集变化事件失败：{error}");
-                    }
-                    crate::level_sets::recompress::enqueue_installed(
-                        &state,
-                        &app,
-                        names.as_deref(),
-                    );
+                let Some(state) = app.try_state::<AppState>() else {
+                    return;
+                };
+                let reattach = topology_changed(&roots, &paths);
+                let Some((_operation, external)) = state
+                    .committed_watch_paths
+                    .classify(&state.operation, paths)
+                else {
+                    return;
+                };
+                let game = game::detect_game(&state.config.load_or_default())
+                    .path
+                    .and_then(|path| game::resolve_existing_ancestor(Path::new(&path)).ok());
+                // A MOD notice may already have revoked the scan. In that
+                // case keep the map notice for the same game: the new MOD scan
+                // will own reattachment and the refreshed map read.
+                if !active.load(Ordering::Acquire) || game.as_deref() != Some(selected.game_root())
+                {
+                    return;
                 }
+                if let Ok((_, current)) =
+                    crate::mods::snapshot::level_roots(&state, selected.game_root())
+                {
+                    if current != selected {
+                        return;
+                    }
+                    if reattach {
+                        // Even a covered transaction may have created a root;
+                        // the parent-only registration then needs to follow it.
+                        state.level_watch.watch(&app, Some(&current), true);
+                    }
+                }
+                if external.is_empty() {
+                    return;
+                }
+                if let Ok(mut sessions) = state.mod_changes.lock() {
+                    sessions.invalidate();
+                }
+                drop(_operation);
+                let names = changed_sets(&roots, &external);
+                if let Err(error) = app.emit(LEVEL_SETS_CHANGED_EVENT, ()) {
+                    log::debug!("发送关卡集变化事件失败：{error}");
+                }
+                crate::level_sets::recompress::enqueue_installed(&state, &app, names.as_deref());
             });
         });
     }
 
-    fn watch_paths(
+    pub(crate) fn watch_paths(
         &self,
         scopes: Vec<RootScope>,
         reattach: bool,
-        mut emit: impl FnMut(Option<Vec<String>>) + Send + 'static,
+        mut emit: impl FnMut(&Arc<AtomicBool>, &[PathBuf], Vec<PathBuf>) + Send + 'static,
     ) {
         if reattach {
             self.directory.stop();
@@ -72,30 +126,21 @@ impl LevelWatcher {
             paths.clone(),
             &guards,
             move |event| accept_event(&scopes, event),
-            move |changed| emit(changed_sets(&paths, &changed)),
+            move |active, changed| emit(active, &paths, changed),
         );
     }
 }
 
 fn accept_event(scopes: &[RootScope], event: &mut Event) -> bool {
-    if event.need_rescan()
-        || event.paths.iter().any(|path| {
-            scopes
-                .iter()
-                .any(|scope| scope.topology_changed(path, event.kind))
-        })
-    {
-        event.paths = vec![PathBuf::new()];
+    if retain_topology(event, scopes) {
         return true;
     }
     event.paths.retain_mut(|path| {
         for scope in scopes {
             if let Some(relative) = scope.content(path) {
-                // Debounce per set and use the physical root consistently.
-                if let Some(name) = relative.iter().next() {
-                    *path = scope.root.join(name);
-                    return true;
-                }
+                // Project the set name only after checking exact write paths.
+                *path = scope.root.join(relative);
+                return true;
             }
         }
         false

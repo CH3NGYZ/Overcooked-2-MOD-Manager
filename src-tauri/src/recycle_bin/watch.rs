@@ -23,7 +23,7 @@ impl RecycleWatcher {
                     .retain(|path| path.starts_with(&root) || root.starts_with(path));
                 !event.paths.is_empty()
             },
-            move |_| {
+            move |_, _| {
                 if let Err(error) = app.emit("recycle-bin-changed", ()) {
                     log::debug!("发送回收站变化事件失败：{error}");
                 }

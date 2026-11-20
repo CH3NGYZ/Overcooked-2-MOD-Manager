@@ -46,7 +46,7 @@ pub async fn get_level_sets(
              * 游戏目录没了：旧监听还指着已经消失的路径，先停掉（空 roots 在
              * `LevelWatcher::watch` 里就是「停掉现有监听」），下次检测到目录再建。
              */
-            state.level_watch.watch(&app, Vec::new(), false);
+            state.level_watch.watch(&app, None, false);
             crate::api_scheduler::set_installed("map", Vec::new());
             return Ok(Vec::new());
         };

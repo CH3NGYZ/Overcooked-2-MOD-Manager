@@ -56,15 +56,18 @@ fn filter_projects_only_current_sets_and_real_root_topology() {
     .add_path(disabled.join("pear/info"))
     .add_path(game.join("outside"));
     assert!(accept_event(&scopes, &mut multi));
-    assert_eq!(multi.paths, [map.join("pear"), disabled.join("pear")]);
+    assert_eq!(
+        multi.paths,
+        [map.join("pear/info"), disabled.join("pear/info")]
+    );
     let cache = game.join("BepInEx/cache");
     fs::create_dir(&cache).unwrap();
     let mut created = event(EventKind::Create(CreateKind::Any), &cache);
     assert!(accept_event(&scopes, &mut created));
-    assert_eq!(created.paths, [PathBuf::new()]);
+    assert_eq!(created.paths, [cache]);
     let mut removed = event(remove, map.parent().unwrap());
     assert!(accept_event(&scopes, &mut removed));
-    assert_eq!(removed.paths, [PathBuf::new()]);
+    assert_eq!(removed.paths, [map.parent().unwrap()]);
 }
 
 #[test]
@@ -83,8 +86,8 @@ fn os_watch_ignores_siblings_and_recovers_missing_and_replaced_roots() {
             .into_iter()
             .map(|path| RootScope::new(&game, path.clone(), path))
             .collect();
-        watcher.watch_paths(scopes, reattach, move |batch| {
-            let _ = sent.send(batch);
+        watcher.watch_paths(scopes, reattach, move |_, roots, batch| {
+            let _ = sent.send(changed_sets(roots, &batch));
         });
         received
     };

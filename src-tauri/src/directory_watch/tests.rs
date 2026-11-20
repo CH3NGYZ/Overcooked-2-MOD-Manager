@@ -176,7 +176,7 @@ fn real_watcher_reports_directory_creation() {
     let state = build_watch_state(
         plan,
         |_| true,
-        move |_| {
+        move |_, _| {
             counter.fetch_add(1, Ordering::SeqCst);
         },
     )

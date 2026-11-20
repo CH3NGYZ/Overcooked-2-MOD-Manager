@@ -2,10 +2,11 @@
 use super::file_state::PLUGINS_DIR;
 use crate::{
     app_state::AppState,
-    directory_watch::{DirectoryWatcher, RootScope},
+    directory_watch::{DirectoryWatcher, RootScope, topology_changed},
     game, metadata_read,
 };
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -32,8 +33,9 @@ impl LocalModWatcher {
             return;
         };
         let app = app.clone();
-        self.watch(root, move |root, plugins, topology_changed| {
+        self.watch(root, move |active, root, plugins, paths| {
             let app = app.clone();
+            let active = active.clone();
             let root = root.to_path_buf();
             let plugins = plugins.to_path_buf();
             // Registration joins its old debounce worker. Do not acquire the
@@ -42,17 +44,24 @@ impl LocalModWatcher {
                 let Some(state) = app.try_state::<AppState>() else {
                     return;
                 };
-                let Ok(_operation) = state.operation.lock() else {
+                let reattach = topology_changed(std::slice::from_ref(&plugins), &paths);
+                let Some((_operation, changed)) = state
+                    .committed_watch_paths
+                    .classify(&state.operation, paths)
+                else {
                     return;
                 };
-                if !invalidate_if_selected(&state, &root, &plugins) {
+                if !active.load(Ordering::Acquire) || !is_selected(&state, &root) {
                     return;
                 }
-                if topology_changed {
+                if reattach {
                     // Windows silently stops the recursive handle if the directory
                     // is removed; a same-name replacement needs a new handle.
                     state.local_mod_watch.directory.stop();
                     state.local_mod_watch.watch_selected(&app, Some(&root));
+                }
+                if changed.is_empty() || !invalidate_content(&state, &plugins) {
+                    return;
                 }
                 drop(_operation);
                 if let Err(error) = app.emit("local-mods-changed", ()) {
@@ -69,7 +78,11 @@ impl LocalModWatcher {
             Some((root.to_path_buf(), Arc::new(scanned)));
     }
 
-    fn watch(&self, root: &Path, mut emit: impl FnMut(&Path, &Path, bool) + Send + 'static) {
+    pub(crate) fn watch(
+        &self,
+        root: &Path,
+        mut emit: impl FnMut(&Arc<AtomicBool>, &Path, &Path, Vec<PathBuf>) + Send + 'static,
+    ) {
         let Ok(plugins) = game::safe_game_path(root, PLUGINS_DIR) else {
             self.directory.stop();
             return;
@@ -102,7 +115,7 @@ impl LocalModWatcher {
             },
             {
                 let plugins = plugins.clone();
-                move |paths| emit(&root, &plugins, !paths.is_empty())
+                move |active, paths| emit(active, &root, &plugins, paths)
             },
         );
         if rebuilt {
@@ -112,14 +125,16 @@ impl LocalModWatcher {
     }
 }
 
-/// Called under `operation`, beside scan begin/publish and transaction writes.
-fn invalidate_if_selected(state: &AppState, root: &Path, plugins: &Path) -> bool {
-    let selected = game::detect_game(&state.config.load_or_default())
+fn is_selected(state: &AppState, root: &Path) -> bool {
+    game::detect_game(&state.config.load_or_default())
         .path
-        .and_then(|path| game::resolve_existing_ancestor(Path::new(&path)).ok());
-    if selected.as_deref() != Some(root) {
-        return false;
-    }
+        .and_then(|path| game::resolve_existing_ancestor(Path::new(&path)).ok())
+        .as_deref()
+        == Some(root)
+}
+
+/// Called under `operation`, beside scan begin/publish and transaction writes.
+fn invalidate_content(state: &AppState, plugins: &Path) -> bool {
     metadata_read::invalidate_dll_details_under(plugins);
     state.invalidate_local_mod_snapshot().is_ok()
 }

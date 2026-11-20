@@ -2,24 +2,22 @@
 
 use crate::asset_bundle;
 use crate::asset_bundle::LevelSetMetadata;
+use crate::file_metadata::{NativeStamp, Stamp};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use std::time::UNIX_EPOCH;
 
 /// 单个 `info` 文件的解析结果缓存条目。
-pub(super) struct InfoCacheEntry {
-    /// 解析时的文件长度。
-    pub(super) len: u64,
-    /// 解析时的修改时间（Unix 纳秒）；拿不到时记 0。
-    pub(super) mtime_nanos: u128,
+struct InfoCacheEntry {
+    /// Change time distinguishes a real rewrite even if mtime was restored.
+    stamp: NativeStamp,
     /// 解析结果（成功或失败 tag）。
-    pub(super) result: Result<LevelSetMetadata, String>,
+    result: Result<LevelSetMetadata, String>,
     /// 这个 key 累计真正读盘解析的次数（缓存命中不增加）。
-    pub(super) parses: u32,
+    parses: u32,
 }
 
 /// 缓存条数上限。
@@ -28,7 +26,7 @@ pub(super) struct InfoCacheEntry {
 /// 缓存只是加速，为它维护 LRU 淘汰反而多一份要出错的状态。
 const INFO_CACHE_LIMIT: usize = 512;
 
-pub(super) fn info_cache() -> &'static Mutex<HashMap<PathBuf, InfoCacheEntry>> {
+fn info_cache() -> &'static Mutex<HashMap<PathBuf, InfoCacheEntry>> {
     static CACHE: OnceLock<Mutex<HashMap<PathBuf, InfoCacheEntry>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
@@ -38,7 +36,7 @@ pub(super) fn info_cache() -> &'static Mutex<HashMap<PathBuf, InfoCacheEntry>> {
 /// 用绝对路径而不是传入的原样路径：同一个 `info` 可能通过不同相对根被访问到，
 /// 统一成绝对路径才能共用同一条缓存。`current_dir` 失败时退回原路径 ——
 /// 那只可能发生在工作目录已被删除的极端情况，退化成不共享缓存也不会出错。
-pub(super) fn info_cache_key(info_path: &Path) -> PathBuf {
+fn info_cache_key(info_path: &Path) -> PathBuf {
     if info_path.is_absolute() {
         return info_path.to_path_buf();
     }
@@ -51,18 +49,11 @@ pub(super) fn info_cache_key(info_path: &Path) -> PathBuf {
 #[cfg(test)]
 pub(crate) fn seed_info_metadata(info_path: &Path, metadata: LevelSetMetadata) {
     let key = info_cache_key(info_path);
-    let stats = fs::metadata(&key).unwrap();
-    let mtime_nanos = stats
-        .modified()
-        .unwrap()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let stamp = Stamp::for_file(&key).unwrap();
     info_cache().lock().unwrap().insert(
         key,
         InfoCacheEntry {
-            len: stats.len(),
-            mtime_nanos,
+            stamp,
             result: Ok(metadata),
             parses: 0,
         },
@@ -70,6 +61,7 @@ pub(crate) fn seed_info_metadata(info_path: &Path, metadata: LevelSetMetadata) {
 }
 
 /// 磁盘缓存目录名（位于数据根的 `cache/` 下）。
+#[cfg(not(test))]
 const INFO_DISK_CACHE_DIR: &str = "level-info";
 
 /// 磁盘缓存格式版本。解析逻辑或字段有变动时递增，旧文件自然失效。
@@ -93,9 +85,18 @@ struct InfoDiskEntry {
 
 /// 磁盘缓存目录；数据根不可用时返回 `None`（退化成只有内存缓存）。
 fn info_disk_cache_dir() -> Option<PathBuf> {
-    crate::user_paths::root()
-        .ok()
-        .map(|root| root.join("cache").join(INFO_DISK_CACHE_DIR))
+    #[cfg(test)]
+    {
+        // Test scans must not populate the user's real cache. Tests of the
+        // content-addressed layer supply their own temporary directory.
+        None
+    }
+    #[cfg(not(test))]
+    {
+        crate::user_paths::root()
+            .ok()
+            .map(|root| root.join("cache").join(INFO_DISK_CACHE_DIR))
+    }
 }
 
 /// 内容哈希：SHA-256 十六进制小写。
@@ -190,7 +191,7 @@ pub(super) fn clear_info_disk_cache(dir: &Path) -> Result<usize, String> {
 
 /// 清空 `info` 的两级解析缓存，返回删除的磁盘缓存文件数。
 ///
-/// 两层都要清：只清磁盘的话，本进程的 `(len, mtime)` 命中仍会返回旧结果；
+/// 两层都要清：只清磁盘的话，本进程的文件指纹命中仍会返回旧结果；
 /// 只清内存的话，下一次解析立刻从磁盘读回同一份 —— 两种都让用户觉得
 /// 「点了没反应」。这与头像缓存的处理是同一个理由。
 ///
@@ -217,30 +218,17 @@ pub fn clear_info_cache() -> Result<usize, String> {
 /// 读 `info` 并解析，命中缓存时不再读盘。
 pub(crate) fn read_info_metadata(info_path: &Path) -> Result<LevelSetMetadata, String> {
     let key = info_cache_key(info_path);
-    let (len, mtime_nanos) = match fs::metadata(&key) {
-        Ok(metadata) => (
-            metadata.len(),
-            metadata
-                .modified()
-                .ok()
-                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-                .map(|delta| delta.as_nanos())
-                .unwrap_or(0),
-        ),
-        // 元数据读不到就无从判断缓存是否仍然有效，直接报错 ——
-        // 与「不缓存时读文件失败」的行为保持一致，不悄悄返回旧结果
-        Err(error) => return Err(error.to_string()),
-    };
-    if let Ok(cache) = info_cache().lock() {
-        if let Some(entry) = cache.get(&key) {
-            if entry.len == len && entry.mtime_nanos == mtime_nanos {
-                return entry.result.clone();
-            }
-        }
+    let stamp = Stamp::for_file(&key);
+    if let Some(stamp) = stamp.as_ref()
+        && let Ok(cache) = info_cache().lock()
+        && let Some(entry) = cache.get(&key)
+        && &entry.stamp == stamp
+    {
+        return entry.result.clone();
     }
     /*
      * 两级缓存：
-     *   1. 进程内 (len, mtime) 指纹 —— 命中不读盘，是最快的路径；
+     *   1. 进程内文件标识与变更时间 —— 命中不读文件内容；
      *   2. 磁盘内容哈希 —— 跨进程有效，重启管理器后仍然命中。
      *
      * 第 2 级要先把文件读进来算哈希（几十 MB / 几十毫秒），但这仍比重新解析
@@ -270,7 +258,9 @@ pub(crate) fn read_info_metadata(info_path: &Path) -> Result<LevelSetMetadata, S
      * 锁中毒（持锁线程 panic）时放弃写入缓存 —— 解析结果照常返回，
      * 下一次扫描会重新解析，正确性不受影响。
      */
-    if let Ok(mut cache) = info_cache().lock() {
+    if let Some(stamp) = stamp
+        && let Ok(mut cache) = info_cache().lock()
+    {
         if cache.len() >= INFO_CACHE_LIMIT {
             cache.clear();
         }
@@ -278,8 +268,7 @@ pub(crate) fn read_info_metadata(info_path: &Path) -> Result<LevelSetMetadata, S
         cache.insert(
             key,
             InfoCacheEntry {
-                len,
-                mtime_nanos,
+                stamp,
                 result: result.clone(),
                 parses: previous_parses.saturating_add(1),
             },

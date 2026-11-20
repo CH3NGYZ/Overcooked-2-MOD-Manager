@@ -111,6 +111,8 @@ pub(super) fn commit(
         // Revoke old recompression leases before publishing Applying. No background
         // worker may write into a directory whose ownership is about to change.
         state.invalidate_local_mod_snapshot()?;
+        // A failure or rollback cannot inherit evidence from an older commit.
+        state.committed_watch_paths.publish(Default::default());
         let data_root = state
             .config
             .config_path()
@@ -156,13 +158,14 @@ pub(super) fn commit(
             transaction.id(),
             session.plan.result.actions.len()
         );
-        if let Err(error) = transaction
-            .apply_with_cancel(crate::archive::is_download_cancelled, |event| {
-                progress.observe(event)
-            })
-        {
-            progress.failed(error != "recycle.partialFailure");
-            return Err(error);
+        match transaction.apply_with_cancel(crate::archive::is_download_cancelled, |event| {
+            progress.observe(event)
+        }) {
+            Ok(watch_paths) => state.committed_watch_paths.publish(watch_paths),
+            Err(error) => {
+                progress.failed(error != "recycle.partialFailure");
+                return Err(error);
+            }
         }
     }
     // A durable Committed journal is final. A later cache/UI failure must not report

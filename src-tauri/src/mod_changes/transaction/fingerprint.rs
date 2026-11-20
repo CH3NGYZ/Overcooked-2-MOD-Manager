@@ -1,5 +1,6 @@
 use super::paths::{MODIFIED, UNSAFE, io_error, is_link, validate_absolute};
 use super::types::{Fingerprint, PermissionsSnapshot, StagedFile};
+use crate::file_metadata::Stamp;
 use sha2::{Digest, Sha256};
 use std::{fs, fs::File, io::Read, path::Path};
 
@@ -13,6 +14,22 @@ impl Fingerprint {
         path: &Path,
         visit: &mut impl FnMut(&Path, &Self) -> Result<(), String>,
     ) -> Result<Self, String> {
+        Self::capture_inner(path, visit, None)
+    }
+
+    /// Use the existing validation read to collect native stamps for watched endpoints.
+    pub(super) fn capture_for_watch(
+        path: &Path,
+        committed: &mut crate::directory_watch::CommittedPaths,
+    ) -> Result<Self, String> {
+        Self::capture_inner(path, &mut |_, _| Ok(()), Some(committed))
+    }
+
+    fn capture_inner(
+        path: &Path,
+        visit: &mut impl FnMut(&Path, &Self) -> Result<(), String>,
+        mut committed: Option<&mut crate::directory_watch::CommittedPaths>,
+    ) -> Result<Self, String> {
         validate_absolute(path)?;
         let metadata = match fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
@@ -22,8 +39,12 @@ impl Fingerprint {
         if is_link(&metadata) {
             return Err(UNSAFE.into());
         }
+        // An external writer racing this check must not get its new stamp
+        // attached to the bytes verified earlier. Unsupported metadata merely
+        // opts this path out of deduplication.
+        let stamp = committed.as_ref().and_then(|_| Stamp::capture(path).ok());
         let permissions = PermissionsSnapshot::capture(path)?;
-        if metadata.is_file() {
+        let fingerprint = if metadata.is_file() {
             let mut input = File::open(path).map_err(io_error)?;
             let mut digest = Sha256::new();
             let mut size = 0;
@@ -45,7 +66,7 @@ impl Fingerprint {
                 permissions,
             };
             visit(path, &fingerprint)?;
-            Ok(fingerprint)
+            fingerprint
         } else if metadata.is_dir() {
             let mut children = fs::read_dir(path)
                 .map_err(io_error)?
@@ -58,7 +79,7 @@ impl Fingerprint {
                     .file_name()
                     .into_string()
                     .map_err(|_| UNSAFE.to_string())?;
-                let child = Self::capture_with_files(&entry.path(), visit)?;
+                let child = Self::capture_inner(&entry.path(), visit, committed.as_deref_mut())?;
                 if child == Self::Missing {
                     return Err(MODIFIED.into());
                 }
@@ -66,13 +87,19 @@ impl Fingerprint {
                 digest.update((bytes.len() as u64).to_le_bytes());
                 digest.update(bytes);
             }
-            Ok(Self::Directory {
+            Self::Directory {
                 sha256: format!("{:x}", digest.finalize()),
                 permissions,
-            })
+            }
         } else {
-            Err(UNSAFE.into())
+            return Err(UNSAFE.into());
+        };
+        if let (Some(committed), Some(stamp)) = (committed, stamp)
+            && Stamp::capture(path).is_ok_and(|current| current == stamp)
+        {
+            committed.present(path, stamp);
         }
+        Ok(fingerprint)
     }
 
     pub(super) fn permissions(&self) -> Option<&PermissionsSnapshot> {

@@ -2,6 +2,9 @@
 use std::fs;
 use std::path::Path;
 
+mod stamp;
+pub(crate) use stamp::{NativeStamp, Stamp};
+
 /// BepInEx and MOD assemblies remain PE files even for native Unix games.
 pub fn read_file_version(path: &Path) -> Option<String> {
     #[cfg(windows)]

@@ -2,20 +2,16 @@ use crate::asset_bundle::LevelSetMetadata;
 use crate::level_sets::conflicts::conflicts_with_installed;
 use crate::level_sets::conflicts::find_install_conflicts;
 use crate::level_sets::identity::level_set_display_name;
-use crate::level_sets::info_cache::InfoCacheEntry;
-use crate::level_sets::info_cache::info_cache;
-use crate::level_sets::info_cache::info_cache_key;
 use crate::level_sets::install::existing_level_set_metadata;
 use crate::level_sets::install::install_from_zip;
 use crate::level_sets::paths::disabled_root;
 use crate::level_sets::paths::levels_root;
 use crate::level_sets::scan::LevelSetOnDisk;
+use crate::level_sets::seed_info_metadata;
 use crate::level_sets::zip_inspect::ImportedLevelSet;
 use crate::level_sets::zip_inspect::inspect_zip;
 use crate::models::LevelSetLayout;
-use std::path::Path;
 use std::path::PathBuf;
-use std::time::UNIX_EPOCH;
 
 fn metadata(name: &str, name_zh: Option<&str>, author: &str, version: &str) -> LevelSetMetadata {
     LevelSetMetadata {
@@ -49,29 +45,6 @@ fn imported(dir_name: &str, metadata: LevelSetMetadata) -> ImportedLevelSet {
         plugins: Vec::new(),
         layout: LevelSetLayout::Flattened,
     }
-}
-
-/// 往 `info` 的进程内缓存里塞一份伪造解析结果。
-///
-/// 造一份真的 AssetBundle 不现实，而身份判定只吃 `read_info_metadata` 的
-/// 返回值：指纹（长度 + mtime）对上就直接命中，不会真的去解析。
-fn inject_info_cache(info_path: &Path, metadata: LevelSetMetadata) {
-    let stats = std::fs::metadata(info_path).unwrap();
-    let mtime_nanos = stats
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .map(|delta| delta.as_nanos())
-        .unwrap_or(0);
-    info_cache().lock().unwrap().insert(
-        info_cache_key(info_path),
-        InfoCacheEntry {
-            len: stats.len(),
-            mtime_nanos,
-            result: Ok(metadata),
-            parses: 0,
-        },
-    );
 }
 
 #[test]
@@ -175,7 +148,7 @@ fn existing_level_set_metadata_reads_the_disabled_root_too() {
     std::fs::create_dir_all(&stale).unwrap();
     let info = stale.join("info");
     std::fs::write(&info, b"not-a-real-bundle").unwrap();
-    inject_info_cache(&info, metadata("GAODA", Some("胡闹糕中"), "GAODA", "1.0"));
+    seed_info_metadata(&info, metadata("GAODA", Some("胡闹糕中"), "GAODA", "1.0"));
 
     let found = existing_level_set_metadata(&levels, &disabled, "GAODA").unwrap();
     assert_eq!(found.name_zh.as_deref(), Some("胡闹糕中"));
@@ -205,7 +178,7 @@ fn a_same_named_set_in_disabled_with_another_identity_is_renamed() {
     std::fs::create_dir_all(&stale).unwrap();
     let info = stale.join("info");
     std::fs::write(&info, b"not-a-real-bundle").unwrap();
-    inject_info_cache(
+    seed_info_metadata(
         &info,
         metadata("AnotherMap", Some("另一张图"), "Someone", "2.0"),
     );

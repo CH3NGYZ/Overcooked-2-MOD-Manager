@@ -132,7 +132,10 @@ pub(super) fn assemble(
     }
     roots::update_registry(&mut builder, migration.as_ref())?;
     let mut result = builder.moves;
-    result.extend(builder.writes.into_values().map(|(_, mutation)| mutation));
+    result.extend(retirements::ordered_writes(
+        builder.writes.into_values(),
+        &session.plan.retired_mod_copies,
+    ));
     Ok(result)
 }
 

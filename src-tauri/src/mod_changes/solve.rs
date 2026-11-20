@@ -390,11 +390,13 @@ impl Search<'_> {
         {
             return Vec::new();
         }
+        let proven_upgrade = self.replacement_only.contains(&index);
         ordered_candidates(node, false)
             .into_iter()
             .filter(|candidate| {
                 node.current.as_ref().is_none_or(|current| {
-                    candidate.id != current.id && preserves_package_identity(current, candidate)
+                    candidate.id != current.id
+                        && (proven_upgrade || preserves_package_identity(current, candidate))
                 })
             })
             .filter_map(|candidate| {
@@ -620,20 +622,32 @@ impl Search<'_> {
             // compatible releases from newest to oldest.
             let mut reason = None;
             for candidate in ordered_candidates(node, !self.prefer_newest) {
-                if node
-                    .current
-                    .as_ref()
-                    .is_some_and(|current| !preserves_package_identity(current, &candidate))
-                {
+                // Consolidation supplies one candidate, already authorized by
+                // physical Release evidence. Its verified core can have a wholly
+                // different GUID; the solver still checks actual providers.
+                let proven_upgrade = self.replacement_only.contains(&index)
+                    && node
+                        .current
+                        .as_ref()
+                        .is_some_and(|old| old.id != candidate.id);
+                if node.current.as_ref().is_some_and(|current| {
+                    !proven_upgrade && !preserves_package_identity(current, &candidate)
+                }) {
                     continue;
                 }
-                if !candidate.provides.iter().any(|plugin| {
-                    same_guid(&plugin.guid, &relation.guid)
-                        && match relation.kind {
-                            RelationKind::Conflicts => matches(relation, plugin) == Some(false),
-                            _ => matches(relation, plugin) == Some(true),
-                        }
-                }) {
+                let retires_conflicting_provider = proven_upgrade
+                    && relation.kind == RelationKind::Conflicts
+                    && incompatible_nodes.contains(&node.id)
+                    && !provides(&candidate, &relation.guid);
+                if !retires_conflicting_provider
+                    && !candidate.provides.iter().any(|plugin| {
+                        same_guid(&plugin.guid, &relation.guid)
+                            && match relation.kind {
+                                RelationKind::Conflicts => matches(relation, plugin) == Some(false),
+                                _ => matches(relation, plugin) == Some(true),
+                            }
+                    })
+                {
                     continue;
                 }
                 branches.extend(self.with_candidate(

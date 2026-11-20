@@ -5,6 +5,8 @@ use super::*;
 mod dependencies;
 #[path = "duplicate_release_target/release_contents.rs"]
 mod release_contents;
+#[path = "duplicate_release_target/tied_copies.rs"]
+mod tied_copies;
 
 const FASTINIT: &str = "FastInit";
 const GUID: &str = "oc2.diylevel.fastinit";

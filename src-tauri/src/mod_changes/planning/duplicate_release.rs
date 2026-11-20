@@ -34,6 +34,17 @@ pub(super) fn has_copies(trusted: &TrustedInventory, repo_id: &str) -> bool {
         .is_some()
 }
 
+/// A single standalone provider with a changed GUID needs the same proof as
+/// multiple copies. A normal same-GUID upgrade keeps the regular path.
+fn historical_core(files: &NodeFiles, repo: &ModRepositoryConfig) -> bool {
+    repo.download_mode == ModDownloadMode::Release
+        && !repo.plugin_guid.trim().is_empty()
+        && matches!(&files.summary.members[..], [member]
+        if member.guid.as_deref().is_some_and(|guid| {
+            !guid.trim().is_empty() && !same_guid(guid, &repo.plugin_guid)
+        }))
+}
+
 pub(super) fn attach_root(
     trusted: &mut TrustedInventory,
     root: &RootRequest,
@@ -48,12 +59,17 @@ pub(super) fn attach_root(
     if !root.intent.enabled || root.intent.member_key.is_some() {
         return Ok(false);
     }
-    if !has_copies(trusted, repo_id) {
-        return Ok(false);
-    }
     let Some(repo) = trusted.config.repositories.iter().find(|r| r.id == repo_id) else {
         return Ok(false);
     };
+    if !has_copies(trusted, repo_id)
+        && !trusted
+            .files
+            .get(&root.intent.node_id)
+            .is_some_and(|files| historical_core(files, repo))
+    {
+        return Ok(false);
+    }
     let Some(candidate) =
         candidates::for_root_asset(repo, None, &trusted.config, root.asset_name.as_deref())
             .into_iter()
@@ -80,15 +96,25 @@ pub(super) fn attach_dependencies(
         .get(&root.intent.node_id)
         .and_then(|files| files.summary.repository_id.clone());
     let mut counts = BTreeMap::new();
-    for (repo_id, _) in installed_groups(trusted) {
-        if root_repo.as_deref() == Some(repo_id) {
-            continue;
+    for (id, _) in installed_groups(trusted) {
+        if root_repo.as_deref() != Some(id) {
+            *counts.entry(id).or_insert(0usize) += 1;
         }
-        *counts.entry(repo_id).or_insert(0) += 1;
     }
-    let ids = counts
-        .into_iter()
-        .filter_map(|(id, count)| (count > 1).then(|| id.to_owned()))
+    let ids = trusted
+        .config
+        .repositories
+        .iter()
+        .filter(|repo| {
+            counts.get(repo.id.as_str()).is_some_and(|count| {
+                *count > 1
+                    || trusted
+                        .files
+                        .get(&format!("mod:{}", repo.id))
+                        .is_some_and(|files| historical_core(files, repo))
+            })
+        })
+        .map(|repo| repo.id.clone())
         .collect::<Vec<_>>();
     for repo_id in ids {
         let Some(repo) = trusted
@@ -123,6 +149,21 @@ pub(super) fn attach_dependencies(
         if let Some((candidate, proof)) = upgrade {
             attach(trusted, &repo_id, candidate, proof);
         } else {
+            if let Some(node) = trusted
+                .inventory
+                .nodes
+                .iter_mut()
+                .find(|node| node.id == format!("mod:{repo_id}"))
+            {
+                // Do not fall back to the regular installation path for a
+                // unique historical GUID whose retirement was not proven.
+                blocked.extend(
+                    node.candidates
+                        .iter()
+                        .flat_map(|candidate| candidate.provides.iter().cloned()),
+                );
+                node.candidates.clear();
+            }
             trusted.duplicate_releases.blocked.extend(blocked);
         }
     }
@@ -192,14 +233,19 @@ fn prove(
         if !is_affiliated(trusted, repo, item, files, tag, prerelease) {
             return Err(AMBIGUOUS.into());
         }
-        copies.push(Copy { node, files, item });
+        let identity = mods::PluginIdentity::from_installed(item, &trusted.config);
+        copies.push(Copy {
+            node,
+            files,
+            item,
+            identity,
+        });
     }
-    let primary = select_primary(&copies, &repo.plugin_guid).ok_or(AMBIGUOUS)?;
+    let primary = select_primary(&copies, repo).ok_or(AMBIGUOUS)?;
     let roots = TransactionRoots {
         game_root: trusted.game_root.clone(),
         data_root: data_root.to_path_buf(),
     };
-    let primary_identity = mods::PluginIdentity::from_installed(primary.item, &trusted.config);
     let primary_key = inventory::key(&primary.item.dll_file);
     let mut occupied = BTreeSet::new();
     for member in &primary.files.summary.members {
@@ -218,37 +264,36 @@ fn prove(
             && relation
                 .owner_guid
                 .as_deref()
-                .is_some_and(|guid| same_guid(guid, &repo.plugin_guid))
+                .zip(primary.item.guid.as_deref())
+                .is_some_and(|(owner, guid)| same_guid(owner, guid))
         {
             relation.owner_member_key = Some(primary_key.clone());
         }
     }
     let mut retired = Vec::new();
+    if !primary.has_guid(&repo.plugin_guid) {
+        // All physical copies are predecessors of the new GUID. Even the
+        // representative is an explicit retirement and cannot survive the
+        // replacement payload as a second provider.
+        retired.push(retirement(&roots, primary, primary_key)?);
+    }
     let mut replaced_ids = BTreeSet::from([primary.node.id.clone()]);
     for copy in copies.iter().filter(|copy| copy.node.id != primary.node.id) {
-        let identity = mods::PluginIdentity::from_installed(copy.item, &trusted.config);
-        if !mods::same_release_plugin_identity(&primary_identity, &identity) {
+        if !mods::same_release_plugin_identity(&primary.identity, &copy.identity) {
             return Err(AMBIGUOUS.into());
         }
         let old = copy.node.current.as_ref().ok_or(AMBIGUOUS)?;
-        let ([dll], [member], [provided]) = (
-            copy.files.summary.dll_files.as_slice(),
-            copy.files.summary.members.as_slice(),
-            old.provides.as_slice(),
-        ) else {
-            return Err(AMBIGUOUS.into());
-        };
         let member_key = inventory::key(&copy.item.dll_file);
-        if !occupied.insert(member_key.clone())
-            || dll != &member.dll_file
-            || member.key != member_key
-            || provided.member_key.as_deref() != Some(member_key.as_str())
-        {
+        if !occupied.insert(member_key.clone()) {
             return Err(AMBIGUOUS.into());
         }
         retired.push(retirement(&roots, copy, member_key)?);
-        files.summary.dll_files.push(dll.clone());
-        files.summary.members.push(member.clone());
+        let provided = &old.provides[0]; // `retirement` verifies the standalone shape.
+        files.summary.dll_files.push(copy.item.dll_file.clone());
+        files
+            .summary
+            .members
+            .push(copy.files.summary.members[0].clone());
         files.manifests.extend(copy.files.manifests.iter().cloned());
         current.provides.push(provided.clone());
         current
@@ -300,11 +345,12 @@ fn attach(
     let candidate_id = candidate.id.clone();
     files.summary.node_id.clone_from(&id);
     files.summary.enabled = combined.enabled;
+    files.summary.candidates.clear();
     files.summary.candidates.push(inventory::CandidateSummary {
         id: candidate.id.clone(),
         tag: candidate.tag.clone(),
     });
-    combined.candidates.push(candidate);
+    combined.candidates = vec![candidate];
     trusted
         .inventory
         .nodes
@@ -325,6 +371,16 @@ struct Copy<'a> {
     node: &'a ChangeNode,
     files: &'a NodeFiles,
     item: &'a InstalledMod,
+    identity: mods::PluginIdentity<'a>,
+}
+
+impl Copy<'_> {
+    fn has_guid(&self, guid: &str) -> bool {
+        self.item
+            .guid
+            .as_deref()
+            .is_some_and(|value| same_guid(guid, value))
+    }
 }
 
 fn representative<'a>(
@@ -460,28 +516,48 @@ fn line_allows(channel: Channel, prerelease: bool) -> bool {
         )
 }
 
-fn select_primary<'a>(copies: &'a [Copy<'a>], guid: &str) -> Option<&'a Copy<'a>> {
-    let contenders = copies
+fn select_primary<'a>(copies: &'a [Copy<'a>], repo: &ModRepositoryConfig) -> Option<&'a Copy<'a>> {
+    let mut contenders = copies
         .iter()
-        .filter(|copy| {
-            copy.item
-                .guid
-                .as_deref()
-                .is_some_and(|value| same_guid(guid, value))
-        })
+        .filter(|copy| copy.has_guid(&repo.plugin_guid))
         .collect::<Vec<_>>();
-    // Tied winners do not authorize choosing an arbitrary physical copy.
-    contenders.iter().copied().find(|copy| {
-        contenders.iter().copied().all(|other| {
-            std::ptr::eq(*copy, other)
-                || copy
-                    .item
-                    .version
-                    .as_deref()
-                    .zip(other.item.version.as_deref())
-                    .and_then(|(left, right)| mods::compare_mod_versions(left, right))
-                    == Some(Ordering::Greater)
-        })
+    if contenders.is_empty() {
+        if copies
+            .iter()
+            .any(|copy| !copy.identity.matches_release_core(repo))
+        {
+            return None;
+        }
+        contenders.extend(copies);
+    }
+    // An absent field cannot mask disagreement between two other copies.
+    let fields: [fn(&Copy<'a>) -> Option<&'a str>; 2] = [
+        |copy: &Copy<'a>| copy.item.product_name.as_deref(),
+        |copy: &Copy<'a>| copy.item.original_filename.as_deref(),
+    ];
+    for field in fields {
+        let mut names = copies
+            .iter()
+            .filter_map(field)
+            .filter(|value| !value.trim().is_empty());
+        if let Some(first) = names.next()
+            && names.any(|other| !first.trim().eq_ignore_ascii_case(other.trim()))
+        {
+            return None;
+        }
+    }
+    // The selected Release is strictly newer than every copy. A tie among
+    // locals cannot affect the final provider. Preserve the unique package's
+    // context if it is tied with standalone DLLs, otherwise use a stable order.
+    let order = |copy: &Copy<'_>| (copy.files.summary.members.len() > 1, copy.item.enabled);
+    contenders.into_iter().max_by(|left, right| {
+        mods::compare_mod_versions(
+            left.item.version.as_deref().unwrap_or_default(),
+            right.item.version.as_deref().unwrap_or_default(),
+        )
+        .unwrap_or(Ordering::Equal)
+        .then_with(|| order(left).cmp(&order(right)))
+        .then_with(|| right.node.id.cmp(&left.node.id))
     })
 }
 
@@ -492,7 +568,19 @@ fn retirement(
 ) -> Result<RetiredModCopy, String> {
     let canonical = &copy.item.dll_file;
     let disabled = mods::disabled_dll_file(canonical);
-    if !canonical.starts_with(&format!("{}/", mods::file_state::PLUGINS_DIR))
+    let ([dll], [member], Some(current)) = (
+        copy.files.summary.dll_files.as_slice(),
+        copy.files.summary.members.as_slice(),
+        copy.node.current.as_ref(),
+    ) else {
+        return Err(AMBIGUOUS.into());
+    };
+    if current.provides.len() != 1
+        || current.provides[0].member_key.as_deref() != Some(member_key.as_str())
+        || dll != canonical
+        || &member.dll_file != canonical
+        || member.key != member_key
+        || !canonical.starts_with(&format!("{}/", mods::file_state::PLUGINS_DIR))
         || !canonical.to_ascii_lowercase().ends_with(".dll")
         || copy.files.manifests.iter().any(|manifest| {
             let [file] = manifest.files.as_slice() else {

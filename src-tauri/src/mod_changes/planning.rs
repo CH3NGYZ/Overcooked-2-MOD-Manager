@@ -330,7 +330,6 @@ fn attach_exact_root(
     duplicate_upgrade_data_root: Option<&Path>,
 ) -> Result<(), String> {
     if let Some(data_root) = duplicate_upgrade_data_root
-        && !trusted.files.contains_key(&root.intent.node_id)
         && duplicate_release::attach_root(trusted, root, data_root)?
     {
         return Ok(());

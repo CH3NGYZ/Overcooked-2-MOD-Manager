@@ -1,6 +1,6 @@
 use super::binding::{ModRepositoryBindingRef, unique_release_upstream};
 use super::file_state::canonical_dll_name;
-use crate::models::{AppConfig, Channel, InstalledMod, ModRepositoryBinding};
+use crate::models::{AppConfig, Channel, InstalledMod, ModRepositoryBinding, ModRepositoryConfig};
 use std::cmp::Ordering;
 
 /// Borrowed plugin identity shared by local scanning and install previews. A
@@ -110,7 +110,7 @@ impl<'a> PluginIdentity<'a> {
                 && remote.matches(repo)
                 && (repo.channel == channel || repo.channel == Channel::All)
         }) {
-            declared_core |= equal_nonempty(self.guid, Some(&repo.plugin_guid));
+            declared_core |= self.matches_release_core(repo);
             declared_bundled |= repo
                 .bundled_plugin_guids
                 .iter()
@@ -123,6 +123,19 @@ impl<'a> PluginIdentity<'a> {
             declared_bundled,
         });
         self
+    }
+
+    /// A historical core must match both PE fields, not merely the display
+    /// binding's product name or manifest repository. This never aliases GUIDs.
+    pub(crate) fn matches_release_core(&self, repo: &ModRepositoryConfig) -> bool {
+        equal_nonempty(self.guid, Some(&repo.plugin_guid))
+            || (nonempty(self.guid).is_some()
+                && !repo
+                    .bundled_plugin_guids
+                    .iter()
+                    .any(|guid| equal_nonempty(self.guid, Some(guid)))
+                && equal_nonempty(self.product_name, Some(&repo.local_product_name))
+                && equal_nonempty(self.original_filename, Some(&repo.local_original_filename)))
     }
 }
 
@@ -173,19 +186,19 @@ pub(crate) fn same_release_plugin_identity(
     let left_file = normalized_dll_filename(left.dll_file);
     let right_file = normalized_dll_filename(right.dll_file);
     let same_disk_name = !left_file.is_empty() && left_file == right_file;
-    // A shared GUID is already strong DLL evidence for the exact same release
-    // line and filename. Not every assembly ships native PE version resources.
-    if same_disk_name && equal_nonempty(left.guid, right.guid) {
-        return true;
-    }
-    if left_repo.declared_bundled || right_repo.declared_bundled {
-        return false;
-    }
     let same_original = nonempty(left.original_filename).is_some_and(|original| {
         normalized_dll_filename(original) == original.to_ascii_lowercase()
             && original.to_ascii_lowercase().ends_with(".dll")
             && equal_nonempty(Some(original), right.original_filename)
     });
+    // A shared GUID on the same release line may keep its original filename
+    // in PE metadata even after a user renames the physical file.
+    if (same_disk_name || same_original) && equal_nonempty(left.guid, right.guid) {
+        return true;
+    }
+    if left_repo.declared_bundled || right_repo.declared_bundled {
+        return false;
+    }
     let same_product = equal_nonempty(left.product_name, right.product_name);
     if left_repo.declared_core || right_repo.declared_core {
         // The defined core GUID and strong PE evidence distinguish a moved or

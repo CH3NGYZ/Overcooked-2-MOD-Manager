@@ -1,9 +1,46 @@
 use super::super::inventory::RetiredModCopy;
 use super::{
-    Builder, FileChange, Fingerprint, ItemKey, TransactionPath, data, file_conflict, game, within,
+    Builder, FileChange, Fingerprint, ItemKey, Mutation, OwnedMutation, RootKind, TransactionPath,
+    data, file_conflict, game, inventory, within,
 };
 use crate::mods;
-use std::fs;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+};
+
+pub(super) fn ordered_writes(
+    writes: impl IntoIterator<Item = (String, OwnedMutation)>,
+    copies: &BTreeMap<String, Vec<RetiredModCopy>>,
+) -> impl Iterator<Item = OwnedMutation> {
+    let retired_paths = copies
+        .values()
+        .flatten()
+        .map(|copy| inventory::key(&copy.dll_file))
+        .collect::<BTreeSet<_>>();
+    let mut removals = Vec::new();
+    let mut replacements = Vec::new();
+    let mut remaining = Vec::new();
+    for (owner, owned) in writes {
+        // All obsolete files of the consolidated upgrade leave first,
+        // regardless of path order. A still-used destination is a single
+        // atomic replacement and goes before unrelated dependent writes.
+        let queue = match &owned.mutation {
+            Mutation::File(change) if copies.contains_key(&owner) && change.source.is_none() => {
+                &mut removals
+            }
+            Mutation::File(change)
+                if change.target.root == RootKind::Game
+                    && retired_paths.contains(&inventory::key(&change.target.relative)) =>
+            {
+                &mut replacements
+            }
+            _ => &mut remaining,
+        };
+        queue.push(owned);
+    }
+    removals.into_iter().chain(replacements).chain(remaining)
+}
 
 impl Builder<'_> {
     pub(super) fn retire_copy(

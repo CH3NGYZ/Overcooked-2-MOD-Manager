@@ -396,7 +396,6 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
         }
         if safe
             && repo.is_some()
-            && !unique
             && owned_manifests.iter().all(|manifest| {
                 manifest
                     .files

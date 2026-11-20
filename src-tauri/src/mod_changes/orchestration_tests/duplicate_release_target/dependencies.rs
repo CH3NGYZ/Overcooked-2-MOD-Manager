@@ -14,6 +14,7 @@ const BLOCKER: &str = "ResourceReadFailureBlocker";
 const BLOCKER_GUID: &str = "com.example.resourcereadfailure";
 const RENAMED_CURRENT: &str = "BepInEx/plugins/FastInit (2).dll";
 const LEGACY_TARGET: &str = "BepInEx/plugins/FastInit.dll";
+const LEGACY_OTHER: &str = "BepInEx/plugins/Z-FastInit/FastInit (old).dll";
 
 fn conflicts(guid: &str, version: &str) -> RepositoryRelation {
     RepositoryRelation {
@@ -224,6 +225,139 @@ fn dependency_upgrade_replaces_the_canonical_dll_only_after_confirmation() {
     assert_eq!(manifest.repository_binding.as_ref().unwrap().tag, TARGET);
 }
 
+fn only_historical_guids() -> Fixture {
+    let f = scenario();
+    fs::remove_file(f.game.join(RENAMED_CURRENT)).unwrap();
+    retained_repo_copy(
+        &f,
+        "FastInit-second-legacy",
+        LEGACY_OTHER,
+        OLD_GUID,
+        "1.3.0",
+    );
+    f
+}
+
+#[test]
+fn web_requires_modern_fastinit_and_retires_all_proven_old_guid_copies() {
+    let f = only_historical_guids();
+    let before = game_and_manifest_bytes(&f);
+    let plan = planning::create(&f.state, request(WEB, Some("v4.0.0"), true)).unwrap();
+    assert_eq!(plan.result.status, SolveStatus::Ready, "{:?}", plan.result);
+    assert_eq!(
+        plan.retired_mod_copies[NODE]
+            .iter()
+            .map(|copy| copy.dll_file.as_str())
+            .collect::<std::collections::BTreeSet<_>>(),
+        [LEGACY_TARGET, LEGACY_OTHER].into()
+    );
+    let mut session = take(&f, &plan);
+    verify_selected(&f, &mut session);
+    preparation::finish(&f.state, &mut session).unwrap();
+    assert_eq!(session.plan.retired_mod_copies, plan.retired_mod_copies);
+    assert_eq!(game_and_manifest_bytes(&f), before);
+    session.plan.prepared = true;
+    execution::commit(&f.state, &mut session, |_| {}).unwrap();
+
+    let installed = inventory::build(&f.state).unwrap();
+    let mut providers = installed.installed_mods.iter().filter(|item| {
+        item.guid
+            .as_deref()
+            .is_some_and(|guid| [GUID, OLD_GUID].contains(&guid))
+    });
+    let current = providers.next().unwrap();
+    assert!(providers.next().is_none());
+    assert_eq!(current.guid.as_deref(), Some(GUID));
+    assert_eq!(current.version.as_deref(), Some("1.9.6"));
+    assert!(current.enabled);
+    assert!(!f.game.join(LEGACY_OTHER).exists());
+    assert!(
+        archive::read_manifest(&f.state.config.manifests_dir(), "FastInit-second-legacy").is_none()
+    );
+}
+
+#[test]
+fn a_single_historical_fastinit_can_be_replaced_directly_or_as_a_dependency() {
+    let f = scenario();
+    fs::remove_file(f.game.join(RENAMED_CURRENT)).unwrap();
+    let before = game_and_manifest_bytes(&f);
+    for (repo, tag) in [(FASTINIT, TARGET), (WEB, "v4.0.0")] {
+        let plan = planning::create(&f.state, request(repo, Some(tag), true)).unwrap();
+        assert_eq!(plan.result.status, SolveStatus::Ready, "{:?}", plan.result);
+        let [old] = plan.retired_mod_copies[NODE].as_slice() else {
+            panic!("exactly one historical DLL should be retired");
+        };
+        assert_eq!(old.dll_file, LEGACY_TARGET);
+        let mut session = take(&f, &plan);
+        verify_selected(&f, &mut session);
+        preparation::finish(&f.state, &mut session).unwrap();
+        assert_eq!(session.plan.retired_mod_copies, plan.retired_mod_copies);
+        assert_eq!(game_and_manifest_bytes(&f), before);
+        execution::cleanup(&f.state, &session.staging).unwrap();
+    }
+}
+
+#[test]
+fn conflict_and_old_copies_leave_before_new_writes_and_restore_on_write_failure() {
+    let f = only_historical_guids();
+    let before = game_and_manifest_bytes(&f);
+    let plan = planning::create(&f.state, request(WEB, Some("v4.0.0"), true)).unwrap();
+    let mut session = take(&f, &plan);
+    verify_selected(&f, &mut session);
+    preparation::finish(&f.state, &mut session).unwrap();
+    let changes = session
+        .mutations
+        .take()
+        .unwrap()
+        .into_iter()
+        .map(|change| change.mutation)
+        .collect::<Vec<_>>();
+    let first_payload = changes
+        .iter()
+        .position(|mutation| matches!(mutation, Mutation::File(change) if change.source.is_some()))
+        .unwrap();
+    // The canonical destination still belongs to the old GUID. Replace it
+    // once, atomically, after other retirements and before dependent writes.
+    assert!(matches!(&changes[first_payload], Mutation::File(change)
+        if change.target.relative == LEGACY_TARGET && change.require_single_link));
+    let manifest_dir = f.state.config.manifests_dir();
+    let data_root = manifest_dir.parent().unwrap().to_path_buf();
+    let journal_root = data_root.join("mod-change-transactions");
+    let roots = TransactionRoots {
+        game_root: f.game.clone(),
+        data_root,
+    };
+    let _operation = f.state.operation.lock().unwrap();
+    let batch = prepare(&journal_root, &roots, changes).unwrap();
+    let missing_payload = journal_root
+        .join(batch.id())
+        .join(format!("after/{first_payload}"));
+    let mut observed = false;
+    let outcome = batch.apply_with_cancel(
+        || false,
+        |event| {
+            if matches!(event, RecordProgress::Applying(index) if index == first_payload) {
+                assert!(!f.game.join(LEGACY_OTHER).exists());
+                assert!(!manifest_dir.join("FastInit-second-legacy.toml").exists());
+                let conflict = format!("BepInEx/plugins/{BLOCKER}/{BLOCKER}.dll");
+                assert!(!f.game.join(&conflict).exists());
+                assert!(f.game.join(mods::disabled_dll_file(&conflict)).exists());
+                assert_eq!(
+                    fs::read(f.game.join(LEGACY_TARGET)).unwrap(),
+                    installed_fastinit_bytes(OLD_GUID, "1.3.0")
+                );
+                // Simulate a staged file disappearing after preflight. The real
+                // writer must roll back every already-completed conflict change.
+                fs::remove_file(&missing_payload).unwrap();
+                observed = true;
+            }
+        },
+    );
+    assert!(observed);
+    assert_eq!(outcome.unwrap_err(), "recycle.payloadModified");
+    assert_eq!(game_and_manifest_bytes(&f), before);
+}
+
 #[test]
 fn cached_upgrade_reports_ambiguous_active_and_disabled_fastinit_copies() {
     let f = scenario();
@@ -311,14 +445,9 @@ fn installed_switches_do_not_authorize_fastinit_retirement() {
 
 #[test]
 fn required_legacy_guid_still_blocks_retirement() {
-    let f = scenario();
-    // Isolate the constraint: the new root requires a consumer of the old GUID,
-    // even if there is no explicit source conflict with the legacy DLL.
-    update_repository(&f, DIYLEVEL, |repo| {
-        repo.release_relations[0]
-            .relations
-            .retain(|relation| relation.guid != OLD_GUID);
-    });
+    let f = only_historical_guids();
+    // The new root explicitly keeps an enabled consumer that still requires
+    // the retired GUID. The new actual GUID cannot satisfy that relation.
     update_repository(&f, WEB, |repo| {
         repo.release_relations[1]
             .relations

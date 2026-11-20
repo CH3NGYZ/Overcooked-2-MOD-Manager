@@ -23,6 +23,8 @@ mod diychef;
 // 展示用路径归一化：送给前端的路径只从这里出口，不参与 I/O
 mod display_path;
 mod download;
+#[cfg(windows)]
+mod elevation;
 mod file_metadata;
 mod framework;
 mod game;
@@ -82,6 +84,10 @@ pub fn run() {
     install_guard::run_if_requested();
     update_migration::run_if_requested();
     manager_data::run_if_requested();
+    #[cfg(windows)]
+    if !elevation::complete_handoff() {
+        return;
+    }
     let _data_session = match manager_data::initialize() {
         Ok(session) => session,
         Err(error) => {
@@ -373,26 +379,16 @@ pub fn run() {
         ])
         .build(context)
         .expect("error while building tauri application")
-        .run(|app, event| {
-            if let tauri::RunEvent::ExitRequested { api, .. } = &event {
-                if crate::level_sets::recompress::has_pending_work() {
-                    api.prevent_exit();
-                    let app = app.clone();
-                    tauri::async_runtime::spawn_blocking(move || {
-                        match crate::level_sets::recompress::shutdown() {
-                            Ok(()) => app.exit(0),
-                            Err(error) => log::error!("地图资源恢复未完成，拒绝退出：{error}"),
-                        }
-                    });
-                }
-            }
+        .run(|_, event| {
+            // Explicit exit codes belong to the updater's own handoff. User
+            // exits must acquire the same gate before doing blocking work.
             if let tauri::RunEvent::ExitRequested {
                 code: None, api, ..
             } = event
             {
-                if archive::app_update_in_progress() {
-                    api.prevent_exit();
-                }
+                api.prevent_exit();
+                // Dropping the join handle detaches the exit worker.
+                let _ = commands::system::request_user_exit();
             }
         });
 }
@@ -470,46 +466,4 @@ pub(crate) fn is_elevated() -> bool {
     {
         false
     }
-}
-
-/// 以管理员身份重启自己（仅 Windows 的 UAC 提权有意义）。
-///
-/// 返回 true 表示新进程已启动、本进程应当退出；false 表示用户取消了 UAC
-/// 或启动失败，调用方应保留当前窗口并提示用户。
-#[cfg(windows)]
-pub(crate) fn relaunch_elevated() -> bool {
-    use std::os::windows::ffi::OsStrExt;
-    use std::ptr::null_mut;
-    use winapi::um::shellapi::ShellExecuteW;
-    use winapi::um::winuser::SW_SHOWNORMAL;
-    if is_elevated() {
-        return false;
-    }
-    let Ok(exe) = std::env::current_exe() else {
-        return false;
-    };
-    let wide = |value: &std::ffi::OsStr| {
-        value
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect::<Vec<u16>>()
-    };
-    let exe_w = wide(exe.as_os_str());
-    let verb_w = wide(std::ffi::OsStr::new("runas"));
-    let result = unsafe {
-        ShellExecuteW(
-            null_mut(),
-            verb_w.as_ptr(),
-            exe_w.as_ptr(),
-            std::ptr::null(),
-            std::ptr::null(),
-            SW_SHOWNORMAL,
-        )
-    };
-    (result as usize) > 32
-}
-
-#[cfg(not(windows))]
-pub(crate) fn relaunch_elevated() -> bool {
-    false
 }

@@ -26,7 +26,7 @@ pub(super) struct Work {
 #[derive(Default)]
 pub(super) struct Lifecycle {
     pub running: bool,
-    pub stopping: bool,
+    exit_holds: usize,
     pub paused: bool,
     pub generation: u64,
     pub rescan_requested: bool,
@@ -37,10 +37,26 @@ pub(super) struct Lifecycle {
 }
 
 impl Lifecycle {
+    pub fn stopping(&self) -> bool {
+        self.exit_holds != 0
+    }
+
+    pub fn pause_for_exit(&mut self) {
+        if !self.stopping() {
+            self.discard_batch();
+        }
+        self.exit_holds += 1;
+    }
+
+    pub fn resume_after_exit(&mut self) -> bool {
+        self.exit_holds -= 1;
+        !self.stopping()
+    }
+
     pub fn enqueue(&mut self, job: Job, signature: Signature) {
         // Recheck under the queue lock: enumeration can outlive its MOD scan and
         // must never replace pending work admitted by the newer scan.
-        if self.stopping
+        if self.stopping()
             || self.paused
             || !job.valid_scan.load(std::sync::atomic::Ordering::SeqCst)
             || self.completed.get(&job.set) == Some(&signature)
@@ -69,7 +85,7 @@ impl Lifecycle {
 
     /// Called under the queue lock, with no filesystem IO. Workers never wait for a set barrier.
     pub fn claim(&mut self) -> Option<Work> {
-        if self.stopping {
+        if self.stopping() {
             self.pending.clear();
             return None;
         }
@@ -124,24 +140,28 @@ impl Lifecycle {
         !self.active.is_empty()
     }
 
-    /// Discard the entire old batch; in-flight transactions still finish safely.
     pub fn game_started(&mut self) {
         self.paused = true;
+        self.discard_batch();
+        self.completed.clear();
+    }
+
+    /// Discard the old batch; in-flight transactions still finish safely.
+    fn discard_batch(&mut self) {
         self.generation += 1;
         self.rescan_requested = true;
         self.pending.clear();
         self.active.clear();
-        self.completed.clear();
         self.progress = Progress::default();
     }
 
     pub fn accepts(&self, generation: u64) -> bool {
-        !self.stopping && !self.paused && self.generation == generation
+        !self.stopping() && !self.paused && self.generation == generation
     }
 
     /// Only the observer consumes this after old workers have joined.
     pub fn take_rescan(&mut self) -> bool {
-        if self.stopping || self.paused || self.running {
+        if self.stopping() || self.paused || self.running {
             return false;
         }
         std::mem::take(&mut self.rescan_requested)

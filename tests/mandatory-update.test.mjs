@@ -114,12 +114,13 @@ test('UI hides cancellation; native cancel, exit and close share the atomic upda
   const system = source('src-tauri/src/commands/system.rs')
   assert.match(download, /if !archive::cancel_download\(\)[\s\S]*?update.inProgress/)
   assert.match(update, /install_app_update[\s\S]*?archive::begin_app_update\(\)\?/)
-  for (const name of ['exit_app', 'relaunch_as_admin']) {
-    assert.match(system, new RegExp(`pub (?:async )?fn ${name}[^]*?archive::app_update_in_progress\\(\\)[^]*?update.inProgress`))
-  }
+  assert.match(system, /pub async fn exit_app[^]*?request_user_exit\(\)\?[^]*?\.await/)
+  assert.match(system, /pub\(crate\) fn request_user_exit[^]*?begin_app_update\(\)\?[^]*?spawn_blocking\(move \|\| \{\s*let _exit = exit;[^]*?recompress::shutdown\(\)/)
+  assert.match(system, /pub async fn relaunch_as_admin[^]*?spawn_blocking\(\|\| relaunch_with\(crate::elevation::launch\)\)/)
+  assert.match(system, /pub\(crate\) fn relaunch_with[^]*?begin_app_update\(\)\?[^]*?quiesce_for_exit\(\)[^]*?match launch\(\)/)
   const lib = source('src-tauri/src/lib.rs')
   assert.match(lib, /if window.label\(\) == "main" \{\s*if let tauri::WindowEvent::CloseRequested[\s\S]*?api.prevent_close\(\)/)
-  assert.match(lib, /ExitRequested[\s\S]*?code: None[\s\S]*?app_update_in_progress\(\)[\s\S]*?api.prevent_exit\(\)/)
+  assert.match(lib, /ExitRequested\s*\{[^}]*?code: None[^}]*?\}\s*= event\s*\{[^]*?api.prevent_exit\(\)[^]*?commands::system::request_user_exit\(\)/)
   assert.match(source('src/composables/useAppCloseGuard.ts'), /appUpdateState.stage === 'installing' \|\| appUpdateState.stage === 'handoff'/)
   assert.match(source('src/composables/usePageLeaveGuard.ts'), /appCloseBlocked/)
 })

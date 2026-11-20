@@ -22,18 +22,23 @@ pub fn open_devtools(window: tauri::WebviewWindow) -> Result<OperationResult, St
 
 #[tauri::command]
 pub async fn exit_app() -> Result<(), String> {
-    if archive::app_update_in_progress() {
-        return Err("update.inProgress".into());
-    }
     log::info!("收到退出应用请求");
-    tauri::async_runtime::spawn_blocking(crate::level_sets::recompress::shutdown)
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|error| {
+    request_user_exit()?.await.map_err(|e| e.to_string())?
+}
+
+/// Both user exit paths retain the updater's exclusion through the final exit.
+pub(crate) fn request_user_exit()
+-> Result<tauri::async_runtime::JoinHandle<Result<(), String>>, String> {
+    let exit = archive::begin_app_update()?;
+    Ok(tauri::async_runtime::spawn_blocking(move || {
+        let _exit = exit;
+        crate::level_sets::recompress::shutdown().map_err(|error| {
             log::error!("地图资源恢复未完成，拒绝退出：{error}");
             "assetBundle.recoveryPending".to_string()
         })?;
-    std::process::exit(0)
+        log::logger().flush();
+        std::process::exit(0)
+    }))
 }
 
 /// 当前进程的权限与可写性自检。
@@ -84,12 +89,12 @@ fn probe_writable(dir: &Path) -> bool {
     }
 }
 
-/// 以管理员身份重启自己；成功后本进程立即退出。
+/// 以管理员身份重启自己；只有新进程已确认接手时，当前进程才退出。
 ///
 /// 只在文件访问真的被拒时由用户主动触发 —— 应用平时以普通权限运行，
 /// 这样拖放可用、启动不弹 UAC、更新时能正常关闭自己。
 #[tauri::command]
-pub fn relaunch_as_admin() -> Result<OperationResult, String> {
+pub async fn relaunch_as_admin() -> Result<OperationResult, String> {
     if archive::app_update_in_progress() {
         return Err("update.inProgress".into());
     }
@@ -107,27 +112,46 @@ pub fn relaunch_as_admin() -> Result<OperationResult, String> {
      * 用 root 跑 GUI 会让 TCC 权限失效、配置与缓存变成 root 所有、更新器
      * 无法自替换。设置页在 macOS 上已不再显示这个按钮，这里兜住旧前端。
      */
-    if !cfg!(windows) {
+    #[cfg(not(windows))]
+    {
         log::info!("当前平台不需要也不支持提权重启");
-        return Ok(OperationResult {
+        Ok(OperationResult {
             ok: false,
             message: "update.elevationUnsupported".into(),
-        });
+        })
     }
-    crate::level_sets::recompress::shutdown().map_err(|error| {
+    #[cfg(windows)]
+    {
+        tauri::async_runtime::spawn_blocking(|| relaunch_with(crate::elevation::launch))
+            .await
+            .map_err(|error| error.to_string())?
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn relaunch_with(
+    launch: impl FnOnce() -> std::io::Result<()>,
+) -> Result<OperationResult, String> {
+    // Share the updater/data-migration gate while Windows is waiting for UAC.
+    let _handoff = archive::begin_app_update()?;
+    let _compression = crate::level_sets::recompress::quiesce_for_exit().map_err(|error| {
         log::error!("地图资源恢复未完成：{error}");
         "assetBundle.recoveryPending".to_string()
     })?;
-    if crate::relaunch_elevated() {
-        log::info!("已启动管理员实例，退出当前进程");
-        // 给新进程一点时间接管
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        std::process::exit(0);
+    match launch() {
+        Ok(()) => {
+            log::info!("管理员实例已确认接手，退出当前进程以交接单实例锁");
+            log::logger().flush();
+            std::process::exit(0);
+        }
+        Err(error) => {
+            log::warn!("管理员重启未交接，继续使用当前实例：{error}");
+            Ok(OperationResult {
+                ok: false,
+                message: "update.elevationFailed".into(),
+            })
+        }
     }
-    Ok(OperationResult {
-        ok: false,
-        message: "update.elevationFailed".into(),
-    })
 }
 
 /// Startup retries respect the persisted choice instead of re-detecting the OS.

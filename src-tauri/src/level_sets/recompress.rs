@@ -65,18 +65,6 @@ pub(crate) fn take_rescan_request() -> bool {
         .take_rescan()
 }
 
-pub(crate) fn has_pending_work() -> bool {
-    lifecycle()
-        .0
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .running
-        || !recovery()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_empty()
-}
-
 /// The caller holds the game operation lock, excluding new failed replacements.
 /// Normal conversion work is cancelled by scan leases and does not block a plan.
 pub(crate) fn has_pending_recovery(game_root: &Path) -> bool {
@@ -98,9 +86,35 @@ pub(crate) fn has_pending_recovery(game_root: &Path) -> bool {
 
 /// Called on a blocking exit worker, never on the window event thread.
 pub(crate) fn shutdown() -> Result<(), String> {
+    let mut guard = quiesce_for_exit()?;
+    guard.0 = false; // Commit the stop for callers that will now exit.
+    Ok(())
+}
+
+/// Let a failed relaunch leave the current window's compression queue usable.
+pub(crate) struct ExitPause(bool);
+
+impl Drop for ExitPause {
+    fn drop(&mut self) {
+        if !self.0 {
+            return;
+        }
+        let (lock, wake) = lifecycle();
+        let mut state = lock.lock().unwrap_or_else(|e| e.into_inner());
+        if state.resume_after_exit() {
+            CANCEL.store(false, Ordering::SeqCst);
+        }
+        wake.notify_all();
+    }
+}
+
+/// Prevent new writes, join workers and verify recovery before attempting a handoff.
+pub(crate) fn quiesce_for_exit() -> Result<ExitPause, String> {
     let (lock, wake) = lifecycle();
+    let guard = ExitPause(true);
     let mut state = lock.lock().unwrap_or_else(|e| e.into_inner());
-    state.stopping = true;
+    state.pause_for_exit();
+    GENERATION.store(state.generation, Ordering::SeqCst);
     CANCEL.store(true, Ordering::SeqCst);
     // Idle workers may be waiting for an active set's follow-up. Cancellation
     // can leave unclaimed files in that set, so completion alone cannot wake them.
@@ -116,7 +130,7 @@ pub(crate) fn shutdown() -> Result<(), String> {
             pending.len()
         ));
     }
-    Ok(())
+    Ok(guard)
 }
 
 struct Job {
@@ -336,7 +350,7 @@ pub(crate) fn enqueue_installed(
             });
             let mut queue = lifecycle().0.lock().unwrap_or_else(|e| e.into_inner());
             // Admission and going idle share a lock: an enqueue at the boundary cannot be lost.
-            if !queue.stopping && !queue.paused && !queue.pending.is_empty() {
+            if !queue.stopping() && !queue.paused && !queue.pending.is_empty() {
                 continue;
             }
             finish.0 = false;
@@ -606,7 +620,7 @@ fn run_workers(workers: usize, emit: &(dyn Fn(Progress) + Sync)) {
                 if let Some(work) = queue.claim() {
                     return Some(work);
                 }
-                if queue.stopping || queue.paused || !queue.has_active() {
+                if queue.stopping() || queue.paused || !queue.has_active() {
                     return None;
                 }
                 queue = wake.wait(queue).unwrap_or_else(|e| e.into_inner());
@@ -740,9 +754,10 @@ mod tests {
         queue.completed.insert(PathBuf::from("unchanged"), vec![]);
         queue.enqueue(job("unchanged", 9), vec![]);
         assert_eq!(queue.progress.total, 11);
-        queue.stopping = true;
-        queue.enqueue(job("after-exit", 10), vec![]);
         assert_eq!(queue.pending.len(), 2);
+        queue.pause_for_exit();
+        queue.enqueue(job("after-exit", 10), vec![]);
+        assert!(queue.pending.is_empty());
     }
     #[test]
     fn replacement_verifies_hash_and_rolls_back_corrupt_output() {

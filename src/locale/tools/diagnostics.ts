@@ -223,13 +223,21 @@ export const toolsUiDiagnostics: DomainMessages = {
     ko: '로그 지우기',
     ja: 'ログを消去',
   },
-  // 当前日志的全部内容将被清空，此操作不可撤销。继续吗？
+  logFile: {
+    'zh-CN': '日志文件', 'zh-TW': '日誌檔案', en: 'Log file', ko: '로그 파일', ja: 'ログファイル',
+  },
+  copyLogFile: {
+    'zh-CN': '复制日志', 'zh-TW': '複製日誌', en: 'Copy log file', ko: '로그 파일 복사', ja: 'ログファイルをコピー',
+  },
+  logFileCopied: {
+    'zh-CN': '日志文件已复制', 'zh-TW': '已複製日誌檔案', en: 'Log file copied', ko: '로그 파일을 복사했습니다', ja: 'ログファイルをコピーしました',
+  },
   clearLogConfirm: {
-    'zh-CN': '当前日志的全部内容将被清空，此操作不可撤销。继续吗？',
-    'zh-TW': '目前日誌的全部內容將被清空，此操作無法復原。繼續嗎？',
-    en: 'All content of this log will be cleared. This cannot be undone. Continue?',
-    ko: '현재 로그의 모든 내용이 지워집니다. 이 작업은 되돌릴 수 없습니다. 계속할까요?',
-    ja: '現在のログの内容をすべて消去します。この操作は元に戻せません。続行しますか？',
+    'zh-CN': '「{name}」的全部内容将被清空，此操作不可撤销。继续吗？',
+    'zh-TW': '「{name}」的全部內容將被清空，此操作無法復原。繼續嗎？',
+    en: 'Clear all content in “{name}”? This cannot be undone.',
+    ko: '“{name}”의 모든 내용을 지울까요? 이 작업은 되돌릴 수 없습니다.',
+    ja: '「{name}」の内容をすべて消去しますか？この操作は元に戻せません。',
   },
   // 日志已清空
   logCleared: {

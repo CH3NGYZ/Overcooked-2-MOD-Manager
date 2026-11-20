@@ -4,6 +4,12 @@ use super::repositories::Provider;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogFileEntry {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RustLog {
     pub path: String,
     pub content: String,

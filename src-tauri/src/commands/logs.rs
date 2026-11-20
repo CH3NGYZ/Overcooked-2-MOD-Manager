@@ -1,101 +1,133 @@
-use crate::display_path::display_path;
-use crate::models::RustLog;
+use crate::models::{LogFileEntry, RustLog};
 use chrono::Utc;
-use std::fs;
-use std::fs::OpenOptions;
-use std::io::{Read, Seek, SeekFrom, Write};
+use history::{History, MAX_RUST_BYTES};
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
+use tauri_plugin_log::{Target, TargetKind, fern};
 
-#[tauri::command]
-pub fn read_rust_log() -> Result<RustLog, String> {
-    read_log_file("rust.log")
+mod files;
+mod history;
+
+static HISTORY: OnceLock<Mutex<History>> = OnceLock::new();
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LogKind {
+    Rust,
+    Frontend,
+    Crash,
+}
+
+impl LogKind {
+    const ALL: [Self; 3] = [Self::Rust, Self::Frontend, Self::Crash];
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Rust => "rust",
+            Self::Frontend => "frontend",
+            Self::Crash => "crash",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, String> {
+        Self::ALL
+            .into_iter()
+            .find(|kind| kind.as_str() == value)
+            .ok_or_else(|| "log.unknownKind".into())
+    }
+}
+
+fn unavailable() -> io::Error {
+    io::Error::new(io::ErrorKind::NotFound, "Unknown or replaced log file")
+}
+
+fn file_error(error: io::Error) -> String {
+    if error.kind() == io::ErrorKind::NotFound {
+        "log.fileUnavailable".into()
+    } else {
+        // The caller must no longer be holding HISTORY before logging again.
+        log::warn!("Log operation failed: {error}");
+        "log.fileOperationFailed".into()
+    }
+}
+
+pub(crate) fn start(directory: &Path) -> io::Result<Target> {
+    let history = History::start(directory, MAX_RUST_BYTES)?;
+    HISTORY
+        .set(Mutex::new(history))
+        .map_err(|_| io::Error::other("Log history already initialized"))?;
+    // Keep the plugin's formatting, stdout and filters. Its built-in rotator
+    // recycles the active path, whereas a selected history entry must keep its identity.
+    let writer = fern::Output::call(|record| {
+        let line = format!("{}\n", record.args());
+        if let Err(error) = with_history(|history| history.append(LogKind::Rust, line.as_bytes())) {
+            eprintln!("Could not write Rust log: {error}");
+        }
+    });
+    Ok(Target::new(TargetKind::Dispatch(
+        fern::Dispatch::new().chain(writer),
+    )))
+}
+
+fn with_history<T>(action: impl FnOnce(&mut History) -> io::Result<T>) -> io::Result<T> {
+    let mut history = HISTORY
+        .get()
+        .ok_or_else(unavailable)?
+        .lock()
+        .map_err(|_| io::Error::other("Log history lock poisoned"))?;
+    action(&mut history)
+}
+
+async fn log_operation<T: Send + 'static>(
+    kind: String,
+    action: impl FnOnce(&mut History, LogKind) -> io::Result<T> + Send + 'static,
+) -> Result<T, String> {
+    let kind = LogKind::parse(&kind)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        with_history(|history| action(history, kind)).map_err(file_error)
+    })
+    .await
+    .map_err(|_| "log.fileOperationFailed".to_owned())?
 }
 
 #[tauri::command]
-pub fn read_frontend_log() -> Result<RustLog, String> {
-    read_log_file("frontend.log")
+pub async fn list_log_files(kind: String) -> Result<Vec<LogFileEntry>, String> {
+    log_operation(kind, History::list).await
 }
 
 #[tauri::command]
-pub fn read_crash_log() -> Result<RustLog, String> {
-    read_log_file("crash.log")
+pub async fn read_log(kind: String, id: String) -> Result<RustLog, String> {
+    log_operation(kind, move |history, kind| history.read(kind, &id)).await
 }
 
-/// 清空一份日志，并把清空后的内容回读给前端。
-///
-/// 回读而不是让前端自己再调一次 read：两次 IPC 之间日志插件可能又写进新行，
-/// 界面就会显示「点了清空但内容还在」。一次调用拿到的就是那一刻的文件内容。
 #[tauri::command]
-pub fn clear_log(kind: String) -> Result<RustLog, String> {
-    let file_name = log_file_name(&kind)?;
-    let path = crate::user_paths::logs_dir()?.join(file_name);
-    clear_log_at_path(&path)?;
-    // 先回读再记这次清空：回读要给前端一个真正的空内容，而「日志被清空过」
-    // 这件事必须留在文件里 —— 否则诊断时只看到日志从中间开始，却没有任何
-    // 线索说明是谁在什么时候清的。
-    let log = read_log_at_path(&path)?;
-    log::info!("清空日志：文件={file_name}");
+pub async fn clear_log(kind: String, id: String) -> Result<RustLog, String> {
+    let log = log_operation(kind, move |history, kind| history.clear(kind, &id)).await?;
+    // Read the truncated file under the writer lock before writing this audit line.
+    log::info!("清空日志：文件={}", log.path);
     Ok(log)
 }
 
-/// kind → 文件名。白名单，不接受调用方直接给文件名：
-/// `logs_dir().join(任意字符串)` 里的 `..` 能逃出日志目录，而清空不可逆。
-fn log_file_name(kind: &str) -> Result<&'static str, String> {
-    match kind {
-        "rust" => Ok("rust.log"),
-        "frontend" => Ok("frontend.log"),
-        "crash" => Ok("crash.log"),
-        _ => Err("log.unknownKind".to_string()),
-    }
-}
-
-fn read_log_file(file_name: &str) -> Result<RustLog, String> {
-    let path = crate::user_paths::logs_dir()?.join(file_name);
-    read_log_at_path(&path)
-}
-
-/// Reading diagnostics must never append diagnostics about the read itself.
-/// Seek to the tail before reading so large logs do not allocate the full file.
-fn read_log_at_path(path: &Path) -> Result<RustLog, String> {
-    let content = match fs::File::open(path) {
-        Ok(mut file) => {
-            const MAX_LOG_BYTES: u64 = 512 * 1024;
-            let length = file.metadata().map_err(|error| error.to_string())?.len();
-            let start = length.saturating_sub(MAX_LOG_BYTES);
-            file.seek(SeekFrom::Start(start))
-                .map_err(|error| error.to_string())?;
-            let mut bytes = Vec::with_capacity(length.min(MAX_LOG_BYTES) as usize);
-            file.take(MAX_LOG_BYTES)
-                .read_to_end(&mut bytes)
-                .map_err(|error| error.to_string())?;
-            String::from_utf8_lossy(&bytes).into_owned()
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(error.to_string()),
-    };
-    Ok(RustLog {
-        path: display_path(path),
-        content,
+#[tauri::command]
+pub async fn copy_log_file(kind: String, id: String) -> Result<(), String> {
+    let kind = LogKind::parse(&kind)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = with_history(|history| history.selected_path(kind, &id)).map_err(file_error)?;
+        copy_to_clipboard(&path).map_err(file_error)
     })
+    .await
+    .map_err(|_| "log.fileOperationFailed".to_owned())?
 }
 
-/// 把日志文件截断到 0 字节。
-///
-/// rust.log 正被日志插件以 append 模式持有：外部截断是安全的，插件的写入走
-/// O_APPEND 语义，截断后自然从头写。唯一的副作用是插件内部的字节计数不会
-/// 跟着重置，可能让下一次轮转提前发生一次 —— 不丢日志，只多一个归档文件。
-/// crash.log / frontend.log 每次写入才打开，没有长期句柄。
-fn clear_log_at_path(path: &Path) -> Result<(), String> {
-    match OpenOptions::new().write(true).truncate(true).open(path) {
-        Ok(_) => Ok(()),
-        // 文件本来就不存在，等价于已经是空的
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.to_string()),
-    }
+fn copy_to_clipboard(path: &Path) -> io::Result<()> {
+    // Native clipboard libraries may themselves log when the clipboard is busy.
+    let mut clipboard = arboard::Clipboard::new().map_err(io::Error::other)?;
+    clipboard.set().file_list(&[path]).map_err(io::Error::other)
 }
 
 #[tauri::command]
-pub fn write_frontend_log(level: String, message: String) -> Result<(), String> {
+pub async fn write_frontend_log(level: String, message: String) -> Result<(), String> {
     log::trace!("写入前端日志：等级={}，长度={}", level, message.len());
     const MAX_FRONTEND_LOG_BYTES: usize = 64 * 1024;
     let message = if message.len() > MAX_FRONTEND_LOG_BYTES {
@@ -109,23 +141,51 @@ pub fn write_frontend_log(level: String, message: String) -> Result<(), String> 
     } else {
         message
     };
-    let level = level.to_ascii_lowercase();
-    let path = crate::user_paths::logs_dir()?;
-    fs::create_dir_all(&path).map_err(|error| error.to_string())?;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path.join("frontend.log"))
-        .map_err(|error| error.to_string())?;
-    writeln!(
-        file,
-        "[{}][{}] {}",
+    let line = format!(
+        "[{}][{}] {message}\n",
         Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
-        level,
-        message
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
+        level.to_ascii_lowercase()
+    );
+    log_operation("frontend".into(), move |history, kind| {
+        history.append(kind, line.as_bytes())
+    })
+    .await
+}
+
+pub(crate) fn install_panic_logger() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic| {
+        previous(panic);
+        let line = format!(
+            "[{}][panic] {panic}\n",
+            Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+        );
+        // A panic could be unwinding the thread currently holding HISTORY.
+        if let Some(mut history) = HISTORY.get().and_then(|history| history.try_lock().ok())
+            && history.append(LogKind::Crash, line.as_bytes()).is_ok()
+        {
+            return;
+        }
+        let fallback = std::env::temp_dir().join("oc2-modmanager-crash.log");
+        if let Err(error) = append_fallback(&fallback, line.as_bytes()) {
+            eprintln!("panic 日志写入失败：{}（{error}）", fallback.display());
+        }
+    }));
+}
+
+fn append_fallback(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    match OpenOptions::new().create_new(true).append(true).open(path) {
+        Ok(mut file) => file.write_all(bytes),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            let mut options = OpenOptions::new();
+            options.append(true);
+            files::open_plain_file(path, options)?.write_all(bytes)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(test)]

@@ -75,12 +75,8 @@ mod version_range;
 #[cfg(any(unix, test))]
 mod wine;
 
-use chrono::Utc;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
-use std::path::Path;
 use tauri::{Emitter, Manager};
-use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
+use tauri_plugin_log::{Target, TargetKind};
 
 pub fn run() {
     install_guard::run_if_requested();
@@ -94,7 +90,7 @@ pub fn run() {
         }
     };
     let skip_legacy_migration = _data_session.skip_legacy_migration;
-    install_panic_logger();
+    commands::logs::install_panic_logger();
     /*
      * 不再在启动时无条件自提权。
      *
@@ -151,27 +147,13 @@ pub fn run() {
                 user_paths::migrate_legacy_root()
             };
             let data_root = user_paths::root()?;
-            let log_dir = data_root.join("logs");
-            fs::create_dir_all(&log_dir)
-                .map_err(|error| format!("{}: {error}", log_dir.display()))?;
-            let log_path = log_dir.clone();
+            let log_path = user_paths::logs_dir()?;
+            let history_target = commands::logs::start(&log_path)?;
             app.handle().plugin(
                 tauri_plugin_log::Builder::default()
-                    .targets([
-                        Target::new(TargetKind::Stdout),
-                        Target::new(TargetKind::Folder {
-                            path: log_dir,
-                            file_name: Some("rust".into()),
-                        }),
-                    ])
-                    // Keep trace-level stage details in rust.log so diagnostics can
-                    // reconstruct a complete operation without exposing secrets.
+                    .targets([Target::new(TargetKind::Stdout), history_target])
                     .level(log::LevelFilter::Trace)
                     .level_for("tao", log::LevelFilter::Info)
-                    // The plugin's 40 KiB/KeepOne defaults discard startup JS
-                    // requests quickly when detailed runtime logging is on.
-                    .max_file_size(8 * 1024 * 1024)
-                    .rotation_strategy(RotationStrategy::KeepSome(5))
                     .build(),
             )?;
             let state = app_state::AppState::new().map_err(|error| {
@@ -257,9 +239,9 @@ pub fn run() {
             commands::manager_data::get_manager_data_directory,
             commands::manager_data::clear_all_config,
             commands::manager_data::migrate_manager_data,
-            commands::logs::read_rust_log,
-            commands::logs::read_frontend_log,
-            commands::logs::read_crash_log,
+            commands::logs::list_log_files,
+            commands::logs::read_log,
+            commands::logs::copy_log_file,
             commands::logs::clear_log,
             commands::logs::write_frontend_log,
             commands::mods_local::save_mod_note,
@@ -462,43 +444,6 @@ fn present_startup_window<R: tauri::Runtime>(app: &tauri::App<R>) {
     }
 }
 
-fn install_panic_logger() {
-    let previous = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |panic| {
-        previous(panic);
-        let message = panic.to_string();
-        // 主路径：数据根里的 logs/crash.log。
-        if let Ok(log_dir) = user_paths::logs_dir() {
-            if append_panic_line(&log_dir.join("crash.log"), &message).is_ok() {
-                return;
-            }
-        }
-        // 兜底：数据目录本身不可用时，至少把崩溃写进临时目录。
-        // 旧实现在这里直接 `return`，于是 macOS 上「启动即崩、没有任何日志」。
-        let fallback = std::env::temp_dir().join(PANIC_LOG_FALLBACK);
-        if let Err(error) = append_panic_line(&fallback, &message) {
-            eprintln!("panic 日志写入失败：{}（{error}）", fallback.display());
-        }
-    }));
-}
-
-/// 数据目录不可用时的崩溃日志文件名（位于系统临时目录）。
-const PANIC_LOG_FALLBACK: &str = "oc2-modmanager-crash.log";
-
-/// 追加一条 panic 记录，必要时创建父目录。
-fn append_panic_line(path: &Path, message: &str) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-    writeln!(
-        file,
-        "[{}][panic] {}",
-        Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
-        message
-    )
-}
-
 /// 当前进程是否已具备管理员权限。
 #[cfg(windows)]
 pub(crate) fn is_elevated() -> bool {
@@ -568,7 +513,3 @@ pub(crate) fn relaunch_elevated() -> bool {
 pub(crate) fn relaunch_elevated() -> bool {
     false
 }
-
-#[cfg(test)]
-#[path = "lib/tests.rs"]
-mod tests;

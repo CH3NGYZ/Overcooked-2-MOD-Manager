@@ -298,6 +298,19 @@ export const log: DomainMessages = {
     ko: '프런트엔드 로그가 비어 있습니다',
     ja: 'フロントエンドログが空です',
   },
+  fileUnavailable: {
+    'zh-CN': '所选日志已不存在或已更换，请重新打开日志列表。',
+    'zh-TW': '所選日誌已不存在或已更換，請重新開啟日誌列表。',
+    en: 'The selected log is no longer available. Reopen the log list.',
+    ko: '선택한 로그를 더 이상 사용할 수 없습니다. 로그 목록을 다시 열어 주세요.',
+    ja: '選んだログは利用できなくなりました。ログ一覧を開き直してください。',
+  },
+  fileOperationFailed: {
+    'zh-CN': '日志文件操作失败，请重试。', 'zh-TW': '日誌檔案操作失敗，請重試。',
+    en: 'The log file operation failed. Please retry.',
+    ko: '로그 파일 작업에 실패했습니다. 다시 시도해 주세요.',
+    ja: 'ログファイルの操作に失敗しました。もう一度お試しください。',
+  },
   // 未知的日志类型
   unknownKind: {
     'zh-CN': '未知的日志类型',

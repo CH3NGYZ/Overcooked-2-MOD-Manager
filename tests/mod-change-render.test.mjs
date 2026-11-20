@@ -48,7 +48,7 @@ registerHooks({
 const { default: Dialog } = await import('../src/modChanges/ChangePlanDialog.vue')
 const { changeStatusKey } = await import('../src/modChanges/presentation.ts')
 const host = createRenderer({
-  createElement: tag => ({ tag, props: {}, children: [] }), createText: text => ({ text }), createComment: () => ({}),
+  createElement: tag => ({ tag, props: {}, children: [], focus() {} }), createText: text => ({ text }), createComment: () => ({}),
   patchProp: (node, key, _, value) => { node.props[key] = value },
   insert(node, parent, anchor) {
     if (node.parent) node.parent.children.splice(node.parent.children.indexOf(node), 1)
@@ -135,21 +135,31 @@ test('the plan table shows live preparation only in the affected row and leaves 
   assert.deepEqual(fixture.calls, [])
 })
 
-test('final confirmation shows the returned plan directly and never self-executes', async t => {
+test('a completed cache or local payload paints a check, and the new apply dialog resets it', async t => {
   const root = mounted(t)
+  const verified = { ...plan, prepared: true, actions: [action('level', 'downgrade', { from_tag: 'v0.11', to_tag: 'v0.10' })] }
   fixture.preparation.value = { plan_id: 'one', stage: 'ready', actions: [action('web', 'upgrade', { to_tag: 'v5' })], items: [] }
-  fixture.state.value = { phase: 'reconfirming', plan: { ...plan, plan_id: 'verified', prepared: true,
-    actions: [action('level', 'downgrade', { from_tag: 'v0.11', to_tag: 'v0.10' })] }, error: null }
+  const panel = () => find(root, node => node.tag === 'modal')[0]
+  const original = panel()
+  fixture.state.value = { phase: 'prepared', plan: verified, error: null }
   await nextTick()
+  assert.strictEqual(panel(), original)
+  assert.deepEqual(bodyRows(root).map(stage), ['prepared'])
+  assert.deepEqual(bodyRows(root).map(icon), ['check'])
+  assert.equal(statuses(bodyRows(root)[0])[0].props.title, '文件已验证，等待应用')
+  assert.deepEqual(fixture.calls, [])
+  fixture.state.value = { phase: 'reconfirming', applyReview: 'prepared', plan: verified, error: null }
+  await nextTick()
+  assert.notStrictEqual(panel(), original)
   const rows = bodyRows(root)
   assert.equal(rows.length, 1); assert.match(text(rows[0]), /降级.*DIYLevel 框架.*v0\.11.*v0\.10/)
-  assert.deepEqual(rows.map(stage), ['prepared'])
+  assert.deepEqual(rows.map(stage), ['queued'])
   assert.deepEqual(rows.map(icon), ['dots'])
-  assert.equal(statuses(rows[0])[0].props.title, '文件已验证，等待应用')
+  assert.equal(statuses(rows[0])[0].props.title, '等待处理')
   assert.doesNotMatch(text(rows[0]), /升级|v5|Web 前置/)
   assert.equal(find(root, n => n.tag === 'details').length, 0)
   assert.deepEqual(fixture.calls, [])
-  assert.match(text(find(root, n => n.tag === 'footer')[0]), /确认更新后的方案/)
+  assert.match(text(find(root, n => n.tag === 'footer')[0]), /确认并应用/)
 })
 
 test('the only view is a five-column table with separate actions, version changes, and readable reasons', async t => {
@@ -275,7 +285,7 @@ test('execution icons follow exact member writes, and a rolled-back write loses 
   assert.equal(rows.length, 3)
   assert.match(text(cells(rows[0])[2]), /Web 前置.*A\.dll/)
   assert.match(text(cells(rows[1])[2]), /Web 前置.*B\.dll/)
-  assert.deepEqual(rows.map(stage), ['applying', 'queued', 'prepared'])
+  assert.deepEqual(rows.map(stage), ['applying', 'queued', 'queued'])
   assert.equal(statuses(rows[0])[0].props.title, '正在处理')
   assert.equal(find(statuses(rows[0])[0], node => node.tag === 'spin').length, 1)
   fixture.execution.set(changeStatusKey('web', 'a'), 'processed')
@@ -334,7 +344,7 @@ test('the rows for a bundled DLL stay with its map and show the map transaction 
   await nextTick()
   const rows = bodyRows(root)
   assert.equal(rows.length, 3)
-  assert.deepEqual(rows.map(stage), ['processed', 'processed', 'prepared'])
+  assert.deepEqual(rows.map(stage), ['processed', 'processed', 'queued'])
   assert.deepEqual(rows.map(row => text(cells(row)[2]).trim()), ['Web 前置', 'Addon.dll', 'DIYLevel 框架'])
   assert.match(text(cells(rows[1])[4]), /随包.*禁用/)
   fixture.execution.set(changeStatusKey('web'), 'applied')

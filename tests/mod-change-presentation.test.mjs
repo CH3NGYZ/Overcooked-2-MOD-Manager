@@ -40,14 +40,17 @@ test('uses the latest solved actions and removes candidates abandoned during pre
   assert.equal(rows[0].kind, 'upgrade')
   assert.deepEqual(rows[0].version, { from: 'v4', to: 'v5' })
   assert.equal(rows[0].preparationStage, 'downloading')
-  assert.deepEqual(changePlanDetails(plan, { actions: [], items: [] }).rows, [])
+  // Prepare initially emits a resolving snapshot before it projects any work.
+  assert.deepEqual(changePlanDetails(plan, { stage: 'resolving', actions: [], items: [] }).rows.map(row => row.kind), plan.actions.map(action => action.kind))
 })
 
 test('measures only verified packages and does not treat downloaded bytes as validated contents', () => {
   assert.deepEqual(preparationCompletion(null), { completed: 0, total: 0, percentage: null })
-  const items = [{ stage: 'ready' }, { stage: 'verifying', download: { downloaded: 100, total: 100, finished: true } }, { stage: 'failed' }]
-  assert.deepEqual(preparationCompletion({ items }), { completed: 1, total: 3, percentage: 33 })
-  assert.deepEqual(preparationCompletion({ items: [items[0]] }), { completed: 1, total: 1, percentage: 100 })
+  const actions = [action('package'), action('transfer','install'), action('broken','replace'), action('toggle','enable')]
+  const items = [{ node_id: 'package', stage: 'ready' }, { node_id: 'transfer', stage: 'verifying', download: { downloaded: 100, total: 100, finished: true } },
+    { node_id: 'broken', stage: 'failed' }, { node_id: 'toggle', stage: 'ready' }]
+  assert.deepEqual(preparationCompletion({ actions, items }), { completed: 1, total: 3, percentage: 33 })
+  assert.deepEqual(preparationCompletion({ actions, items: [items[0]] }), { completed: 1, total: 1, percentage: 100 })
 })
 
 test('details keep individual actions and explain them with names and ranges instead of repeating opaque impacts', () => {

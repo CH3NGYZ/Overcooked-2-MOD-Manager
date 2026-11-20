@@ -18,7 +18,7 @@ test('shared confirmation delegates the single action table and only connects tr
 })
 test('blocked and busy plans cannot confirm; failure can only replan; preparation and execution cannot cancel',()=>{
  assert.match(dialog,/state\?\.phase === 'failed'/);assert.match(dialog,/plan\?\.status !== 'ready'/)
- assert.match(dialog,/\['preparing', 'executing'\]\.includes/);assert.match(dialog,/:disabled="!canCancel"/)
+ assert.match(dialog,/\['preparing', 'prepared', 'executing'\]\.includes/);assert.match(dialog,/:disabled="!canCancel"/)
  assert.match(dialog,/@click="changes\.confirm"/)
  assert.match(dialog,/@click="changes\.retry"/)
 })
@@ -52,7 +52,7 @@ test('planning stays indeterminate; task-local bytes use the shared race overlay
  assert.match(store,/updateDownloadProgress\([\s\S]*?, token\)/)
  assert.doesNotMatch(details,/<NProgress|<DownloadVolumes|formatFileSize|speed_bytes|item-download/)
  assert.match(strip,/<AppModal :show="visible" :closable="false"[^>]*:z-index="canCancel \? 2600 : 6200"/)
- assert.match(dialog,/<AppModal v-else[^>]*:z-index="2599"/)
+ assert.match(dialog,/<AppModal v-else :key="applyReview \? 'apply-review' : 'prepare-review'"[^>]*:z-index="2599"/)
  assert.match(dialog,/v-if="showDownloadFallback"/)
  assert.doesNotMatch(strip,/downloadInlineTarget|mod-changes|dl-inline/)
  assert.equal((strip.match(/void watchDownloadProgress\(/g)||[]).length,1)

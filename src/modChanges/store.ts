@@ -30,6 +30,20 @@ let subjectSequence = 0
 let preparationSequence = 0
 let preparationTaskId: number | undefined
 
+/** Hold the finished marks briefly, without waiting for a frame in a minimized window. */
+function presentPrepared(): Promise<void> | undefined {
+  if (typeof document === 'undefined' || document.hidden) return
+  return new Promise(resolve => {
+    const finish = () => {
+      clearTimeout(timer)
+      document.removeEventListener('visibilitychange', finish)
+      resolve()
+    }
+    const timer = setTimeout(finish, 350)
+    document.addEventListener('visibilitychange', finish)
+  })
+}
+
 export function registerEvaluationSubject(subject: EvaluationSubject) {
   const token = String(++subjectSequence)
   registeredSubjects.set(token, subject)
@@ -39,6 +53,7 @@ export function registerEvaluationSubject(subject: EvaluationSubject) {
 
 const workflow = createChangeWorkflow({
   plan: request => api.planModChanges(request),
+  presentPrepared,
   prepare: async planId => {
     const sequence = ++preparationSequence
     preparation.value = null
@@ -84,6 +99,7 @@ const workflow = createChangeWorkflow({
   state.value = value
   if (!value && readNotes.value.size) readNotes.value = new Set()
   if (!value || value.phase === 'planning') { preparationSequence += 1; preparation.value = null; execution.clear() }
+  if (value?.phase === 'reconfirming') preparation.value = null
   if (value?.phase !== 'preparing') cancellingDownload.value = false
 })
 

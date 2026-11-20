@@ -19,7 +19,7 @@ function fixture(overrides = {}) {
   return { ...workflow, calls, states, get state() { return states.at(-1) } }
 }
 
-test('one confirmation prepares the whole plan and executes exactly one planId', async () => {
+test('one confirmation still applies a plan whose actions need no package', async () => {
   const f = fixture(), pending = f.run(request)
   await tick()
   assert.equal(f.state.phase, 'confirming')
@@ -29,6 +29,45 @@ test('one confirmation prepares the whole plan and executes exactly one planId',
   assert.deepEqual(f.calls.map(call => call[0]), ['plan', 'prepare', 'execute'])
   assert.equal(f.calls[2][1], 'plan-1')
   assert.equal(f.state, null)
+})
+
+for (const kind of ['install', 'upgrade', 'downgrade', 'replace']) test(`unchanged ${kind} must show completion and get separate approval to write`, async () => {
+  const presentation = deferred(), actions = [{ node_id: 'mod:owner', kind }]
+  const f = fixture({ plan: async () => plan('same', { actions }),
+    prepare: async () => plan('same', { actions, prepared: true }), presentPrepared: () => presentation.promise })
+  const pending = f.run(request)
+  await tick()
+  const staging = f.confirm()
+  await tick()
+  assert.equal(f.state.phase, 'prepared')
+  await f.confirm()
+  assert.deepEqual(f.calls, [])
+  presentation.resolve()
+  await staging
+  assert.equal(f.state.phase, 'reconfirming')
+  assert.equal(f.state.applyReview, 'prepared')
+  assert.equal(f.state.plan.plan_id, 'same')
+  assert.deepEqual(f.calls, [])
+  await f.confirm()
+  assert.equal((await pending).ok, true)
+  assert.deepEqual(f.calls, [['execute', 'same']])
+})
+
+test('a prepared local preview or staged ZIP can be cancelled without writing', async () => {
+  for (const [request, node_id] of [
+    [{ roots: [{ node_id: 'preview:payload', enabled: true }] }, 'preview:payload'],
+    [{ roots: [], map_import: { zip_path: 'local.zip', selected: ['map'] } }, 'map:local'],
+  ]) {
+    const actions = [{ node_id, kind: 'replace' }]
+    const f = fixture({ plan: async () => plan('unchanged', { actions, prepared: true }) })
+    const pending = f.run(request)
+    await tick(); await f.confirm()
+    assert.equal(f.state.phase, 'reconfirming')
+    assert(f.states.some(state => state?.phase === 'prepared'))
+    assert.deepEqual(f.calls, [])
+    await f.cancel(); assert.equal(await pending, null)
+    assert.deepEqual(f.calls, [['cancel', 'unchanged']])
+  }
 })
 
 test('changed downloaded content requires a second confirmation of the complete new plan', async () => {

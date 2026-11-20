@@ -1,8 +1,8 @@
 import type { ChangeAction, ChangeActionKind, ChangeActionReason, ChangeLabel, ChangePlan, ChangePreparationItem, ChangePreparationProgress, DiagnosticStep } from './types'
 import type { DeepReadonly } from 'vue'
 import { levelSetDisplayName } from '../levelSetStatus.ts'
+import { isPackageAction } from './types.ts'
 
-const isVersionChange = ({ kind }: DeepReadonly<ChangeAction>) => kind !== 'enable' && kind !== 'disable'
 export const changeStatusKey = (nodeId: string, memberKey?: string | null) => JSON.stringify([nodeId, memberKey ?? null])
 
 function versionPair(from?: string | null, to?: string | null) {
@@ -173,7 +173,7 @@ export function changePlanDetails(plan: DeepReadonly<ChangePlan>, progress?: Dee
   if (plan.status !== 'ready') return diagnosticDetails(plan, names)
   const nodes = new Map(plan.nodes.map(node => [node.node_id, node]))
   const items = new Map(progress?.items.map(item => [item.node_id, item]))
-  const actions = progress?.actions ?? plan.actions
+  const actions = progress?.actions.length ? progress.actions : plan.actions
   const coveredNodes = new Set<string>()
   const coveredTags = new Map<string, string>()
   const parentActions = new Map<string, DeepReadonly<ChangeAction>>()
@@ -186,12 +186,12 @@ export function changePlanDetails(plan: DeepReadonly<ChangePlan>, progress?: Dee
       const group = memberActions.get(nodeId)
       if (group) group.push(action)
       else memberActions.set(nodeId, [action])
-    } else if (!parentActions.has(nodeId) || isVersionChange(action)) parentActions.set(nodeId, action)
+    } else if (!parentActions.has(nodeId) || isPackageAction(action)) parentActions.set(nodeId, action)
   }
   const actionRow = (action: DeepReadonly<ChangeAction>, bundled = false): ChangePlanDetailRow => {
     const { node_id: nodeId, member_key: memberKey, kind } = action
     const item = items.get(nodeId)
-    const changesVersion = isVersionChange(action)
+    const changesVersion = isPackageAction(action)
     // A switch may carry a version in the DTO, but it leaves that version installed.
     const version = changesVersion ? versionPair(action.from_tag, item?.tag || action.to_tag) : undefined
     const node = nodes.get(nodeId)
@@ -228,7 +228,7 @@ export function changePlanDetails(plan: DeepReadonly<ChangePlan>, progress?: Dee
     // particular, a separately registered map DLL is its own plan node.
     const node = nodes.get(nodeId)
     const children = node?.members ?? []
-    const changesVersion = isVersionChange(action)
+    const changesVersion = isPackageAction(action)
     const previousMembers = plan.previous_enabled_members?.[nodeId]
     const includedBeforeDisable = previousMembers && new Set(previousMembers)
     if (node?.kind === 'map' || children.length > 1) {
@@ -239,7 +239,8 @@ export function changePlanDetails(plan: DeepReadonly<ChangePlan>, progress?: Dee
         if (!file || explicitMembers.has(childKey) || (!changesVersion && !affected)) continue
         explicitMembers.add(childKey)
         rows.push({ key: childKey, nodeId, statusKey: row.statusKey, member: file, bundled: true,
-          kind: changesVersion ? undefined : kind, bundleReason: changesVersion ? 'included' : kind === 'enable' ? 'enabled' : 'disabled' })
+          kind: changesVersion ? undefined : kind, bundleReason: changesVersion ? 'included' : kind === 'enable' ? 'enabled' : 'disabled',
+          preparationStage: row.preparationStage, waitsForPackage: row.waitsForPackage })
       }
     }
     for (const memberAction of memberActions.get(nodeId) ?? []) rows.push(actionRow(memberAction, true))
@@ -259,7 +260,9 @@ export function changePlanDetails(plan: DeepReadonly<ChangePlan>, progress?: Dee
 
 /** This measures verified packages, never pretends to measure solver progress. */
 export function preparationCompletion(progress: DeepReadonly<ChangePreparationProgress> | null | undefined) {
-  const total = progress?.items.length ?? 0
-  const completed = progress?.items.filter(item => item.stage === 'ready').length ?? 0
+  const packages = new Set(progress?.actions.filter(isPackageAction).map(action => action.node_id))
+  const items = progress?.items.filter(item => packages.has(item.node_id)) ?? []
+  const total = items.length
+  const completed = items.filter(item => item.stage === 'ready').length
   return { completed, total, percentage: total ? Math.floor(completed / total * 100) : null }
 }

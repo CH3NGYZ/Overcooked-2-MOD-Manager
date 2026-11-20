@@ -12,6 +12,7 @@ import ModInstallNoteDialog from './ModInstallNoteDialog.vue'
 import { changePlanLabels, preparationCompletion } from './presentation'
 import { activeDownloadProgress } from '../downloadTask'
 import { appUpdateState } from '../appUpdateState'
+import { isPackageAction } from './types'
 const changes = useModChanges()
 useModChangesLifecycle()
 const state = changes.state
@@ -21,8 +22,13 @@ const preparation = changes.preparation
 const currentProgress = computed(() => (state.value?.phase === 'preparing'
   || state.value?.phase === 'failed' && !plan.value?.prepared) ? preparation.value : null)
 const completion = computed(() => preparationCompletion(preparation.value))
-const waiting = computed(() => ['planning', 'preparing', 'executing'].includes(state.value?.phase ?? ''))
-const canCancel = computed(() => !['preparing', 'executing'].includes(state.value?.phase ?? ''))
+const working = computed(() => ['planning', 'preparing', 'executing'].includes(state.value?.phase ?? ''))
+const completedPreparation = computed(() => state.value?.phase === 'prepared')
+const canCancel = computed(() => !['preparing', 'prepared', 'executing'].includes(state.value?.phase ?? ''))
+const applyReview = computed(() => state.value?.applyReview)
+const needsPreparation = computed(() => !applyReview.value && plan.value?.actions.some(isPackageAction))
+const confirmLabel = computed(() => applyReview.value === 'changed' && plan.value?.prepared ? 'modChanges.reconfirm'
+  : needsPreparation.value ? 'modChanges.confirmPreparation' : 'modChanges.confirm')
 const names = computed(() => plan.value && changePlanLabels(plan.value, currentProgress.value, pickI18n, locale.value))
 const diagnostics = computed(() => {
   const blockers = plan.value?.blockers ?? []
@@ -33,6 +39,8 @@ const error = computed(() => state.value?.error ? backendMessageOf(state.value.e
 const phase = computed(() => {
   if (state.value?.phase === 'preparing' && preparation.value) return t(`modChanges.preparation.${preparation.value.stage}`)
   if (plan.value && plan.value.status !== 'ready') return t('modChanges.phase.failed')
+  if (completedPreparation.value) return t('modChanges.preparation.ready')
+  if (state.value?.phase === 'reconfirming' && applyReview.value === 'prepared') return t('modChanges.phase.applyReview')
   return t(`modChanges.phase.${state.value?.phase ?? 'planning'}`)
 })
 const downloadAbove = computed(() => state.value?.phase === 'preparing' && appUpdateState.stage === 'idle'
@@ -41,6 +49,15 @@ const showDownloadFallback = computed(() => appUpdateState.stage === 'idle' && !
   && (changes.canCancelDownload.value || changes.cancellingDownload.value))
 const statusElement = useTemplateRef<HTMLElement>('statusElement')
 const buttons = useTemplateRef<HTMLElement>('buttons')
+watch(statusElement, async element => {
+  // The apply review is a new focus trap. Focus its heading instead of an
+  // action, so a held Enter from the preparation button cannot approve writes.
+  if (!element) return
+  await nextTick()
+  if (statusElement.value === element && state.value?.phase === 'reconfirming' && !installNotes.value.length && appUpdateState.stage === 'idle') {
+    element.focus({ preventScroll: true })
+  }
+}, { flush: 'post' })
 let restoreAfterDownload = false
 watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length], async ([above, workflowPhase, notes], _, onCleanup) => {
   if (above) { restoreAfterDownload = true; return }
@@ -50,6 +67,7 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
   onCleanup(() => { stale = true })
   await nextTick()
   if (stale || typeof document === 'undefined') return
+  if (workflowPhase === 'reconfirming') { restoreAfterDownload = false; return }
   const focused = document.activeElement
   const ownDialog = statusElement.value?.closest('.mod-changes-modal')
   // Do not take focus away from a new dialog or an intentional move to the title bar.
@@ -67,17 +85,18 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
 <template>
   <ModInstallNoteDialog v-if="installNotes.length" :notes="installNotes"
     @continue="changes.acceptInstallNotes" @cancel="changes.cancel" />
-  <AppModal v-else :show="!!state && !state.silent" :title="t('modChanges.title')" :z-index="2599" max-width="90%" max-height="90%"
-    :closable="canCancel" :mask-closable="false" card-class="mod-changes-modal"
+  <AppModal v-else :key="applyReview ? 'apply-review' : 'prepare-review'"
+    :show="!!state && !state.silent" :title="t(applyReview ? 'modChanges.applyTitle' : 'modChanges.title')" :z-index="2599" max-width="90%" max-height="90%"
+    :closable="canCancel" :mask-closable="false" :auto-focus="!applyReview" card-class="mod-changes-modal"
     @update:show="(show: boolean) => { if (!show) void changes.cancel() }">
     <template #header-extra>
       <div ref="statusElement" class="plan-phase" role="status" tabindex="-1" data-plan-status>
-        <NSpin v-if="waiting" size="small" class="plan-phase-spinner" aria-hidden="true" />
+        <NSpin v-if="working" size="small" class="plan-phase-spinner" aria-hidden="true" />
         <span>{{ phase }}</span>
       </div>
     </template>
-    <div class="change-plan" data-mod-changes-plan>
-      <NAlert v-if="state?.phase === 'reconfirming' && plan?.status === 'ready'" type="warning" :bordered="false">
+    <div class="change-plan" data-mod-changes-plan :data-plan-phase="state?.phase" :data-plan-review="applyReview">
+      <NAlert v-if="state?.phase === 'reconfirming' && applyReview === 'changed' && plan?.status === 'ready'" type="warning" :bordered="false">
         {{ t('modChanges.changed') }}
       </NAlert>
       <NAlert v-if="plan && plan.status !== 'ready'" type="error" :bordered="false">
@@ -93,7 +112,8 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
           <span v-if="blocker.target_guid"> · {{ names?.dependency(blocker.target_guid) }}</span>
         </li>
       </ul>
-      <ChangePlanDetails v-if="plan && names" :plan="plan" :progress="currentProgress" :execution="changes.execution" :names="names" />
+      <ChangePlanDetails v-if="plan && names" :plan="plan" :progress="currentProgress" :execution="changes.execution" :names="names"
+        :preparation-complete="completedPreparation" />
     </div>
     <template #footer>
       <div class="plan-bottom">
@@ -112,8 +132,8 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
             :disabled="!changes.canCancelDownload.value" @click="changes.cancelPreparationDownload">{{ t('common.cancelDownload') }}</NButton>
           <NButton data-plan-action="cancel" :disabled="!canCancel" @click="changes.cancel">{{ t('common.action.cancel') }}</NButton>
           <NButton v-if="state?.phase === 'failed'" data-plan-action="retry" type="primary" @click="changes.retry">{{ t('modChanges.retry') }}</NButton>
-          <NButton v-else data-plan-action="confirm" type="primary" :loading="waiting" :disabled="waiting || plan?.status !== 'ready'"
-            @click="changes.confirm">{{ t(state?.phase === 'reconfirming' ? 'modChanges.reconfirm' : 'modChanges.confirm') }}</NButton>
+          <NButton v-else data-plan-action="confirm" type="primary" :loading="working" :disabled="working || completedPreparation || plan?.status !== 'ready'"
+            @click="changes.confirm">{{ t(confirmLabel) }}</NButton>
         </div>
       </div>
     </template>

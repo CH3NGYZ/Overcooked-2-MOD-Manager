@@ -10,6 +10,8 @@ export interface ChangeRequest {
   bulk_toggle?: boolean
 }
 export type ChangeActionKind = 'install' | 'upgrade' | 'downgrade' | 'replace' | 'enable' | 'disable'
+/** These actions stage installation payloads, even when their files are already local. */
+export const isPackageAction = ({ kind }: Pick<ChangeAction, 'kind'>) => kind !== 'enable' && kind !== 'disable'
 export interface ChangeActionReason {
   kind: 'requested' | 'required_by' | 'compatible_upgrade' | 'dependency_version' | 'dependency_disabled' | 'dependency_missing'
     | 'dependency_unconfirmed' | 'compatibility_unconfirmed' | 'conflicts_with' | 'incompatible_with'
@@ -146,6 +148,8 @@ export interface ChangePreparationOutcome {
 export interface ChangeBackend {
   plan(request: ChangeRequest): Promise<ChangePlan>
   prepare(planId: string): Promise<ChangePlan>
+  /** Let a visible preparation surface show its terminal state before replacing it. */
+  presentPrepared?(): Promise<void> | void
   execute(planId: string): Promise<ChangeExecutionResult>
   cancel(planId: string): Promise<void>
 }

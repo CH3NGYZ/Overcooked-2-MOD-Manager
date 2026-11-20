@@ -1,11 +1,12 @@
-import type { ChangeBackend, ChangePlan, ChangeRequest, ChangeExecutionResult } from './types'
+import { isPackageAction, type ChangeBackend, type ChangePlan, type ChangeRequest, type ChangeExecutionResult } from './types.ts'
 
-export type ChangePhase = 'planning' | 'confirming' | 'preparing' | 'reconfirming' | 'executing' | 'failed'
+export type ChangePhase = 'planning' | 'confirming' | 'preparing' | 'prepared' | 'reconfirming' | 'executing' | 'failed'
 export interface ChangeWorkflowState {
   phase: ChangePhase
   plan: ChangePlan | null
   error: unknown
   silent?: boolean
+  applyReview?: 'prepared' | 'changed'
 }
 
 /** Only skip the UI when the trusted plan has no change outside the requested switch. */
@@ -27,7 +28,7 @@ function canApplyDirectly(request: ChangeRequest, plan: ChangePlan) {
       || (action.member_key == null && soleDll && node.members?.[0]?.key === root.member_key)))
 }
 
-/** One batch is prepared and committed once; a revised plan always needs consent. */
+/** Package preparation and approval to write live files are separate steps. */
 export function createChangeWorkflow(backend: ChangeBackend, publish: (state: ChangeWorkflowState | null) => void) {
   let generation = 0
   let current: ChangeWorkflowState | null = null
@@ -62,40 +63,51 @@ export function createChangeWorkflow(backend: ChangeBackend, publish: (state: Ch
     return result
   }
 
-  async function apply(plan: ChangePlan, directRequest?: ChangeRequest) {
+  async function apply(plan: ChangePlan, directRequest?: ChangeRequest, applyReview?: ChangeWorkflowState['applyReview']) {
     if (plan.status !== 'ready') return
     const mine = generation
     const silent = !!directRequest
     try {
+      let prepared = plan
       if (!plan.prepared) {
         update({ phase: 'preparing', plan, error: null, silent })
-        const prepared = await backend.prepare(plan.plan_id)
+        prepared = await backend.prepare(plan.plan_id)
         if (mine !== generation) { await backend.cancel(prepared.plan_id).catch(() => undefined); return }
-        // Backend changes plan_id whenever root, actions, dependencies or package contents change.
-        if (prepared.plan_id !== plan.plan_id || prepared.status !== 'ready'
-          || (directRequest && (!prepared.prepared || !canApplyDirectly(directRequest, prepared)))) {
-          update({ phase: 'reconfirming', plan: prepared, error: null })
-          return
-        }
-        plan = prepared
       }
-      update({ phase: 'executing', plan, error: null, silent })
+      if (prepared.status !== 'ready') {
+        update({ phase: 'reconfirming', plan: prepared, error: null, applyReview: 'changed' })
+        return
+      }
+      if (!prepared.prepared) throw new Error('modChanges.notPrepared')
+      const changed = prepared.plan_id !== plan.plan_id || !!(directRequest && !canApplyDirectly(directRequest, prepared))
+      const hasPackages = prepared.actions.some(isPackageAction)
+      if (!applyReview && (changed || hasPackages)) {
+        if (hasPackages) {
+          update({ phase: 'prepared', plan: prepared, error: null })
+          await backend.presentPrepared?.()
+          if (mine !== generation) return
+        }
+        update({ phase: 'reconfirming', plan: prepared, error: null, applyReview: changed ? 'changed' : 'prepared' })
+        return
+      }
+      plan = prepared
+      update({ phase: 'executing', plan, error: null, silent, applyReview })
       const result = await backend.execute(plan.plan_id)
       if (mine !== generation) return
-      if (!result.ok) { update({ phase: 'failed', plan, error: result.message }); return }
+      if (!result.ok) { update({ phase: 'failed', plan, error: result.message, applyReview }); return }
       finish(result)
     } catch (error) {
-      if (mine === generation) update({ phase: 'failed', plan, error })
+      if (mine === generation) update({ phase: 'failed', plan, error, applyReview })
     }
   }
 
   async function confirm() {
     const state = current
-    if (state?.plan && (state.phase === 'confirming' || state.phase === 'reconfirming')) await apply(state.plan)
+    if (state?.plan && (state.phase === 'confirming' || state.phase === 'reconfirming')) await apply(state.plan, undefined, state.applyReview)
   }
 
   async function cancel() {
-    if (current?.phase === 'executing' || current?.phase === 'preparing') return
+    if (current?.phase === 'executing' || current?.phase === 'preparing' || current?.phase === 'prepared') return
     const plan = current?.plan
     generation += 1
     finish(null)

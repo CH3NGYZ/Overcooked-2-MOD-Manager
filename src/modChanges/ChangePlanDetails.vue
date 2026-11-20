@@ -8,11 +8,12 @@ import { changeReasonText } from './messages'
 import { changePlanDetails, type ChangePlanNames } from './presentation'
 import type { ChangeExecutionStage, ChangePlan, ChangePreparationProgress, DiagnosticStep } from './types'
 
-const { plan, progress, execution, names } = defineProps<{
+const { plan, progress, execution, names, preparationComplete } = defineProps<{
   plan: DeepReadonly<ChangePlan>
   progress: DeepReadonly<ChangePreparationProgress> | null
   execution: ReadonlyMap<string, ChangeExecutionStage>
   names: ChangePlanNames
+  preparationComplete: boolean
 }>()
 
 const details = computed(() => changePlanDetails(plan, progress, names))
@@ -37,11 +38,11 @@ const rows = computed(() => details.value.rows.map(row => {
   if (plan.status !== 'ready' || (!row.statusKey && !row.preparationStage)) return { ...row, terminalReason: undefined, status: undefined }
   const applying = row.statusKey ? execution.get(row.statusKey) : undefined
   const prepared = row.preparationStage
-  const stage = applying ?? (prepared === 'failed' ? 'preparationFailed' : prepared === 'ready' ? 'prepared'
-    : prepared ?? (plan.prepared && row.waitsForPackage ? 'prepared' : 'queued'))
+  const stage = applying ?? (preparationComplete && row.waitsForPackage ? 'prepared'
+    : prepared === 'failed' ? 'preparationFailed' : prepared === 'ready' ? 'prepared' : prepared ?? 'queued')
   const icon = stage === 'failed' || stage === 'preparationFailed' ? 'error'
     : stage === 'applying' || stage === 'downloading' || stage === 'verifying' ? 'spinner'
-    : stage === 'applied' || stage === 'processed' ? 'check'
+    : stage === 'applied' || stage === 'processed' || stage === 'prepared' ? 'check'
     : stage === 'rolled_back' ? 'undo' : 'dots'
   return { ...row, terminalReason: undefined, status: { stage, label: t(stageLabels[stage]), icon } }
 }))

@@ -87,7 +87,7 @@ test('chain preparation feeds the shared race overlay from isolated IPC and a re
  emit({...progress,items:[{...progress.items[0],download:{...progress.items[0].download,downloaded:8}}]});assert.equal(downloadTaskState.progress.downloaded,8)
  prepared.resolve(plan('revised',true));await confirm
  assert.equal(store.state.value.phase,'reconfirming');assert.equal(downloadTaskState.running,null);assert.equal(downloadTaskState.progress,null)
- emit({...progress,items:[]});assert.equal(store.preparation.value.items.length,1,'closed IPC cannot replace retained progress')
+ emit({...progress,items:[]});assert.equal(store.preparation.value,null,'closed IPC cannot reopen preparation during consent to apply')
  assert.equal(calls.some(call=>call[0]==='executeModChanges'),false)
  await store.confirm();await pending;assert.equal(store.state.value,null);assert.equal(store.preparation.value,null);assert.equal(downloadTaskState.failure,null)
 })

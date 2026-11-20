@@ -206,11 +206,10 @@ pub(crate) async fn download_repository_asset(
             .map_err(|e| e.to_string())?;
         let cache_dir = state.config.cache_dir();
         let cache_scope = (!is_raw_file).then(|| {
-            archive::release_download::ReleaseCacheScope::new(
+            archive::release_download::ReleaseCacheScope::for_mod(
                 repo.provider.clone(),
                 &repo.username,
                 &repo.repository,
-                None,
                 release_tag,
             )
         });

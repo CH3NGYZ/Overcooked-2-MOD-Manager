@@ -13,7 +13,7 @@ use std::sync::{Mutex, OnceLock};
 use tempfile::{Builder, TempPath};
 use uuid::Uuid;
 
-const RETAINED_VERSIONS: usize = 2;
+const RETAINED_VERSIONS: usize = 3;
 const INDEX_LIMIT: u64 = 4096;
 const INDEX: &str = "versions.json";
 const ARCHIVE_SUFFIX: &str = ".asset";
@@ -108,7 +108,7 @@ impl ReleaseDownloadCache {
         }
     }
 
-    /// Promote only a complete, independently verified archive, not a part of it.
+    /// Promote only a complete, independently verified download, not a volume of it.
     pub(super) fn touch(&self, key: &ReleaseCacheKey) {
         // The version may have been evicted while we copied it. Do not revive it.
         if let Ok(_access) = ACCESS.lock()
@@ -292,8 +292,10 @@ fn read_index(scope: &Path) -> io::Result<Vec<String>> {
         Vec::new()
     };
     if versions.len() > RETAINED_VERSIONS
-        || !versions.iter().all(|version| is_key(version))
-        || (versions.len() == 2 && versions[0] == versions[1])
+        || !versions
+            .iter()
+            .enumerate()
+            .all(|(index, version)| is_key(version) && !versions[..index].contains(version))
     {
         return Ok(Vec::new());
     }

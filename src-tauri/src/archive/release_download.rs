@@ -172,7 +172,7 @@ where
             return Err("download.cancelled".into());
         }
         if let Some((file, sizes)) = cached.unwrap_or(Ok(None))? {
-            log::debug!("已复用 Release ZIP 缓存：{label}");
+            log::debug!("已复用 Release 资产缓存：{label}");
             let volumes = assets
                 .iter()
                 .zip(sizes)
@@ -200,7 +200,7 @@ where
                 split_assets: split.then_some(assets),
             });
         }
-        log::debug!("Release ZIP 缓存未命中：{label}");
+        log::debug!("Release 资产缓存未命中：{label}");
     }
     // Resolve all routes before opening a connection, using the caller's task
     // snapshot. Each volume preserves the selected plan's race/thread limits.

@@ -1,4 +1,4 @@
-//! Try a complete, provider-verified ZIP set before planning download routes.
+//! Try a complete, provider-verified Release asset set before planning download routes.
 use super::cache::{ReleaseCacheKey, ReleaseDownloadCache};
 use super::{TemporaryFile, expected_size, is_zip, merge_volumes};
 use crate::archive::{integrity::validate_zip_with_cancel, is_download_cancelled};
@@ -11,47 +11,51 @@ pub(super) const RELEASE_ASSETS_CACHE: &str = "release-assets";
 pub(crate) struct ReleaseCacheScope {
     repository: String,
     version: String,
+    allow_dll: bool,
 }
 
 impl ReleaseCacheScope {
-    pub(crate) fn for_map(map: &MapRepositoryConfig, version: &str) -> Self {
-        let tag = crate::map_sources::map_tag(map);
-        let mut scope = Self::new(
+    pub(crate) fn for_map(
+        map: &MapRepositoryConfig,
+        version: &str,
+        main: &ReleaseAsset,
+    ) -> Option<Self> {
+        let mut repository = crate::releases::repository_cache_key(
             map.provider.clone(),
             &map.username,
             &map.repository,
-            tag,
-            version,
         );
-        // A derived Release describes one map, but explicit entries may
-        // select different maps from a shared fixed tag. Their source IDs
-        // can change on regrouping, so use the existing content identity.
-        if tag.is_some() && !map.release_derived {
-            scope.repository.push('\0');
-            scope
-                .repository
-                .push_str(&crate::map_sources::map_identity(map));
+        if let Some(tag) = crate::map_sources::map_tag(map) {
+            let prefix = crate::map_sources::map_asset_version_prefix(map, version, &main.name)?;
+            // A fixed tag can publish more than one filename family. Use the
+            // actual prefix rather than the source entry or local display name.
+            repository.push_str("\0map-tag\0");
+            repository.push_str(tag);
+            repository.push('\0');
+            repository.push_str(prefix);
+        } else {
+            // A conventional map Release uses one real tag per version. Do
+            // not split it into one cache group per version or share it with MODs.
+            repository.push_str("\0map\0");
+            repository.push_str(&crate::map_sources::map_identity(map));
         }
-        scope
+        Some(Self {
+            repository,
+            version: version.to_owned(),
+            allow_dll: false,
+        })
     }
 
-    pub(crate) fn new(
+    pub(crate) fn for_mod(
         provider: Provider,
         owner: &str,
         repository: &str,
-        map_tag: Option<&str>,
         version: &str,
     ) -> Self {
-        let mut scope = crate::releases::repository_cache_key(provider, owner, repository);
-        // Several maps can share a repository: a fixed tag identifies the
-        // map, while the projected Release tag is its installable version.
-        if let Some(tag) = map_tag {
-            scope.push('\0');
-            scope.push_str(tag);
-        }
         Self {
-            repository: scope,
+            repository: crate::releases::repository_cache_key(provider, owner, repository),
             version: version.to_owned(),
+            allow_dll: true,
         }
     }
 }
@@ -60,6 +64,7 @@ impl ReleaseCacheScope {
 pub(super) struct ReusableRelease {
     store: ReleaseDownloadCache,
     assets: Arc<[(ReleaseCacheKey, Option<u64>)]>,
+    zip: bool,
 }
 
 impl ReusableRelease {
@@ -68,9 +73,15 @@ impl ReusableRelease {
         scope: &ReleaseCacheScope,
         assets: &[ReleaseAsset],
     ) -> Option<Self> {
-        // asset_set supplies the main file last. DLLs, unversioned files and
-        // a set with any missing/unsupported digest bypass the cache entirely.
-        if !is_zip(assets.last()?) {
+        // asset_set supplies the main file last. MOD Releases can also be a
+        // standalone DLL; installation will still verify the plugin identity.
+        let main = assets.last()?;
+        let zip = is_zip(main);
+        if !(zip
+            || scope.allow_dll
+                && assets.len() == 1
+                && main.name.to_ascii_lowercase().ends_with(".dll"))
+        {
             return None;
         }
         let keys: Vec<_> = assets
@@ -88,6 +99,7 @@ impl ReusableRelease {
         Some(Self {
             store: ReleaseDownloadCache::new(cache.join(RELEASE_ASSETS_CACHE)),
             assets: keys.into(),
+            zip,
         })
     }
 
@@ -110,7 +122,11 @@ impl ReusableRelease {
         }
         let validated = if files.len() == 1 {
             let file = files.pop().unwrap();
-            validate_zip_with_cancel(file.path(), is_download_cancelled).map(|()| file)
+            if self.zip {
+                validate_zip_with_cancel(file.path(), is_download_cancelled).map(|()| file)
+            } else {
+                Ok(file)
+            }
         } else {
             merge_volumes(&files, cache)
         };
@@ -127,7 +143,7 @@ impl ReusableRelease {
         Ok(Some((output, sizes)))
     }
 
-    /// Called only after every volume and the resulting ZIP have validated.
+    /// Called only after the download and any ZIP reassembly have validated.
     pub(super) fn remember(&self, files: &[TemporaryFile]) {
         let verified = self
             .assets
@@ -143,7 +159,7 @@ impl ReusableRelease {
 mod tests {
     use super::*;
 
-    fn map(tag: Option<&str>, release_derived: bool) -> MapRepositoryConfig {
+    fn map(tag: Option<&str>) -> MapRepositoryConfig {
         serde_json::from_value(serde_json::json!({
             "id": "original-map-id",
             "source_id": "original-source",
@@ -151,59 +167,76 @@ mod tests {
             "username": "Owner",
             "repository": "MapCollection",
             "tag": tag,
-            "release_derived": release_derived,
             "author": "Author",
             "level_set_name": "OC2Maps",
             "level_set_name_zh": "地图一",
+            "asset_rules": [{"type": "regex", "value": "^厨房_v(?P<version>[0-9.]+)\\.zip$"}],
             "latest_mapset_version": "v2",
             "latest_info_version": "unrelated-info-version"
         }))
         .unwrap()
     }
 
-    #[test]
-    fn explicit_maps_at_one_fixed_tag_keep_independent_version_slots() {
-        let map_a = map(Some(" shared-tag "), false);
-        let mut map_b = map_a.clone();
-        map_b.level_set_name_zh = "地图二".into();
-        let first = ReleaseCacheScope::for_map(&map_a, "v1");
-        let other = ReleaseCacheScope::for_map(&map_b, "v1");
-        assert_ne!(first.repository, other.repository);
-
-        // A duplicate declaration can be renamed or regrouped; its canonical
-        // map identity and previously cached version still point to those bytes.
-        map_b.level_set_name_zh = " 地图一 ".into();
-        map_b.level_set_name = "oc2maps".into();
-        map_b.id = "different-map-id".into();
-        map_b.source_id = Some("another-group".into());
-        map_b.name = "Localized label".into();
-        assert_eq!(
-            first.repository,
-            ReleaseCacheScope::for_map(&map_b, "v1").repository
-        );
-        assert_eq!(first.version, "v1");
+    fn asset(name: &str) -> ReleaseAsset {
+        ReleaseAsset {
+            name: name.into(),
+            size: 0,
+            digest: None,
+            download_count: None,
+            download_url: String::new(),
+        }
     }
 
     #[test]
-    fn release_tags_keep_the_real_tag_scope_through_source_and_version_changes() {
-        let mut map = map(Some("map-tag"), true);
-        let original = ReleaseCacheScope::for_map(&map, "v1");
+    fn fixed_map_tag_groups_the_same_prefix_even_for_declared_versions_and_renamed_sources() {
+        let mut map = map(Some(" shared-tag "));
+        let first = ReleaseCacheScope::for_map(&map, "1.0", &asset("厨房_v1.0.zip")).unwrap();
+        map.level_set_name_zh = "新名字".into();
         map.id = "different-map-id".into();
         map.source_id = Some("another-group".into());
-        map.name = "Updated display name".into();
-        map.latest_mapset_version = Some("v3".into());
-        map.latest_info_version = Some("99".into());
-        let historical = ReleaseCacheScope::for_map(&map, "v1");
-        let current = ReleaseCacheScope::for_map(&map, "v3");
-        assert_eq!(original.repository, historical.repository);
-        assert_eq!(original.repository, current.repository);
-        assert_eq!(original.version, historical.version);
-        assert_eq!(current.version, "v3");
-
+        map.release_derived = true;
+        map.tag = Some("shared-tag".into());
+        let fix = asset("厨房_v3.0-fix.zip");
+        let current = ReleaseCacheScope::for_map(&map, "3.0-fix", &fix).unwrap();
+        assert_eq!(current.repository, first.repository);
+        assert_eq!(current.version, "3.0-fix");
+        assert!(ReleaseCacheScope::for_map(&map, "3.1", &fix).is_none());
         map.tag = Some("other-map-tag".into());
         assert_ne!(
-            original.repository,
-            ReleaseCacheScope::for_map(&map, "v1").repository
+            current.repository,
+            ReleaseCacheScope::for_map(&map, "3.0-fix", &fix)
+                .unwrap()
+                .repository
         );
+    }
+
+    #[test]
+    fn ordinary_map_releases_keep_three_slots_per_map_across_release_tags() {
+        let mut map = map(None);
+        let main = asset("arbitrary.zip");
+        let first = ReleaseCacheScope::for_map(&map, "v1", &main).unwrap();
+        let current = ReleaseCacheScope::for_map(&map, "v3", &main).unwrap();
+        let mod_scope =
+            ReleaseCacheScope::for_mod(map.provider.clone(), &map.username, &map.repository, "v1");
+        assert_ne!(first.repository, mod_scope.repository);
+        assert_eq!(first.repository, current.repository);
+        assert_eq!(current.version, "v3");
+
+        map.level_set_name_zh = "另一张地图".into();
+        assert_ne!(
+            first.repository,
+            ReleaseCacheScope::for_map(&map, "v3", &main)
+                .unwrap()
+                .repository
+        );
+        map.level_set_name_zh = " 地图一 ".into();
+        map.name = "Localized label".into();
+        assert_eq!(
+            first.repository,
+            ReleaseCacheScope::for_map(&map, "v1", &main)
+                .unwrap()
+                .repository
+        );
+        assert_eq!(first.version, "v1");
     }
 }

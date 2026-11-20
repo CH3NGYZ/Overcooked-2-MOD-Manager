@@ -202,12 +202,12 @@ pub async fn stage_map_release(
             .map_err(|error| error.to_string())?;
         let cache_dir = state.config.cache_dir();
         let cache_scope =
-            archive::release_download::ReleaseCacheScope::for_map(&map, &release.tag_name);
+            archive::release_download::ReleaseCacheScope::for_map(&map, &release.tag_name, &asset);
         let temp = archive::release_download::download(
             &client,
             assets,
             &cache_dir,
-            Some(&cache_scope),
+            cache_scope.as_ref(),
             &display_name,
             Some(&app),
             &config.network,

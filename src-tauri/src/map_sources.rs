@@ -13,6 +13,7 @@ mod transport;
 mod tree;
 pub(crate) mod view;
 
+pub(crate) use assets::map_asset_version_prefix;
 pub(crate) use context::MapSourceContext;
 #[cfg(test)]
 pub(crate) use document::parse_document;

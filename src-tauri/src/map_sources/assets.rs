@@ -78,10 +78,11 @@ pub(crate) fn synthesize_releases(
         let declared = asset_name_for_version(&map.asset_rules, version);
         let asset = declared
             .as_ref()
-            .and_then(|name| release.assets.iter().find(|asset| &asset.name == name))
+            .and_then(|(name, _)| release.assets.iter().find(|asset| &asset.name == name))
             .or_else(|| {
                 release.assets.iter().find(|asset| {
-                    matched_version(&label, &regex, asset).as_deref() == Some(version)
+                    matched_version(&label, &regex, &asset.name)
+                        .is_some_and(|found| found.as_str().trim() == version)
                 })
             });
         let Some(asset) = asset else {
@@ -97,10 +98,15 @@ pub(crate) fn synthesize_releases(
     // 才扫描全部附件兼容历史地图。
     if map.asset_versions.is_empty() {
         for asset in &release.assets {
-            let Some(version) = matched_version(&label, &regex, asset) else {
+            let Some(version) = matched_version(&label, &regex, &asset.name) else {
                 continue;
             };
-            push_version(&mut versions, version, asset, &label)?;
+            push_version(
+                &mut versions,
+                version.as_str().trim().to_owned(),
+                asset,
+                &label,
+            )?;
         }
     }
     if versions.is_empty() {
@@ -170,7 +176,7 @@ pub(crate) fn synthesize_releases(
 /// 这里做的是反过来渲染：取版本组前后的字面量、还原 `\.` 这类转义。规则里
 /// 用到其它正则构造（字符类、分组、分支、量词）时不猜，返回 None —— 猜错会
 /// 指向一个不存在的文件，宁可由调用方退回按版本段比对附件名。
-fn asset_name_for_version(rules: &[AssetRule], version: &str) -> Option<String> {
+fn asset_name_for_version(rules: &[AssetRule], version: &str) -> Option<(String, usize)> {
     rules.iter().find_map(|rule| {
         let body = rule.value.trim().strip_prefix('^')?.strip_suffix('$')?;
         let start = body.find("(?P<version>")?;
@@ -193,8 +199,26 @@ fn asset_name_for_version(rules: &[AssetRule], version: &str) -> Option<String> 
         }
         let prefix = literal_from_pattern(&body[..start])?;
         let suffix = literal_from_pattern(&rest[end? + 1..])?;
-        Some(format!("{prefix}{version}{suffix}"))
+        Some((format!("{prefix}{version}{suffix}"), prefix.len()))
     })
+}
+
+/// The exact text preceding the selected version in a fixed-tag main ZIP.
+/// Try the version table's filename first: `0.78-fix` may not match the regex.
+pub(crate) fn map_asset_version_prefix<'a>(
+    map: &MapRepositoryConfig,
+    version: &str,
+    name: &'a str,
+) -> Option<&'a str> {
+    if let Some((rendered, start)) = asset_name_for_version(&map.asset_rules, version)
+        && rendered == name
+    {
+        return Some(&name[..start]);
+    }
+    let rule = version_rule(&map.asset_rules)?;
+    let regex = regex::Regex::new(&rule.value).ok()?;
+    let found = matched_version(&map.name, &regex, name)?;
+    (found.as_str().trim() == version).then(|| &name[..found.start()])
 }
 
 /// 把正则里的字面量段还原成原文；碰到真正的正则构造就放弃。
@@ -216,22 +240,19 @@ fn literal_from_pattern(pattern: &str) -> Option<String> {
 /// `asset_matches` 用的是 `is_match`（子串命中即真），不锚定就会出现「同一个
 /// 文件同时匹配出两个版本号」。解析阶段已经要求规则写成 `^…$`，这里再判一次
 /// 是因为配置里的旧条目可能没经过那道校验。
-fn matched_version(label: &str, regex: &regex::Regex, asset: &ReleaseAsset) -> Option<String> {
-    let captures = regex.captures(&asset.name)?;
+fn matched_version<'a>(
+    label: &str,
+    regex: &regex::Regex,
+    name: &'a str,
+) -> Option<regex::Match<'a>> {
+    let captures = regex.captures(name)?;
     let whole = captures.get(0)?;
-    if whole.start() != 0 || whole.end() != asset.name.len() {
-        log::debug!(
-            "资产名不是整串匹配，忽略：地图={label}，资产={}",
-            asset.name
-        );
+    if whole.start() != 0 || whole.end() != name.len() {
+        log::debug!("资产名不是整串匹配，忽略：地图={label}，资产={name}");
         return None;
     }
-    let version = captures
-        .name("version")
-        .or_else(|| captures.get(1))?
-        .as_str()
-        .trim();
-    (!version.is_empty()).then(|| version.to_string())
+    let version = captures.name("version").or_else(|| captures.get(1))?;
+    (!version.as_str().trim().is_empty()).then_some(version)
 }
 
 /// 追加一条版本；同一个版本号出现两次直接报错。

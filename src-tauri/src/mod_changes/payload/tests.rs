@@ -337,11 +337,10 @@ async fn split_repository_payload_binds_verified_volumes_to_the_exact_staged_zip
 
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
     let cache = state.config.cache_dir();
-    let scope = release_download::ReleaseCacheScope::new(
+    let scope = release_download::ReleaseCacheScope::for_mod(
         Provider::Github,
         &repo.username,
         &repo.repository,
-        None,
         tag,
     );
     for hit in [false, true] {

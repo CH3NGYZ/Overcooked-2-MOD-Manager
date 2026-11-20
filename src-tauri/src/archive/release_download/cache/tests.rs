@@ -82,25 +82,28 @@ fn restores_after_reconstruction_and_stage_is_disposable() {
 }
 
 #[test]
-fn retains_two_most_recently_used_versions_with_all_their_assets() {
+fn retains_three_most_recently_used_versions_with_all_their_assets() {
     let f = Fixture::new();
     let one = key(MOD_REPO, "v1", "mod.zip", b"archive 1");
     let companion = key(MOD_REPO, "v1", "Mod.z01", b"chunk 1");
     let two = key(MOD_REPO, "v2", "mod.zip", b"archive 2");
     let three = key(MOD_REPO, "v3", "mod.zip", b"archive 3");
+    let four = key(MOD_REPO, "v4", "mod.zip", b"archive 4");
     f.remember(&one, b"archive 1");
     f.remember(&companion, b"chunk 1");
     f.remember(&two, b"archive 2");
+    f.remember(&three, b"archive 3");
     assert!(f.restore(&one).is_some());
     f.cache.touch(&one); // A successful downgrade promotes v1, not a new version slot.
-    f.remember(&three, b"archive 3");
+    f.remember(&four, b"archive 4");
     assert!(f.restore(&two).is_none());
     assert!(f.restore(&one).is_some());
     assert!(f.restore(&companion).is_some());
     assert!(f.restore(&three).is_some());
+    assert!(f.restore(&four).is_some());
     let scope = f.cache.scope(&two, false).unwrap();
     assert!(!scope.join(&two.version).exists());
-    assert_eq!(fs::read_dir(scope).unwrap().count(), 3); // Two directories + index.
+    assert_eq!(fs::read_dir(scope).unwrap().count(), 4); // Three directories + index.
 }
 
 #[test]
@@ -137,32 +140,39 @@ fn partial_set_does_not_publish_or_evict_the_preceding_versions() {
     let one = key(MOD_REPO, "v1", "mod.zip", b"archive 1");
     let two = key(MOD_REPO, "v2", "mod.zip", b"archive 2");
     let three = key(MOD_REPO, "v3", "mod.zip", b"archive 3");
-    let companion = key(MOD_REPO, "v3", "Mod.z01", b"chunk 3");
+    let four = key(MOD_REPO, "v4", "mod.zip", b"archive 4");
+    let companion = key(MOD_REPO, "v4", "Mod.z01", b"chunk 4");
     f.remember(&one, b"archive 1");
     f.remember(&two, b"archive 2");
+    f.remember(&three, b"archive 3");
     let main = f.dir.path().join("release.zip");
     let chunk = f.dir.path().join("Release.z01");
-    fs::write(&main, b"archive 3").unwrap();
+    fs::write(&main, b"archive 4").unwrap();
     fs::write(&chunk, b"corrupt").unwrap();
     let set = [
-        (&three, main.as_path(), None),
+        (&four, main.as_path(), None),
         (&companion, chunk.as_path(), None),
     ];
     f.cache.remember_set(&set, || false);
-    assert!(f.restore(&three).is_none());
+    assert!(f.restore(&four).is_none());
     assert!(f.restore(&companion).is_none());
-    let scope = f.cache.scope(&three, false).unwrap();
+    let scope = f.cache.scope(&four, false).unwrap();
     assert_eq!(
         read_index(&scope).unwrap(),
-        [two.version.clone(), one.version.clone()]
+        [
+            three.version.clone(),
+            two.version.clone(),
+            one.version.clone()
+        ]
     );
-    assert_eq!(fs::read_dir(&scope).unwrap().count(), 3);
+    assert_eq!(fs::read_dir(&scope).unwrap().count(), 4);
 
-    fs::write(&chunk, b"chunk 3").unwrap();
+    fs::write(&chunk, b"chunk 4").unwrap();
     f.cache.remember_set(&set, || false);
     assert!(f.restore(&one).is_none());
     assert!(f.restore(&two).is_some());
     assert!(f.restore(&three).is_some());
+    assert!(f.restore(&four).is_some());
     assert!(f.restore(&companion).is_some());
 }
 
@@ -175,13 +185,15 @@ fn map_identity_scopes_are_independent_even_when_versions_and_assets_match() {
     let old = key(first, "1", "map.zip", b"same bytes");
     let newer = key(first, "2", "map.zip", b"same bytes");
     let newest = key(first, "3", "map.zip", b"same bytes");
-    for asset in [&other, &old, &newer, &newest] {
+    let fourth = key(first, "4", "map.zip", b"same bytes");
+    for asset in [&other, &old, &newer, &newest, &fourth] {
         f.remember(asset, b"same bytes");
     }
     assert!(f.restore(&old).is_none());
     assert!(f.restore(&other).is_some());
     assert!(f.restore(&newer).is_some());
     assert!(f.restore(&newest).is_some());
+    assert!(f.restore(&fourth).is_some());
 }
 
 #[test]
@@ -208,6 +220,27 @@ fn api_replacement_invalidates_old_asset_and_bad_bytes_never_hit() {
     assert_eq!(fs::read_dir(&f.staging).unwrap().count(), 0);
     f.remember(&new, b"new");
     assert_eq!(fs::read(f.restore(&new).unwrap()).unwrap(), b"new");
+}
+
+#[test]
+fn duplicate_index_entries_cannot_consume_a_third_version_slot() {
+    let f = Fixture::new();
+    let one = key(MOD_REPO, "v1", "mod.zip", b"old");
+    let two = key(MOD_REPO, "v2", "mod.zip", b"new");
+    f.remember(&one, b"old");
+    f.remember(&two, b"new");
+    let scope = f.cache.scope(&one, false).unwrap();
+    assert_eq!(read_index(&scope).unwrap().len(), 2);
+    write_index(
+        &scope,
+        &[
+            one.version.clone(),
+            two.version.clone(),
+            one.version.clone(),
+        ],
+    )
+    .unwrap();
+    assert!(read_index(&scope).unwrap().is_empty());
 }
 
 #[test]
@@ -263,8 +296,10 @@ fn concurrent_open_asset_and_version_eviction_leave_verified_copy_intact() {
     let one = key(MOD_REPO, "v1", "mod.zip", b"archive 1");
     let two = key(MOD_REPO, "v2", "mod.zip", b"archive 2");
     let three = key(MOD_REPO, "v3", "mod.zip", b"archive 3");
+    let four = key(MOD_REPO, "v4", "mod.zip", b"archive 4");
     f.remember(&one, b"archive 1");
     f.remember(&two, b"archive 2");
+    f.remember(&three, b"archive 3");
     let opened = Barrier::new(2);
     let evicted = Barrier::new(2);
     let staging = std::thread::scope(|threads| {
@@ -279,7 +314,7 @@ fn concurrent_open_asset_and_version_eviction_leave_verified_copy_intact() {
             })
         });
         opened.wait();
-        f.remember(&three, b"archive 3");
+        f.remember(&four, b"archive 4");
         evicted.wait();
         reader.join().unwrap().unwrap()
     });

@@ -34,11 +34,17 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
   const token = tokens[idx] as unknown as { info?: string; content?: string }
   const language = (token.info ?? '').trim().split(/\s+/)[0]?.toLowerCase()
   if (language === 'mermaid') {
-    const source = (token.content ?? '').replace(/</g, '&lt;').replace(/"/g, '&quot;')
-    return `<pre class="mermaid-block" data-mermaid-source="${source}"><code>${token.content ?? ''}</code></pre>`
+    const source = md.utils.escapeHtml(token.content ?? '')
+    return `<pre class="mermaid-block" data-mermaid-source="${source}"><code>${source}</code></pre>`
   }
   return defaultFence(tokens, idx, options, env, self)
 }
+
+// Keep the table semantic and give wide tables their own scroll area.
+md.renderer.rules.table_open = (tokens, idx, options, _env, self) =>
+  `<div class="markdown-table">${self.renderToken(tokens, idx, options)}`
+md.renderer.rules.table_close = (tokens, idx, options, _env, self) =>
+  `${self.renderToken(tokens, idx, options)}</div>\n`
 
 /* ===== 只放行 <img>，其余 HTML 继续转义 ===== */
 /**

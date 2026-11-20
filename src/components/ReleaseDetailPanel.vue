@@ -744,8 +744,7 @@ const {
   border-radius: 8px;
   background: var(--oc2-card);
   font-size: 12px;
-  line-height: 1.65;
-  overflow-x: auto;
+  --markdown-font-size: 12px;
   overflow-y: auto;
   overscroll-behavior: auto;
 }
@@ -930,91 +929,6 @@ const {
 .readme-loading :deep(.skeleton-line:nth-child(3)) { width: 66%; }
 .readme-loading :deep(.skeleton-line:nth-child(4)) { width: 42%; }
 
-/* README 内容 */
-.markdown-body {
-  font-size: 12.5px;
-  line-height: 1.7;
-  color: var(--oc2-text-2);
-  overflow-wrap: anywhere;
-  /* Markdown 输出的宽表格/长代码行不撑破抽屉，超出时横向滚动 */
-  overflow-x: auto;
-}
-.markdown-body :deep(h1),
-.markdown-body :deep(h2),
-.markdown-body :deep(h3),
-.markdown-body :deep(h4) {
-  margin: 16px 0 8px;
-  color: var(--oc2-text-1);
-  line-height: 1.35;
-}
-.markdown-body :deep(h1) { font-size: 17px; }
-.markdown-body :deep(h2) { font-size: 15px; }
-.markdown-body :deep(h3) { font-size: 13.5px; }
-/* README 首个元素（通常是标题）不留顶部外边距，避免内容和分割线之间出现空隙 */
-.readme-section :deep(.markdown-body > :first-child) { margin-top: 0; }
-.markdown-body :deep(p) { margin: 0 0 10px; }
-/* 末元素不留底部外边距，避免 README/备注区域底部出现空隙 */
-.markdown-body :deep(> :last-child) { margin-bottom: 0; }
-.markdown-body :deep(ul),
-.markdown-body :deep(ol) { margin: 0 0 10px; padding-left: 22px; }
-.markdown-body :deep(li) { margin: 3px 0; }
-.markdown-body :deep(code) {
-  padding: 1px 5px;
-  border-radius: 5px;
-  background: var(--oc2-sunken);
-  font-family: Consolas, monospace;
-  font-size: 11.5px;
-  color: var(--oc2-accent);
-}
-.markdown-body :deep(pre) {
-  margin: 0 0 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--oc2-row-line);
-  border-radius: 8px;
-  background: var(--oc2-sunken);
-  overflow-x: auto;
-}
-.markdown-body :deep(pre code) { padding: 0; background: none; color: var(--oc2-text-2); }
-.markdown-body :deep(blockquote) {
-  margin: 0 0 12px;
-  padding: 8px 12px;
-  border-left: 3px solid var(--oc2-accent);
-  background: var(--oc2-sunken);
-  color: var(--oc2-text-3);
-  border-radius: 0 8px 8px 0;
-}
-.markdown-body :deep(a) { color: var(--oc2-accent); text-decoration: none; }
-.markdown-body :deep(a:hover) { text-decoration: underline; }
-.markdown-body :deep(img) { max-width: 100%; border-radius: 8px; }
-.markdown-body :deep(hr) { border: 0; border-top: 1px solid var(--oc2-row-line); margin: 14px 0; }
-/* Mermaid：渲染前保留代码块，渲染后居中显示 SVG */
-.markdown-body :deep(.mermaid-block) {
-  margin: 0 0 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--oc2-row-line);
-  border-radius: 8px;
-  background: var(--oc2-sunken);
-  overflow-x: auto;
-}
-.markdown-body :deep(.mermaid-block.mermaid-rendered) {
-  display: grid;
-  place-items: center;
-  padding: 14px;
-  background: var(--oc2-card);
-}
-.markdown-body :deep(.mermaid-block.mermaid-rendered svg) {
-  max-width: 100%;
-  height: auto;
-}
-.markdown-body :deep(.mermaid-error) {
-  border-color: #8c4038;
-}
-.markdown-body :deep(.mermaid-error-hint) {
-  margin: -6px 0 12px;
-  color: #ee8585;
-  font-size: 11.5px;
-  overflow-wrap: anywhere;
-}
 @media (prefers-reduced-motion: reduce) {
   .readme-content-enter-active,
   .readme-content-leave-active { transition: none; }

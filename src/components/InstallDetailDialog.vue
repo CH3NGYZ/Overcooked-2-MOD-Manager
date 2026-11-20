@@ -251,7 +251,7 @@ watch(() => props.show, (open) => { if (open) expansion.closeAll() })
           <b class="mono">{{ formatVersion(model.releaseLog.tag) }}</b>
         </div>
         <!-- renderReadme 关闭了原始 HTML，日志只能输出 Markdown 生成的安全节点 -->
-        <div class="release-log-box" v-html="model.releaseLog.html"></div>
+        <div class="release-log-box markdown-body" v-html="model.releaseLog.html"></div>
       </div>
     </div>
 
@@ -480,45 +480,6 @@ watch(() => props.show, (open) => { if (open) expansion.closeAll() })
   border: 1px solid var(--oc2-row-line);
   border-radius: 8px;
   background: var(--oc2-sunken);
-  font-size: 12px;
-  line-height: 1.65;
-  /* Markdown 输出的宽表格/长代码行不撑破弹窗，超出时横向滚动 */
-  overflow-x: auto;
+  --markdown-font-size: 12px;
 }
-/*
- * v-html 插入的 Markdown 节点不会带 scoped 属性，
- * 所以这些规则必须用 :deep 才能作用到 renderReadme 的输出上。
- */
-.release-log-box :deep(p) { margin: 0 0 8px; }
-.release-log-box :deep(> :last-child) { margin-bottom: 0; }
-.release-log-box :deep(h1),
-.release-log-box :deep(h2),
-.release-log-box :deep(h3),
-.release-log-box :deep(h4) {
-  margin: 12px 0 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--oc2-text-1);
-}
-.release-log-box :deep(> :first-child) { margin-top: 0; }
-.release-log-box :deep(ul),
-.release-log-box :deep(ol) { margin: 0 0 8px; padding-left: 20px; }
-.release-log-box :deep(li) { margin: 2px 0; }
-.release-log-box :deep(code) {
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: var(--oc2-row-hover);
-  font-size: 11.5px;
-}
-.release-log-box :deep(pre) {
-  margin: 0 0 8px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: var(--oc2-row-hover);
-  overflow-x: auto;
-}
-.release-log-box :deep(pre code) { padding: 0; background: none; }
-.release-log-box :deep(a) { color: var(--oc2-accent); text-decoration: none; }
-.release-log-box :deep(a:hover) { text-decoration: underline; }
-.release-log-box :deep(img) { max-width: 100%; border-radius: 6px; }
 </style>

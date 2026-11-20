@@ -33,7 +33,7 @@ function continueReading() {
     @update:show="(show: boolean) => { if (!show) emit('cancel') }">
     <article v-for="article in articles" :key="article.id" class="install-note">
       <h3 class="install-note-name">{{ article.name }}</h3>
-      <div class="install-note-markdown markdown-body" v-html="article.html"></div>
+      <div class="markdown-body" v-html="article.html"></div>
     </article>
     <template #footer>
       <NButton @click="emit('cancel')">{{ t('common.action.cancel') }}</NButton>
@@ -46,10 +46,5 @@ function continueReading() {
 
 <style scoped>
 .install-note + .install-note { margin-top: 16px; }
-.install-note-name { margin: 0 0 8px; overflow-wrap: anywhere; }
-.install-note-markdown { line-height: 1.65; overflow-wrap: anywhere; }
-.install-note-markdown :deep(> :last-child) { margin-bottom: 0; }
-.install-note-markdown :deep(img), .install-note-markdown :deep(svg) { max-width: 100%; }
-.install-note-markdown :deep(pre) { overflow-x: auto; }
-.install-note-markdown :deep(a) { color: var(--oc2-accent); }
+.install-note-name { margin: 0 0 12px; overflow-wrap: anywhere; }
 </style>

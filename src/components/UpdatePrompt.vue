@@ -157,34 +157,7 @@ async function openRelease() {
 /* Markdown 渲染时交给块级排版，不要再叠加 pre-wrap。 */
 .body.markdown-body {
   white-space: normal;
-  overflow-wrap: anywhere;
 }
-.body.markdown-body :deep(h1),
-.body.markdown-body :deep(h2),
-.body.markdown-body :deep(h3) {
-  margin: 12px 0 6px;
-  font-size: 14px;
-  color: var(--oc2-text-1);
-}
-.body.markdown-body :deep(p) { margin: 0 0 8px; }
-.body.markdown-body :deep(ul),
-.body.markdown-body :deep(ol) { margin: 0 0 8px; padding-left: 20px; }
-.body.markdown-body :deep(code) {
-  padding: 1px 4px;
-  border-radius: 4px;
-  background: var(--oc2-row-line);
-  font-family: Consolas, monospace;
-  font-size: 12px;
-}
-.body.markdown-body :deep(pre) {
-  margin: 0 0 8px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: var(--oc2-card);
-  overflow-x: auto;
-}
-.body.markdown-body :deep(pre code) { padding: 0; background: none; }
-.body.markdown-body :deep(a) { color: var(--oc2-accent); }
 .phase {
   margin-top: 10px;
   color: var(--oc2-accent);

@@ -81,7 +81,10 @@ fn downgraded_dll_shows_update_label_without_losing_its_binding() {
     }))
     .unwrap();
     crate::mods::status::apply_mod_update_state(Some(&repo), &mut item);
-    super::refresh_status_labels(std::slice::from_mut(&mut item));
+    super::refresh_status_labels(
+        &crate::mods::test_support::config(vec![repo]),
+        std::slice::from_mut(&mut item),
+    );
     assert!(item.update_available);
     assert_eq!(item.status, "update_available");
     assert_eq!(item.repository_binding.as_ref().unwrap().tag, "v99.0.0");
@@ -142,7 +145,10 @@ fn disabled_mod_keeps_update_label_and_legacy_json_defaults_labels() {
     }))
     .unwrap();
     assert!(item.labels.is_empty());
-    super::refresh_status_labels(std::slice::from_mut(&mut item));
+    super::refresh_status_labels(
+        &crate::mods::test_support::config(Vec::new()),
+        std::slice::from_mut(&mut item),
+    );
     assert_eq!(
         item.labels,
         [

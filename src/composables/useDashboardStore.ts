@@ -33,7 +33,9 @@ let configRevision = 0
 let gameStateRevision = 0
 let latestGame: GameInfo | undefined
 let gameIdentity: GameInfo | undefined
-let bindingRevision = 0
+const bindingRevision = shallowRef(0)
+const acceptedBindingRevision = shallowRef(-1)
+const modBindingCurrent = computed(() => bindingRevision.value === acceptedBindingRevision.value)
 let bindingPending: Promise<void> | undefined
 let bindingDeferred = false
 
@@ -48,7 +50,7 @@ function invalidateLocalMods() {
   diyLevelTarget.value = null
   modsError.value = ''
   localMods.value = []
-  bindingRevision += 1
+  bindingRevision.value += 1
   bindingDeferred = false
   updateRevision += 1
   const current = dashboard.value
@@ -69,7 +71,7 @@ function gamePathChanged(before: GameInfo | undefined, after: GameInfo) {
  * a newer TOML or local scan without blocking either lane's initial display. */
 function rebindLocalMods({ deferForOnline = false } = {}): Promise<void> {
   if (demoActive.value) return Promise.resolve()
-  bindingRevision += 1
+  bindingRevision.value += 1
   if (!modsLoaded || !localMods.value.length) return Promise.resolve()
   bindingDeferred = deferForOnline && onlineRefreshPending.value
   if (bindingDeferred) return Promise.resolve()
@@ -77,22 +79,23 @@ function rebindLocalMods({ deferForOnline = false } = {}): Promise<void> {
   bindingPending = (async () => {
     let revision: number
     do {
-      revision = bindingRevision
+      revision = bindingRevision.value
       if (demoActive.value || !modsLoaded || !localMods.value.length) break
       const installed = localMods.value
       try {
         const rebound = await api.rebindLocalMods(installed)
-        if (revision !== bindingRevision || installed !== localMods.value) continue
+        if (revision !== bindingRevision.value || installed !== localMods.value) continue
         localMods.value = rebound
+        acceptedBindingRevision.value = revision
         updateRevision += 1
         const current = dashboard.value
         if (current) dashboard.value = { ...current, mods: rebound }
       } catch (reason) {
-        if (revision === bindingRevision && installed === localMods.value) {
+        if (revision === bindingRevision.value && installed === localMods.value) {
           modsError.value = backendMessageOf(reason)
         }
       }
-    } while (revision !== bindingRevision && !bindingDeferred)
+    } while (revision !== bindingRevision.value && !bindingDeferred)
   })().finally(() => { bindingPending = undefined })
   return bindingPending
 }
@@ -399,7 +402,7 @@ export function useDashboard() {
 
   return {
     dashboard, loading, backgroundLoading, error, modsLoading, modsError, modsGeneration, modsStatus,
-    config, game, mods, diyLevelTarget, enabledModCount, updateCount, frameworkOk,
+    config, game, mods, modBindingCurrent, diyLevelTarget, enabledModCount, updateCount, frameworkOk,
     load, loadBase, loadLocalMods, checkModUpdates, invalidateModUpdates, reloadConfig, applyConfigSnapshot, ensureLoaded, ensureLocalModsLoaded, refresh, recheckGameState,
   }
 }

@@ -19,7 +19,7 @@ import { RELATION_CARD_KEYS, RELATION_STATUS } from './modRelations.ts'
  *   moderate  中度   对比色中 可更新、预发布
  *   severe    重度   对比色强 重复（同 GUID 冲突）
  *   critical  严重   固定红   来源未知、仓库缺失/不可用、加载警告
- *   muted     中性   灰       未安装、未绑定、已禁用、版本未知
+ *   muted     中性   灰       未安装、未收录、已禁用、版本未知
  *
  * 旧值（ok/warn/idle/danger/violet）保留在类型里只为兼容旧快照，
  * 新代码一律使用五档名称。
@@ -48,7 +48,8 @@ export const STATUS_META: Record<string, { text: string; tone: StatusTone }> = {
   /** 已安装的是预发布版本：与「可更新」同档，因为都需要用户注意。 */
   prerelease: { text: 'modsOnline.preRelease', tone: 'moderate' },
   not_release_asset: { text: 'modsLocal.installed', tone: 'accent' },
-  unbound: { text: 'modsLocal.unbound', tone: 'muted' },
+  unlisted: { text: 'modsLocal.unlisted', tone: 'muted' },
+  unbound: { text: 'modsLocal.sourceUnconfirmed', tone: 'muted' },
   bound_repository_missing: { text: 'modsLocal.repositoryMissing', tone: 'critical' },
   /**
    * 绑定仓库的 Release 抓取失败。
@@ -109,7 +110,7 @@ export const STATUS_META: Record<string, { text: string; tone: StatusTone }> = {
 /**
  * 版本结论类标签：一个 MOD 只能有一个。
  *
- * 「最新版 / 可更新 / 已安装 / 版本未知 / 仓库缺失 / 仓库不可用 / 未绑定」
+ * 「最新版 / 可更新 / 已安装 / 版本未知 / 仓库缺失 / 仓库不可用 / 未收录 / 来源未确认」
  * 描述的是同一件事——这个 MOD 相对于仓库的版本结论，天然互斥。
  * 它们同时出现就是 bug（例如重算更新状态后残留旧的「仓库不可用」）。
  *
@@ -125,6 +126,7 @@ export const VERSION_CONCLUSION_LABELS = [
   'refreshing',
   'unknown',
   'unbound',
+  'unlisted',
   'bound_repository_missing',
   'repository_unavailable',
   'refresh_failed',
@@ -184,7 +186,7 @@ const TONE_PRIORITY: Record<string, number> = {
   severe: 1,    // 重度：重复
   moderate: 2,  // 中度：可更新、仓库刷新失败、预发布
   mild: 3,      // 轻微：低版本
-  muted: 4,     // 中性：刷新中、版本未知、未绑定、已禁用
+  muted: 4,     // 中性：刷新中、版本未知、未收录、已禁用
   accent: 5,    // 正常：最新版、已安装
 }
 
@@ -202,6 +204,7 @@ const WITHIN_TONE_ORDER: string[] = [
   'refreshing',
   'unknown',
   'unbound',
+  'unlisted',
   'disabled',
   'dependency',
   'not_release_asset',
@@ -303,6 +306,10 @@ export function packageStatuses(mods: readonly InstalledMod[]): PackageStatus[] 
       if (STATUS_META[label] && (!(mod.bundled_with_dll || mod.release_companion) || !isVersionConclusion(label))) present.add(label)
     }
   }
+  // A manual ZIP can contain unrelated MODs. An unlisted member alone cannot
+  // prove that the entire package is unlisted.
+  if (present.has('unlisted') && real.some(mod => !mod.bundled_with_dll && !mod.release_companion
+    && !mod.labels?.includes('unlisted'))) present.delete('unlisted')
 
   const result: PackageStatus[] = []
   /*

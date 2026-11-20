@@ -35,6 +35,8 @@ export interface RuntimeRefreshState {
    * 逐个返回的结果会被压成整批一起返回。
    */
   entryStateUnavailable: boolean
+  /** Source documents and the corresponding local binding are both current. */
+  catalogReady: boolean
 }
 
 /**
@@ -146,6 +148,13 @@ export function runtimeModStatus(
         ) as InstalledMod['labels']),
       } as InstalledMod,
     }
+  }
+
+  // Rust reports absence in its current repository snapshot. During source
+  // discovery, failure or a pending rebind that snapshot cannot prove absence.
+  if (!state.catalogReady && mod.labels?.includes('unlisted')) {
+    const labels = replaceVersionConclusion(mod.labels, 'unbound') as InstalledMod['labels']
+    return { ...relationState, refreshing, mod: { ...mod, labels: withRelation(labels) } }
   }
 
   const verdict = modUpdateVerdict(mod, repositories)

@@ -113,7 +113,20 @@ test('installedModTags 保留后端顺序，labels 为空时退回 status', () =
   assert.deepEqual(tags.map((tag) => tag.text), ['tools.olderVersion', 'modsLocal.duplicate'])
   // 重复属重度，低版本属轻微
   assert.deepEqual(tags.map((tag) => tag.tone), ['mild', 'severe'])
-  assert.equal(installedModTags(mod({ labels: [], status: 'unbound' }))[0].text, 'modsLocal.unbound')
+  assert.equal(installedModTags(mod({ labels: [], status: 'unbound' }))[0].text, 'modsLocal.sourceUnconfirmed')
+})
+
+test('confirmed absence is a separate MOD label shared by the card, package and summary', () => {
+  const core = mod({ labels: ['unlisted'], status: 'unbound' })
+  const other = { ...core, dll_file: 'b.dll' }
+  assert.deepEqual(installedModTags(core), [{ key: 'unlisted', text: 'modsLocal.unlisted', tone: 'muted' }])
+  assert.deepEqual(replaceVersionConclusion(['unlisted', 'disabled'], 'latest'), ['latest', 'disabled'])
+  assert.deepEqual(packageStatuses([core, other]).map(item => [item.key, item.count]), [['unlisted', undefined]])
+  assert.deepEqual(packageStatuses([core, { ...other, labels: ['unbound'] }]).map(item => item.key), ['unbound'])
+  assert.deepEqual(packageStatuses([core, { ...other, labels: ['latest'] }]).map(item => item.key), ['latest'])
+  assert.deepEqual(packageStatuses([core, { ...other, labels: [] }]), [])
+  assert.deepEqual(summarizeUnits([{ keys: ['unlisted'] }, { keys: ['unbound'] }]).map(x => [x.key, x.count]),
+    [['unbound', 1], ['unlisted', 1]])
 })
 
 test('预发布版本在最前面插入「预发布」标签，与可更新同档', () => {

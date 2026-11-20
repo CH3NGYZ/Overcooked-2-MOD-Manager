@@ -8,8 +8,9 @@ fn both_duplicate_copies_get_the_duplicate_label() {
         duplicate_configuration_manager("1.8.7", "1.9.7"),
         duplicate_configuration_manager("1.9.7", "1.9.7"),
     ];
-    super::mark_duplicate_guids(&mut mods, &crate::mods::test_support::config(Vec::new()));
-    super::refresh_status_labels(&mut mods);
+    let config = crate::mods::test_support::config(Vec::new());
+    super::mark_duplicate_guids(&mut mods, &config);
+    super::refresh_status_labels(&config, &mut mods);
 
     use crate::models::InstalledModStatusLabel as Label;
     assert!(mods[0].labels.contains(&Label::Duplicate));
@@ -128,11 +129,9 @@ fn same_version_duplicates_keep_updates_and_raw_keeps_its_source_status() {
     raw.status = "not_release_asset".into();
     raw.update_available = false;
     let mut raw_and_release = vec![raw, duplicate_configuration_manager("19.0", "19.0")];
-    super::mark_duplicate_guids(
-        &mut raw_and_release,
-        &crate::mods::test_support::config(Vec::new()),
-    );
-    refresh_status_labels(&mut raw_and_release);
+    let config = crate::mods::test_support::config(Vec::new());
+    super::mark_duplicate_guids(&mut raw_and_release, &config);
+    refresh_status_labels(&config, &mut raw_and_release);
     assert_eq!(raw_and_release[0].status, "not_release_asset");
     assert!(!raw_and_release[0].update_available);
     assert!(raw_and_release[0].duplicate_cleanup_available);
@@ -319,8 +318,9 @@ fn exact_repository_binding_marks_changed_guids_and_the_lower_local_version() {
     let binding = mods[1].repository_binding.as_mut().unwrap();
     binding.owner = " example ".into();
     binding.repository = " MOD ".into();
-    mark_duplicate_guids(&mut mods, &crate::mods::test_support::config(Vec::new()));
-    refresh_status_labels(&mut mods);
+    let config = crate::mods::test_support::config(Vec::new());
+    mark_duplicate_guids(&mut mods, &config);
+    refresh_status_labels(&config, &mut mods);
     assert!(mods.iter().all(|item| item.duplicate_guid));
     assert!(mods.iter().all(|item| {
         item.labels
@@ -462,11 +462,12 @@ fn old_guid_shadow_warning_is_revoked_when_the_higher_copy_is_disabled() {
         duplicate_configuration_manager("1.0", "3.0"),
         duplicate_configuration_manager("2.0", "3.0"),
     ];
-    mark_duplicate_guids(&mut mods, &crate::mods::test_support::config(Vec::new()));
+    let config = crate::mods::test_support::config(Vec::new());
+    mark_duplicate_guids(&mut mods, &config);
     assert_eq!(mods[0].status, "duplicate_lower_version");
     mods[1].enabled = false;
-    mark_duplicate_guids(&mut mods, &crate::mods::test_support::config(Vec::new()));
-    refresh_status_labels(&mut mods);
+    mark_duplicate_guids(&mut mods, &config);
+    refresh_status_labels(&config, &mut mods);
     assert!(
         mods.iter()
             .all(|item| !item.duplicate_guid && !item.duplicate_version)

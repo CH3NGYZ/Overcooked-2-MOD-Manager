@@ -1,4 +1,4 @@
-import { computed, ref, watch } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 import { api } from '../services/tauri'
 import { createSourceTreeState, replaceScopedItems, sourceActivity, sourceDescendantIds } from '../sourceTreeState'
 import type { RuntimeRefreshState } from '../modRuntimeStatus'
@@ -90,16 +90,30 @@ const anyRefreshing = state.anyRefreshing
 /** 全量按钮从主文件准备持续转到 Release 队列结束，局部刷新不带动它。 */
 const repositoriesLoading = computed(() => refreshingAll.value)
 
+// Card comparisons are incremental (runtimeState). This is only the final
+// aggregate summary over the same local snapshot; it never fetches Releases.
+const dashboardStore = useDashboard()
+// An untouched heading may display as ready. Absence needs the stronger proof
+// that the current declaration was read and applied in this source generation.
+const loadedDocuments = shallowRef<ReadonlyMap<string, string>>(new Map())
+function documentKey(source: RepositorySource, generation: number) {
+  return JSON.stringify([generation, source.url, source.parent_id, source.region])
+}
+const catalogReady = computed(() => {
+  const config = dashboardStore.config.value
+  return !!config && dashboardStore.modBindingCurrent.value && !state.schedulingPaused.value
+    && !state.preparingSources.value && !Object.keys(state.refreshingSources.value).length
+    && config.repository_sources.every(source => COMMUNITY_SOURCE_IDS.has(source.id)
+      || !sourceMatchesRegion(source, config.region, config.repository_sources)
+      || loadedDocuments.value.get(source.id) === documentKey(source, state.generation.value))
+})
 const runtimeState = computed<RuntimeRefreshState>(() => ({
   refreshing: refreshing.value,
   queued: queued.value,
   sourceRefreshing: sourceRefreshing.value,
   entryStateUnavailable: !demoActive.value && (entryStateUnavailable.value || state.preparingAllSources.value),
+  catalogReady: !demoActive.value && catalogReady.value,
 }))
-
-// Card comparisons are incremental (runtimeState). This is only the final
-// aggregate summary over the same local snapshot; it never fetches Releases.
-const dashboardStore = useDashboard()
 // Source reconstruction is a view projection. Trusted repository bindings stay
 // in Dashboard/config even when a child fails and its online group stays empty.
 const hiddenSourceIds = ref<Set<string>>(new Set())
@@ -309,6 +323,12 @@ function sourceConfigProjection(rootId: string, sourceId: string, pass?: SourceR
     const ids = sourceDescendantIds([...current.repository_sources, ...received.repository_sources], rootId)
     const repositories = replaceScopedItems(current.repositories, received.repositories, repo => !!repo.source_id && ids.has(repo.source_id))
     const repository_sources = replaceScopedItems(current.repository_sources, received.repository_sources, source => ids.has(source.id))
+    const loaded = new Map<string, string>()
+    for (const source of repository_sources) {
+      const key = documentKey(source, ticket)
+      if (source.id === sourceId || loadedDocuments.value.get(source.id) === key) loaded.set(source.id, key)
+    }
+    loadedDocuments.value = loaded
     const hidden = new Set(hiddenSourceIds.value)
     if (pass?.rebuild) for (const id of ids) {
       if (pass.successful.has(id)) hidden.delete(id)
@@ -352,6 +372,9 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>(),
   // this source atomically only after a complete successful document read.
   /* 源级标志也走共享状态机：地图侧用的是同一套写入规则 */
   const importErrors = await state.runSource(sourceId, async () => {
+    const loaded = new Map(loadedDocuments.value)
+    loaded.delete(sourceId)
+    loadedDocuments.value = loaded
     try {
       const result = await api.importRepositorySource(source.id, source.url, false, !!pass?.force && sourceId === rootId)
       if (ticket !== state.generation.value) return []

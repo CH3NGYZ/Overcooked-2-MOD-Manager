@@ -39,6 +39,7 @@ registerHooks({
 const { useDashboard } = await import('../src/composables/useDashboardStore.ts')
 const { useMapSources } = await import('../src/composables/useMapSources.ts')
 const { useModRepositoryRefresh } = await import('../src/composables/useModRepositoryRefresh.ts')
+const { runtimeModStatus } = await import('../src/modRuntimeStatus.ts')
 const { createSourceTreeState } = await import('../src/sourceTreeState.ts')
 const { buildSourceGroupTree } = await import('../src/composables/useSourceGroupTree.ts')
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
@@ -119,6 +120,68 @@ test('MOD engine publishes root and pending child titles, waits for every TOML, 
   await e.refreshSource('failed')
   assert.deepEqual(calls,['toml:failed',['api','recovered',false]])
   assert.equal(d.config.value.repositories.length,3)
+})
+
+test('MOD absence needs all current catalog documents and a matching local rebind', async () => {
+  const root = 'catalog-root', child = 'catalog-child'
+  const source = (id, parent_id) => ({ id, parent_id, nickname: id, url: id + '.toml' })
+  let config = { repositories: [], repository_sources: [source(root)], region: 'global', platform: 'windows' }
+  const local = { dll_file: 'BepInEx/plugins/local.dll', guid: 'known.local', enabled: true,
+    status: 'unbound', labels: ['unlisted'], update_available: false }
+  const slowRebind = deferred(), rebindStarted = deferred(), childStarted = deferred(), failedRead = deferred()
+  const applied = { ...repo('catalog-other', child), download_mode: 'repository_file' }
+  let fail = true
+  globalThis.__loadingApi = {
+    dashboard: async () => ({ config: structuredClone(config), game: { kitchen_running: false } }),
+    config: async () => structuredClone(config),
+    localMods: async () => ({ generation: 41, mods: [local] }), modUpdates: async () => [],
+    rebindLocalMods: async mods => {
+      if (config.repositories.includes(applied)) { rebindStarted.resolve(); await slowRebind.promise }
+      return mods
+    },
+    importRepositorySource: async id => {
+      if (id === root) config = { ...config, repository_sources: [source(root), source(child, root)] }
+      if (id === child) {
+        if (fail) { childStarted.resolve(); return failedRead.promise }
+        config = { ...config, repositories: [applied] }
+      }
+      return { access_error: null }
+    },
+    syncDependencySnapshots: async () => {},
+  }
+  const d = useDashboard(), e = useModRepositoryRefresh()
+  const label = () => runtimeModStatus(d.mods.value[0], d.mods.value, d.config.value.repositories, e.runtimeState.value).mod.labels[0]
+  await d.load()
+  assert.equal(d.modBindingCurrent.value, true)
+  assert.equal(label(), 'unbound', 'a config snapshot alone never proves absence')
+  const first = e.refreshEverything()
+  await childStarted.promise
+  assert.equal(label(), 'unbound', 'reading the parent does not establish its child')
+  failedRead.resolve({ access_error: 'catalog child offline' })
+  assert.match((await first)[0], /catalog child offline/)
+  assert.equal(label(), 'unbound', 'a failed child cannot prove absence')
+
+  fail = false
+  assert.deepEqual(await e.refreshSource(child), [])
+  await rebindStarted.promise
+  assert.equal(e.sourceNodes.value.find(row => row.id === child).status, 'ready')
+  assert.equal(e.anyRefreshing.value, false)
+  assert.equal(d.modBindingCurrent.value, false)
+  assert.equal(label(), 'unbound', 'an applied catalog still needs its matching local rebind')
+  slowRebind.resolve()
+  await tick()
+  assert.equal(label(), 'unlisted')
+
+  e.invalidateRefresh()
+  assert.equal(label(), 'unbound', 'changing source generation revokes earlier document evidence')
+  assert.deepEqual(await e.refreshEverything(), [])
+  assert.equal(label(), 'unlisted')
+  config = { ...config, repository_sources: [source(root), { ...source(child, root), url: 'changed-child.toml' }] }
+  await d.reloadConfig()
+  assert.equal(d.modBindingCurrent.value, true)
+  assert.equal(label(), 'unbound', 'an edited URL cannot inherit proof from the old declaration')
+  assert.deepEqual(await e.refreshSource(child), [])
+  assert.equal(label(), 'unlisted')
 })
 
 test('cached maps reconstruct source titles and notes before an incremental tree arrives', async () => {

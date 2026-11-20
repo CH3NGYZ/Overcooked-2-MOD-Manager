@@ -277,6 +277,21 @@ pub(crate) fn repository_matches_identity(
     repository_identity_match(Some(repo), guid, product_name, original_filename).is_some()
 }
 
+fn matches_declared_identity(actual: Option<&str>, configured: &str) -> bool {
+    let configured = configured.trim();
+    !configured.is_empty()
+        && actual.is_some_and(|value| value.trim().eq_ignore_ascii_case(configured))
+}
+
+pub(super) fn repository_declares_companion(
+    repo: &ModRepositoryConfig,
+    guid: Option<&str>,
+) -> bool {
+    repo.bundled_plugin_guids
+        .iter()
+        .any(|member| matches_declared_identity(guid, member))
+}
+
 /// The matching fields are the same as repository binding, but a GUID names a
 /// single plugin more precisely than PE metadata common to package members.
 pub(super) fn repository_identity_match(
@@ -286,21 +301,12 @@ pub(super) fn repository_identity_match(
     original_filename: Option<&str>,
 ) -> Option<RepositoryIdentityMatch> {
     let repo = repo?;
-    let matches = |actual: Option<&str>, configured: &str| {
-        let configured = configured.trim();
-        !configured.is_empty()
-            && actual.is_some_and(|value| value.trim().eq_ignore_ascii_case(configured))
-    };
-    if matches(guid, &repo.plugin_guid) {
+    if matches_declared_identity(guid, &repo.plugin_guid) {
         return Some(RepositoryIdentityMatch::Guid);
     }
     // A declared helper may share PE metadata with the core. That evidence
     // must not bind the helper as the repository's primary installed plugin.
-    if repo
-        .bundled_plugin_guids
-        .iter()
-        .any(|member| matches(guid, member))
-    {
+    if repository_declares_companion(repo, guid) {
         return None;
     }
     [
@@ -308,7 +314,7 @@ pub(super) fn repository_identity_match(
         (original_filename, repo.local_original_filename.as_str()),
     ]
     .into_iter()
-    .any(|(actual, configured)| matches(actual, configured))
+    .any(|(actual, configured)| matches_declared_identity(actual, configured))
     .then_some(RepositoryIdentityMatch::Metadata)
 }
 
@@ -589,5 +595,5 @@ pub(crate) fn rebind_installed_mods(config: &crate::models::AppConfig, mods: &mu
     inherit_repository_from_sibling(mods);
     bind_declared_package_members(config, mods);
     super::identity::mark_duplicate_guids(mods, config);
-    super::status::refresh_status_labels(mods);
+    super::status::refresh_status_labels(config, mods);
 }

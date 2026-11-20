@@ -246,7 +246,33 @@ pub(super) fn apply_mod_update_state(repo: Option<&ModRepositoryConfig>, item: &
     item.status = status.into();
 }
 
-pub(super) fn refresh_status_labels(mods: &mut [InstalledMod]) {
+fn unbound_label(config: &AppConfig, item: &InstalledMod) -> InstalledModStatusLabel {
+    let guid = item.guid.as_deref();
+    // A filtered, version-incompatible or bundled entry still counts as listed.
+    // Keep historical repository installs distinct even if their entry disappeared.
+    if guid.is_none_or(|guid| guid.trim().is_empty())
+        || item.bundled_with_dll.is_some()
+        || item.repository_binding.is_some()
+        || item.repository_id.is_some()
+        || !item.repository_ids.is_empty()
+        || (item.package_id.is_some() && !item.manual_install)
+        || config.repositories.iter().any(|repo| {
+            super::binding::repository_declares_companion(repo, guid)
+                || super::binding::repository_matches_identity(
+                    repo,
+                    guid,
+                    item.product_name.as_deref(),
+                    item.original_filename.as_deref(),
+                )
+        })
+    {
+        InstalledModStatusLabel::Unbound
+    } else {
+        InstalledModStatusLabel::Unlisted
+    }
+}
+
+pub(super) fn refresh_status_labels(config: &AppConfig, mods: &mut [InstalledMod]) {
     for item in mods {
         let mut labels = Vec::new();
         /*
@@ -270,7 +296,7 @@ pub(super) fn refresh_status_labels(mods: &mut [InstalledMod]) {
             match item.status.as_str() {
                 "latest" => labels.push(InstalledModStatusLabel::Latest),
                 "not_release_asset" => labels.push(InstalledModStatusLabel::NotReleaseAsset),
-                "unbound" => labels.push(InstalledModStatusLabel::Unbound),
+                "unbound" => labels.push(unbound_label(config, item)),
                 "bound_repository_missing" => {
                     labels.push(InstalledModStatusLabel::BoundRepositoryMissing)
                 }

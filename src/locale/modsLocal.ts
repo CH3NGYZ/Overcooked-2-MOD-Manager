@@ -102,6 +102,20 @@ export const modsLocal: DomainMessages = {
     ko: '미연결',
     ja: '未リンク',
   },
+  unlisted: {
+    'zh-CN': '未收录',
+    'zh-TW': '未收錄',
+    en: 'Not listed',
+    ko: '목록에 없음',
+    ja: '未掲載',
+  },
+  sourceUnconfirmed: {
+    'zh-CN': '来源未确认',
+    'zh-TW': '來源未確認',
+    en: 'Source unconfirmed',
+    ko: '출처 미확인',
+    ja: '配布元未確認',
+  },
   // 仓库缺失
   repositoryMissing: {
     'zh-CN': '仓库缺失',

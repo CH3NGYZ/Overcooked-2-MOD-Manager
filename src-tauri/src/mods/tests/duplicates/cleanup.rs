@@ -163,7 +163,7 @@ fn cleanup_capability_does_not_hide_an_independent_warning() {
     old.status = "repository_unavailable".into();
     let mut installed = [old, current];
     mark_duplicate_guids(&mut installed, &config);
-    super::refresh_status_labels(&mut installed);
+    super::refresh_status_labels(&config, &mut installed);
     assert!(installed[0].duplicate_cleanup_available);
     assert_eq!(
         installed[0].load_warning.as_deref(),

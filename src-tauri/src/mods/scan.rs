@@ -137,7 +137,7 @@ pub(crate) fn scan_mods(
     inherit_repository_from_sibling(&mut installed);
     bind_declared_package_members(config, &mut installed);
     mark_duplicate_guids(&mut installed, config);
-    refresh_status_labels(&mut installed);
+    refresh_status_labels(config, &mut installed);
     let packages = installed
         .iter()
         .filter_map(|item| item.package_id.as_ref())

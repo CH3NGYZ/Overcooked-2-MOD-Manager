@@ -41,4 +41,5 @@ mod prerelease;
 mod relations;
 mod scan_binding;
 mod scan_metadata;
+mod unlisted;
 mod updates;

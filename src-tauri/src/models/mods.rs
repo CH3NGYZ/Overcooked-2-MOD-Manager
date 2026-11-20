@@ -45,6 +45,8 @@ pub enum InstalledModStatusLabel {
     UpdateAvailable,
     Latest,
     NotReleaseAsset,
+    /// Recognizable plugin without an entry in the loaded catalog snapshot.
+    Unlisted,
     Unbound,
     BoundRepositoryMissing,
     RepositoryUnavailable,

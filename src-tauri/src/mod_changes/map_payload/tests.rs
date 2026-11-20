@@ -347,7 +347,7 @@ fn online_map_update_uses_the_chosen_source_when_a_mirror_has_the_same_identity(
             .iter()
             .any(|owned| owned.relation.guid == "fixture-mirror")
     );
-    let mutations = output::build_at(&fixture.roots.data_root, &fixture.session).unwrap();
+    let mutations = mutations(&fixture.roots, &fixture.session).unwrap();
     super::super::transaction::prepare(
         &fixture.roots.data_root.join("transactions"),
         &fixture.roots,
@@ -448,7 +448,8 @@ fn map_update_does_not_guess_missing_or_inconsistent_source_provenance() {
 #[test]
 fn sandbox_map_update_is_one_tree_and_keeps_external_disabled_and_other_registry_owner() {
     let fixture = fixture();
-    let mutations = output::build_at(&fixture.roots.data_root, &fixture.session).unwrap();
+    let mutations =
+        super::super::mutations::assemble(&fixture.session, fixture.roots.clone()).unwrap();
     let tree_targets = mutations
         .iter()
         .filter_map(|mutation| {
@@ -469,6 +470,15 @@ fn sandbox_map_update_is_one_tree_and_keeps_external_disabled_and_other_registry
     let old = fixture.roots.game_root.join(&tree_targets[0]);
     assert!(old.join("old-level").is_file());
     assert!(!old.join("new-level").exists());
+    let registry_index = mutations.iter().position(|owned| {
+        matches!(&owned.mutation, Mutation::File(change)
+            if change.target.root == RootKind::Data
+                && change.target.relative == format!("manifests/{}", level_sets::LEVEL_SET_PLUGIN_REGISTRY))
+    }).unwrap();
+    let tree_index = mutations
+        .iter()
+        .position(|owned| matches!(owned.mutation, Mutation::Tree(_)))
+        .unwrap();
     let transaction = super::super::transaction::prepare(
         &fixture.roots.data_root.join("transactions"),
         &fixture.roots,
@@ -476,7 +486,35 @@ fn sandbox_map_update_is_one_tree_and_keeps_external_disabled_and_other_registry
     )
     .unwrap();
     assert!(old.join("old-level").is_file(), "prepare不能碰live");
-    transaction.apply().unwrap();
+    use super::super::transaction::RecordProgress;
+    let mut registry_written = false;
+    transaction
+        .apply_with_cancel(
+            || false,
+            |event| match event {
+                RecordProgress::Processed(index) if index == registry_index => {
+                    assert!(old.join("old-level").is_file());
+                    assert!(!old.join("new-level").exists());
+                    registry_written = true;
+                }
+                RecordProgress::Applying(index) if index == tree_index => {
+                    assert!(
+                        registry_written,
+                        "ownership must be recorded before publishing the map"
+                    );
+                    let external = fixture
+                        .roots
+                        .game_root
+                        .join("BepInEx/plugins/External/Fix.dll.disabled");
+                    assert_eq!(
+                        fs::read(external).unwrap(),
+                        crate::mods::plugin_blob("fixture-fix", "Fix", "2.0")
+                    );
+                }
+                _ => (),
+            },
+        )
+        .unwrap();
     assert!(!old.join("old-level").exists());
     assert_eq!(fs::read(old.join("new-level")).unwrap(), b"new-level");
     assert!(
@@ -513,7 +551,7 @@ fn map_tree_endpoint_collisions_and_external_active_disabled_duplicates_block() 
         b"unexpected second variant",
     );
     assert!(
-        matches!(output::build_at(&fixture.roots.data_root, &fixture.session), Err(error) if error == "modChanges.ambiguousOwnership")
+        matches!(mutations(&fixture.roots, &fixture.session), Err(error) if error == "modChanges.ambiguousOwnership")
     );
     let mut result = Vec::new();
     let mut targets = BTreeSet::new();
@@ -550,7 +588,7 @@ fn external_map_dll_collision_during_preparation_reports_path_without_writing_li
     let original = fs::read(&disabled).unwrap();
     f.session.trusted.files.remove(&external.node_id).unwrap();
 
-    let error = output::build_at(&f.roots.data_root, &f.session)
+    let error = mutations(&f.roots, &f.session)
         .err()
         .expect("an existing unowned file must block preparation");
     assert_eq!(
@@ -756,9 +794,8 @@ fn framework_directory_change_and_map_update_commit_with_all_map_and_member_swit
             )),
         },
     );
-    let mut mutations =
+    let mutations =
         super::super::mutations::assemble(&fixture.session, fixture.roots.clone()).unwrap();
-    mutations.extend(output::build_at(&fixture.roots.data_root, &fixture.session).unwrap());
     let endpoints = mutations
         .iter()
         .filter_map(|mutation| {

@@ -195,6 +195,19 @@ fn incompatible_web_history_disables_mod_map_and_independent_external_dll_atomic
                 item["member_key"].is_null(),
                 "whole-package actions use their node ID"
             );
+            if item["node_id"] == "mod:framework" && item["stage"] == "applying" {
+                assert!(!f.game.join(MAP_PATH).exists());
+                assert!(
+                    level_sets::disabled_root(&f.game)
+                        .join(MAP)
+                        .join("Inside.dll.disabled")
+                        .is_file()
+                );
+                for path in [test.web.as_str(), test.dependent.as_str(), EXTERNAL] {
+                    assert!(!f.game.join(path).exists());
+                    assert!(f.game.join(mods::disabled_dll_file(path)).is_file());
+                }
+            }
             stages
                 .entry(item["node_id"].as_str().unwrap().to_owned())
                 .or_default()

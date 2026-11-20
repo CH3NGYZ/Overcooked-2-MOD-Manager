@@ -240,6 +240,9 @@ pub(super) fn compose(
     bundled::merge_missing_maps(session, roots, &stage, &result.to)?;
     fs::set_permissions(&stage, permissions).map_err(|error| error.to_string())?;
     if before != Fingerprint::Missing {
+        // A new tree without a switched-off map must still follow removal of
+        // its old tree, even when that removal includes the requested target.
+        new_tree_items.extend(old_tree_items.iter().cloned());
         push_tree(
             &mut result.mutations,
             &mut targets,

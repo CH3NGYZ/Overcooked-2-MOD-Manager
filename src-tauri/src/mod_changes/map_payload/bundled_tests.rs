@@ -89,9 +89,7 @@ fn same_root_framework_bundle_and_map_update_keep_disjoint_tree_endpoints() {
             )),
         },
     );
-    let mut changes =
-        super::super::super::mutations::assemble(&f.session, f.roots.clone()).unwrap();
-    changes.extend(output::build_at(&f.roots.data_root, &f.session).unwrap());
+    let changes = super::super::super::mutations::assemble(&f.session, f.roots.clone()).unwrap();
     let tree_targets = changes
         .iter()
         .filter_map(|change| match &change.mutation {

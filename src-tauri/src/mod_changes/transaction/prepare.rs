@@ -237,6 +237,7 @@ fn collect_missing_parents(
             return Err(UNSAFE.into());
         }
         if seen.insert(super::paths::key(parent)) {
+            // Apply consumes this list as a durable prefix, at each parent's first use.
             output.push(TransactionPath {
                 root: path.root,
                 relative: relative.to_string_lossy().replace('\\', "/"),

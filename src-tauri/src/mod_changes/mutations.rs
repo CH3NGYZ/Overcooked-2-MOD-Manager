@@ -13,6 +13,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod order;
 mod physical;
 mod release_ownership;
 mod retirements;
@@ -136,7 +137,10 @@ pub(super) fn assemble(
         builder.writes.into_values(),
         &session.plan.retired_mod_copies,
     ));
-    Ok(result)
+    if session.map_payload.is_some() {
+        result.extend(super::map_payload::mutations(&builder.roots, session)?);
+    }
+    Ok(order::for_apply(session, result))
 }
 
 impl Builder<'_> {

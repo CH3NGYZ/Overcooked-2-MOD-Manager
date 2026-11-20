@@ -579,20 +579,62 @@ fn framework_root_migration_combines_map_gates_and_internal_member_switches() {
                 .unwrap();
             map.enabled = target_enabled;
             map.current.as_mut().unwrap().provides[0].enabled = target_enabled;
+            f.session.request.roots.push(RootIntent {
+                node_id: "map:fixture".into(),
+                candidate_id: None,
+                enabled: target_enabled,
+                member_key: None,
+            });
             write(&f.roots.data_root, "manifests/level-set-plugins.json", &serde_json::to_vec(&serde_json::json!({
                 "version": 1, "entries": [{"dll": format!("{initial}/nested/plugin.dll"), "owner": {"name": "Fixture"}}]
             })).unwrap());
             let changes = assemble(&f.session, f.roots.clone()).unwrap();
             assert!(f.roots.game_root.join(&initial).is_dir());
             assert!(!f.roots.game_root.join(&destination).exists());
+            let target_key = ItemKey::new("map:fixture", None);
+            let target_index = changes
+                .iter()
+                .position(|record| record.items.contains(&target_key))
+                .unwrap();
+            let game = &f.roots.game_root;
+            let mut saw_target = false;
             super::super::transaction::prepare(
                 &f.roots.data_root.join("transactions"),
                 &f.roots,
                 changes.into_iter().map(|owned| owned.mutation).collect(),
             )
             .unwrap()
-            .apply()
+            .apply_with_cancel(
+                || false,
+                |event| {
+                    if let RecordProgress::Applying(index) = event {
+                        if index <= target_index {
+                            assert!(game.join(&initial).is_dir());
+                            assert!(!game.join(&destination).exists());
+                        }
+                        if index == target_index {
+                            saw_target = true;
+                            if changing_root {
+                                assert_eq!(
+                                    fs::read(game.join("BepInEx/plugins/new/framework.dll"))
+                                        .unwrap(),
+                                    b"new"
+                                );
+                                assert!(!game.join("BepInEx/plugins/old/framework.dll").exists());
+                            }
+                            let registry = crate::level_sets::read_registered_plugins(
+                                &f.roots.data_root.join("manifests"),
+                            );
+                            assert_eq!(
+                                inventory::key(&registry[0].dll),
+                                inventory::key(&format!("{destination}/nested/plugin.dll"))
+                            );
+                        }
+                    }
+                },
+            )
             .unwrap();
+            assert!(saw_target);
             let dll = if target_enabled {
                 format!("{destination}/nested/plugin.dll")
             } else {

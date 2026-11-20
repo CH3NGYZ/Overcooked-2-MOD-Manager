@@ -174,8 +174,23 @@ impl PreparedTransaction {
         self.journal.records[index].phase = RecordPhase::Applying;
         self.persist()?;
         started();
+        let destination = match &self.journal.records[index].operation {
+            RecordedMutation::File { target, .. } | RecordedMutation::Tree { target, .. } => target,
+            RecordedMutation::Move { to, .. } => to,
+        };
+        let root = destination.root;
+        let relative = paths::key(Path::new(&destination.relative));
         while self.journal.created_directory_count < self.journal.created_directories.len() {
             let path = &self.journal.created_directories[self.journal.created_directory_count];
+            // Preparation collects parents in first-use order. Keep that prefix
+            // for recovery, but don't create directories for a later record.
+            if path.root != root
+                || !relative
+                    .strip_prefix(&paths::key(Path::new(&path.relative)))
+                    .is_some_and(|rest| rest.starts_with('/'))
+            {
+                break;
+            }
             let absolute = path.resolve(&self.journal.roots)?;
             // create_dir is exclusive: an externally created directory never
             // becomes ours merely because the planned target was missing.

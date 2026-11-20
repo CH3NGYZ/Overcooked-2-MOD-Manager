@@ -12,6 +12,7 @@ use std::{
 
 mod output;
 mod projection;
+pub(super) use output::mutations;
 
 type MapSource<'metadata, 'source> = (
     &'metadata crate::asset_bundle::LevelSetMetadata,
@@ -30,6 +31,10 @@ pub(crate) struct MapBatch {
 }
 
 impl MapBatch {
+    pub(super) fn has_external_plugin(&self, id: &str) -> bool {
+        self.external.iter().any(|plugin| plugin.node_id == id)
+    }
+
     pub(crate) fn registry_paths(&self, id: &str, target: &str) -> Vec<(String, String)> {
         self.maps
             .iter()
@@ -157,13 +162,6 @@ pub(crate) fn attach(state: &AppState, session: &mut PlanSession) -> Result<(), 
     batch.extra_files = loose_files(&batch)?;
     session.map_payload = Some(batch);
     Ok(())
-}
-
-pub(super) fn mutations(
-    state: &AppState,
-    session: &PlanSession,
-) -> Result<Vec<super::application_progress::OwnedMutation>, String> {
-    output::build(state, session)
 }
 
 fn create_sandbox(state: &AppState, session: &PlanSession, path: &Path) -> Result<PathBuf, String> {

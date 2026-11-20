@@ -94,10 +94,7 @@ impl Builder<'_> {
         }
         self.write(
             node_id,
-            [
-                ItemKey::new(node_id, None),
-                ItemKey::new(node_id, Some(member_key)),
-            ],
+            Some(ItemKey::new(node_id, Some(member_key))),
             FileChange {
                 target,
                 source: None,

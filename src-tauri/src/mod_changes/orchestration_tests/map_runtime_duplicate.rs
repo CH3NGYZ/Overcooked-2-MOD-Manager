@@ -127,8 +127,28 @@ fn assert_safe_runtime_switch(map_requirements: Vec<RepositoryRelation>) {
     assert!(disabled.is_dir());
 
     session.plan.prepared = true;
-    super::super::execution::commit(&f.state, &mut session, |_| {}).unwrap();
     let enabled = f.game.join("BepInEx/plugins/DIYLevel/levels/young");
+    let mut saw_map = false;
+    super::super::execution::commit(&f.state, &mut session, |event| {
+        let payload = serde_json::to_value(event).unwrap();
+        if payload["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["node_id"] == MAP_ID && item["stage"] == "applying")
+        {
+            assert!(disabled.is_dir());
+            assert!(!enabled.exists());
+            assert!(!f.game.join(EXTERNAL).exists());
+            assert_eq!(
+                fs::read(f.game.join(mods::disabled_dll_file(EXTERNAL))).unwrap(),
+                old_runtime
+            );
+            saw_map = true;
+        }
+    })
+    .unwrap();
+    assert!(saw_map);
     assert!(!disabled.exists());
     assert!(!f.game.join(EXTERNAL).exists());
     assert_eq!(

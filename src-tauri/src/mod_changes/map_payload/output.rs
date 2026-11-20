@@ -2,18 +2,8 @@
 use super::*;
 use crate::mod_changes::application_progress::{ItemKey, OwnedMutation};
 
-pub(super) fn build(state: &AppState, session: &PlanSession) -> Result<Vec<OwnedMutation>, String> {
-    let data_root = state
-        .config
-        .config_path()
-        .parent()
-        .ok_or("archive.pathEscape")?
-        .to_path_buf();
-    build_at(&data_root, session)
-}
-
-pub(super) fn build_at(
-    data_root: &Path,
+pub(in crate::mod_changes) fn mutations(
+    roots: &TransactionRoots,
     session: &PlanSession,
 ) -> Result<Vec<OwnedMutation>, String> {
     let batch = session
@@ -26,10 +16,6 @@ pub(super) fn build_at(
     let solved = session.solved.as_ref().ok_or("modChanges.notPrepared")?;
     let package =
         super::super::mutations::final_package(solved)?.ok_or("framework.diyLevelMissing")?;
-    let roots = TransactionRoots {
-        game_root: session.trusted.game_root.clone(),
-        data_root: data_root.into(),
-    };
     let mut result = Vec::new();
     let mut targets = BTreeSet::new();
     let replacements = batch
@@ -43,7 +29,7 @@ pub(super) fn build_at(
             member_prefix: map.member_prefix.clone(),
         })
         .collect::<Vec<_>>();
-    let migration = crate::mod_changes::level_trees::compose(session, &roots, &replacements)?;
+    let migration = crate::mod_changes::level_trees::compose(session, roots, &replacements)?;
     if let Some(migration) = &migration {
         for owned in &migration.mutations {
             if let Mutation::Tree(change) = &owned.mutation {
@@ -51,7 +37,7 @@ pub(super) fn build_at(
             }
         }
     }
-    let map_paths = crate::mod_changes::level_trees::final_map_paths(session, &roots)?;
+    let map_paths = crate::mod_changes::level_trees::final_map_paths(session, roots)?;
     crate::mod_changes::level_trees::rewrite_registry(
         &batch
             .manifests_root
@@ -84,10 +70,10 @@ pub(super) fn build_at(
         }
         if let Some(old) = &map.old_path {
             if key(old) != key(&target) {
-                push_tree(&mut result, &mut targets, &roots, old, None, &map.node_id)?;
+                push_tree(&mut result, &mut targets, roots, old, None, &map.node_id)?;
             }
         }
-        let destination = game(&target).resolve(&roots)?;
+        let destination = game(&target).resolve(roots)?;
         if Fingerprint::capture(&destination)? != Fingerprint::Missing
             && map
                 .old_path
@@ -103,7 +89,7 @@ pub(super) fn build_at(
         push_tree(
             &mut result,
             &mut targets,
-            &roots,
+            roots,
             &target,
             Some(source),
             &map.node_id,
@@ -121,8 +107,8 @@ pub(super) fn build_at(
         let member = &current.provides[0];
         let canonical = crate::mods::canonical_dll_name(&external.target);
         let disabled = crate::mods::disabled_dll_file(&canonical);
-        let active = game(&canonical).resolve(&roots)?;
-        let inactive = game(&disabled).resolve(&roots)?;
+        let active = game(&canonical).resolve(roots)?;
+        let inactive = game(&disabled).resolve(roots)?;
         let has_active = Fingerprint::capture(&active)? != Fingerprint::Missing;
         let has_inactive = Fingerprint::capture(&inactive)? != Fingerprint::Missing;
         if has_active && has_inactive {
@@ -157,7 +143,7 @@ pub(super) fn build_at(
                 push_file(
                     &mut result,
                     &mut targets,
-                    &roots,
+                    roots,
                     game(old),
                     None,
                     Some(&external.node_id),
@@ -168,7 +154,7 @@ pub(super) fn build_at(
         push_file(
             &mut result,
             &mut targets,
-            &roots,
+            roots,
             game(&target),
             Some(source),
             Some(&external.node_id),
@@ -177,13 +163,13 @@ pub(super) fn build_at(
     for relative in &batch.extra_files {
         let target = game(relative);
         // Unowned existing config/framework files cannot be overwritten as a map side effect.
-        if Fingerprint::capture(&target.resolve(&roots)?)? != Fingerprint::Missing {
+        if Fingerprint::capture(&target.resolve(roots)?)? != Fingerprint::Missing {
             return Err("modChanges.ambiguousOwnership".into());
         }
         push_file(
             &mut result,
             &mut targets,
-            &roots,
+            roots,
             target,
             Some(batch.stage_root.join(relative)),
             None,
@@ -195,7 +181,7 @@ pub(super) fn build_at(
             push_file(
                 &mut result,
                 &mut targets,
-                &roots,
+                roots,
                 TransactionPath {
                     root: RootKind::Data,
                     relative: format!("manifests/{name}"),

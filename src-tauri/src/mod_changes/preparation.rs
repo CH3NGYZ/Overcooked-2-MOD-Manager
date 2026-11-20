@@ -260,10 +260,7 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
             &session.unbound_toggle_roots(),
         )?;
     }
-    let mut mutations = super::mutations::build(state, session)?;
-    if session.map_payload.is_some() {
-        mutations.extend(super::map_payload::mutations(state, session)?);
-    }
+    let mutations = super::mutations::build(state, session)?;
     // FileChange already keeps the exact file source stamps. Freeze composed map
     // trees too, without replacing the proofs captured during Release verification.
     planning::remember_payloads(session)?;

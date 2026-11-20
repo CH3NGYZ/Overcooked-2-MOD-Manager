@@ -328,11 +328,14 @@ fn externally_created_parent_is_never_adopted_or_removed_by_rollback() {
             w.file("external/sub/new.dll", Some(b"new child")),
         ]);
         let parent = w.roots.game_root.join("external");
-        fs::create_dir(&parent).unwrap();
         if during_apply {
             pending.journal.state = JournalState::Applying;
             pending.persist().unwrap();
-            assert!(pending.apply_record(0, || {}).is_err());
+            pending.apply_record(0, || {}).unwrap();
+            assert_eq!(w.read("first.dll"), b"new");
+            assert!(!parent.exists());
+            fs::create_dir(&parent).unwrap();
+            assert!(pending.apply_record(1, || {}).is_err());
             drop(pending);
             assert_eq!(
                 recover_all(&w.journal_root, &w.roots)
@@ -342,6 +345,7 @@ fn externally_created_parent_is_never_adopted_or_removed_by_rollback() {
                 1
             );
         } else {
+            fs::create_dir(&parent).unwrap();
             assert!(pending.apply().is_err());
         }
         assert!(parent.is_dir());

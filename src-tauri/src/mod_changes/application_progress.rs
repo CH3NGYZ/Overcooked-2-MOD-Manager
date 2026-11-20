@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub(super) struct ItemKey {
-    node_id: String,
-    member_key: Option<String>,
+    pub(super) node_id: String,
+    pub(super) member_key: Option<String>,
 }
 
 impl ItemKey {

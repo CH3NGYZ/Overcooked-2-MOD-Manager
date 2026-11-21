@@ -598,7 +598,15 @@ pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(),
         )
     };
     let (mut result, mut solved) = solve(&input)?;
-    let adoptions = if let Some(proposal) = &solved {
+    // A downloaded dependency can resolve before DIYLevel's selected asset.
+    // Residue ownership depends on the final physical map roots, not on the
+    // tentative GUIDs and versions used while verifying the rest of the chain.
+    let adoptions = if let Some(proposal) = &solved
+        && proposal.nodes.iter().all(|node| {
+            node.current
+                .as_ref()
+                .is_none_or(|current| !current.verification_pending)
+        }) {
         super::mutations::ResidueAdoptions::collect(state, session, proposal)?
     } else {
         Default::default()

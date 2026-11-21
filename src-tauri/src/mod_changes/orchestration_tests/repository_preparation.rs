@@ -69,6 +69,108 @@ fn assert_private_staging(f: &Fixture, before: &Fingerprint) {
 }
 
 #[tokio::test]
+async fn clean_cycle_downloads_dependent_before_framework_then_commits_both() {
+    const FRAMEWORK: &str = "FixtureFramework";
+    const FRAMEWORK_GUID: &str = mods::plugin_target::DIYLEVEL_GUID;
+    const FRAMEWORK_DLL: &str = "Framework.dll";
+    let dll = mod_dll();
+    let mut framework_dll = PE.to_vec();
+    framework_dll.extend(mods::plugin_blob(FRAMEWORK_GUID, FRAMEWORK, "2.0.0"));
+    let assets = [
+        ("Selected.zip", zip(&[(DLL, &dll)])),
+        ("Framework.zip", zip(&[(FRAMEWORK_DLL, &framework_dll)])),
+    ];
+    let server = Server::new(
+        assets.iter().map(|(_, bytes)| bytes.clone()).collect(),
+        false,
+    );
+    let mut repos = vec![
+        repository(
+            REPO,
+            GUID,
+            &["2.0.0"],
+            vec![requires(FRAMEWORK_GUID, ">=2.0.0")],
+        ),
+        repository(
+            FRAMEWORK,
+            FRAMEWORK_GUID,
+            &["2.0.0"],
+            vec![requires(GUID, ">=2.0.0")],
+        ),
+    ];
+    for (index, (repo, (name, bytes))) in repos.iter_mut().zip(&assets).enumerate() {
+        repo.asset_rules[0].value = (*name).into();
+        repo.cached_releases[0].assets = vec![served(&server, index, name, bytes)];
+    }
+    let f = fixture(repos);
+    write(&f.game.join("BepInEx/core/BepInEx.dll"), PE);
+    let before = Fingerprint::capture(&f.game).unwrap();
+    let plan = select_plan(&f, REPO, TAG, assets[0].0);
+    assert_eq!(plan.result.actions.len(), 2);
+    let nodes = [format!("mod:{REPO}"), format!("mod:{FRAMEWORK}")];
+    let resolve_passes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let trace = resolve_passes.clone();
+    let outcome = preparation::prepare(f.state.clone(), plan.plan_id, move |progress| {
+        if progress.stage == PreparationStage::Resolving {
+            trace.lock().unwrap().push(
+                progress
+                    .items
+                    .into_iter()
+                    .map(|item| (item.node_id, item.stage))
+                    .collect::<Vec<_>>(),
+            );
+        }
+    })
+    .await;
+    assert_private_staging(&f, &before);
+    assert_eq!(
+        outcome.error,
+        None,
+        "{} asset requests",
+        server.request_count()
+    );
+    assert_eq!(outcome.progress.stage, PreparationStage::Ready);
+    assert_eq!(server.request_count(), assets.len());
+    let trace = resolve_passes.lock().unwrap();
+    assert!(trace.contains(&vec![
+        (nodes[0].clone(), ItemStage::Ready),
+        (nodes[1].clone(), ItemStage::Queued)
+    ]));
+    assert!(trace.contains(&vec![
+        (nodes[0].clone(), ItemStage::Ready),
+        (nodes[1].clone(), ItemStage::Ready)
+    ]));
+    let ready = outcome.plan.unwrap();
+    assert!(ready.prepared);
+    assert_eq!(ready.result.status, SolveStatus::Ready);
+    assert_eq!(ready.result.actions.len(), 2);
+    let mut session = take(&f, &ready);
+    assert_eq!(session.payloads.len(), 2);
+    assert!(session.mutations.is_some());
+    super::super::execution::commit(&f.state, &mut session, |_| {}).unwrap();
+    let manifests = archive::read_manifests(&f.state.config.manifests_dir());
+    let expected = [
+        (REPO, format!("BepInEx/plugins/{REPO}/{DLL}"), dll),
+        (
+            FRAMEWORK,
+            format!("BepInEx/plugins/{FRAMEWORK}/{FRAMEWORK_DLL}"),
+            framework_dll,
+        ),
+    ];
+    assert_eq!(manifests.len(), expected.len());
+    for (repo, path, bytes) in expected {
+        assert_eq!(fs::read(f.game.join(&path)).unwrap(), bytes);
+        let manifest = manifests
+            .iter()
+            .find(|manifest| manifest.repository_id == repo)
+            .unwrap();
+        assert_eq!(manifest.release_tag, TAG);
+        assert_eq!(manifest.repository_binding.as_ref().unwrap().tag, TAG);
+        assert_eq!(manifest.files, [path]);
+    }
+}
+
+#[tokio::test]
 async fn exact_release_and_asset_prepare_directly_then_reuse_and_commit() {
     let dll = mod_dll();
     let bytes = zip(&[(DLL, &dll), ("readme.txt", b"preserved resource")]);

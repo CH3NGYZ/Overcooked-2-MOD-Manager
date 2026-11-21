@@ -3,7 +3,7 @@ use super::document::MapSourceMode;
 use super::document::build_declaration_map;
 use super::document::parse_document;
 use super::identity::map_repository_id;
-use super::progress::{SourceNode, SourceTarget};
+use super::progress::{SourceNode, SourceObserver, SourceTarget};
 use super::release_tags::load_release_tag_maps;
 use super::state::SourceLabel;
 use super::transport::load_document;
@@ -315,9 +315,7 @@ async fn load_map_document(
         // ID 必须跨刷新稳定，否则重建条目会丢失缓存与关系快照的关联。
         // 用「源 ID + 身份」派生，重建出来的地图能接回上一次的缓存。
         map.id = map_repository_id(&label.id, &map);
-        if super::state::map_is_available(&map, region) {
-            collected.push(map);
-        }
+        collect_available_map(collected, map, region, ctx.observer);
     }
 
     if let Some(observer) = ctx.observer {
@@ -328,6 +326,18 @@ async fn load_map_document(
         // 地区不匹配的子源整个跳过：它的地址对当前用户没有意义，
         // 请求它只会换来一次 404 和一条无从处理的错误
         if !crate::config::region_matches(child.region.as_deref(), region) {
+            // An inlined map was already parsed and validated with this document.
+            // Its excluded node is absent from the tree; the parent owns the evidence.
+            if let (MapSourceMode::Repository, Some(map), Some(observer)) =
+                (child.mode, child.map.as_ref(), ctx.observer)
+            {
+                observer.record_excluded_identity(
+                    &label.id,
+                    &map.level_set_name,
+                    &map.level_set_name_zh,
+                    &map.author,
+                );
+            }
             log::debug!("跳过地区不匹配的地图子源：源={}", child.id);
             continue;
         }
@@ -342,9 +352,7 @@ async fn load_map_document(
             MapSourceMode::Repository => {
                 match build_declaration_map(&child, &child_label, child_builtin, &location) {
                     Ok(map) => {
-                        if super::state::map_is_available(&map, region) {
-                            collected.push(map);
-                        }
+                        collect_available_map(collected, map, region, ctx.observer);
                         if let Some(observer) = ctx.observer {
                             observer.publish(&child_label.id, "ready", None, collected);
                         }
@@ -462,6 +470,24 @@ async fn load_map_document(
         }
     }
     Ok(())
+}
+
+fn collect_available_map(
+    collected: &mut Vec<MapRepositoryConfig>,
+    map: MapRepositoryConfig,
+    region: &str,
+    observer: Option<&SourceObserver>,
+) {
+    if super::state::map_is_available(&map, region) {
+        collected.push(map);
+    } else if let (Some(observer), Some(source_id)) = (observer, map.source_id.as_deref()) {
+        observer.record_excluded_identity(
+            source_id,
+            &map.level_set_name,
+            &map.level_set_name_zh,
+            &map.author,
+        );
+    }
 }
 
 /// Release-derived sources begin only after every TOML has settled.
@@ -593,9 +619,7 @@ pub(crate) async fn load_map_branch(
                     &target.origin,
                 ) {
                     Ok(map) => {
-                        if super::state::map_is_available(&map, region) {
-                            collected.push(map);
-                        }
+                        collect_available_map(&mut collected, map, region, ctx.observer);
                         observer.publish(id, "ready", None, &collected);
                     }
                     Err(error) => {

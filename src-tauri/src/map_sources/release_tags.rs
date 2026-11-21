@@ -3,6 +3,7 @@ use super::document::MapSourceDeclaration;
 use super::document::validate_map_entry;
 use super::identity::map_identity;
 use super::identity::map_repository_id;
+use super::progress::SourceObserver;
 use super::state::SourceLabel;
 use crate::config::ConfigError;
 use crate::models::MapRepositoryConfig;
@@ -82,6 +83,7 @@ pub(super) async fn load_release_tag_maps(
         builtin,
         origin,
         &releases,
+        ctx.observer,
     ))
 }
 
@@ -92,6 +94,7 @@ pub(super) fn project_release_tag_maps(
     builtin: bool,
     origin: &SourceLocation,
     releases: &[crate::models::ReleaseInfo],
+    observer: Option<&SourceObserver>,
 ) -> Vec<MapRepositoryConfig> {
     let mut maps = Vec::new();
     let mut seen = HashSet::new();
@@ -123,6 +126,7 @@ pub(super) fn project_release_tag_maps(
         };
         let Some(rule) = crate::map_note::versioned_asset_rule(note.metadata.asset.as_deref(), tag)
         else {
+            record_unprojected_note(observer, label, &note.metadata);
             log::warn!(
                 "Release 里没有能提取版本号的地图包，跳过：源={}，tag={}",
                 label.id,
@@ -152,12 +156,15 @@ pub(super) fn project_release_tag_maps(
                 }
                 maps.push(map);
             }
-            Err(error) => log::warn!(
-                "Release note 生成的条目无效，跳过：源={}，tag={}，原因={}",
-                label.id,
-                tag,
-                error
-            ),
+            Err(error) => {
+                record_unprojected_note(observer, label, &note.metadata);
+                log::warn!(
+                    "Release note 生成的条目无效，跳过：源={}，tag={}，原因={}",
+                    label.id,
+                    tag,
+                    error
+                );
+            }
         }
     }
     log::info!(
@@ -167,6 +174,21 @@ pub(super) fn project_release_tag_maps(
         maps.len()
     );
     maps
+}
+
+fn record_unprojected_note(
+    observer: Option<&SourceObserver>,
+    label: &SourceLabel,
+    metadata: &crate::map_note::MapNoteMetadata,
+) {
+    if let Some(observer) = observer {
+        observer.record_excluded_identity(
+            &label.id,
+            &metadata.level_set_name,
+            &metadata.level_set_name_zh,
+            &metadata.author,
+        );
+    }
 }
 
 /// 把一个 Release 的 note 元数据拼成地图条目。

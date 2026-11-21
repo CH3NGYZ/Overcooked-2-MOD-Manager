@@ -1,5 +1,5 @@
 use crate::display_path::display_path;
-use crate::models::{AppConfig, LevelSetInfo, MapRelationSnapshots};
+use crate::models::{AppConfig, LevelSetInfo, MapRelationSnapshot, MapRelationSnapshots};
 use std::collections::BTreeMap;
 
 /// 把内部扫描结果转成 IPC 模型。
@@ -45,6 +45,7 @@ pub(crate) fn level_set_to_info(set: crate::level_sets::LevelSetOnDisk) -> Level
         // 绑定、依赖快照与资产版本都由 `bind_map_relation_snapshot` 补：它需要
         // 配置与快照，这里只负责把磁盘扫描结果转成模型
         map_id: None,
+        has_map_source_snapshot: false,
         installed_mapset_version: String::new(),
         // 分组与依赖一样由 `bind_map_relation_snapshot` 补：它需要配置与快照，
         // 这里只负责把磁盘扫描结果转成模型；都查不到时前端回退 info 的 author
@@ -79,15 +80,16 @@ pub(crate) fn bind_map_relation_snapshot(
             &map.author,
         )
     };
-    let bound = super::installed_versions::installed_repository_id(
+    let installed_repository_id = super::installed_versions::installed_repository_id(
         snapshots,
         &info.name,
         info.name_zh.as_deref(),
         &info.author,
-    )
-    .and_then(|id| super::map_repository_by_id(&config.map_repositories, id))
-    .filter(|map| matches(map))
-    .or_else(|| config.map_repositories.iter().find(|map| matches(map)));
+    );
+    let bound = installed_repository_id
+        .and_then(|id| super::map_repository_by_id(&config.map_repositories, id))
+        .filter(|map| matches(map))
+        .or_else(|| config.map_repositories.iter().find(|map| matches(map)));
     /*
      * 分组来源：绑定地图的当前声明 → 快照（先按地图 id，再按身份找）。
      *
@@ -95,20 +97,34 @@ pub(crate) fn bind_map_relation_snapshot(
      * 作者」—— 管理页的折叠分组与详情里的作者中英两名都靠它。两处都没有
      * 就留空，前端回退 info 里的本地 `author`。
      */
-    let snapshot = bound
-        .and_then(|map| snapshots.entries.get(&map.id))
-        .or_else(|| {
-            snapshots.entries.values().find(|entry| {
-                crate::level_sets::level_set_identity_matches(
-                    &info.name,
-                    info.name_zh.as_deref(),
-                    &info.author,
-                    &entry.level_set_name,
-                    Some(entry.level_set_name_zh.as_str()),
-                    &entry.author,
-                )
-            })
-        });
+    let snapshot_matches = |entry: &MapRelationSnapshot| {
+        super::level_set_identity_matches(
+            &info.name,
+            info.name_zh.as_deref(),
+            &info.author,
+            &entry.level_set_name,
+            Some(entry.level_set_name_zh.as_str()),
+            &entry.author,
+        )
+    };
+    let has_source = |entry: &MapRelationSnapshot| {
+        !entry.repository_id.trim().is_empty() || !entry.installed_mapset_version.trim().is_empty()
+    };
+    let (snapshot, snapshot_has_source) = match bound.and_then(|map| snapshots.entries.get(&map.id))
+    {
+        Some(entry) => (Some(entry), snapshot_matches(entry) && has_source(entry)),
+        None => {
+            let mut matching = snapshots
+                .entries
+                .values()
+                .filter(|entry| snapshot_matches(entry));
+            let first = matching.next();
+            // Keep the existing group choice; a cleared local-install row must not hide
+            // another snapshot for the same map that still records its source.
+            let has_source = first.into_iter().chain(matching).any(has_source);
+            (first, has_source)
+        }
+    };
     let mut group_i18n = bound.map(|map| map.group_i18n.clone()).unwrap_or_default();
     let mut group = bound
         .map(|map| map.group.trim().to_string())
@@ -138,6 +154,9 @@ pub(crate) fn bind_map_relation_snapshot(
         &info.author,
     )
     .to_string();
+    info.has_map_source_snapshot = snapshot_has_source
+        || installed_repository_id.is_some_and(|id| !id.trim().is_empty())
+        || !info.installed_mapset_version.is_empty();
     let Some(map) = bound else {
         return;
     };

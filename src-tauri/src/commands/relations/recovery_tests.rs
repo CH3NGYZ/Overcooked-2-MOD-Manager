@@ -106,3 +106,73 @@ fn dependency_snapshot_sync_keeps_manifests_when_an_applying_journal_cannot_reco
     assert!(directory.join("before").join("0").is_file());
     assert!(directory.join("after").join("0").is_file());
 }
+
+#[test]
+fn dependency_snapshot_sync_keeps_explicit_map_origin_without_an_asset_version() {
+    use crate::level_sets::{self, LevelSetOnDisk, view};
+
+    let temp = tempfile::tempdir().unwrap();
+    let state = AppState::with_config(ConfigService::for_test(temp.path().join("data")));
+    let mut config = crate::config::default_config();
+    config.map_repositories.clear();
+    state.config.save(&config).unwrap();
+    let manifests = state.config.manifests_dir();
+    let mut snapshots = MapRelationSnapshots::default();
+    let origin = MapRelationSnapshot {
+        repository_id: "removed-source".into(),
+        level_set_name: "Map".into(),
+        level_set_name_zh: String::new(),
+        author: "Fixture".into(),
+        group_i18n: BTreeMap::new(),
+        group: String::new(),
+        relations: vec![],
+        release_relations: vec![],
+        installed_mapset_version: String::new(),
+    };
+    let id = format!("{}map", level_sets::INSTALLED_PREFIX);
+    let cleared = format!("{}cleared", level_sets::INSTALLED_PREFIX);
+    snapshots.entries.insert(
+        cleared.clone(),
+        MapRelationSnapshot {
+            repository_id: String::new(),
+            ..origin.clone()
+        },
+    );
+    // A legacy catalog snapshot can have no fields beyond its identity and source ID.
+    snapshots
+        .entries
+        .insert(origin.repository_id.clone(), origin.clone());
+    let map_info = || {
+        view::level_set_to_info(LevelSetOnDisk {
+            dir_name: "Map".into(),
+            enabled: true,
+            path: temp.path().join("Map"),
+            metadata: Some(crate::asset_bundle::LevelSetMetadata {
+                name: "Map".into(),
+                author: "Fixture".into(),
+                ..Default::default()
+            }),
+            error: None,
+            required_runtime: None,
+            plugins: vec![],
+        })
+    };
+    let mut info = map_info();
+    view::bind_map_relation_snapshot(&mut info, &config, &snapshots);
+    assert!(info.has_map_source_snapshot);
+
+    snapshots.entries.insert(id.clone(), origin.clone());
+    archive::write_map_relation_snapshots(&manifests, &snapshots).unwrap();
+    sync_dependency_snapshots_in(&state).unwrap();
+    let retained = archive::read_map_relation_snapshots(&manifests);
+    assert_eq!(retained.entries.get(&id), Some(&origin));
+    assert!(!retained.entries.contains_key(&cleared));
+    let mut info = map_info();
+    view::bind_map_relation_snapshot(&mut info, &config, &retained);
+    assert!(info.map_id.is_none());
+    assert!(info.installed_mapset_version.is_empty());
+    assert_eq!(
+        serde_json::to_value(&info).unwrap()["has_map_source_snapshot"],
+        true
+    );
+}

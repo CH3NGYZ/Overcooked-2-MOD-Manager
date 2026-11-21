@@ -304,8 +304,18 @@ nickname = "Failed"
 "#
                     ),
                 ),
-                "/child.toml" => ("200 OK", map("Child")),
-                "/fail.toml" if retry => ("200 OK", map("Recovered")),
+                "/child.toml" => (
+                    "200 OK",
+                    format!("{}{}enabled = false\n", map("Child"), map("Hidden sibling")),
+                ),
+                "/fail.toml" if retry => (
+                    "200 OK",
+                    format!(
+                        "{}{}enabled = false\n",
+                        map("Recovered"),
+                        map("Hidden recovered")
+                    ),
+                ),
                 "/fail.toml" => ("500 Failed", String::new()),
                 _ => panic!("unexpected API or document: {path}"),
             };
@@ -402,21 +412,44 @@ nickname = "Failed"
                 .any(|m| m.source_id.as_deref() == Some("failed"))
         );
     }
+    {
+        let settled = observer.finish(
+            collected
+                .iter()
+                .map(super::super::view::map_to_info)
+                .collect(),
+        );
+        assert!(settled.nodes.iter().any(|node| node.status == "error"));
+        assert_eq!(settled.excluded_map_identities.len(), 1);
+        assert_eq!(settled.excluded_map_identities[0].source_id, "child");
+        assert_eq!(
+            settled.excluded_map_identities[0].level_set_name,
+            "Hidden sibling"
+        );
+    }
     let ctx = MapSourceContext {
         previous: &collected,
         ..ctx
     };
     let recovered = load_map_branch("failed", &ctx, "global").await.unwrap();
     assert_eq!(recovered.len(), 3, "successful siblings survive retry");
+    let settled = observer.finish(
+        recovered
+            .iter()
+            .map(super::super::view::map_to_info)
+            .collect(),
+    );
     assert!(
-        progress
-            .lock()
-            .unwrap()
-            .last()
-            .unwrap()
+        settled
             .nodes
             .iter()
             .any(|n| n.id == "failed" && n.status == "ready" && n.error.is_none())
+    );
+    assert_eq!(settled.excluded_map_identities.len(), 1);
+    assert_eq!(settled.excluded_map_identities[0].source_id, "failed");
+    assert_eq!(
+        settled.excluded_map_identities[0].level_set_name,
+        "Hidden recovered"
     );
     assert_eq!(
         server.join().unwrap(),

@@ -60,10 +60,8 @@ fn sync_dependency_snapshots_in(state: &AppState) -> Result<DependencySyncResult
     }
 
     /*
-     * 地图快照整体重写，但配置里已经没有的 id **只保留分组**：地图源被删之后
-     * 这张图确实不再有线上依赖声明，留着旧 relations 等于给用户看一份幽灵
-     * 依赖；可「它归到哪个作者」是安装时的事实，管理页的折叠分组与详情里的
-     * 作者名还要靠它。没有分组的旧条目没有保留价值，直接丢掉。
+     * 地图快照整体重写。源被删后剥离旧依赖，但保留分组、资产版本或明确的在线
+     * 安装来源：这些是地图管理页仍需显示的已知事实。
      */
     let previous = archive::read_map_relation_snapshots(&manifest_dir);
     /*
@@ -101,11 +99,13 @@ fn sync_dependency_snapshots_in(state: &AppState) -> Result<DependencySyncResult
         })
         .collect();
     for (id, entry) in &previous.entries {
-        // 资产版本与分组同理：源被删掉之后这条记录仍然有用，不能一起清理掉
+        let installed_from_source = id.starts_with(crate::level_sets::INSTALLED_PREFIX)
+            && !entry.repository_id.trim().is_empty();
         if entries.contains_key(id)
             || (entry.group_i18n.is_empty()
                 && entry.group.trim().is_empty()
-                && entry.installed_mapset_version.is_empty())
+                && entry.installed_mapset_version.is_empty()
+                && !installed_from_source)
         {
             continue;
         }

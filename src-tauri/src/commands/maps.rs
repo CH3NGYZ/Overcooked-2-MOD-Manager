@@ -1,4 +1,5 @@
 use crate::app_state::AppState;
+use crate::map_sources::progress::MapTreeProgress;
 use crate::map_sources::view::map_to_info;
 use crate::models::{MapInfo, Provider};
 use crate::release_cache::freshness::RELEASE_CACHE_TTL_MS;
@@ -21,7 +22,8 @@ mod task_tests;
 /// 关系判定实现，结论不会分叉。
 #[tauri::command]
 pub fn get_maps(state: State<'_, AppState>) -> Result<Vec<MapInfo>, String> {
-    let config = state.config.load_or_default();
+    // A failed cache read must not masquerade as a successfully read empty list.
+    let config = state.config.load().map_err(|error| error.to_string())?;
     let maps = crate::map_sources::available_maps(&config, &config.region);
     log::debug!("地图列表读取完成：数量={}", maps.len());
     Ok(maps.iter().map(map_to_info).collect())
@@ -30,6 +32,7 @@ pub fn get_maps(state: State<'_, AppState>) -> Result<Vec<MapInfo>, String> {
 /// 刷新地图源树，并保留同 ID 条目的 Release 缓存与失败状态，声明字段取新值。
 ///
 /// 每份 TOML 解析后经 Channel 发布目录快照；失败节点保留标题、错误与重试入口。
+/// 提交配置后将地图、终态节点与已读但不可下载的地图身份在同一次回包返回。
 /// 官方入口由本次运行的 DataProvider 决定；主文档失败保留旧快照，成功后逐源重建。
 #[tauri::command]
 pub async fn refresh_map_sources(
@@ -37,8 +40,8 @@ pub async fn refresh_map_sources(
     pass_id: Option<String>,
     force: Option<bool>,
     source_id: Option<String>,
-    on_update: tauri::ipc::Channel<crate::map_sources::progress::MapTreeProgress>,
-) -> Result<Vec<MapInfo>, String> {
+    on_update: tauri::ipc::Channel<MapTreeProgress>,
+) -> Result<MapTreeProgress, String> {
     let refresh_package = force.unwrap_or(false)
         && source_id
             .as_deref()
@@ -142,10 +145,12 @@ pub async fn refresh_map_sources(
                     config.map_repositories.len(),
                     changed
                 );
-                Ok(crate::map_sources::available_maps(&config, &region)
+                drop(_guard);
+                let maps = crate::map_sources::available_maps(&config, &region)
                     .iter()
                     .map(map_to_info)
-                    .collect())
+                    .collect();
+                Ok(observer.finish(maps))
             }),
         )
         .await

@@ -67,6 +67,7 @@ pub(crate) async fn fetch_map_release_data(
             map.builtin,
             &origin,
             std::slice::from_ref(release),
+            None,
         )
         .into_iter()
         .find(|entry| entry.id == map.id)

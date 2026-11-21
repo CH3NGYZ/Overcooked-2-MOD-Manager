@@ -5,7 +5,7 @@ use super::zip_inspect::ImportedLevelSet;
 use crate::models::MapRelationSnapshots;
 use std::path::Path;
 
-const INSTALLED_PREFIX: &str = "installed:";
+pub(crate) const INSTALLED_PREFIX: &str = "installed:";
 
 pub(crate) fn installed_repository_id<'a>(
     snapshots: &'a MapRelationSnapshots,

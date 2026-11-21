@@ -140,6 +140,14 @@ async fn three_modes_skip_excluded_sources_before_requests_and_branch_retry_keep
             let body = match path.as_str() {
                 "/root.toml" => {
                     r#"
+[[maps]]
+username='u'
+repository='r'
+level_set_name='Disabled'
+level_set_name_zh='已停用'
+author='Test Author'
+enabled=false
+asset_rules=[{type='exact',value='map.zip'}]
 [[map_sources]]
 id='cn-document'
 region='cn'
@@ -171,6 +179,15 @@ en='Source notice'
 level_set_name='Shared'
 asset_rules=[{type='exact',value='map.zip'}]
 [[map_sources]]
+id='disabled-repository'
+mode='repository'
+username='u'
+repository='r'
+[map_sources.map]
+level_set_name='Disabled inline map'
+enabled=false
+asset_rules=[{type='exact',value='map.zip'}]
+[[map_sources]]
 id='nested'
 region='global'
 url='nested.toml'
@@ -182,6 +199,12 @@ url='nested.toml'
 username='u'
 repository='r'
 level_set_name='Nested'
+asset_rules=[{type='exact',value='map.zip'}]
+[[maps]]
+username='u'
+repository='r'
+level_set_name='Other region'
+region='cn'
 asset_rules=[{type='exact',value='map.zip'}]
 [[map_sources]]
 id='conflicting-grandchild'
@@ -247,8 +270,15 @@ url='never.toml'
         "excluded release-tags must not be queued"
     );
     assert_eq!(server.join().unwrap(), vec!["/root.toml", "/nested.toml"]);
-    let nodes = events.lock().unwrap().last().unwrap().nodes.clone();
-    assert_eq!(nodes.len(), 2);
+    let final_snapshot = observer.finish(
+        collected
+            .iter()
+            .map(super::super::view::map_to_info)
+            .collect(),
+    );
+    let snapshots = events.lock().unwrap();
+    let nodes = &final_snapshot.nodes;
+    assert_eq!(nodes.len(), 3);
     assert_eq!(
         nodes
             .iter()
@@ -262,6 +292,25 @@ url='never.toml'
             .iter()
             .all(|node| !node.id.starts_with("cn-") && node.id != "conflicting-grandchild")
     );
+    assert!(
+        snapshots
+            .iter()
+            .all(|batch| batch.excluded_map_identities.is_empty())
+    );
+    assert_eq!(snapshots.last().unwrap().maps.len(), 2);
+    let wire = serde_json::to_value(final_snapshot).unwrap();
+    assert_eq!(wire["maps"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        wire["excluded_map_identities"],
+        serde_json::json!([
+            {"source_id":"root", "level_set_name":"Disabled",
+             "level_set_name_zh":"已停用", "author":"Test Author"},
+            {"source_id":"root", "level_set_name":"Excluded", "author":""},
+            {"source_id":"disabled-repository", "level_set_name":"Disabled inline map", "author":""},
+            {"source_id":"nested", "level_set_name":"Other region", "author":""}
+        ])
+    );
+    drop(snapshots);
     let ctx = MapSourceContext {
         previous: &collected,
         ..ctx

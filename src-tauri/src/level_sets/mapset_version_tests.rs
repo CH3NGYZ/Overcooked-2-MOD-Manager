@@ -2,8 +2,9 @@ use crate::level_sets::install::install_parsed_sets;
 use crate::level_sets::installed_versions::installed_mapset_version;
 use crate::level_sets::installed_versions::record_installed_mapset_versions;
 use crate::level_sets::paths::levels_root;
+use crate::level_sets::view::{bind_map_relation_snapshot, level_set_to_info};
 use crate::level_sets::zip_inspect::ImportedLevelSet;
-use crate::models::LevelSetLayout;
+use crate::models::{LevelSetInfo, LevelSetLayout};
 use std::fs;
 
 fn imported(name: &str, author: &str) -> ImportedLevelSet {
@@ -190,39 +191,61 @@ fn both_install_layouts_scope_asset_versions_even_with_single_selection() {
         let source = origin(&primary, "11.0-fix");
         let mut writer = zip::ZipWriter::new(fs::File::create(&zip_path).unwrap());
         for set in [&mut bundled, &mut primary] {
-            let entry = match layout {
-                LevelSetLayout::Flattened => format!("{}/info", set.dir_name),
+            let directory = match layout {
+                LevelSetLayout::Flattened => set.dir_name.clone(),
                 LevelSetLayout::Bepinex => {
-                    format!("BepInEx/plugins/OC2DIYLevel/levels/{}/info", set.dir_name)
+                    format!("BepInEx/plugins/OC2DIYLevel/levels/{}", set.dir_name)
                 }
             };
-            writer
-                .start_file(&entry, zip::write::SimpleFileOptions::default())
-                .unwrap();
-            writer.write_all(b"fixture").unwrap();
-            set.files.push((entry, "info".into()));
+            for (name, bytes) in [("info", b"fixture".as_slice()), ("requires.txt", b"3.10.2")] {
+                let entry = format!("{directory}/{name}");
+                writer
+                    .start_file(&entry, zip::write::SimpleFileOptions::default())
+                    .unwrap();
+                writer.write_all(bytes).unwrap();
+                set.files.push((entry, name.into()));
+            }
         }
         writer.finish().unwrap();
         let sets = vec![bundled, primary];
-        // 先只安装随包地图，不能因为本轮只有一张就把主包版本塞给它。
+        let roots = crate::level_sets::paths::test_roots(&game);
+        // A local import and a bundled-only selection both lack origin evidence.
+        for (game, origin) in [(game.clone(), Some(&source)), (root.join("local"), None)] {
+            fs::create_dir_all(&game).unwrap();
+            let roots = crate::level_sets::paths::test_roots(&game);
+            install_parsed_sets(
+                &sets,
+                &zip_path,
+                &roots,
+                &manifests,
+                &["Music".into()],
+                origin,
+            )
+            .unwrap();
+            let snapshots = crate::archive::read_map_relation_snapshots(&manifests);
+            assert!(snapshots.entries.is_empty());
+            let info = levels_root(&roots).unwrap().join("Music/info");
+            crate::level_sets::seed_info_metadata(&info, sets[0].metadata.clone());
+            let mut info = level_set_to_info(crate::level_sets::scan_level_sets(&roots).remove(0));
+            bind_map_relation_snapshot(&mut info, &crate::config::default_config(), &snapshots);
+            assert_eq!(
+                info.relations.len(),
+                1,
+                "requires.txt should still be visible"
+            );
+            assert!(!info.has_map_source_snapshot);
+            let json = serde_json::to_value(info).unwrap();
+            assert!(json.get("has_map_source_snapshot").is_none());
+            assert!(
+                !serde_json::from_value::<LevelSetInfo>(json)
+                    .unwrap()
+                    .has_map_source_snapshot
+            );
+        }
         install_parsed_sets(
             &sets,
             &zip_path,
-            &crate::level_sets::paths::test_roots(&game),
-            &manifests,
-            &["Music".into()],
-            Some(&source),
-        )
-        .unwrap();
-        assert!(
-            crate::archive::read_map_relation_snapshots(&manifests)
-                .entries
-                .is_empty()
-        );
-        install_parsed_sets(
-            &sets,
-            &zip_path,
-            &crate::level_sets::paths::test_roots(&game),
+            &roots,
             &manifests,
             &["pear".into()],
             Some(&source),
@@ -241,13 +264,27 @@ fn both_install_layouts_scope_asset_versions_even_with_single_selection() {
         );
         for name in ["Music", "pear"] {
             assert!(
-                levels_root(&crate::level_sets::paths::test_roots(&game))
+                levels_root(&roots)
                     .unwrap()
                     .join(name)
                     .join("info")
                     .is_file()
             );
         }
+        let info = levels_root(&roots).unwrap().join("pear/info");
+        crate::level_sets::seed_info_metadata(&info, sets[1].metadata.clone());
+        let mut info = crate::level_sets::scan_level_sets(&roots)
+            .into_iter()
+            .find(|set| set.dir_name == "pear")
+            .map(level_set_to_info)
+            .unwrap();
+        bind_map_relation_snapshot(&mut info, &crate::config::default_config(), &after);
+        assert!(info.map_id.is_none());
+        assert_eq!(info.installed_mapset_version, "11.0-fix");
+        assert!(
+            info.has_map_source_snapshot,
+            "legacy origin recorded only the asset version"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 }

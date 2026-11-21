@@ -97,6 +97,9 @@ pub struct LevelSetInfo {
     /// 绑定的地图仓库 id（英文名、双方非空中文名及作者匹配；未绑定为 `None`）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub map_id: Option<String>,
+    /// 当前地图身份有仓库声明快照或明确的在线安装记录；仅供来源状态展示。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub has_map_source_snapshot: bool,
     /// 线上声明的分组多语言表（地图的分组语义就是作者）。
     ///
     /// 来源是「绑定地图的当前声明 → 安装时固化的地图依赖快照」：地图没有

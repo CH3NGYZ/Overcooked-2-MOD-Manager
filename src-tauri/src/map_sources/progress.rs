@@ -39,10 +39,22 @@ pub struct SourceNode {
 pub struct MapTreeProgress {
     pub nodes: Vec<SourceNode>,
     pub maps: Vec<MapInfo>,
+    pub excluded_map_identities: Vec<ExcludedMapIdentity>,
+}
+
+/// A declaration already read, but not in the available map list.
+#[derive(Clone, Serialize)]
+pub struct ExcludedMapIdentity {
+    pub source_id: String,
+    pub level_set_name: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub level_set_name_zh: String,
+    pub author: String,
 }
 
 pub struct SourceObserver {
     nodes: Mutex<Vec<SourceNode>>,
+    excluded_map_identities: Mutex<Vec<ExcludedMapIdentity>>,
     registry: Arc<SourceRegistry>,
     namespace: String,
     region: String,
@@ -54,6 +66,7 @@ impl SourceObserver {
     pub fn new(region: &str, send: impl Fn(MapTreeProgress) + Send + Sync + 'static) -> Self {
         Self {
             nodes: Mutex::new(Vec::new()),
+            excluded_map_identities: Mutex::default(),
             registry: Arc::default(),
             namespace: String::new(),
             region: region.into(),
@@ -69,6 +82,7 @@ impl SourceObserver {
     ) -> Self {
         Self {
             nodes: Mutex::new(Vec::new()),
+            excluded_map_identities: Mutex::default(),
             send: Box::new(send),
             registry,
             namespace,
@@ -172,6 +186,40 @@ impl SourceObserver {
         }
     }
 
+    pub(super) fn record_excluded_identity(
+        &self,
+        source_id: &str,
+        level_set_name: &str,
+        level_set_name_zh: &str,
+        author: &str,
+    ) {
+        self.excluded_map_identities
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(ExcludedMapIdentity {
+                source_id: source_id.into(),
+                level_set_name: level_set_name.trim().into(),
+                level_set_name_zh: level_set_name_zh.trim().into(),
+                author: author.trim().into(),
+            });
+    }
+
+    /// Assemble the authoritative reply after saving, without depending on Channel delivery.
+    pub(crate) fn finish(&self, maps: Vec<MapInfo>) -> MapTreeProgress {
+        let nodes = self.nodes.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let excluded_map_identities = std::mem::take(
+            &mut *self
+                .excluded_map_identities
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+        );
+        MapTreeProgress {
+            nodes,
+            maps,
+            excluded_map_identities,
+        }
+    }
+
     /// Scheduling may prioritize installed repositories; display and storage use tree order.
     pub(super) fn sort_by_source<T>(
         &self,
@@ -252,6 +300,7 @@ impl SourceObserver {
         (self.send)(MapTreeProgress {
             nodes,
             maps: maps.into_iter().map(super::view::map_to_info).collect(),
+            excluded_map_identities: Vec::new(),
         });
     }
 }

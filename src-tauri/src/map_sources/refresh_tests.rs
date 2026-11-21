@@ -1,3 +1,4 @@
+use super::progress::SourceObserver;
 use super::{MapSourceContext, document::parse_document, release_tags::load_release_tag_maps};
 use super::{releases::fetch_map_release_data, state::SourceLabel};
 use crate::models::Provider;
@@ -9,12 +10,21 @@ use std::sync::{
 };
 
 fn response(version: u32) -> String {
-    serde_json::to_string(&(0..2).map(|i| serde_json::json!({
+    let mut releases = (0..2).map(|i| serde_json::json!({
         "tag_name": format!("map{i}"),
         "body": format!("Updated {version}\n<!-- oc2-map\nlevel_set_name = 'Map{i}'\nauthor = 'A'\nasset = 'map{i}_v${{version}}.zip'\n[[asset_versions]]\nmapset_version = '{version}.0'\ninfo_version = '{version}.1'\n-->"),
         "assets": [{"name": format!("map{i}_v{version}.0.zip"), "type":"attach", "size":1,
             "browser_download_url":format!("https://gitcode.com/u/b/releases/download/map{i}/map{i}_v{version}.0.zip")}]
-    })).collect::<Vec<_>>()).unwrap()
+    })).collect::<Vec<_>>();
+    releases.push(serde_json::json!({
+        "tag_name":"map-excluded",
+        "body":"<!-- oc2-map\nlevel_set_name = ' Map excluded '\nlevel_set_name_zh = '无可下载包'\nauthor = ' Author '\nasset = 'map.zip'\n-->",
+        "assets":[]
+    }));
+    releases.push(serde_json::json!({
+        "tag_name":"regular-release", "body":"No map declaration", "assets":[]
+    }));
+    serde_json::to_string(&releases).unwrap()
 }
 
 #[tokio::test]
@@ -86,8 +96,9 @@ repository='b'
         let cache = crate::release_cache::RepoReleaseCache::default();
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
         let config = crate::config::default_config();
+        let observer = SourceObserver::new("global", |_| {});
         let ctx = MapSourceContext {
-            observer: None,
+            observer: Some(&observer),
             cache: &cache,
             client: &client,
             config: &config,
@@ -104,6 +115,13 @@ repository='b'
             .unwrap();
         assert_eq!(maps.len(), 2);
         assert!(maps.iter().all(|map| map.release_derived));
+        let settled = observer.finish(maps.iter().map(super::view::map_to_info).collect());
+        assert_eq!(settled.maps.len(), 2);
+        assert_eq!(
+            serde_json::to_value(settled.excluded_map_identities).unwrap(),
+            serde_json::json!([{"source_id":"bundle", "level_set_name":"Map excluded",
+                "level_set_name_zh":"无可下载包", "author":"Author"}])
+        );
         let started = std::time::Instant::now();
         for (map, pass) in maps.iter().zip(["card-a", "card-b"]) {
             let ctx = MapSourceContext {

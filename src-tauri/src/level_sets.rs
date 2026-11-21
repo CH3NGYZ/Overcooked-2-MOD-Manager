@@ -31,6 +31,7 @@ pub(crate) use info_cache::read_info_metadata;
 #[cfg(test)]
 pub(crate) use info_cache::seed_info_metadata;
 pub(crate) use install::install_parsed_sets;
+pub(crate) use installed_versions::INSTALLED_PREFIX;
 pub use installed_versions::installed_mapset_version;
 pub(crate) use installed_versions::installed_repository_id;
 pub use operations::locate_level_set_directory;

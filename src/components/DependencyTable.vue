@@ -24,7 +24,7 @@ export type { DependencyJump, DependencyRow } from '../dependencyRows'
  * 为什么是表格而不是一排标签：一张图/一个包可能声明三四条前置（DIYLevel、
  * Web Runtime、宿主版本…），每条都带「版本要求」（区间表达式原文）和「本地是否满足」。
  * 标签只能表达名字，满足情况得另起一行解释；表格把三件事对齐在同一列上，
- * 用户扫一眼就知道哪条需要处理、要求多少；原因与状态并排，窄列可换行。
+ * 用户扫一眼就知道哪条需要处理、要求多少。右侧信息优先单行，名称空间不足时尾部省略。
  *
  * 只做版式：`rows` 为空时整块不渲染 —— 没有依赖声明的条目不该留一行
  * 「无依赖」，那会让详情面板多出一条没有信息量的分隔线。
@@ -105,7 +105,9 @@ function lineLabel(line: DependencyRow['line']): string {
         </thead>
         <tbody>
           <tr v-for="row in rows" :key="row.key">
-            <td class="dep-name" :class="{ mono: monoName }" :title="row.name">{{ row.name || '-' }}</td>
+            <td class="dep-name" :class="{ mono: monoName }" :title="row.name">
+              <span class="dep-name-text">{{ row.name || '-' }}</span>
+            </td>
             <td v-if="showKind" class="dep-kind">
               {{ kindLabel(row) }}
               <span v-if="row.line" class="dep-line">{{ lineLabel(row.line) }}</span>
@@ -135,7 +137,7 @@ function lineLabel(line: DependencyRow['line']): string {
 <style scoped>
 .dep-block {
   min-inline-size: 0;
-  container-type: inline-size;
+  contain: inline-size;
 }
 
 .dep-table {
@@ -146,9 +148,18 @@ function lineLabel(line: DependencyRow['line']): string {
   color: var(--oc2-text-1);
 }
 
-.dep-name,
-.dep-reason {
-  overflow-wrap: anywhere;
+.dep-name-text {
+  /* 名称只使用其余列分配后的宽度，不用长名称撑宽整张表。 */
+  display: block;
+  contain: inline-size;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dep-kind,
+.dep-verdict {
+  white-space: nowrap;
 }
 
 .dep-kind,
@@ -159,25 +170,20 @@ function lineLabel(line: DependencyRow['line']): string {
 /* 发布线小标：跟在关系名后面，说明这条关系指的是测试版还是正式版 */
 .dep-line {
   display: inline-block;
-  margin-left: 6px;
+  margin-inline-start: 6px;
   padding: 0 6px;
   border: 1px solid var(--oc2-row-line);
   border-radius: 999px;
   background: var(--oc2-sunken);
   font-size: 11px;
   color: var(--oc2-text-3);
-  white-space: nowrap;
 }
 
 .dep-verdict {
-  /* 按标签和说明预留宽度，说明再长也给名称及版本留空间。 */
   inline-size: max-content;
-  min-inline-size: min-content;
-  max-inline-size: min(32ch, 30cqi);
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 3px 6px;
+  gap: 6px;
 }
 
 .dep-verdict .state-tag { flex: none; }

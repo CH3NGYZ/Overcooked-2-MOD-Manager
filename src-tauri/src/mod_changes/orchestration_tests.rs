@@ -16,6 +16,8 @@ mod duplicate_release_target;
 mod install_notes;
 #[path = "orchestration_tests/installed_relations.rs"]
 mod installed_relations;
+#[path = "orchestration_tests/live_game.rs"]
+mod live_game;
 #[path = "orchestration_tests/map_runtime_duplicate.rs"]
 mod map_runtime_duplicate;
 #[path = "orchestration_tests/repair_cycle.rs"]

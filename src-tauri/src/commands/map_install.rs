@@ -170,8 +170,8 @@ pub async fn stage_map_release(
             return Err("mapSource.mapMissing".into());
         };
         /*
-         * 暂存不写游戏目录，所以不探测游戏目录、也不拦「游戏正在运行」：
-         * 真正的写入在 `import_level_sets`，那里仍会校验 `game.notFound` 与运行状态。
+         * 暂存不写游戏目录，不检查运行状态。整链准备与提交会按实际文件判断
+         * 是否涉及 MOD；若涉及，才要求退出游戏。
          */
         let release = releases::select_cached_release(&map.cached_releases, tag.as_deref(), None)
             .ok_or(if tag.is_some() {

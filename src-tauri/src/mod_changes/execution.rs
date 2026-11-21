@@ -3,9 +3,9 @@ use super::{
     application_progress::{
         ChangeApplicationOutcome, ChangeApplicationProgress, ItemKey, Recorder,
     },
-    inventory,
+    guard, inventory, live_game,
     model::{ActionKind, NodeKind, SolveStatus},
-    preparation,
+    mutations, preparation,
     session::*,
     transaction::*,
 };
@@ -82,11 +82,10 @@ pub(super) fn commit(
     let config = state.config.load_or_default();
     let detected = game::detect_game(&config).path.ok_or("game.notFound")?;
     let root = game::resolve_existing_ancestor(Path::new(&detected))?;
-    game::ensure_game_stopped(&root)?;
     if crate::level_sets::recompress::has_pending_recovery(&root) {
         return Err("modChanges.recoveryRequired".into());
     }
-    super::guard::ensure_recovered(state)?;
+    guard::ensure_recovered(state)?;
     let solved = session.solved.as_ref().ok_or("modChanges.notPrepared")?;
     if root != session.trusted.game_root {
         return Err("modChanges.targetChanged".into());
@@ -104,6 +103,22 @@ pub(super) fn commit(
         solved,
         &session.unbound_toggle_roots(),
     )?;
+    let roots = mutations::transaction_roots(state, session)?;
+    let touches_mods = live_game::touches_mods(
+        session,
+        &roots,
+        session
+            .mutations
+            .as_deref()
+            .ok_or("modChanges.notPrepared")?,
+    )?;
+    let check_game = || {
+        if touches_mods {
+            guard::ensure_game_stopped(state, &root)?;
+        }
+        Ok(())
+    };
+    check_game()?;
     let changes = session.mutations.take().ok_or("modChanges.notPrepared")?;
     // Consuming frozen mutations consumes approval, including prepare failures.
     session.plan.prepared = false;
@@ -113,16 +128,6 @@ pub(super) fn commit(
         state.invalidate_local_mod_snapshot()?;
         // A failure or rollback cannot inherit evidence from an older commit.
         state.committed_watch_paths.publish(Default::default());
-        let data_root = state
-            .config
-            .config_path()
-            .parent()
-            .ok_or("archive.pathEscape")?
-            .to_path_buf();
-        let roots = TransactionRoots {
-            game_root: root.clone(),
-            data_root: data_root.clone(),
-        };
         let (changes, records) = changes
             .into_iter()
             .map(|owned| (owned.mutation, owned.items))
@@ -149,7 +154,7 @@ pub(super) fn commit(
             report,
         );
         let transaction = super::transaction::prepare(
-            &data_root.join("mod-change-transactions"),
+            &roots.data_root.join("mod-change-transactions"),
             &roots,
             changes,
         )?;
@@ -158,9 +163,13 @@ pub(super) fn commit(
             transaction.id(),
             session.plan.result.actions.len()
         );
-        match transaction.apply_with_cancel(crate::archive::is_download_cancelled, |event| {
-            progress.observe(event)
-        }) {
+        // The game can start during private journal preparation. Check again
+        // after verifying that journal, just before its first live write.
+        match transaction.apply_checked(
+            crate::archive::is_download_cancelled,
+            check_game,
+            |event| progress.observe(event),
+        ) {
             Ok(watch_paths) => state.committed_watch_paths.publish(watch_paths),
             Err(error) => {
                 progress.failed(error != "recycle.partialFailure");

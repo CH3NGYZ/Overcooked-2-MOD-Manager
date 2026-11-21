@@ -2,7 +2,9 @@
 use super::progress::{
     ChangePreparationProgress, PreparationOutcome, PreparationReporter, PreparationStage,
 };
-use super::{inventory, model::*, planning, session::*, transaction::*};
+use super::{
+    guard, inventory, live_game, model::*, mutations, planning, session::*, transaction::*,
+};
 use crate::{
     app_state::AppState,
     archive, game,
@@ -74,6 +76,7 @@ async fn prepare_inner(
         if session.plan.result.status != SolveStatus::Ready {
             break;
         }
+        live_game::check_plan(&state, session)?;
         let pending = session
             .solved
             .as_ref()
@@ -261,11 +264,12 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
             &session.unbound_toggle_roots(),
         )?;
     }
-    let mutations = super::mutations::build(state, session)?;
+    let roots = mutations::transaction_roots(state, session)?;
+    let changes = mutations::assemble(session, roots.clone())?;
     // FileChange already keeps the exact file source stamps. Freeze composed map
     // trees too, without replacing the proofs captured during Release verification.
     planning::remember_payloads(session)?;
-    for owned in &mutations {
+    for owned in &changes {
         if let Mutation::Tree(change) = &owned.mutation
             && let Some(source) = &change.source
         {
@@ -274,18 +278,20 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
                 .insert(source.clone(), Fingerprint::capture(source)?);
         }
     }
-    session.mutations = Some(mutations);
     ensure_fresh(state, &session.trusted.revision)?;
+    if live_game::touches_mods(session, &roots, &changes)? {
+        guard::ensure_game_stopped(state, &roots.game_root)?;
+    }
+    session.mutations = Some(changes);
     Ok(())
 }
 
 pub(crate) fn ensure_fresh(state: &AppState, expected: &str) -> Result<(), String> {
     let _operation = state.operation.lock().map_err(|_| "lock.poisoned")?;
-    super::guard::ensure_recovered(state)?;
+    guard::ensure_recovered(state)?;
     let config = state.config.load_or_default();
     let root = game::detect_game(&config).path.ok_or("game.notFound")?;
     let root = game::resolve_existing_ancestor(std::path::Path::new(&root))?;
-    game::ensure_game_stopped(&root)?;
     if inventory::revision(state, &root, &config)? != expected {
         return Err("modChanges.targetChanged".into());
     }

@@ -5,7 +5,7 @@ use super::{
     model::*,
     session::*,
 };
-use crate::{app_state::AppState, archive, game, releases};
+use crate::{app_state::AppState, archive, releases};
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashMap, fs, path::Path};
 
@@ -179,7 +179,6 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
     {
         return Err("modChanges.targetChanged".into());
     }
-    game::ensure_game_stopped(&trusted.game_root)?;
     let data = state
         .config
         .config_path()
@@ -269,6 +268,7 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
             super::map_payload::attach(state, &mut session)?;
         }
         resolve(state, &mut session)?;
+        super::live_game::check_plan(state, &session)?;
         remember_payloads(&mut session)?;
         Ok(session.plan.clone())
     })();

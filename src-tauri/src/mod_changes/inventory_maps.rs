@@ -353,10 +353,7 @@ fn internal_members(
     let paths = entries
         .into_iter()
         .filter(|entry| entry.file_type().is_file())
-        .filter(|entry| {
-            let name = entry.file_name().to_string_lossy().to_lowercase();
-            name.ends_with(".dll") || name.ends_with(".dll.disabled")
-        })
+        .filter(|entry| crate::mods::file_state::is_mod_file(entry.path()))
         .collect::<Vec<_>>();
     let requests = paths
         .iter()

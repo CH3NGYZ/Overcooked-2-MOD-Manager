@@ -27,7 +27,7 @@ test('level_sets is a domain entry, not a second implementation or forwarding la
   const entry = readText(resolve(root, '../level_sets.rs'))
   assert.doesNotMatch(entry, /\b(?:fn|struct|enum|impl)\s/)
   assert.match(entry, /pub use zip_inspect::inspect_zip_with_progress;/)
-  assert.match(entry, /pub use install::install_parsed_sets;/)
+  assert.match(entry, /pub\(crate\) use install::install_parsed_sets;/)
   assert.match(entry, /pub\(crate\) mod staging;/)
   assert.match(entry, /pub\(crate\) mod view;/)
 })
@@ -48,15 +48,20 @@ test('map scan, cache, identity, ZIP and transactions each retain one bounded ow
 })
 
 
-test('map operations no longer probe game state while actual MOD writes retain their gates', () => {
+test('map IPCs defer the game gate to concrete MOD mutations', () => {
   for (const path of ['../commands/levels.rs', '../commands/map_install.rs', '../level_sets.rs']) {
     assert.doesNotMatch(readText(resolve(root, path)), /ensure_operation_allowed|LevelSetOperation|ensure_game_stopped|is_game_running/)
   }
   const operations = readText(resolve(root, 'operations.rs'))
   assert.doesNotMatch(operations, /ALLOW_LEVEL_SET|levelSet\.gameRunning|allowed_while_running/)
-  for (const path of ['operations.rs', 'install.rs', 'bepinex_layer.rs']) {
-    assert.match(readText(resolve(root, path)), /crate::game::ensure_game_stopped\(game_root\)/)
+  assert.match(operations, /crate::game::ensure_game_stopped\(game_root\)/)
+  for (const path of ['install.rs', 'bepinex_layer.rs']) {
+    assert.doesNotMatch(readText(resolve(root, path)), /ensure_game_stopped|is_game_running/)
   }
-  assert.match(readText(resolve(root, '../mod_changes/execution.rs')), /game::ensure_game_stopped/)
+  const prepare = readText(resolve(root, '../mod_changes/preparation.rs'))
+  const execute = readText(resolve(root, '../mod_changes/execution.rs'))
+  assert.match(prepare, /if live_game::touches_mods\([\s\S]*?guard::ensure_game_stopped/)
+  assert.match(execute, /let touches_mods = live_game::touches_mods\([\s\S]*?if touches_mods \{\s*guard::ensure_game_stopped/)
+  assert.match(execute, /transaction\.apply_checked\([\s\S]*?check_game/)
   assert.match(readText(resolve(root, '../mods/repository_download.rs')), /game::ensure_game_stopped/)
 })

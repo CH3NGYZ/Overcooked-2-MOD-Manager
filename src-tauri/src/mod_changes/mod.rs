@@ -9,6 +9,7 @@ mod install_notes;
 pub(crate) mod inventory;
 pub(crate) mod inventory_maps;
 pub(crate) mod level_trees;
+mod live_game;
 pub(crate) mod map_payload;
 pub(crate) mod model;
 pub(crate) mod mutations;

@@ -11,6 +11,17 @@ pub(crate) fn require_shared_plan<T>() -> Result<T, String> {
     Err("modChanges.installationBlocked".into())
 }
 
+pub(super) fn ensure_game_stopped(_state: &AppState, game_root: &Path) -> Result<(), String> {
+    #[cfg(test)]
+    if _state
+        .game_running_for_test
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        return Err("game.running".into());
+    }
+    game::ensure_game_stopped(game_root)
+}
+
 /// Call only while holding AppState.operation. This function never acquires it.
 pub(crate) fn ensure_recovered(state: &AppState) -> Result<(), String> {
     let data_root = state
@@ -27,7 +38,7 @@ pub(crate) fn ensure_recovered(state: &AppState) -> Result<(), String> {
         let config = state.config.load_or_default();
         let detected = game::detect_game(&config).path.ok_or(REQUIRED)?;
         let game_root = game::resolve_existing_ancestor(Path::new(&detected))?;
-        game::ensure_game_stopped(&game_root)?;
+        ensure_game_stopped(state, &game_root)?;
         let roots = TransactionRoots {
             game_root,
             data_root,

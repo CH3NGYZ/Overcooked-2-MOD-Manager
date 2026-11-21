@@ -38,20 +38,36 @@ pub(super) struct Builder<'a> {
     pub map_paths: Vec<(String, String)>,
 }
 
-pub(super) fn build(state: &AppState, session: &PlanSession) -> Result<Vec<OwnedMutation>, String> {
+pub(super) fn transaction_roots(
+    state: &AppState,
+    session: &PlanSession,
+) -> Result<TransactionRoots, String> {
     let data_root = state
         .config
         .config_path()
         .parent()
         .ok_or("archive.pathEscape")?
         .to_path_buf();
-    assemble(
-        session,
-        TransactionRoots {
-            game_root: session.trusted.game_root.clone(),
-            data_root,
-        },
-    )
+    Ok(TransactionRoots {
+        game_root: session.trusted.game_root.clone(),
+        data_root,
+    })
+}
+
+/// Both the old and solved levels roots belong to maps during a root migration.
+pub(super) fn map_roots(session: &PlanSession, solved: &Inventory) -> Result<Vec<String>, String> {
+    let game_root = &session.trusted.game_root;
+    let mut roots = vec![inventory::relative(
+        game_root,
+        &crate::level_sets::disabled_root(game_root),
+    )?];
+    if let Some(package) = session.trusted.level_roots.package_root() {
+        roots.push(inventory::relative(game_root, &package.join("levels"))?);
+    }
+    if let Some(package) = final_package(solved)? {
+        roots.push(format!("{package}/levels"));
+    }
+    Ok(roots)
 }
 
 pub(super) fn assemble(
@@ -152,19 +168,7 @@ impl Builder<'_> {
     }
 
     fn index_ownership(&mut self, solved: &Inventory) -> Result<(), String> {
-        if let Some(package) = final_package(solved)? {
-            self.protected_maps.push(format!("{package}/levels"));
-        }
-        if let Some(package) = self.session.trusted.level_roots.package_root() {
-            self.protected_maps.push(inventory::relative(
-                &self.roots.game_root,
-                &package.join("levels"),
-            )?);
-        }
-        self.protected_maps.push(inventory::relative(
-            &self.roots.game_root,
-            &crate::level_sets::disabled_root(&self.roots.game_root),
-        )?);
+        self.protected_maps = map_roots(self.session, solved)?;
         let manifests = self.roots.data_root.join("manifests");
         if manifests.exists() {
             for entry in fs::read_dir(&manifests).map_err(|error| error.to_string())? {

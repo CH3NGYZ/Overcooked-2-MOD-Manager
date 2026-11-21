@@ -40,16 +40,14 @@ pub(super) fn existing_level_set_metadata(
     None
 }
 
-/// 把已经解析好的关卡集写进 `levels/`（`zip_path` 只用于回读文件内容）。
-///
-/// 识别与写盘拆开是为了多选导入只解析一次：`import_level_sets` 以前对每个
-/// 选中的关卡集各重新整包识别一遍 —— N 张合集就是 N 倍识别时间。
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]
 pub use test_support::install_from_zip;
 
-pub fn install_parsed_sets(
+/// 只向整链计划的私有根解包已解析的关卡集。不接触真实游戏目录，也不检查游戏进程；
+/// 暂存得出的实际文件由整链确认、验证并提交。
+pub(crate) fn install_parsed_sets(
     sets: &[ImportedLevelSet],
     zip_path: &Path,
     roots: &LevelSetRoots,
@@ -67,16 +65,6 @@ pub fn install_parsed_sets(
     }
     let levels_dir = levels_root(roots)?;
     let disabled_dir = roots.safe_path(&disabled_root(game_root))?;
-    if targets.iter().any(|set| {
-        !set.plugins.is_empty()
-            || set
-                .files
-                .iter()
-                .any(|(_, path)| path.to_ascii_lowercase().ends_with(".dll"))
-    }) {
-        crate::game::ensure_game_stopped(game_root)?;
-    }
-
     /*
      * 表层包与历史形态是两条完全不同的落盘路径：前者按 ZIP 内路径原样解压
      * 并登记插件归属，后者拍平成 `levels/<集名>/`。混选不该出现（同一个 ZIP

@@ -84,10 +84,9 @@ pub(super) fn is_in_map_tree(
     false
 }
 
-pub(super) fn is_mod_file(path: &Path) -> bool {
-    let name = path.to_string_lossy();
-    name.to_ascii_lowercase().ends_with(".dll")
-        || name.to_ascii_lowercase().ends_with(".dll.disabled")
+pub(crate) fn is_mod_file(path: &Path) -> bool {
+    let name = path.to_string_lossy().to_ascii_lowercase();
+    name.ends_with(".dll") || name.ends_with(".dll.disabled")
 }
 
 pub(super) fn is_disabled_mod_file(path: &Path) -> bool {

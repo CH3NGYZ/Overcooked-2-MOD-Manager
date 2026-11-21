@@ -357,9 +357,7 @@ fn loose_files(batch: &MapBatch) -> Result<Vec<String>, String> {
             continue;
         }
         // Every loader input must participate in the same evaluated graph.
-        if path.to_ascii_lowercase().ends_with(".dll")
-            || path.to_ascii_lowercase().ends_with(".dll.disabled")
-        {
+        if crate::mods::file_state::is_mod_file(entry.path()) {
             log::warn!("地图批次拒绝未归属 DLL：文件={path}");
             return Err("modChanges.ambiguousOwnership".into());
         }

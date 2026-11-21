@@ -30,6 +30,8 @@ pub struct AppState {
     pub readme: Arc<crate::repository_readme::ReadmeDownloads>,
     // Display-only snapshot; file operations always inspect the live process.
     pub game_state: Arc<Mutex<Option<GameInfo>>>,
+    #[cfg(test)]
+    pub(crate) game_running_for_test: Arc<std::sync::atomic::AtomicBool>,
     /// 关卡集目录监听：外部改动后通知前端重读（见 `level_watch`）。
     pub level_watch: Arc<crate::level_watch::LevelWatcher>,
     /// 按仓库收敛的 Release 列表缓存（见 `release_cache`）。
@@ -89,6 +91,8 @@ impl AppState {
             community: Arc::new(crate::community::CommunitySearch::default()),
             readme: Arc::new(crate::repository_readme::ReadmeDownloads::default()),
             game_state: Arc::new(Mutex::new(None)),
+            #[cfg(test)]
+            game_running_for_test: Arc::default(),
             level_watch: Arc::new(crate::level_watch::LevelWatcher::default()),
             map_source_registry: Arc::default(),
             release_cache: Arc::new(crate::release_cache::RepoReleaseCache::default()),

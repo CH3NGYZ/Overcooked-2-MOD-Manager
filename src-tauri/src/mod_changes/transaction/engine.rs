@@ -103,14 +103,24 @@ impl PreparedTransaction {
         self.apply_with_cancel(|| false, |_| {})
     }
 
-    /// The caller holds the shared operation lock and has rechecked game/source revisions.
-    /// Cancellation is observed between atomic filesystem operations; it rolls back the batch.
+    #[cfg(test)]
     pub(in crate::mod_changes) fn apply_with_cancel(
+        self,
+        cancelled: impl Fn() -> bool,
+        observe: impl FnMut(RecordProgress),
+    ) -> Result<CommittedPaths, String> {
+        self.apply_checked(cancelled, || Ok(()), observe)
+    }
+
+    /// Run the last domain check after private verification and before live writes.
+    /// Cancellation is observed between atomic filesystem operations and rolls back the batch.
+    pub(in crate::mod_changes) fn apply_checked(
         mut self,
         cancelled: impl Fn() -> bool,
+        before_apply: impl FnOnce() -> Result<(), String>,
         mut observe: impl FnMut(RecordProgress),
     ) -> Result<CommittedPaths, String> {
-        let result = self.apply_inner(&cancelled, &mut observe);
+        let result = self.apply_inner(&cancelled, before_apply, &mut observe);
         let mut committed = match result {
             Ok(committed) => committed,
             Err(error) => {
@@ -140,6 +150,7 @@ impl PreparedTransaction {
     fn apply_inner(
         &mut self,
         cancelled: &impl Fn() -> bool,
+        before_apply: impl FnOnce() -> Result<(), String>,
         observe: &mut impl FnMut(RecordProgress),
     ) -> Result<CommittedPaths, String> {
         if self.journal.state != JournalState::Prepared {
@@ -158,6 +169,7 @@ impl PreparedTransaction {
         if cancelled() {
             return Err("download.cancelled".into());
         }
+        before_apply()?;
         self.journal.state = JournalState::Applying;
         self.persist()?;
         for index in 0..self.journal.records.len() {

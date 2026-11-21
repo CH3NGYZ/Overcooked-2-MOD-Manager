@@ -100,6 +100,37 @@ fn prepared_does_not_change_targets_and_batch_commits_every_file() {
 }
 
 #[test]
+fn domain_check_before_apply_rejects_with_no_live_writes_or_pending_journal() {
+    let w = Workspace::new();
+    w.write("plugins/a.dll", b"old");
+    let pending = w.prepare(vec![
+        w.file("plugins/a.dll", Some(b"new")),
+        w.file("levels/New/info", Some(b"map")),
+    ]);
+    let journal = w.journal_root.join(pending.id());
+    assert_eq!(
+        pending
+            .apply_checked(
+                || false,
+                || {
+                    assert_eq!(
+                        durable::read_journal(&journal)?.state,
+                        JournalState::Prepared
+                    );
+                    Err("game.running".into())
+                },
+                |_| panic!("a rejected transaction must not start applying"),
+            )
+            .unwrap_err(),
+        "game.running"
+    );
+    assert_eq!(w.read("plugins/a.dll"), b"old");
+    assert!(!w.roots.game_root.join("levels").exists());
+    assert!(!journal.exists());
+    assert!(!has_pending(&w.journal_root).unwrap());
+}
+
+#[test]
 fn cancellation_after_first_write_reverses_batch_and_keeps_original_permissions() {
     let w = Workspace::new();
     w.write("a.dll", b"old A");

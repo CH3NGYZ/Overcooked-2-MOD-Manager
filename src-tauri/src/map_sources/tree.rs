@@ -181,9 +181,12 @@ pub async fn load_map_tree(
     let index = SourceLocation::parse(&provider.document(BUILTIN_MAP_INDEX))?;
     let root_builtin = matches!(index, SourceLocation::Bundled(_));
     log::info!(
-        "开始加载地图源树：索引={}，内置={}",
-        crate::repository_sources::safe_log_address(&index.address()),
-        root_builtin
+        "从{}读取地图索引：包内路径={BUILTIN_MAP_INDEX}",
+        if root_builtin {
+            "内置源码包"
+        } else {
+            "已选官方源码包"
+        }
     );
 
     let mut collected = Vec::new();
@@ -497,6 +500,12 @@ async fn load_deferred(
     ctx: &MapSourceContext<'_>,
     region: &str,
 ) {
+    if !targets.is_empty() {
+        log::info!(
+            "开始按仓库的 Release 列表刷新地图：待处理源={}，列表来自仓库 API 或缓存",
+            targets.len()
+        );
+    }
     targets.sort_by_key(|target| {
         let bound = ctx.previous_for(&target.label.id);
         !bound.iter().any(|map| {

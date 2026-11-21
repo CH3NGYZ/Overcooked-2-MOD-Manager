@@ -43,10 +43,6 @@ struct Search<'a> {
     fixed: BTreeSet<usize>,
     roots: BTreeSet<usize>,
     repair_owner: Option<usize>,
-    /// A fixed, disabled repair owner was needed as a provider on a failed branch.
-    activation_probe_needed: bool,
-    /// A separate search with that owner enabled proves readiness, not runtime.
-    probing_activation: bool,
     visited: BTreeMap<String, bool>,
     baseline: BTreeSet<String>,
     failure: Option<Diagnostic>,
@@ -59,7 +55,6 @@ struct Search<'a> {
     preference_pruned: bool,
 }
 
-mod activation_repair;
 mod diagnostics;
 mod package_switches;
 mod reasons;
@@ -770,8 +765,8 @@ fn solve_inner(
         reasons: ActionReasons::default(),
     };
     let mut roots = BTreeSet::new();
-    // The owner never changes in a committed repair. Search checks its outgoing
-    // relations even if it is disabled.
+    // Repair keeps the owner's version and switches fixed. Only maps can be
+    // repaired while disabled; a disabled MOD is checked when it is enabled.
     let repair_owner = match request.repair_dependencies_of.as_deref() {
         Some(id) => {
             if !request.roots.is_empty() {
@@ -780,7 +775,7 @@ fn solve_inner(
             let index = inventory
                 .nodes
                 .iter()
-                .position(|node| node.id == id && node.current.is_some())
+                .position(|node| node.id == id && node.can_repair_dependencies())
                 .ok_or_else(|| diagnostic("root_missing", Some(id), true))?;
             roots.insert(index);
             state.decided.insert(index);
@@ -956,8 +951,6 @@ fn solve_inner(
         fixed: roots.clone(),
         roots,
         repair_owner,
-        activation_probe_needed: false,
-        probing_activation: false,
         fixed_members,
         visited: BTreeMap::new(),
         baseline,

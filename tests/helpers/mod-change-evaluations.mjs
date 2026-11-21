@@ -4,7 +4,7 @@ import { setEvaluationSnapshotReader } from '../../src/modChanges/evaluationProj
 export function evaluationSnapshot(entries, extras = []) {
   const snapshot = { revision: 'fixture', nodes: entries.map(entry => ({
     node_id: entry.id, label: entry.label ?? entry.id, kind: entry.kind ?? 'mod',
-    enabled: entry.enabled ?? true, dll_files: entry.dlls ?? [],
+    enabled: entry.enabled ?? true, dll_files: entry.dlls ?? [], members: entry.members,
     repository_id: entry.repo, map_dir_name: entry.dir, map_id: entry.map,
     subject_tag: entry.tag, candidates: entry.candidates ?? [],
   })).concat(extras), evaluations: entries.map(entry => {

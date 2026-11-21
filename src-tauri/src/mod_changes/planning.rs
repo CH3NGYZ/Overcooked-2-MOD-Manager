@@ -172,12 +172,19 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
     }
     let trusted = (*inventory::cached(state)?).clone();
     ensure_toggle_scope(state, &trusted, &wire_request)?;
-    if let Some(id) = repair
-        && !trusted.files.get(id).is_some_and(|files| {
+    if let Some(id) = repair {
+        let installed = trusted.files.get(id).is_some_and(|files| {
             !files.summary.dll_files.is_empty() || files.summary.map_dir_name.is_some()
-        })
-    {
-        return Err("modChanges.targetChanged".into());
+        });
+        if !installed
+            || !trusted
+                .inventory
+                .nodes
+                .iter()
+                .any(|node| node.id == id && node.can_repair_dependencies())
+        {
+            return Err("modChanges.targetChanged".into());
+        }
     }
     let data = state
         .config

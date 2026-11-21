@@ -5,7 +5,7 @@
 // 带 .ts 扩展名：Node 24 直接执行 TS 时靠它解析相对导入；
 // 该文件同时被 Vite 打包，两种加载方式都要能用（与 statusTags 的写法一致）。
 import { compareVersions, isPrereleaseVersion } from './modStatus.ts'
-import { relationForSubject, relationsForSubject, repairTarget, targetMod } from './modChanges/evaluationProjection.ts'
+import { relationsForSubject, repairTarget, sameRelation, targetMod } from './modChanges/evaluationProjection.ts'
 import type { DependencyRepairTarget, EvaluationSubject, RelationEvaluation } from './modChanges/types'
 import { parseVersionSpec, versionMatches } from './versionSpec.ts'
 import type { TagTone } from './theme'
@@ -169,7 +169,8 @@ export function resolveRelation(
   mods: readonly InstalledMod[],
   subject?: EvaluationSubject,
 ): RelationStatus {
-  const evaluation = relationForSubject(relation, subject)
+  const assessment = subject && relationsForSubject(subject, mods)
+  const evaluation = assessment?.assessed && assessment.rows.find(entry => sameRelation(entry.relation, relation))
   return evaluation ? relationStatusFromEvaluation(evaluation, mods)
     : unassessedRelation(relation)
 }
@@ -180,9 +181,10 @@ export function relationStatusesForSubject(
   mods: readonly InstalledMod[],
   declarations?: () => readonly RepositoryRelation[],
 ): RelationStatus[] {
-  const evaluations = subject ? relationsForSubject(subject) : undefined
-  return evaluations
-    ? evaluations.filter(({ relation }) => !relation.optional).map(entry => relationStatusFromEvaluation(entry, mods))
+  const assessment = subject && relationsForSubject(subject, mods)
+  return assessment
+    ? assessment.rows.filter(({ relation }) => !relation.optional)
+      .map(entry => assessment.assessed ? relationStatusFromEvaluation(entry, mods) : unassessedRelation(entry.relation))
     : (declarations?.() ?? []).filter(relation => !relation.optional).map(unassessedRelation)
 }
 

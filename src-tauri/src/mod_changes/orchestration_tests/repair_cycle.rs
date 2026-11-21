@@ -1,27 +1,25 @@
-//! Repair FastInit's dependencies with the relations declared for DIYLevel 0.10+.
+//! Activate or repair the installed dependency cycle declared for DIYLevel 0.10+.
 use super::*;
 
 const FRAMEWORK: &str = "DIYLevel";
+const FRAMEWORK_NODE: &str = "mod:DIYLevel";
 const FW_GUID: &str = mods::plugin_target::DIYLEVEL_GUID;
+const CORE_DLL: &str = "BepInEx/plugins/OC2DIYLevel/OC2DIYLevel.dll";
+const STUB_DLL: &str = "BepInEx/plugins/OC2DIYLevel/LevelEditorStub.dll";
 const FAST: &str = "FastInit";
 const FAST_GUID: &str = "oc2.diylevel.fastinit";
-const MESSAGE_FIX: &str = "com.example.messagefix";
-const EXPERIENCE: &str = "com.example.diylevelexperience";
-const CONSUMER_GUID: &str = "com.example.consumer";
+const FAST_NODE: &str = "mod:FastInit";
+const MESSAGE_FIX: &str = "fixture.message-fix";
+const EXPERIENCE: &str = "fixture.experience-optimization";
 
-fn repair() -> PlanRequest {
+fn repair(id: &str) -> PlanRequest {
     PlanRequest {
-        repair_dependencies_of: Some(format!("mod:{FAST}")),
+        repair_dependencies_of: Some(id.into()),
         ..Default::default()
     }
 }
 
-fn scenario(
-    fast_on: bool,
-    framework_on: bool,
-    addons_on: bool,
-    fast_floor: &str,
-) -> (Fixture, String, String) {
+fn repositories(fast_floor: &str) -> Vec<ModRepositoryConfig> {
     // Pin the reported rules in the fixture: the parent can embed older sources.
     let mut framework = repository(FRAMEWORK, FW_GUID, &["0.10", "0.9"], vec![]);
     framework.release_relations = vec![ReleaseRelationOverride {
@@ -36,7 +34,7 @@ fn scenario(
             },
         ],
     }];
-    let f = fixture(vec![
+    vec![
         framework,
         repository(
             FAST,
@@ -46,12 +44,39 @@ fn scenario(
         ),
         repository("MessageFix", MESSAGE_FIX, &[], vec![requires(FW_GUID, "")]),
         repository("Experience", EXPERIENCE, &[], vec![requires(FW_GUID, "")]),
-    ]);
-    let fw = install(&f, FRAMEWORK, FW_GUID, "0.9", framework_on);
-    let fast = install(&f, FAST, FAST_GUID, "1.9.6", fast_on);
-    install(&f, "MessageFix", MESSAGE_FIX, "0.2.3", addons_on);
-    install(&f, "Experience", EXPERIENCE, "1.14.2", addons_on);
-    (f, fw, fast)
+    ]
+}
+
+fn disabled_package(fast_enabled: bool, fast_floor: &str) -> (Fixture, [String; 5]) {
+    let f = fixture(repositories(fast_floor));
+    let disabled_core = mods::disabled_dll_file(CORE_DLL);
+    let disabled_stub = mods::disabled_dll_file(STUB_DLL);
+    write(
+        &f.game.join(&disabled_core),
+        &mods::plugin_blob(FW_GUID, "OC2DIYLevel", "0.10"),
+    );
+    // The 0.10 ZIP has a GUID-less library alongside the main DLL.
+    write(&f.game.join(&disabled_stub), b"fixture LevelEditorStub");
+    let config = f.state.config.load_or_default();
+    let repository = &config.repositories[0];
+    assert_eq!(repository.id, FRAMEWORK);
+    let mut manifest = archive::new_manifest(
+        FRAMEWORK,
+        "v0.10",
+        BTreeMap::new(),
+        BTreeMap::new(),
+        vec![disabled_core, disabled_stub],
+        mods::effective_relations(repository, Some("v0.10")),
+    );
+    manifest.repository_binding = ModRepositoryBinding::from_release(repository, "v0.10");
+    archive::write_manifest(&f.state.config.manifests_dir(), &manifest).unwrap();
+    let fast = install(&f, FAST, FAST_GUID, "1.9.6", fast_enabled);
+    let message = install(&f, "MessageFix", MESSAGE_FIX, "0.2.3", false);
+    let experience = install(&f, "Experience", EXPERIENCE, "1.14.2", false);
+    (
+        f,
+        [CORE_DLL.into(), STUB_DLL.into(), fast, message, experience],
+    )
 }
 
 fn apply_fixture(f: &Fixture, plan: &ChangePlan) {
@@ -64,138 +89,248 @@ fn apply_fixture(f: &Fixture, plan: &ChangePlan) {
 
 #[test]
 fn repairing_fastinit_upgrades_diylevel_and_does_not_change_fastinit() {
-    for (fast_enabled, fw_enabled) in [(true, true), (false, false), (false, true)] {
-        let (f, fw, fast) = scenario(fast_enabled, fw_enabled, fast_enabled, ">=1.9.6");
-        let fast_dll = f.game.join(if fast_enabled {
-            fast.clone()
-        } else {
-            mods::disabled_dll_file(&fast)
-        });
-        let fast_before = Fingerprint::capture(&fast_dll).unwrap();
-        let manifest_dir = f.state.config.manifests_dir();
-        let fast_manifest =
-            Fingerprint::capture(&manifest_dir.join(format!("{FAST}.toml"))).unwrap();
-        let before = Fingerprint::capture(&f.game).unwrap();
-        let plan = planning::create(&f.state, repair()).unwrap();
-        assert_eq!(
-            plan.result.status,
-            SolveStatus::Ready,
-            "{fast_enabled}/{fw_enabled}: {:?}",
-            plan.result.blockers
+    let f = fixture(repositories(">=1.9.6"));
+    let fw = install(&f, FRAMEWORK, FW_GUID, "0.9", true);
+    let fast = install(&f, FAST, FAST_GUID, "1.9.6", true);
+    install(&f, "MessageFix", MESSAGE_FIX, "0.2.3", true);
+    install(&f, "Experience", EXPERIENCE, "1.14.2", true);
+    let fast_dll = f.game.join(fast);
+    let fast_before = Fingerprint::capture(&fast_dll).unwrap();
+    let manifest_dir = f.state.config.manifests_dir();
+    let fast_manifest = Fingerprint::capture(&manifest_dir.join(format!("{FAST}.toml"))).unwrap();
+    let before = Fingerprint::capture(&f.game).unwrap();
+    let plan = planning::create(&f.state, repair(FAST_NODE)).unwrap();
+    assert_eq!(plan.result.status, SolveStatus::Ready, "{:?}", plan.result);
+    let [action] = plan.result.actions.as_slice() else {
+        panic!(
+            "expected just the DIYLevel upgrade: {:?}",
+            plan.result.actions
         );
-        assert!(
-            plan.result
-                .actions
-                .iter()
-                .all(|action| action.node_id == "mod:DIYLevel")
-        );
-        assert!(plan.result.actions.iter().any(|action| {
-            action.kind == ActionKind::Upgrade
-                && action.from_tag.as_deref() == Some("v0.9")
-                && action.to_tag.as_deref() == Some("v0.10")
-        }));
-        assert_eq!(Fingerprint::capture(&f.game).unwrap(), before);
-        apply_fixture(&f, &plan);
-        assert_eq!(Fingerprint::capture(&fast_dll).unwrap(), fast_before);
-        assert_eq!(
-            Fingerprint::capture(&manifest_dir.join(format!("{FAST}.toml"))).unwrap(),
-            fast_manifest
-        );
-        assert_eq!(
-            archive::read_manifest(&manifest_dir, FRAMEWORK)
-                .unwrap()
-                .release_tag,
-            "v0.10"
-        );
-        let saved = f.game.join(if fast_enabled {
-            fw.clone()
-        } else {
-            mods::disabled_dll_file(&fw)
-        });
-        assert_eq!(
-            fs::read(saved).unwrap(),
-            mods::plugin_blob(FW_GUID, FRAMEWORK, "0.10")
-        );
-        assert_eq!(f.game.join(&fw).exists(), fast_enabled);
-        if !fast_enabled {
-            let plan = planning::create(&f.state, request(FAST, None, true)).unwrap();
-            assert_eq!(
-                plan.result.status,
-                SolveStatus::Ready,
-                "{:?}",
-                plan.result.blockers
-            );
-            assert_eq!(plan.result.actions.len(), 4);
-            assert!(
-                plan.result
-                    .actions
-                    .iter()
-                    .all(|action| action.kind == ActionKind::Enable)
-            );
-            apply_fixture(&f, &plan);
-            assert!(f.game.join(fw).is_file() && f.game.join(fast).is_file());
-            assert!(
-                f.game
-                    .join("BepInEx/plugins/MessageFix/MessageFix.dll")
-                    .is_file()
-            );
-            assert!(
-                f.game
-                    .join("BepInEx/plugins/Experience/Experience.dll")
-                    .is_file()
-            );
-        }
-    }
+    };
+    assert_eq!(action.node_id, FRAMEWORK_NODE);
+    assert_eq!(action.kind, ActionKind::Upgrade);
+    assert_eq!(action.from_tag.as_deref(), Some("v0.9"));
+    assert_eq!(action.to_tag.as_deref(), Some("v0.10"));
+    assert_eq!(Fingerprint::capture(&f.game).unwrap(), before);
+    apply_fixture(&f, &plan);
+    assert_eq!(Fingerprint::capture(&fast_dll).unwrap(), fast_before);
+    assert_eq!(
+        Fingerprint::capture(&manifest_dir.join(format!("{FAST}.toml"))).unwrap(),
+        fast_manifest
+    );
+    assert_eq!(
+        archive::read_manifest(&manifest_dir, FRAMEWORK)
+            .unwrap()
+            .release_tag,
+        "v0.10"
+    );
+    assert_eq!(
+        fs::read(f.game.join(fw)).unwrap(),
+        mods::plugin_blob(FW_GUID, FRAMEWORK, "0.10")
+    );
 }
 
 #[test]
-fn cyclic_repair_does_not_ignore_a_real_version_mismatch_or_break_an_active_consumer() {
-    for (floor, addons_on, live_consumer) in [
-        (">=1.9.7", false, false),
-        (">=1.9.6", true, false),
-        (">=1.9.6", false, true),
-    ] {
-        let (f, ..) = scenario(false, true, addons_on, floor);
-        if live_consumer {
-            let mut config = f.state.config.load_or_default();
-            config.repositories.push(repository(
-                "LiveConsumer",
-                CONSUMER_GUID,
-                &[],
-                vec![requires(FW_GUID, ">=0.9.0")],
-            ));
-            f.state.config.save(&config).unwrap();
-            install(&f, "LiveConsumer", CONSUMER_GUID, "1.0", true);
-            let trusted = inventory::build(&f.state).unwrap();
-            assert!(
-                trusted.inventory.nodes.iter().any(|node| {
-                    node.id == "mod:LiveConsumer"
-                        && node.enabled
-                        && node.current.as_ref().is_some_and(|candidate| {
-                            candidate
-                                .relations
-                                .iter()
-                                .any(|owned| owned.relation.guid == FW_GUID)
-                        })
-                }),
-                "the active consumer must be recognized by the real DLL scanner"
-            );
-        }
-        let before = Fingerprint::capture(&f.game).unwrap();
-        let plan = planning::create(&f.state, repair()).unwrap();
-        assert!(
-            !matches!(plan.result.status, SolveStatus::Ready),
-            "{floor}/{addons_on}/{live_consumer}: {:?}",
-            plan.result.actions
+fn disabled_diylevel_rejects_standalone_repair_but_enables_the_entire_cycle() {
+    let (f, paths) = disabled_package(false, ">=1.9.6");
+    let manifests = f.state.config.manifests_dir();
+    let before = Fingerprint::capture(&f.game).unwrap();
+    let before_manifests = Fingerprint::capture(&manifests).unwrap();
+    let trusted = inventory::build(&f.state).unwrap();
+    assert!(trusted.atomic_mod_package(FRAMEWORK_NODE));
+    assert_eq!(trusted.files[FRAMEWORK_NODE].summary.members.len(), 2);
+    let pure = super::super::solve::solve(
+        &trusted.inventory,
+        &ChangeRequest {
+            repair_dependencies_of: Some(FRAMEWORK_NODE.into()),
+            ..Default::default()
+        },
+    );
+    assert_eq!(pure.status, SolveStatus::Incomplete);
+    assert_eq!(pure.blockers[0].code, "root_missing");
+    assert!(pure.actions.is_empty());
+    let evaluated = pure
+        .evaluations
+        .iter()
+        .find(|node| node.node_id == FRAMEWORK_NODE)
+        .unwrap();
+    assert!(!evaluated.enabled && evaluated.runtime.is_empty());
+    assert_eq!(
+        evaluated
+            .readiness
+            .iter()
+            .filter(|edge| edge.state == EvaluationState::Disabled)
+            .count(),
+        3
+    );
+    assert_eq!(
+        planning::create(&f.state, repair(FRAMEWORK_NODE)).unwrap_err(),
+        "modChanges.targetChanged"
+    );
+    assert!(
+        !manifests
+            .parent()
+            .unwrap()
+            .join("mod-change-staging")
+            .exists()
+    );
+    assert!(f.state.mod_changes.lock().unwrap().plans.is_empty());
+    assert_eq!(Fingerprint::capture(&f.game).unwrap(), before);
+    assert_eq!(Fingerprint::capture(&manifests).unwrap(), before_manifests);
+
+    let toggle = super::unbound_toggle::toggle(&f, FRAMEWORK_NODE, None, true);
+    let plan = planning::create(&f.state, toggle).unwrap();
+    let actions = assert_actions(
+        &plan,
+        ActionKind::Enable,
+        &[
+            FRAMEWORK_NODE,
+            "mod:Experience",
+            FAST_NODE,
+            "mod:MessageFix",
+        ],
+    );
+    assert_eq!(actions[0].reason_details[0].kind, ReasonKind::Requested);
+    for (action, requirement) in actions[1..].iter().zip([">=1.14.2", ">=1.9.6", ">=0.2.3"]) {
+        let reason = &action.reason_details[0];
+        assert_eq!(reason.kind, ReasonKind::RequiredBy);
+        assert_eq!(reason.related_node_ids, [FRAMEWORK_NODE]);
+        assert_eq!(reason.requirement.as_deref(), Some(requirement));
+    }
+    let summary = plan
+        .nodes
+        .iter()
+        .find(|node| node.node_id == FRAMEWORK_NODE)
+        .unwrap();
+    assert_eq!(summary.members.len(), 2);
+    assert!(summary.members.iter().all(|member| member.enabled));
+    assert_eq!(Fingerprint::capture(&f.game).unwrap(), before);
+    apply_fixture(&f, &plan);
+    assert_switch_files(&f, &paths, true);
+    assert_eq!(
+        archive::read_manifest(&manifests, FRAMEWORK)
+            .unwrap()
+            .release_tag,
+        "v0.10"
+    );
+}
+
+#[test]
+fn active_fastinit_can_repair_disabled_diylevel_and_follows_its_disable() {
+    let (f, paths) = disabled_package(true, ">=1.9.6");
+    let before = planning::evaluate(&f.state, vec![]).unwrap();
+    let owner = before
+        .evaluations
+        .iter()
+        .find(|node| node.node_id == FAST_NODE)
+        .unwrap();
+    assert!(owner.enabled);
+    assert!(
+        owner.runtime.iter().any(|edge| {
+            edge.relation.guid == FW_GUID && edge.state == EvaluationState::Disabled
+        })
+    );
+    let plan = planning::create(&f.state, repair(FAST_NODE)).unwrap();
+    assert_eq!(plan.roots[0].node_id, FAST_NODE);
+    let actions = assert_actions(
+        &plan,
+        ActionKind::Enable,
+        &[FRAMEWORK_NODE, "mod:Experience", "mod:MessageFix"],
+    );
+    let reason = &actions[0].reason_details[0];
+    assert_eq!(reason.kind, ReasonKind::RequiredBy);
+    assert_eq!(reason.related_node_ids, [FAST_NODE]);
+    assert_eq!(reason.requirement.as_deref(), Some(">=0.10.0"));
+    assert!(!reason.condition_on_related);
+    let fast_path = f.game.join(&paths[2]);
+    let original_fast = Fingerprint::capture(&fast_path).unwrap();
+    apply_fixture(&f, &plan);
+    assert_eq!(Fingerprint::capture(&fast_path).unwrap(), original_fast);
+    assert_switch_files(&f, &paths, true);
+
+    let toggle = super::unbound_toggle::toggle(&f, FRAMEWORK_NODE, None, false);
+    let disable = planning::create(&f.state, toggle).unwrap();
+    let actions = assert_actions(
+        &disable,
+        ActionKind::Disable,
+        &[
+            FRAMEWORK_NODE,
+            "mod:Experience",
+            FAST_NODE,
+            "mod:MessageFix",
+        ],
+    );
+    let reason = &actions[2].reason_details[0];
+    assert_eq!(reason.kind, ReasonKind::DependencyDisabled);
+    assert_eq!(reason.related_node_ids, [FRAMEWORK_NODE]);
+    apply_fixture(&f, &disable);
+    assert_switch_files(&f, &paths, false);
+}
+
+#[test]
+fn explicit_cyclic_activation_reports_a_real_version_mismatch_without_writing() {
+    let (f, _) = disabled_package(false, ">=1.9.7");
+    let toggle = super::unbound_toggle::toggle(&f, FRAMEWORK_NODE, None, true);
+    let before = Fingerprint::capture(&f.game).unwrap();
+    let plan = planning::create(&f.state, toggle).unwrap();
+    assert_eq!(
+        plan.result.status,
+        SolveStatus::Unsatisfiable,
+        "{:?}",
+        plan.result
+    );
+    assert!(plan.result.actions.is_empty());
+    assert!(
+        plan.result
+            .blockers
+            .iter()
+            .flat_map(|blocker| &blocker.traces)
+            .flatten()
+            .any(|step| {
+                step.owner_id == FRAMEWORK_NODE
+                    && step.state == EvaluationState::VersionMismatch
+                    && step.relation.as_ref().is_some_and(|relation| {
+                        relation.guid == FAST_GUID && relation.version == ">=1.9.7"
+                    })
+            }),
+        "{:?}",
+        plan.result.blockers
+    );
+    assert_eq!(Fingerprint::capture(&f.game).unwrap(), before);
+}
+
+fn assert_actions<'a>(plan: &'a ChangePlan, kind: ActionKind, ids: &[&str]) -> &'a [ChangeAction] {
+    assert_eq!(plan.result.status, SolveStatus::Ready, "{:?}", plan.result);
+    let actions = &plan.result.actions;
+    assert_eq!(
+        actions
+            .iter()
+            .map(|action| action.node_id.as_str())
+            .collect::<Vec<_>>(),
+        ids
+    );
+    assert!(
+        actions
+            .iter()
+            .all(|action| action.kind == kind && action.member_key.is_none())
+    );
+    actions
+}
+
+fn assert_switch_files(f: &Fixture, paths: &[String], enabled: bool) {
+    for path in paths {
+        assert_eq!(f.game.join(path).is_file(), enabled, "{path}");
+        assert_ne!(
+            f.game.join(mods::disabled_dll_file(path)).is_file(),
+            enabled,
+            "{path}"
         );
-        assert!(plan.result.actions.is_empty());
-        assert_eq!(Fingerprint::capture(&f.game).unwrap(), before);
     }
 }
 
 #[test]
 fn an_enabled_mod_install_is_only_one_action() {
-    let (f, ..) = scenario(false, false, false, ">=1.9.6");
+    let f = fixture(vec![]);
     let id = "NewDependency";
     let guid = "fixture.new-dependency";
     let mut config = f.state.config.load_or_default();

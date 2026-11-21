@@ -452,10 +452,10 @@ fn unbound_forgiveness_is_not_granted_to_repair_or_filtered_repository_identity(
     loose(&f, false);
     let mut request = toggle(&f, &loose_id(), None, true);
     request.toggle_scope = None;
-    let repair = planning::create(&f.state, request.clone()).unwrap();
-    assert_eq!(repair.result.status, SolveStatus::Incomplete);
+    let unscoped = planning::create(&f.state, request.clone()).unwrap();
+    assert_eq!(unscoped.result.status, SolveStatus::Incomplete);
     assert_eq!(
-        repair.result.blockers[0].code,
+        unscoped.result.blockers[0].code,
         "candidate_relations_unknown"
     );
     request.bulk_toggle = true;
@@ -463,6 +463,22 @@ fn unbound_forgiveness_is_not_granted_to_repair_or_filtered_repository_identity(
     assert_eq!(
         plan_actions(&bulk),
         [(loose_id().as_str(), ActionKind::Enable)]
+    );
+
+    let f = fixture(vec![]);
+    loose(&f, true);
+    let repair = planning::create(
+        &f.state,
+        PlanRequest {
+            repair_dependencies_of: Some(loose_id()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(repair.result.status, SolveStatus::Incomplete);
+    assert_eq!(
+        repair.result.blockers[0].code,
+        "candidate_relations_unknown"
     );
 
     let mut unavailable = repository("Unavailable", LOOSE_GUID, &["1.0.0"], vec![]);

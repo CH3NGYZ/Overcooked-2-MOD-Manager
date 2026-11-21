@@ -291,62 +291,56 @@ fn late_native_notifications_do_not_repeat_a_committed_chain() {
 }
 
 #[test]
-fn dependency_repair_of_disabled_map_or_mod_keeps_its_files_and_switch() {
-    for map in [true, false] {
-        let mut test = scenario(map);
-        test.request = serde_json::from_value(serde_json::json!({
-            "repair_dependencies_of": test.id,
-        }))
+fn dependency_repair_of_disabled_map_keeps_its_files_and_switch() {
+    let mut test = scenario(true);
+    test.request = serde_json::from_value(serde_json::json!({
+        "repair_dependencies_of": test.id,
+    }))
+    .unwrap();
+    let before = Fingerprint::capture(&test.from).unwrap();
+    let manifests = test.f.state.config.manifests_dir();
+    let relations = serde_json::to_value(archive::read_map_relation_snapshots(&manifests)).unwrap();
+    let mut session = test.prepared();
+    assert_eq!(session.plan.roots[0].node_id, test.id);
+    let actions = &session.plan.result.actions;
+    assert_eq!(actions.len(), 2, "{actions:?}");
+    assert!(actions.iter().all(|action| action.node_id != test.id));
+    let evaluation = session
+        .plan
+        .result
+        .evaluations
+        .iter()
+        .find(|evaluation| evaluation.node_id == test.id)
         .unwrap();
-        let before = Fingerprint::capture(&test.from).unwrap();
-        let owner_manifest =
-            archive::read_manifest(&test.f.state.config.manifests_dir(), "ATarget");
-        let mut session = test.prepared();
-        assert_eq!(session.plan.roots[0].node_id, test.id);
-        let actions = &session.plan.result.actions;
-        assert_eq!(actions.len(), 2, "{actions:?}");
-        assert!(actions.iter().all(|action| action.node_id != test.id));
-        let evaluation = session
-            .plan
-            .result
-            .evaluations
+    assert!(!evaluation.enabled && evaluation.runtime.is_empty());
+    assert!(
+        evaluation
+            .readiness
             .iter()
-            .find(|evaluation| evaluation.node_id == test.id)
-            .unwrap();
-        assert!(!evaluation.enabled && evaluation.runtime.is_empty());
-        assert!(
-            evaluation
-                .readiness
-                .iter()
-                .any(|edge| edge.relation.guid == DEP_GUID)
-        );
-        assert!(
-            evaluation
-                .readiness
-                .iter()
-                .all(|edge| !edge.state.is_issue())
-        );
-        let check_target = || {
-            test.assert_target_untouched();
-            assert_eq!(Fingerprint::capture(&test.from).unwrap(), before);
-        };
-        check_target();
-        super::super::execution::commit(&test.f.state, &mut session, |_| check_target()).unwrap();
-        check_target();
-        test.assert_conflict_disabled();
-        assert_eq!(
-            fs::read(test.f.game.join(&test.dependency)).unwrap(),
-            mods::plugin_blob(DEP_GUID, DEP, "2.0.0")
-        );
-        assert_eq!(
-            serde_json::to_value(archive::read_manifest(
-                &test.f.state.config.manifests_dir(),
-                "ATarget"
-            ))
-            .unwrap(),
-            serde_json::to_value(owner_manifest).unwrap()
-        );
-    }
+            .any(|edge| edge.relation.guid == DEP_GUID)
+    );
+    assert!(
+        evaluation
+            .readiness
+            .iter()
+            .all(|edge| !edge.state.is_issue())
+    );
+    let check_target = || {
+        test.assert_target_untouched();
+        assert_eq!(Fingerprint::capture(&test.from).unwrap(), before);
+    };
+    check_target();
+    super::super::execution::commit(&test.f.state, &mut session, |_| check_target()).unwrap();
+    check_target();
+    test.assert_conflict_disabled();
+    assert_eq!(
+        fs::read(test.f.game.join(&test.dependency)).unwrap(),
+        mods::plugin_blob(DEP_GUID, DEP, "2.0.0")
+    );
+    assert_eq!(
+        serde_json::to_value(archive::read_map_relation_snapshots(&manifests)).unwrap(),
+        relations
+    );
 }
 
 #[test]

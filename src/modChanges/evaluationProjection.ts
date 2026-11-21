@@ -1,4 +1,4 @@
-import type { DependencyRepairTarget, EvaluationSnapshot, EvaluationSubject, RelationEvaluation } from './types'
+import type { ChangeNode, DependencyRepairTarget, EvaluationSnapshot, EvaluationSubject, RelationEvaluation } from './types'
 import type { InstalledMod, RepositoryRelation } from '../types'
 
 // Pure consumers keep their Node entry point. The app supplies its reactive snapshot.
@@ -9,7 +9,10 @@ export function evaluationSnapshot() { return readSnapshot() }
 export function repairTarget(ownerId: string): DependencyRepairTarget | undefined {
   const node = readSnapshot()?.nodes.find(entry => entry.node_id === ownerId)
   if (!node) return undefined
-  if (!node.subject_tag) return node.dll_files.length || node.map_dir_name ? { node_id: node.node_id } : undefined
+  if (!node.subject_tag) {
+    if (node.kind === 'mod' && !node.enabled) return undefined
+    return node.dll_files.length || node.map_dir_name ? { node_id: node.node_id } : undefined
+  }
   if (node.kind === 'map') return undefined
   if (!node.repository_id) return undefined
   const candidate = node.candidates.find(entry => entry.tag === node.subject_tag)
@@ -23,8 +26,18 @@ export function sameRelation(left: RepositoryRelation, right: RepositoryRelation
     && left.prerelease === right.prerelease && !!left.optional === !!right.optional
 }
 
+function modRuntimeMatchesScan(node: ChangeNode, dll: string, mods: readonly InstalledMod[]) {
+  // Installed views pass the full scan, but a caller with no local owner data
+  // can still use the backend snapshot.
+  if (!mods.some(mod => mod.dll_file === dll)) return true
+  if (node.members?.length) {
+    return node.members.every(member => mods.find(mod => mod.dll_file === member.dll_file)?.enabled === member.enabled)
+  }
+  return mods.some(mod => mod.enabled && node.dll_files.includes(mod.dll_file))
+}
+
 /** Missing or ambiguous subjects stay unknown; the client never evaluates ranges. */
-export function relationsForSubject(subject: EvaluationSubject): RelationEvaluation[] | undefined {
+export function relationsForSubject(subject: EvaluationSubject, mods: readonly InstalledMod[]) {
   const snapshot = readSnapshot()
   if (!snapshot) return undefined
   const matching = snapshot.nodes.filter(node => {
@@ -37,13 +50,13 @@ export function relationsForSubject(subject: EvaluationSubject): RelationEvaluat
   const node = matching[0]!
   const result = snapshot.evaluations.find(entry => entry.node_id === node.node_id)
   if (!result) return undefined
-  const rows = result.enabled ? result.runtime : result.readiness
+  // Until a fresh evaluation arrives, changes to any package member can
+  // invalidate runtime verdicts, including which DLL declared a conflict.
+  const declarationsOnly = !!subject.dll_file && node.kind === 'mod' && (!result.enabled
+    || !modRuntimeMatchesScan(node, subject.dll_file, mods))
+  const rows = result.enabled && !declarationsOnly ? result.runtime : result.readiness
   // No known declarations is different from an authoritative empty relation table.
-  return rows.length || result.metadata_known ? rows : undefined
-}
-
-export function relationForSubject(relation: RepositoryRelation, subject?: EvaluationSubject) {
-  return subject ? relationsForSubject(subject)?.find(entry => sameRelation(entry.relation, relation)) : undefined
+  return rows.length || result.metadata_known ? { rows, assessed: !declarationsOnly } : undefined
 }
 
 export function targetMod(evaluation: RelationEvaluation, mods: readonly InstalledMod[]) {

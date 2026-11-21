@@ -67,6 +67,12 @@ pub struct ChangeNode {
     pub candidates_complete: bool,
 }
 
+impl ChangeNode {
+    pub(super) fn can_repair_dependencies(&self) -> bool {
+        self.current.is_some() && (self.enabled || self.kind == NodeKind::Map)
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Inventory {
     pub nodes: Vec<ChangeNode>,
@@ -85,7 +91,7 @@ pub struct RootIntent {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChangeRequest {
     pub roots: Vec<RootIntent>,
-    /// Check this installed node's requirements without changing its candidate or switches.
+    /// Check an enabled MOD or installed map without changing its candidate or switches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repair_dependencies_of: Option<String>,
 }

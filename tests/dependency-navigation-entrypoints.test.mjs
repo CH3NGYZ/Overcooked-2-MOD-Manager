@@ -147,7 +147,7 @@ test('card repair does not freeze a dependency release chosen from stale fronten
   assert.deepEqual(globalThis.__repairRequests, [{ repair_dependencies_of: 'mod:owner' }])
 })
 
-test('disabled map and MOD with updates can repair both kinds of unmet dependency', async t => {
+test('a stopped MOD no longer offers dependency repair; update and map repair remain available', async t => {
   const f = fixture(t)
   f.set.enabled = f.owner.enabled = false
   const ownerRepo = { ...repo('owner', 'owner', ['2.0']), latest_tag: '2.0' }
@@ -163,19 +163,24 @@ test('disabled map and MOD with updates can repair both kinds of unmet dependenc
     { id: 'map:Map', kind: 'map', dir: 'Map', enabled: false, rows },
     { id: 'mod:owner', repo: ownerRepo.id, dlls: [f.owner.dll_file], enabled: false, rows },
   ])
-  f.pkg.statuses = [{ key: 'update_available' }, { key: needsAction }]
+  f.pkg.statuses = [{ key: 'update_available' }]
   assert.equal(f.map.actionOf(f.set)?.kind, 'update')
   assert.equal(f.mod.packageAction(f.pkg)?.action.kind, 'update')
   assert.equal(f.map.repairOf(f.set)?.state, 'version_mismatch')
-  assert.equal(f.mod.packageRepairStatus(f.pkg)?.state, 'version_mismatch')
-  assert.equal(f.mod.packageRelationTag(f.pkg, needsAction)?.relation.guid, f.relation.guid)
+  assert.equal(f.mod.modRepairStatus(f.owner), undefined)
+  assert.equal(f.mod.packageRepairStatus(f.pkg), undefined)
+  assert.equal(f.mod.packageRelationTag(f.pkg, needsAction), undefined)
+  assert.equal(f.onlineMod.cardDependency(ownerRepo), null)
   const tags = levelSetCardTags(f.set, f.maps.value, f.mods.value, true, f.repositories.value)
   assert.equal(tags[0]?.text, 'tools.relationNeedsAction')
   assert.equal(tags.filter(tag => tag.kind === 'dependency').length, 1)
   f.map.onTagClick(f.set, tags[0])
   f.mod.repairPackageDependencies(f.pkg)
+  f.mod.repairModDependencies(f.owner)
+  f.mod.openPackageTag(f.pkg, needsAction)
+  f.onlineMod.jumpToRelationRepository(ownerRepo)
   await new Promise(resolve => setImmediate(resolve))
-  assert.deepEqual(globalThis.__repairRequests, [{ repair_dependencies_of: 'map:Map' }, { repair_dependencies_of: 'mod:owner' }])
+  assert.deepEqual(globalThis.__repairRequests, [{ repair_dependencies_of: 'map:Map' }])
 })
 
 for (const state of ['missing', 'disabled', 'version_mismatch', 'conflict']) {

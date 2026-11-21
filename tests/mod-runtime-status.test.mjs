@@ -38,17 +38,17 @@ function mod(overrides = {}) {
 
 const idle = { refreshing: {}, queued: {}, sourceRefreshing: {}, entryStateUnavailable: false, catalogReady: true }
 
-test('unlisted is shown only with current catalog evidence; relation and disabled labels survive', () => {
+test('unlisted requires catalog evidence and a stopped MOD drops stale relation warnings', () => {
   const local = mod({ repository_id: undefined, labels: ['unlisted', 'disabled'], status: 'unbound', enabled: false })
   const relation = { kind: 'requires', guid: 'missing.guid' }
   evaluationSnapshot([{id:'dll:a',dlls:[local.dll_file],rows:[{relation,state:'missing'}]}])
   try {
-    assert.deepEqual(runtimeModStatus(local, [local], [], idle).mod.labels, ['relation_needs_action', 'unlisted', 'disabled'])
+    assert.deepEqual(runtimeModStatus(local, [local], [], idle).mod.labels, ['unlisted', 'disabled'])
     const unresolved = runtimeModStatus(local, [local], [], { ...idle, catalogReady: false })
-    assert.deepEqual(unresolved.mod.labels, ['relation_needs_action', 'unbound', 'disabled'])
+    assert.deepEqual(unresolved.mod.labels, ['unbound', 'disabled'])
     const missingRepo = { ...local, labels: ['bound_repository_missing', 'disabled'] }
     assert.deepEqual(runtimeModStatus(missingRepo, [missingRepo], [], { ...idle, catalogReady: false }).mod.labels,
-      ['relation_needs_action', 'bound_repository_missing', 'disabled'])
+      ['bound_repository_missing', 'disabled'])
   } finally {
     clearEvaluation()
   }

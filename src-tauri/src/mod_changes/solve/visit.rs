@@ -4,14 +4,6 @@ use super::*;
 
 impl Search<'_> {
     pub(super) fn find_solution(&mut self, state: &SearchState) -> Result<SearchState, bool> {
-        let active = self.find_active_solution(state);
-        self.try_activation_repair(active, state)
-    }
-
-    pub(super) fn find_active_solution(
-        &mut self,
-        state: &SearchState,
-    ) -> Result<SearchState, bool> {
         let mut limit = 0;
         while !self.prefer_newest && self.preference_remaining > 0 {
             let result = self.run_pass(SearchPass::LimitReplacements(limit), state.clone());
@@ -127,7 +119,7 @@ impl Search<'_> {
         // A switch or installed repair is finished once the affected graph is
         // compatible. Only an exact-version request optimizes a satisfied chain.
         if issues.is_empty() && !self.prefer_newest {
-            return self.finish_activation_repair(state);
+            return Ok(state);
         }
         let distances = self.order(&state);
         issues.sort_by_key(|(index, _, issue)| {
@@ -153,7 +145,6 @@ impl Search<'_> {
             }
         });
         if let Some((owner, owned, issue)) = next_issue {
-            self.note_disabled_repair_provider(&state, issue);
             let missing_history = state.inventory.nodes.iter().any(|node| {
                 !node.candidates_complete
                     && (node

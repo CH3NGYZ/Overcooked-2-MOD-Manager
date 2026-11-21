@@ -63,7 +63,7 @@ test('all installed map and MOD rows use the same backend version-mismatch state
 
 test('an exact online tag never borrows the installed owner evaluation', () => {
   evaluationSnapshot([{ id: 'mod:repo', repo: 'repo', rows: [{ relation, state: 'satisfied' }] },
-    { id: 'subject:repo:v1', repo: 'repo', tag: 'v1', candidates: [{ id: 'release:repo:v1', tag: 'v1' }],
+    { id: 'subject:repo:v1', repo: 'repo', tag: 'v1', enabled: false, candidates: [{ id: 'release:repo:v1', tag: 'v1' }],
       rows: [{ relation, state: 'missing' }] }])
   const old = dependencyRowsFor([], { ...options, ownerRepository: online, subject: { repository_id: online.id, tag: 'v1' } })[0]
   assert.equal(old.status, 'tools.relationNeedsAction')
@@ -94,12 +94,44 @@ test('empty inventory assessment with unknown metadata keeps source requirements
   clearEvaluation()
 })
 
-test('disabled owners display backend readiness while enabled owners display runtime', () => {
-  const snapshot = evaluationSnapshot([{ id: 'mod:owner', dlls: ['Owner.dll'], enabled: false,
+test('a stopped MOD keeps its installed declarations without treating readiness as a problem', () => {
+  const stopped = { ...owner, enabled: false }
+  const installedRequirement = { ...relation, version: '>=3.10.3,<4' }
+  evaluationSnapshot([{ id: 'mod:owner', dlls: [stopped.dll_file], enabled: false,
+    rows: [{ relation: installedRequirement, state: 'disabled' }] }])
+  const opts = { ...options, mods: [stopped, target], subject: { dll_file: stopped.dll_file } }
+  const [row] = installedModDependencyRows(stopped, opts)
+  assert.equal(row.requirement, installedRequirement.version, 'keep the actual installed declaration')
+  for (const displayed of [row, dependencyRowFromRelation(installedRequirement, opts)]) {
+    assert.equal(displayed.status, undefined)
+    assert.equal(displayed.reason, undefined)
+    assert.equal(displayed.jump, undefined)
+  }
+  clearEvaluation()
+})
+
+test('a partially enabled package reports active requirements; a newer all-off scan hides stale verdicts', () => {
+  const other = { ...owner, dll_file: 'Other.dll', enabled: false }
+  const inactiveRelation = { ...relation, guid: 'dev.inactive' }
+  const snapshot = evaluationSnapshot([{ id: 'mod:package', dlls: [owner.dll_file, other.dll_file],
+    members: [owner, other].map(({ dll_file, enabled }) => ({ key: dll_file, dll_file, enabled })),
     rows: [{ relation, state: 'disabled' }] }])
-  snapshot.evaluations[0].runtime = [{ relation, state: 'satisfied' }]
-  assert.equal(installedModDependencyRows(owner, options)[0].status, 'tools.relationNeedsAction')
-  assert.equal(installedModDependencyRows(owner, options)[0].reason, 'modChanges.relation.disabled')
+  const entry = snapshot.evaluations[0]
+  entry.readiness = [...entry.runtime, { ...entry.runtime[0], relation: inactiveRelation, state: 'missing' }]
+  const [live] = mergedModDependencyRows([owner, other], { ...options, mods: [owner, other, target] })
+  assert.equal(live.status, 'tools.relationNeedsAction')
+  assert.deepEqual(live.jump.repair, { node_id: 'mod:package' })
+  const stopped = { ...owner, enabled: false }
+  const rows = mergedModDependencyRows([stopped, other], { ...options, mods: [stopped, other, target] })
+  assert.equal(rows.length, 2, 'keep declarations from both members while waiting for the next evaluation')
+  assert.ok(rows.every(row => !row.status && !row.jump && !row.reason))
+  const picked = { ...other, enabled: true }
+  const changed = mergedModDependencyRows([stopped, picked], { ...options, mods: [stopped, picked, target] })
+  assert.equal(changed.length, 2)
+  assert.ok(changed.every(row => !row.status && !row.jump && !row.reason), 'different member is now active')
+  const removed = mergedModDependencyRows([other], { ...options, mods: [other, target] })
+  assert.equal(removed.length, 2)
+  assert.ok(removed.every(row => !row.status && !row.jump && !row.reason), 'the previously active member has gone')
   clearEvaluation()
 })
 
@@ -111,7 +143,7 @@ test('duplicate physical owner matches are unknown and conflict targets follow p
   const statuses = relationStatusesForSubject({ dll_file: owner.dll_file }, [duplicate, real])
   assert.equal(conflictRemovalTarget(statuses), real)
   const snapshot = evaluationSnapshot([{ id: 'mod:a', dlls: ['Owner.dll'] }, { id: 'mod:b', dlls: ['Owner.dll'] }])
-  assert.equal(relationsForSubject({ dll_file: 'Owner.dll' }), undefined)
+  assert.equal(relationsForSubject({ dll_file: 'Owner.dll' }, [owner]), undefined)
   assert.equal(snapshot.nodes.length, 2)
   clearEvaluation()
 })

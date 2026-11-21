@@ -10,6 +10,11 @@
   background: var(--oc2-table-surface, var(--oc2-card));
 }
 
+.oc2-table-scroll:focus-visible {
+  outline: 2px solid var(--oc2-text-2);
+  outline-offset: -2px;
+}
+
 .oc2-detail-table {
   inline-size: 100%;
   border-spacing: 0;

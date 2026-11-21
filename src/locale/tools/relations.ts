@@ -10,6 +10,7 @@ export const toolsUiRelations: DomainMessages = {
     ko: '의존성',
     ja: '依存ファイル',
   },
+  dependencyTable: { 'zh-CN': '依赖关系', 'zh-TW': '相依關係', en: 'Dependency relations', ko: '의존 관계', ja: '依存関係' },
   // 依赖表：名称列（目标 MOD）
   modColumn: {
     'zh-CN': 'MOD',

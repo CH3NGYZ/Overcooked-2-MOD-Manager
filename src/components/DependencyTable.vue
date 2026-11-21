@@ -37,9 +37,10 @@ export type { DependencyJump, DependencyRow } from '../dependencyRows'
  * 以为它们是两回事。行带 `jump` 时标签变成可点标签并抛 `jump` 事件 ——
  * 组件不认识路由，「跳到哪个页面哪张卡片」由调用方决定。
  */
-import { computed } from 'vue'
+import { computed, useTemplateRef } from 'vue'
 import { NTag } from 'naive-ui'
 import { useDependencyNavigation } from '../composables/useDependencyNavigation'
+import { useHorizontalOverflow } from '../composables/useHorizontalOverflow'
 import { t } from '../i18n'
 import { tagColorForAny } from '../theme'
 
@@ -53,6 +54,7 @@ const props = withDefaults(defineProps<{
 })
 
 const visible = computed(() => props.rows.length > 0)
+const overflowing = useHorizontalOverflow(useTemplateRef('scroll'), useTemplateRef('table'))
 /** 状态标签被点击：只有带 `jump` 的行会发，调用方据此跳转。 */
 const emit = defineEmits<{ jump: [row: DependencyRow] }>()
 const navigation = useDependencyNavigation(row => emit('jump', row))
@@ -90,8 +92,9 @@ function lineLabel(line: DependencyRow['line']): string {
 
 <template>
   <section v-if="visible" class="dep-block">
-    <div class="dep-scroll oc2-table-scroll">
-      <table class="dep-table oc2-detail-table">
+    <div ref="scroll" class="dep-scroll oc2-table-scroll" :tabindex="overflowing ? 0 : undefined"
+      :role="overflowing ? 'region' : undefined" :aria-label="overflowing ? t('tools.dependencyTable') : undefined">
+      <table ref="table" class="dep-table oc2-detail-table">
         <thead>
           <tr>
             <th scope="col">{{ t('tools.modColumn') }}</th>

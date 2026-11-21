@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, type DeepReadonly } from 'vue'
+import { computed, useTemplateRef, type DeepReadonly } from 'vue'
 import { ArrowUndoOutline, CheckmarkOutline, CloseOutline, EllipsisHorizontal } from '@vicons/ionicons5'
 import { NSpin, NTag } from 'naive-ui'
+import { useHorizontalOverflow } from '../composables/useHorizontalOverflow'
 import { locale, t } from '../i18n'
 import { DEPENDENCY_ISSUE_TEXT } from '../modRelations'
 import { formatVersionSpec } from '../versionSpec'
@@ -18,6 +19,7 @@ const { plan, progress, execution, names, preparationComplete } = defineProps<{
 }>()
 
 const details = computed(() => changePlanDetails(plan, progress, names))
+const overflowing = useHorizontalOverflow(useTemplateRef('scroll'), useTemplateRef('table'))
 const listFormat = computed(() => new Intl.ListFormat(locale.value, { style: 'short', type: 'conjunction' }))
 type Row = ReturnType<typeof changePlanDetails>['rows'][number]
 type Reason = NonNullable<Row['reasons']>[number]
@@ -93,8 +95,9 @@ function describeCondition(reason: Reason) {
 </script>
 
 <template>
-  <div v-if="rows.length" class="details-scroll oc2-table-scroll">
-    <table class="details-table oc2-detail-table" :aria-label="t('modChanges.detailsTable')">
+  <div v-if="rows.length" ref="scroll" class="details-scroll oc2-table-scroll" :tabindex="overflowing ? 0 : undefined"
+    :role="overflowing ? 'region' : undefined" :aria-label="overflowing ? t('modChanges.detailsTable') : undefined">
+    <table ref="table" class="details-table oc2-detail-table" :aria-label="t('modChanges.detailsTable')">
       <thead>
         <tr>
           <th scope="col" class="details-operation oc2-table-fit">{{ t('modChanges.column.operation') }}</th>

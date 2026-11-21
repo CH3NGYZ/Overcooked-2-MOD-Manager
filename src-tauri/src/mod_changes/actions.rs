@@ -1,6 +1,6 @@
 use super::model::*;
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -99,9 +99,14 @@ pub(super) fn build_actions(
     original: &Inventory,
     solved: &Inventory,
     reasons: &ActionReasons,
+    projected_loose_providers: &BTreeSet<usize>,
 ) -> Vec<ChangeAction> {
     let mut actions = Vec::new();
     for (index, (before, after)) in original.nodes.iter().zip(&solved.nodes).enumerate() {
+        if projected_loose_providers.contains(&index) {
+            // The package action covers this file. There is no standalone switch.
+            continue;
+        }
         let from = before.current.as_ref();
         let to = after.current.as_ref();
         for_each_change(before, after, |change| {

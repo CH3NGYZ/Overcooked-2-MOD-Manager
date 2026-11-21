@@ -52,6 +52,59 @@ fn framework_upgrade_is_selectable_after_manifest_loss_with_a_guidless_stub() {
 }
 
 #[test]
+fn exact_release_replaces_changed_guidless_and_ungrouped_companions_without_a_manifest() {
+    let f = framework_fixture();
+    let old_core = mods::plugin_blob(FRAMEWORK_GUID, "DIYLevel", "0.11.0");
+    let new_core = mods::plugin_blob(FRAMEWORK_GUID, "DIYLevel", "0.11.1");
+    let old_splitter = mods::plugin_blob(SPLITTER, "IngredientSplitter", "0.1.0");
+    let new_splitter = mods::plugin_blob(SPLITTER, "IngredientSplitter", "0.1.1");
+    let other_stub = "BepInEx/plugins/MOD/LevelEditorStub.dll";
+    for (path, bytes) in [
+        (CORE_PATH, old_core.as_slice()),
+        (STUB_PATH, b"old level stub"),
+        (SPLITTER_STUB_PATH, b"old splitter stub"),
+        (SPLITTER_PATH, old_splitter.as_slice()),
+        (RESOURCE_PATH, b"old asset"),
+        (other_stub, b"unrelated same-name stub"),
+    ] {
+        write(&f.game.join(path), bytes);
+    }
+    let incoming = [
+        (CORE_PATH, new_core.as_slice()),
+        (STUB_PATH, b"new level stub"),
+        (SPLITTER_STUB_PATH, b"new splitter stub"),
+        (SPLITTER_PATH, new_splitter.as_slice()),
+        (RESOURCE_PATH, b"new asset"),
+    ];
+    let preview = exact_preview(&f, incoming, true);
+    let before = Fingerprint::capture(&f.game).unwrap();
+    let plan = planning::create(&f.state, request(FRAMEWORK, Some("v0.11.1"), true)).unwrap();
+    assert_eq!(plan.result.actions[0].kind, ActionKind::Upgrade);
+    let mut session = take(&f, &plan);
+    inject_release(&f, &mut session, &preview).expect("empty GUIDs are not shared identities");
+    planning::resolve(&f.state, &mut session).unwrap();
+    preparation::finish(&f.state, &mut session).unwrap();
+    assert_eq!(Fingerprint::capture(&f.game).unwrap(), before);
+    assert!(archive::read_manifests(&f.state.config.manifests_dir()).is_empty());
+    session.plan.prepared = true;
+    super::super::super::execution::commit(&f.state, &mut session, |_| {}).unwrap();
+    let manifest = archive::read_manifest(&f.state.config.manifests_dir(), FRAMEWORK).unwrap();
+    for (path, bytes) in incoming {
+        assert_eq!(fs::read(f.game.join(path)).unwrap(), bytes, "{path}");
+        assert!(
+            manifest
+                .files
+                .iter()
+                .any(|file| inventory::key(file) == inventory::key(path))
+        );
+    }
+    assert_eq!(
+        fs::read(f.game.join(other_stub)).unwrap(),
+        b"unrelated same-name stub"
+    );
+}
+
+#[test]
 fn missing_core_reinstalls_with_disabled_identical_loose_members_and_resources() {
     let f = framework_fixture();
     let stubs = [

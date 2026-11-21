@@ -30,6 +30,8 @@ mod retired_members;
 mod toggle_scope;
 #[path = "orchestration_tests/unbound_toggle.rs"]
 mod unbound_toggle;
+#[path = "orchestration_tests/version_replacement.rs"]
+mod version_replacement;
 
 struct Fixture {
     _temp: tempfile::TempDir,

@@ -108,6 +108,7 @@ fn session(candidate_id: &str) -> PlanSession {
             relation_labels: Default::default(),
             previous_enabled_members: Default::default(),
             retired_mod_copies: Default::default(),
+            untracked_overwrites: Vec::new(),
             install_notes: vec![],
             prepared: false,
             result: SolveResult {
@@ -136,7 +137,7 @@ fn session(candidate_id: &str) -> PlanSession {
         staging: PathBuf::new(),
         payload_fingerprints: HashMap::new(),
         mutations: None,
-        residue_adoptions: Default::default(),
+        loose_file_claims: Default::default(),
         created: Instant::now(),
     }
 }

@@ -18,7 +18,8 @@ mod physical;
 mod release_ownership;
 mod retirements;
 mod roots;
-pub(super) use release_ownership::ResidueAdoptions;
+pub(super) use release_ownership::LooseFileClaims;
+pub(super) use release_ownership::LooseReleaseSearch;
 pub(super) use roots::{final_framework_package, final_package};
 
 pub(super) fn file_conflict(owner: &str, relative: &str) -> String {
@@ -56,6 +57,14 @@ pub(super) fn transaction_roots(
 
 /// Both the old and solved levels roots belong to maps during a root migration.
 pub(super) fn map_roots(session: &PlanSession, solved: &Inventory) -> Result<Vec<String>, String> {
+    let mut roots = installed_map_roots(session)?;
+    if let Some(package) = final_package(solved)? {
+        roots.push(format!("{package}/levels"));
+    }
+    Ok(roots)
+}
+
+fn installed_map_roots(session: &PlanSession) -> Result<Vec<String>, String> {
     let game_root = &session.trusted.game_root;
     let mut roots = vec![inventory::relative(
         game_root,
@@ -63,9 +72,6 @@ pub(super) fn map_roots(session: &PlanSession, solved: &Inventory) -> Result<Vec
     )?];
     if let Some(package) = session.trusted.level_roots.package_root() {
         roots.push(inventory::relative(game_root, &package.join("levels"))?);
-    }
-    if let Some(package) = final_package(solved)? {
-        roots.push(format!("{package}/levels"));
     }
     Ok(roots)
 }
@@ -84,10 +90,10 @@ pub(super) fn assemble(
         // The generic replacement must never remove a copy absent from the confirmed list.
         return Err(MULTIPLE_INSTALLED_COPIES.into());
     }
-    let mut builder = Builder::indexed(session, transaction_roots, solved)?;
+    let mut builder = Builder::indexed(session, transaction_roots, map_roots(session, solved)?)?;
     let migration = roots::prepare(&mut builder, solved)?;
     for node in &solved.nodes {
-        if session.residue_adoptions.consumes(&node.id) {
+        if session.loose_file_claims.consumes(&node.id) {
             continue;
         }
         if session
@@ -150,7 +156,7 @@ impl Builder<'_> {
     fn indexed<'a>(
         session: &'a PlanSession,
         roots: TransactionRoots,
-        solved: &Inventory,
+        protected_maps: Vec<String>,
     ) -> Result<Builder<'a>, String> {
         let mut builder = Builder {
             roots,
@@ -160,15 +166,14 @@ impl Builder<'_> {
             ownership: BTreeMap::new(),
             ownership_paths: BTreeSet::new(),
             external_claims: BTreeSet::new(),
-            protected_maps: Vec::new(),
+            protected_maps,
             map_paths: Vec::new(),
         };
-        builder.index_ownership(solved)?;
+        builder.index_ownership()?;
         Ok(builder)
     }
 
-    fn index_ownership(&mut self, solved: &Inventory) -> Result<(), String> {
-        self.protected_maps = map_roots(self.session, solved)?;
+    fn index_ownership(&mut self) -> Result<(), String> {
         let manifests = self.roots.data_root.join("manifests");
         if manifests.exists() {
             for entry in fs::read_dir(&manifests).map_err(|error| error.to_string())? {
@@ -444,6 +449,16 @@ impl Builder<'_> {
                 let member_key = inventory::key(&canonical);
                 if self
                     .session
+                    .loose_file_claims
+                    .get(&node.id, &member_key)
+                    .is_some()
+                {
+                    // The approved claim already freezes its exact physical
+                    // endpoint, including a possible disabled variant.
+                    continue;
+                }
+                if self
+                    .session
                     .trusted
                     .declared_bundle_switch_members
                     .get(&node.id)
@@ -503,7 +518,6 @@ impl Builder<'_> {
             }
         }
         let mut final_files = Vec::new();
-        let release_directory = std::cell::OnceCell::new();
         let source_roots = TransactionRoots {
             game_root: payload.stage_root.clone(),
             data_root: self.roots.data_root.clone(),
@@ -547,15 +561,15 @@ impl Builder<'_> {
                 return Err("modChanges.pathCollision".into());
             }
             let ownership_key = inventory::key(&mods::canonical_dll_name(&destination));
-            let residue = self.session.residue_adoptions.get(&node.id, &ownership_key);
+            let loose = self.session.loose_file_claims.get(&node.id, &ownership_key);
             let owners = self.ownership.get(&ownership_key);
             let unowned = owners.is_none();
-            if residue.is_none()
+            if loose.is_none()
                 && owners.is_some_and(|owners| owners.len() != 1 || !owners.contains(&node.id))
             {
                 return Err(file_conflict(&node.id, &destination));
             }
-            if is_dll && residue.is_none() {
+            if is_dll && loose.is_none() {
                 let canonical = mods::canonical_dll_name(&destination);
                 for variant in [&canonical, &mods::disabled_dll_file(&canonical)] {
                     if Fingerprint::capture(&game(variant).resolve(&self.roots)?)?
@@ -570,25 +584,28 @@ impl Builder<'_> {
                 .release_files
                 .as_ref()
                 .and_then(|files| files.get(&path_key(Path::new(source_relative))));
-            let declared = self.verify_declared_bundle_write(
-                &node.id,
-                &member_key,
-                &destination,
-                release_stamp,
-            )?;
-            let (target, expected, guarded) = if let Some(residue) = residue {
-                let expected = if inventory::key(&residue.relative) == inventory::key(&destination)
+            let (target, expected, guarded) = if let Some(loose) = loose {
+                let expected = if !is_dll
+                    || inventory::key(&loose.relative) == inventory::key(&destination)
                 {
-                    destination.clone_from(&residue.relative);
-                    residue.expected.clone()
+                    destination.clone_from(&loose.relative);
+                    loose.expected.clone()
                 } else {
+                    // Preserve the live spelling when moving between the
+                    // enabled and disabled forms of the same verified DLL.
+                    let live = mods::canonical_dll_name(&loose.relative);
+                    destination = if destination.to_ascii_lowercase().ends_with(".dll.disabled") {
+                        mods::disabled_dll_file(&live)
+                    } else {
+                        live
+                    };
                     self.write(
                         &node.id,
                         Some(ItemKey::new(&node.id, None)),
                         FileChange {
-                            target: game(&residue.relative),
+                            target: game(&loose.relative),
                             source: None,
-                            expected: residue.expected.clone(),
+                            expected: loose.expected.clone(),
                             require_single_link: true,
                         },
                     )?;
@@ -596,7 +613,12 @@ impl Builder<'_> {
                 };
                 let guarded = expected != Fingerprint::Missing;
                 (game(&destination), expected, guarded)
-            } else if let Some((physical, expected)) = declared {
+            } else if let Some((physical, expected)) = self.verify_declared_bundle_write(
+                &node.id,
+                &member_key,
+                &destination,
+                release_stamp,
+            )? {
                 destination = physical;
                 (game(&destination), expected, true)
             } else {
@@ -616,26 +638,8 @@ impl Builder<'_> {
             } else {
                 StagedFile::capture(path)?
             };
-            let adopting = expected != Fingerprint::Missing && unowned && residue.is_none();
-            if adopting {
-                let identical_resource = !is_dll
-                    && matches!(expected, Fingerprint::File { .. })
-                    && expected.same_content(&source.fingerprint)
-                    && release_directory
-                        .get_or_init(|| self.release_directory(&node.id, payload, &manifest))
-                        .as_ref()
-                        .is_some_and(|directory| {
-                            target.resolve(&self.roots).is_ok_and(|path| {
-                                self.release_path_unclaimed(&destination, &path, directory)
-                            })
-                        });
-                if !identical_resource {
-                    return Err(file_conflict(&node.id, &destination));
-                }
-                log::info!(
-                    "整链安装将一致的 Release 资源补入清单：节点={}，路径={destination}",
-                    node.id
-                );
+            if expected != Fingerprint::Missing && unowned && loose.is_none() {
+                return Err(file_conflict(&node.id, &destination));
             }
             // Do not re-sample either side after authorizing the untracked target.
             self.write(
@@ -645,7 +649,7 @@ impl Builder<'_> {
                     target,
                     source: Some(source),
                     expected,
-                    require_single_link: adopting || guarded,
+                    require_single_link: guarded,
                 },
             )?;
             self.ownership

@@ -256,7 +256,7 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
     ensure_fresh(state, &session.trusted.revision)?;
     verify_fingerprints(&session.payload_fingerprints)?;
     if let Some(solved) = &session.solved {
-        session.residue_adoptions.verify(state, session, solved)?;
+        session.loose_file_claims.verify(state, session, solved)?;
         inventory::validate_solution(
             &session.trusted,
             &session.request,
@@ -282,6 +282,7 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
     if live_game::touches_mods(session, &roots, &changes)? {
         guard::ensure_game_stopped(state, &roots.game_root)?;
     }
+    session.plan.untracked_overwrites = session.loose_file_claims.overwrites();
     session.mutations = Some(changes);
     Ok(())
 }
@@ -364,6 +365,7 @@ pub(super) fn approval_signature(session: &PlanSession) -> Result<Vec<u8>, Strin
         &result.impacts,
         members,
         &session.plan.retired_mod_copies,
+        &session.plan.untracked_overwrites,
         &session.plan.install_notes,
     ))
     .map_err(|e| e.to_string())

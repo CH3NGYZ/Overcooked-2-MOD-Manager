@@ -87,6 +87,7 @@ fn fixture() -> Fixture {
             relation_labels: Default::default(),
             previous_enabled_members: Default::default(),
             retired_mod_copies: Default::default(),
+            untracked_overwrites: Vec::new(),
             install_notes: vec![],
             prepared: true,
         },
@@ -97,7 +98,7 @@ fn fixture() -> Fixture {
         staging,
         payload_fingerprints: HashMap::new(),
         mutations: None,
-        residue_adoptions: Default::default(),
+        loose_file_claims: Default::default(),
         created: Instant::now(),
     };
     Fixture {

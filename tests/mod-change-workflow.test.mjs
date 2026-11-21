@@ -139,6 +139,33 @@ test('a silent switch cannot authorize extra changes discovered during preparati
   assert.deepEqual(f.calls, [['execute', 'verified']])
 })
 
+test('untracked replacements require approval even for the same plan with no package action', async () => {
+  const { request, choice } = toggle('mod', true, 'owner-dll')
+  const overwrites = [{ node_id: 'mod:owner', path: 'BepInEx/plugins/Owner.dll' }]
+  for (const finalAction of ['cancel', 'confirm']) {
+    const f = fixture({ plan: async () => choice, prepare: async id => {
+      assert.equal(id, choice.plan_id)
+      return { ...choice, prepared: true, untracked_overwrites: overwrites }
+    } })
+    const pending = f.run(request)
+    await tick()
+    assert.equal(f.state.phase, 'reconfirming')
+    assert.equal(f.state.applyReview, 'prepared')
+    assert.equal(f.state.silent, undefined)
+    assert.deepEqual(f.state.plan.untracked_overwrites, overwrites)
+    assert.deepEqual(f.calls, [])
+    if (finalAction === 'cancel') {
+      await f.cancel()
+      assert.equal(await pending, null)
+      assert.deepEqual(f.calls, [['cancel', choice.plan_id]])
+    } else {
+      await Promise.all([f.confirm(), f.confirm()])
+      assert.equal((await pending).ok, true)
+      assert.deepEqual(f.calls, [['execute', choice.plan_id]])
+    }
+  }
+})
+
 test('a failed direct switch displays its error and does not retry by itself', async () => {
   const { request, choice } = toggle('map', false)
   let calls = 0

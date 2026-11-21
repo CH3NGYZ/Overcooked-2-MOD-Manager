@@ -163,6 +163,39 @@ test('a completed cache or local payload paints a check, and the new apply dialo
   assert.match(text(find(root, n => n.tag === 'footer')[0]), /确认并应用/)
 })
 
+test('the apply review alone lists untracked replacements with localized names and exact text paths', async t => {
+  const root = mounted(t)
+  const paths = ['BepInEx/plugins/Existing DLL.dll', 'BepInEx/plugins/Details<local>.ini']
+  const verified = { ...plan, prepared: true,
+    nodes: [{ ...plan.nodes[0], name_i18n: { 'zh-CN': '本地化前置', en: 'Localized prerequisite' } }],
+    untracked_overwrites: [{ node_id: 'web', path: paths[0] }, { node_id: 'unlabelled', path: paths[1] }] }
+  const notice = () => find(root, n => n.props && Object.hasOwn(n.props, 'data-untracked-overwrites'))[0]
+  for (const state of [
+    { phase: 'confirming', plan: verified },
+    { phase: 'preparing', plan },
+    { phase: 'prepared', plan: verified },
+    { phase: 'reconfirming', applyReview: 'changed', plan: { ...verified, untracked_overwrites: [] } },
+  ]) {
+    fixture.state.value = { ...state, error: null }
+    await nextTick()
+    assert.equal(notice(), undefined)
+  }
+  fixture.state.value = { phase: 'reconfirming', applyReview: 'changed', plan: verified, error: null }
+  await nextTick()
+  assert.equal(notice().props.type, 'warning')
+  assert.equal(notice().props.title, '将覆盖的现有文件')
+  assert.match(text(notice()), /这些文件没有安装记录。本次应用会用所选版本的文件替换它们。/)
+  assert.deepEqual(find(notice(), n => n.tag === 'li').map(row => find(row, n => n.tag === 'strong' || n.tag === 'code').map(text)),
+    [['本地化前置', paths[0]], ['未命名项目', paths[1]]])
+  fixture.locale.value = 'en'
+  await nextTick()
+  assert.equal(notice().props.title, 'Existing files to overwrite')
+  assert.deepEqual(find(notice(), n => n.tag === 'strong').map(text), ['Localized prerequisite', 'Unnamed item'])
+  fixture.state.value = { ...fixture.state.value, phase: 'executing' }
+  await nextTick()
+  assert.equal(notice(), undefined)
+})
+
 test('the only view is a six-column table with separate actions, version changes, and readable reasons', async t => {
   const root = mounted(t)
   fixture.state.value = { phase: 'confirming', plan: { ...plan, impacts: ['mod:opaque'], actions: [

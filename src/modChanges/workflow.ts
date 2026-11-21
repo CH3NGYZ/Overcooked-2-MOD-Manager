@@ -86,7 +86,7 @@ export function createChangeWorkflow(backend: ChangeBackend, publish: (state: Ch
       if (!prepared.prepared) throw new Error('modChanges.notPrepared')
       const changed = prepared.plan_id !== plan.plan_id || !!(directRequest && !canApplyDirectly(directRequest, prepared))
       const hasPackages = prepared.actions.some(isPackageAction)
-      if (!applyReview && (changed || hasPackages)) {
+      if (!applyReview && (changed || hasPackages || prepared.untracked_overwrites?.length)) {
         if (hasPackages) {
           update({ phase: 'prepared', plan: prepared, error: null })
           await backend.presentPrepared?.()

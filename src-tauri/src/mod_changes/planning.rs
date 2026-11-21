@@ -231,7 +231,7 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
         payload_fingerprints: HashMap::new(),
         map_payload: None,
         mutations: None,
-        residue_adoptions: Default::default(),
+        loose_file_claims: Default::default(),
         created: std::time::Instant::now(),
     };
     let result = (|| {
@@ -596,37 +596,22 @@ pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(),
             }
         }
     }
-    let solve = |input: &Inventory| -> Result<_, String> {
-        Ok(
-            super::inventory_maps::runtime_conflict::solve_toggle(state, session, input)?
-                .unwrap_or_else(|| {
-                    super::solve::solve_with_policy(input, &session.request, Some(&session.trusted))
-                }),
-        )
+    let mut releases = super::mutations::LooseReleaseSearch::new(state, session)?;
+    let (mut result, mut solved) = match super::inventory_maps::runtime_conflict::solve_toggle(
+        state,
+        session,
+        &input,
+        &mut releases,
+    )? {
+        Some(plan) => plan,
+        None => super::solve::solve_with_policy(
+            &input,
+            &session.request,
+            Some(&session.trusted),
+            Some(&mut releases),
+        )?,
     };
-    let (mut result, mut solved) = solve(&input)?;
-    // A downloaded dependency can resolve before DIYLevel's selected asset.
-    // Residue ownership depends on the final physical map roots, not on the
-    // tentative GUIDs and versions used while verifying the rest of the chain.
-    let adoptions = if let Some(proposal) = &solved
-        && proposal.nodes.iter().all(|node| {
-            node.current
-                .as_ref()
-                .is_none_or(|current| !current.verification_pending)
-        }) {
-        super::mutations::ResidueAdoptions::collect(state, session, proposal)?
-    } else {
-        Default::default()
-    };
-    if adoptions.consumes_loose_nodes() {
-        // Solve again with the loose nodes removed from the graph. This keeps
-        // dependency providers and progress rows aligned with the final owners.
-        adoptions.project(input.to_mut());
-        (result, solved) = solve(&input)?;
-        if let Some(proposal) = &solved {
-            adoptions.verify(state, session, proposal)?;
-        }
-    }
+    let claims = releases.finish(state, solved.as_ref())?;
     if !unbound.is_empty() {
         if let Some(solved) = &mut solved {
             for (node, installed) in solved.nodes.iter_mut().zip(&original.nodes) {
@@ -651,7 +636,7 @@ pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(),
         duplicate_release::explain_blockers(&session.trusted, &mut result);
         Default::default()
     };
-    session.residue_adoptions = adoptions;
+    session.loose_file_claims = claims;
     session.plan = presentation(
         &session.trusted,
         &session.request,

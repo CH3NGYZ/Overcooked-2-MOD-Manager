@@ -14,6 +14,7 @@ pub(in crate::mod_changes) fn solve_toggle(
     state: &AppState,
     session: &PlanSession,
     original: &Inventory,
+    loose_releases: &mut mutations::LooseReleaseSearch<'_>,
 ) -> Result<Option<(SolveResult, Option<Inventory>)>, String> {
     let [root] = session.request.roots.as_slice() else {
         return Ok(None);
@@ -98,15 +99,22 @@ pub(in crate::mod_changes) fn solve_toggle(
     if duplicates.is_empty() {
         return Ok(None);
     }
+    let mut solve = |inventory: &Inventory| {
+        super::super::solve::solve_with_policy(
+            inventory,
+            &session.request,
+            Some(trusted),
+            Some(&mut *loose_releases),
+        )
+    };
     let (mut result, solved) = if conflicts.is_empty() {
-        super::super::solve::solve_with_policy(original, &session.request, Some(trusted))
+        solve(original)?
     } else {
         let mut input = original.clone();
         if let Some(current) = &mut input.nodes[map_index].current {
             current.relations.extend(conflicts);
         }
-        let (mut result, mut solved) =
-            super::super::solve::solve_with_policy(&input, &session.request, Some(trusted));
+        let (mut result, mut solved) = solve(&input)?;
         // The map root fixes its candidate, so only its switches may differ.
         if let Some(current) = solved
             .as_mut()

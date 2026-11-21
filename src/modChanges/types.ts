@@ -98,6 +98,8 @@ export interface ChangePlan {
   previous_enabled_members?: Record<string, string[]>
   /** Independently installed older copies removed as part of an approved upgrade. */
   retired_mod_copies?: Record<string, RetiredModCopy[]>
+  /** Existing files without an install record that the prepared plan will replace. */
+  untracked_overwrites?: { node_id: string; path: string }[]
   install_notes: ChangeInstallNote[]
   prepared: boolean
 }

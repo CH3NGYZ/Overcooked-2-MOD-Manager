@@ -1,44 +1,55 @@
-//! Selected Release assets can claim matching loose files under narrow rules.
+//! A verified Release can claim loose files only inside a proven MOD directory.
 use super::*;
+use crate::mod_changes::evaluate::same_guid;
 use crate::mod_changes::session::Payload;
 use same_file::Handle;
 use std::io::ErrorKind;
 
-mod residues;
-pub(in crate::mod_changes) use residues::ResidueAdoptions;
+mod loose_files;
+mod search;
+pub(in crate::mod_changes) use loose_files::LooseFileClaims;
+pub(in crate::mod_changes) use search::LooseReleaseSearch;
+
+enum PackageProof {
+    /// The live core is absent, so the precise bytes must prove provenance.
+    Residue,
+    /// Same installed and verified incoming core, at the exact same path.
+    Replacement,
+}
+
+struct PackageScope<'a> {
+    directory: &'a str,
+    primary_key: &'a str,
+    proof: PackageProof,
+}
+
+impl PackageScope<'_> {
+    fn changes_file(
+        &self,
+        payload: &Payload,
+        source: &str,
+        key: &str,
+        physical: &str,
+        before: &Fingerprint,
+        own: bool,
+    ) -> Option<bool> {
+        let digest = payload
+            .release_files
+            .as_ref()?
+            .get(&path_key(Path::new(source)))?;
+        let changed = !before.same_content(digest);
+        (within(physical, self.directory)
+            && (matches!(self.proof, PackageProof::Replacement)
+                || (key != self.primary_key && !changed && !own)))
+            .then_some(changed)
+    }
+}
 
 impl Builder<'_> {
-    pub(super) fn release_path_unclaimed(
+    fn registered_map_plugins(
         &self,
-        relative: &str,
-        target: &Path,
-        directory: &Path,
-    ) -> bool {
-        // APFS can ignore case even though normal inventory keys preserve it.
-        // An alternate spelling in a manifest must never authorize adoption.
-        let key = path_key(Path::new(relative));
-        if self
-            .ownership
-            .keys()
-            .any(|path| path_key(Path::new(path)) == key)
-        {
-            return false;
-        }
-        let Ok(real_path) = fs::canonicalize(target) else {
-            return false;
-        };
-        if mods::canonical_dll_name(&real_path.to_string_lossy())
-            .to_ascii_lowercase()
-            .ends_with(".dll")
-            || !real_path.starts_with(directory)
-        {
-            return false;
-        }
-        self.physically_unclaimed(
-            relative,
-            &real_path,
-            self.ownership_paths.iter().map(String::as_str),
-        )
+    ) -> Result<Vec<crate::level_sets::RegisteredLevelSetPlugin>, String> {
+        crate::level_sets::checked_registered_plugins(&self.roots.data_root.join("manifests"), true)
     }
 
     fn physically_unclaimed<'a>(
@@ -93,14 +104,11 @@ impl Builder<'_> {
         })
     }
 
-    pub(super) fn release_directory(
-        &self,
-        owner: &str,
-        payload: &Payload,
-        manifest: &archive::InstallManifest,
-    ) -> Option<PathBuf> {
-        // A tag, preview origin or matching local copies alone don't prove ZIP contents.
+    fn package_scope<'a>(&self, owner: &str, payload: &'a Payload) -> Option<PackageScope<'a>> {
+        // A tag or preview origin alone doesn't prove ZIP contents.
         payload.release_files.as_ref()?;
+        let manifest = payload.manifest.as_ref()?;
+        let binding = manifest.repository_binding.as_ref()?;
         let repo = self
             .session
             .trusted
@@ -108,76 +116,100 @@ impl Builder<'_> {
             .repositories
             .iter()
             .find(|repo| Some(&repo.id) == payload.candidate.source_id.as_ref())?;
-        let old = self.session.trusted.files.get(owner)?;
-        let [previous] = old.manifests.as_slice() else {
-            return None;
-        };
-        let previous_binding = previous.repository_binding.as_ref()?;
-        if previous.repository_id != manifest.repository_id
-            || !previous_binding.is_valid()
-            || !previous_binding.matches_repository(repo)
-            // Channel::All can find a Release, but doesn't make two channels the same owner.
-            || previous_binding.channel != manifest.repository_binding.as_ref()?.channel
+        let guid = repo.plugin_guid.trim();
+        if guid.is_empty()
+            || !binding.is_valid()
+            || !binding.matches_repository(repo)
+            || Some(&binding.tag) != payload.candidate.tag.as_ref()
         {
             return None;
         }
-
-        let guid = repo.plugin_guid.trim();
-        if guid.is_empty() {
-            return None;
-        }
-        let mut installed = old.summary.members.iter().filter(|member| {
-            member
-                .guid
-                .as_deref()
-                .is_some_and(|value| value.eq_ignore_ascii_case(guid))
-        });
-        let installed_dll = mods::canonical_dll_name(&installed.next()?.dll_file);
         let mut incoming = payload
             .candidate
             .provides
             .iter()
-            .filter(|member| member.guid.eq_ignore_ascii_case(guid));
-        let incoming_key = incoming.next()?.member_key.as_deref()?;
-        if installed.next().is_some()
-            || incoming.next().is_some()
-            || inventory::key(&installed_dll) != incoming_key
-            || !previous
-                .files
-                .iter()
-                .any(|path| inventory::key(&mods::canonical_dll_name(path)) == incoming_key)
-            || self.ensure_owner(&installed_dll, owner).is_err()
+            .filter(|member| same_guid(&member.guid, guid));
+        let primary_key = incoming.next()?.member_key.as_deref()?;
+        if incoming.next().is_some() {
+            return None;
+        }
+        let primary = payload
+            .files
+            .iter()
+            .find(|path| inventory::key(&mods::canonical_dll_name(path)) == primary_key)?;
+        let directory = Path::new(primary).parent()?.to_str()?;
+        let plugins = mods::file_state::PLUGINS_DIR;
+        if !within(directory, plugins)
+            || path_key(Path::new(directory)) == path_key(Path::new(plugins))
         {
             return None;
         }
 
-        let directory = Path::new(&installed_dll).parent()?.to_str()?;
-        let plugins = mods::file_state::PLUGINS_DIR;
-        if !within(directory, plugins) || inventory::key(directory) == inventory::key(plugins) {
+        let old = self.session.trusted.files.get(owner)?;
+        let mut installed = self
+            .session
+            .trusted
+            .inventory
+            .nodes
+            .iter()
+            .flat_map(|node| {
+                node.current
+                    .iter()
+                    .flat_map(move |c| c.provides.iter().map(move |m| (node, c, m)))
+            })
+            .filter(|(_, _, member)| same_guid(&member.guid, guid));
+        let Some((installed_node, candidate, installed_core)) = installed.next() else {
+            return old.manifests.is_empty().then_some(PackageScope {
+                directory,
+                primary_key,
+                proof: PackageProof::Residue,
+            });
+        };
+        if installed.next().is_some()
+            || installed_node.id != owner
+            || !installed_node.mutable
+            || candidate.source_id.as_ref() != Some(&repo.id)
+            || installed_core.member_key.as_deref() != Some(primary_key)
+            || old.manifests.len() > 1
+            || old.manifests.iter().any(|previous| {
+                previous.repository_id != manifest.repository_id
+                    || previous
+                        .repository_binding
+                        .as_ref()
+                        .is_some_and(|previous_binding| {
+                            !previous_binding.is_valid()
+                                || !previous_binding.matches_repository(repo)
+                                || previous_binding.channel != binding.channel
+                        })
+            })
+        {
             return None;
         }
-        let prefix = format!("{}/", path_key(Path::new(directory)));
-        if self.ownership.iter().any(|(path, owners)| {
-            let folded = path_key(Path::new(path));
-            folded.starts_with(&prefix)
-                && folded.ends_with(".dll")
-                && (owners.len() != 1 || !owners.contains(owner))
-        }) {
+        let physical = self.physical(owner, primary_key).ok()?;
+        self.ensure_owner(&physical, owner).ok()?;
+        let live = game(&physical).resolve(&self.roots).ok()?;
+        // The original on-disk path must be the same physical file that the
+        // selected Release would replace; normalized keys alone are not proof.
+        let canonical = mods::canonical_dll_name(primary);
+        let requested = if physical.to_ascii_lowercase().ends_with(".dll.disabled") {
+            mods::disabled_dll_file(&canonical)
+        } else {
+            canonical
+        };
+        let resolve = |name: &str| fs::canonicalize(game(name).resolve(&self.roots).ok()?).ok();
+        let handle = Handle::from_path(&live).ok()?;
+        if !has_single_link(handle.as_file())
+            || resolve(&requested)? != fs::canonicalize(&live).ok()?
+        {
             return None;
         }
-
-        // Check the live DLL variants too: the scan may hide a disabled twin.
-        let physical = self.physical(owner, incoming_key).ok()?;
-        let live = fs::canonicalize(game(&physical).resolve(&self.roots).ok()?).ok()?;
-        let plugins = fs::canonicalize(game(plugins).resolve(&self.roots).ok()?).ok()?;
-        let directory = live.parent()?;
-        if directory == plugins || !directory.starts_with(&plugins) {
-            return None;
-        }
-        let actual = mods::read_dll_details(&live, &physical);
-        actual
+        mods::read_dll_details(&live, &physical)
             .guid
             .is_some_and(|value| value.eq_ignore_ascii_case(guid))
-            .then(|| directory.to_path_buf())
+            .then_some(PackageScope {
+                directory,
+                primary_key,
+                proof: PackageProof::Replacement,
+            })
     }
 }

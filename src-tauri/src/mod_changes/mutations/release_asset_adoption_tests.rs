@@ -130,9 +130,18 @@ fn fingerprint(f: &Fixture) -> (Fingerprint, Fingerprint) {
     )
 }
 
+fn freeze_writes(f: &mut Fixture) -> Result<Vec<OwnedMutation>, String> {
+    f.session.loose_file_claims = LooseFileClaims::collect(
+        &f.session,
+        f.roots.clone(),
+        f.session.solved.as_ref().unwrap(),
+    )?;
+    assemble(&f.session, f.roots.clone())
+}
+
 #[test]
 fn matching_verified_web_resources_join_new_manifest_as_both_packages_upgrade() {
-    let f = upgrades(true);
+    let mut f = upgrades(true);
     let before = fingerprint(&f);
     assert!(
         !manifest(&f, "web")
@@ -140,8 +149,9 @@ fn matching_verified_web_resources_join_new_manifest_as_both_packages_upgrade() 
             .iter()
             .any(|path| path == WEB_RESOURCE_5 || path == WEB_RESOURCE_6)
     );
-    let changes = assemble(&f.session, f.roots.clone())
+    let changes = freeze_writes(&mut f)
         .expect("the online package already contains the identical loose files");
+    assert!(f.session.loose_file_claims.overwrites().is_empty());
     assert_eq!(fingerprint(&f), before);
     transaction::prepare(
         &f.roots.data_root.join("transactions"),
@@ -195,15 +205,15 @@ fn matching_verified_web_resources_join_new_manifest_as_both_packages_upgrade() 
     );
 }
 
-fn assert_resource_rejected(f: &Fixture, path: &str) {
-    let before = fingerprint(f);
-    let error = assemble(&f.session, f.roots.clone()).unwrap_err();
+fn assert_resource_rejected(mut f: Fixture, path: &str) {
+    let before = fingerprint(&f);
+    let error = freeze_writes(&mut f).unwrap_err();
     assert_eq!(
         error,
         format!("modChanges.fileOwnershipConflict?path={path}")
     );
     assert_eq!(
-        fingerprint(f),
+        fingerprint(&f),
         before,
         "a rejected plan leaves files and manifests intact"
     );
@@ -211,14 +221,32 @@ fn assert_resource_rejected(f: &Fixture, path: &str) {
 
 #[test]
 fn matching_bytes_without_a_release_digest_do_not_authorize_adoption() {
-    assert_resource_rejected(&upgrades(false), WEB_RESOURCE_5);
+    assert_resource_rejected(upgrades(false), WEB_RESOURCE_5);
 }
 
 #[test]
-fn verified_asset_cannot_adopt_same_size_different_content() {
-    let f = upgrades(true);
+fn verified_replacement_lists_same_size_changed_resources_for_confirmation() {
+    let mut f = upgrades(true);
     write(&f.roots.game_root, WEB_RESOURCE_6, b"new-runtime-X");
-    assert_resource_rejected(&f, WEB_RESOURCE_6);
+    let before = fingerprint(&f);
+    let changes = freeze_writes(&mut f).unwrap();
+    let overwrites = f.session.loose_file_claims.overwrites();
+    assert_eq!(overwrites.len(), 1);
+    assert_eq!(overwrites[0].node_id, "web");
+    assert_eq!(overwrites[0].path, WEB_RESOURCE_6);
+    assert_eq!(fingerprint(&f), before);
+    transaction::prepare(
+        &f.roots.data_root.join("transactions"),
+        &f.roots,
+        changes.into_iter().map(|owned| owned.mutation).collect(),
+    )
+    .unwrap()
+    .apply()
+    .unwrap();
+    assert_eq!(
+        fs::read(f.roots.game_root.join(WEB_RESOURCE_6)).unwrap(),
+        b"new-runtime-6"
+    );
 }
 
 #[test]
@@ -230,7 +258,7 @@ fn verified_asset_cannot_adopt_a_file_claimed_by_another_manifest() {
         vec![],
         vec![WEB_RESOURCE_6.into()],
     );
-    assert_resource_rejected(&f, WEB_RESOURCE_6);
+    assert_resource_rejected(f, WEB_RESOURCE_6);
 }
 
 #[test]
@@ -242,7 +270,7 @@ fn a_manifest_claim_with_different_case_still_blocks_release_adoption() {
         vec![],
         vec![WEB_RESOURCE_6.replace("commonW6", "CommonW6")],
     );
-    assert_resource_rejected(&f, WEB_RESOURCE_6);
+    assert_resource_rejected(f, WEB_RESOURCE_6);
 }
 
 #[test]
@@ -262,7 +290,7 @@ fn an_unmatched_manifest_claiming_a_hard_link_blocks_release_adoption() {
     );
     archive::write_manifest(&f.roots.data_root.join("manifests"), &manifest).unwrap();
 
-    assert_resource_rejected(&f, WEB_RESOURCE_6);
+    assert_resource_rejected(f, WEB_RESOURCE_6);
 }
 
 #[test]
@@ -270,15 +298,15 @@ fn a_hard_link_to_a_map_file_without_a_manifest_claim_blocks_release_adoption() 
     let f = upgrades(true);
     let map_file = f.roots.game_root.join(OLD_MAP).with_file_name("map-data");
     fs::hard_link(f.roots.game_root.join(WEB_RESOURCE_6), &map_file).unwrap();
-    assert_resource_rejected(&f, WEB_RESOURCE_6);
+    assert_resource_rejected(f, WEB_RESOURCE_6);
 }
 
 #[test]
 fn release_files_can_share_a_directory_with_mixed_case_zip_paths() {
     let first = "plugins/OC2DIYLevelRuntimeWLoader/assets/a.png";
     let second = "plugins/OC2DIYLevelRuntimeWLoader/ASSETS/b.png";
-    let f = upgrades_with_extra(true, &[(first, b"first"), (second, b"second")]);
-    let changes = assemble(&f.session, f.roots.clone()).unwrap();
+    let mut f = upgrades_with_extra(true, &[(first, b"first"), (second, b"second")]);
+    let changes = freeze_writes(&mut f).unwrap();
     for (name, bytes) in [(first, b"first".as_slice()), (second, b"second")] {
         let staged = changes
             .iter()
@@ -302,7 +330,7 @@ fn verified_asset_cannot_adopt_when_the_installed_repository_binding_differs() {
     let old = &mut f.session.trusted.files.get_mut("web").unwrap().manifests[0];
     old.repository_binding.as_mut().unwrap().owner = "other-owner".into();
     archive::write_manifest(&f.roots.data_root.join("manifests"), old).unwrap();
-    assert_resource_rejected(&f, WEB_RESOURCE_5);
+    assert_resource_rejected(f, WEB_RESOURCE_5);
 }
 
 #[test]
@@ -316,18 +344,18 @@ fn verified_asset_cannot_adopt_a_file_in_a_prefix_matching_sibling_folder() {
     );
     let unrelated = "BepInEx/plugins/OC2DIYLevelRuntimeWLoaderArchive/commonW6";
     write(&f.roots.game_root, unrelated, b"loose");
-    assert_resource_rejected(&f, unrelated);
+    assert_resource_rejected(f, unrelated);
 }
 
 #[test]
 fn verified_regular_file_cannot_replace_a_directory_at_the_resource_path() {
-    let f = upgrades(true);
+    let mut f = upgrades(true);
     let path = f.roots.game_root.join(WEB_RESOURCE_6);
     fs::remove_file(&path).unwrap();
     fs::create_dir(&path).unwrap();
     write(&path, "preserve", b"user data");
     let before = fingerprint(&f);
-    let result = assemble(&f.session, f.roots.clone());
+    let result = freeze_writes(&mut f);
     assert!(
         result.is_err(),
         "a directory is not an adoptable regular file"
@@ -337,7 +365,7 @@ fn verified_regular_file_cannot_replace_a_directory_at_the_resource_path() {
 
 #[test]
 fn matching_live_and_staged_edits_cannot_impersonate_the_verified_release() {
-    let f = upgrades(true);
+    let mut f = upgrades(true);
     let changed = b"new-runtime-X";
     write(&f.roots.game_root, WEB_RESOURCE_6, changed);
     write(
@@ -346,18 +374,20 @@ fn matching_live_and_staged_edits_cannot_impersonate_the_verified_release() {
         changed,
     );
     let before = fingerprint(&f);
-    let result = assemble(&f.session, f.roots.clone());
-    assert!(
-        result.is_err(),
-        "matching copies cannot prove these bytes came from the ZIP"
+    let changes = freeze_writes(&mut f).unwrap();
+    let outcome = transaction::prepare(
+        &f.roots.data_root.join("transactions"),
+        &f.roots,
+        changes.into_iter().map(|owned| owned.mutation).collect(),
     );
+    assert_eq!(outcome.err().as_deref(), Some("recycle.payloadModified"));
     assert_eq!(fingerprint(&f), before);
 }
 
 #[test]
 fn adopted_file_changed_after_assembly_blocks_the_transaction() {
-    let f = upgrades(true);
-    let changes = assemble(&f.session, f.roots.clone()).unwrap();
+    let mut f = upgrades(true);
+    let changes = freeze_writes(&mut f).unwrap();
     write(&f.roots.game_root, WEB_RESOURCE_6, b"new-runtime-X");
     let edited = fingerprint(&f);
     let outcome = transaction::prepare(
@@ -371,9 +401,9 @@ fn adopted_file_changed_after_assembly_blocks_the_transaction() {
 
 #[test]
 fn adopted_file_linked_after_assembly_blocks_the_transaction() {
-    let f = upgrades(true);
+    let mut f = upgrades(true);
     let before = fingerprint(&f);
-    let changes = assemble(&f.session, f.roots.clone()).unwrap();
+    let changes = freeze_writes(&mut f).unwrap();
     let alias = f.roots.data_root.join("linked-runtime");
     fs::hard_link(f.roots.game_root.join(WEB_RESOURCE_6), &alias).unwrap();
     let journal = f.roots.data_root.join("transactions");
@@ -390,9 +420,9 @@ fn adopted_file_linked_after_assembly_blocks_the_transaction() {
 
 #[test]
 fn a_link_added_during_apply_rolls_back_previous_writes() {
-    let f = upgrades(true);
+    let mut f = upgrades(true);
     let before = fingerprint(&f);
-    let changes = assemble(&f.session, f.roots.clone()).unwrap();
+    let changes = freeze_writes(&mut f).unwrap();
     let alias = f.roots.data_root.join("linked-runtime");
     let upgraded_dll = mods::plugin_blob(mods::plugin_target::DIYLEVEL_GUID, "DIYLevel", "0.11.1");
     let linked = Cell::new(false);
@@ -424,8 +454,8 @@ fn a_link_added_during_apply_rolls_back_previous_writes() {
 
 #[test]
 fn staged_source_changed_after_assembly_blocks_the_transaction() {
-    let f = upgrades(true);
-    let changes = assemble(&f.session, f.roots.clone()).unwrap();
+    let mut f = upgrades(true);
+    let changes = freeze_writes(&mut f).unwrap();
     write(
         &f.session.payloads["web"].stage_root,
         WEB_RESOURCE_6,
@@ -444,12 +474,12 @@ fn staged_source_changed_after_assembly_blocks_the_transaction() {
 #[test]
 fn cancelling_after_real_upgrade_writes_restores_both_packages_and_loose_files() {
     // Leave a later write pending so cancellation can observe both upgrades already on disk.
-    let f = upgrades_with_extra(
+    let mut f = upgrades_with_extra(
         true,
         &[("plugins/OC2DIYLevelRuntimeWLoader/zz-last", b"last")],
     );
     let before = fingerprint(&f);
-    let changes = assemble(&f.session, f.roots.clone()).unwrap();
+    let changes = freeze_writes(&mut f).unwrap();
     let saw_writes = Cell::new(false);
     let upgraded_dll = mods::plugin_blob(mods::plugin_target::DIYLEVEL_GUID, "DIYLevel", "0.11.1");
     let upgraded_web = mods::plugin_blob(WEB_GUID, "Web", "4.0.0");

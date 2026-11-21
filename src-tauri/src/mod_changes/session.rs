@@ -51,6 +51,12 @@ pub(crate) struct RelationLabel {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub(crate) struct UntrackedOverwrite {
+    pub node_id: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct ChangePlan {
     pub plan_id: String,
     #[serde(flatten)]
@@ -67,6 +73,9 @@ pub(crate) struct ChangePlan {
     /// Physical older copies consumed by a package replacement, grouped by its action's node.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub retired_mod_copies: BTreeMap<String, Vec<RetiredModCopy>>,
+    /// Existing loose files covered by the prepared package replacement.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub untracked_overwrites: Vec<UntrackedOverwrite>,
     pub install_notes: Vec<InstallNote>,
     pub prepared: bool,
 }
@@ -76,8 +85,7 @@ pub(crate) struct Payload {
     pub candidate: Candidate,
     pub stage_root: PathBuf,
     pub stage_fingerprint: Fingerprint,
-    /// Only a Release ZIP verified against its cached SHA-256 supplies proof
-    /// that a loose file is identical to the package's original staged bytes.
+    /// Exact files in a Release ZIP verified against its cached SHA-256.
     pub release_files: Option<Arc<HashMap<String, Fingerprint>>>,
     pub files: Vec<String>,
     pub manifest: Option<crate::archive::InstallManifest>,
@@ -99,7 +107,7 @@ pub(crate) struct PlanSession {
     /// Exact staged bytes, checked again before applying anything to the game.
     pub payload_fingerprints: HashMap<PathBuf, super::transaction::Fingerprint>,
     /// Exact selected Release claims over previously unowned live files.
-    pub(super) residue_adoptions: super::mutations::ResidueAdoptions,
+    pub(super) loose_file_claims: super::mutations::LooseFileClaims,
     /// Frozen under preparation; execute must not recapture changed live targets.
     pub(super) mutations: Option<Vec<super::application_progress::OwnedMutation>>,
     pub created: std::time::Instant,
@@ -282,6 +290,7 @@ pub(crate) fn presentation(
         nodes: trusted.files.values().map(|f| f.summary.clone()).collect(),
         previous_enabled_members,
         retired_mod_copies: BTreeMap::new(),
+        untracked_overwrites: Vec::new(),
         install_notes: Vec::new(),
     }
 }

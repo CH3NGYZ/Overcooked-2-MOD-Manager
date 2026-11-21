@@ -2,6 +2,7 @@ use super::actions::ActionReasons;
 use super::evaluate::{evaluate, matches, owned_targets, same_guid, scoped_relations, targets};
 use super::inventory::TrustedInventory;
 use super::model::*;
+use super::mutations::LooseReleaseSearch;
 use crate::models::{RelationKind, RepositoryRelation};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
@@ -19,6 +20,7 @@ struct SearchState {
     /// Dependency fallback cascades search compatible owner versions before disabling.
     fallback_disabled_guids: BTreeSet<String>,
     reasons: ActionReasons,
+    projected_loose_providers: BTreeSet<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -34,9 +36,10 @@ enum SearchPass {
     AllowDependencyDisable,
 }
 
-struct Search<'a> {
+struct Search<'a, 'session> {
     original: &'a Inventory,
     trusted: Option<&'a TrustedInventory>,
+    loose_releases: Option<&'a mut LooseReleaseSearch<'session>>,
     /// The adapter proved a specific replacement of these groups, not switches
     /// on their old DLLs or permission to upgrade already satisfied edges.
     replacement_only: BTreeSet<usize>,
@@ -157,7 +160,7 @@ fn ordered_candidates(
     candidates
 }
 
-impl Search<'_> {
+impl Search<'_, '_> {
     fn readiness(&self, index: usize, node: &ChangeNode) -> bool {
         self.repair_owner == Some(index) && !node.enabled
     }
@@ -723,14 +726,16 @@ pub(crate) fn solve_with_inventory(
     inventory: &Inventory,
     request: &ChangeRequest,
 ) -> (SolveResult, Option<Inventory>) {
-    solve_with_policy(inventory, request, None)
+    solve_with_policy(inventory, request, None, None)
+        .expect("an inventory-only solve cannot check disk ownership")
 }
 
 pub(super) fn solve_with_policy(
     inventory: &Inventory,
     request: &ChangeRequest,
     trusted: Option<&TrustedInventory>,
-) -> (SolveResult, Option<Inventory>) {
+    loose_releases: Option<&mut LooseReleaseSearch<'_>>,
+) -> Result<(SolveResult, Option<Inventory>), String> {
     let failure = |blocker: Diagnostic| SolveResult {
         status: if blocker.incomplete {
             SolveStatus::Incomplete
@@ -742,17 +747,30 @@ pub(super) fn solve_with_policy(
         blockers: vec![blocker],
         impacts: Vec::new(),
     };
-    match solve_inner(inventory, request, trusted) {
-        Ok((result, solved)) => (result, Some(solved)),
-        Err(blocker) => (failure(blocker), None),
+    match solve_inner(inventory, request, trusted, loose_releases) {
+        Ok((result, solved)) => Ok((result, Some(solved))),
+        Err(SolveError::Graph(blocker)) => Ok((failure(*blocker), None)),
+        Err(SolveError::Ownership(message)) => Err(message),
     }
 }
 
-fn solve_inner(
-    inventory: &Inventory,
+enum SolveError {
+    Graph(Box<Diagnostic>),
+    Ownership(String),
+}
+
+impl From<Diagnostic> for SolveError {
+    fn from(blocker: Diagnostic) -> Self {
+        Self::Graph(Box::new(blocker))
+    }
+}
+
+fn solve_inner<'a>(
+    inventory: &'a Inventory,
     request: &ChangeRequest,
-    trusted: Option<&TrustedInventory>,
-) -> Result<(SolveResult, Inventory), Diagnostic> {
+    trusted: Option<&'a TrustedInventory>,
+    loose_releases: Option<&'a mut LooseReleaseSearch<'_>>,
+) -> Result<(SolveResult, Inventory), SolveError> {
     let replacement_only = |id: &str| {
         trusted.is_some_and(|trusted| trusted.duplicate_releases.upgrades.contains_key(id))
     };
@@ -763,6 +781,7 @@ fn solve_inner(
         disabled_guids: BTreeSet::new(),
         fallback_disabled_guids: BTreeSet::new(),
         reasons: ActionReasons::default(),
+        projected_loose_providers: BTreeSet::new(),
     };
     let mut roots = BTreeSet::new();
     // Repair keeps the owner's version and switches fixed. Only maps can be
@@ -770,7 +789,7 @@ fn solve_inner(
     let repair_owner = match request.repair_dependencies_of.as_deref() {
         Some(id) => {
             if !request.roots.is_empty() {
-                return Err(diagnostic("contradictory_roots", Some(id), false));
+                return Err(diagnostic("contradictory_roots", Some(id), false).into());
             }
             let index = inventory
                 .nodes
@@ -792,18 +811,14 @@ fn solve_inner(
             .iter()
             .position(|node| node.id == root.node_id)
         else {
-            return Err(diagnostic("root_missing", Some(&root.node_id), true));
+            return Err(diagnostic("root_missing", Some(&root.node_id), true).into());
         };
         let root_key = (&root.node_id, &root.member_key);
         if seen_roots
             .insert(root_key, root)
             .is_some_and(|previous| previous != root)
         {
-            return Err(diagnostic(
-                "contradictory_roots",
-                Some(&root.node_id),
-                false,
-            ));
+            return Err(diagnostic("contradictory_roots", Some(&root.node_id), false).into());
         }
         let node = &mut state.inventory.nodes[index];
         let before = node.clone();
@@ -821,7 +836,7 @@ fn solve_inner(
                     || node.enabled != root.enabled
                     || root.member_key.is_some())
         {
-            return Err(diagnostic("root_ownership_unsafe", Some(&node.id), true));
+            return Err(diagnostic("root_ownership_unsafe", Some(&node.id), true).into());
         }
         if let Some(id) = &root.candidate_id {
             let Some(candidate) = node
@@ -831,7 +846,7 @@ fn solve_inner(
                 .find(|candidate| &candidate.id == id)
                 .cloned()
             else {
-                return Err(diagnostic("root_candidate_missing", Some(&node.id), true));
+                return Err(diagnostic("root_candidate_missing", Some(&node.id), true).into());
             };
             if node
                 .current
@@ -839,18 +854,16 @@ fn solve_inner(
                 .is_none_or(|current| current.id != candidate.id)
                 && !candidate.installable
             {
-                return Err(diagnostic(
-                    "root_candidate_not_installable",
-                    Some(&node.id),
-                    true,
-                ));
+                return Err(
+                    diagnostic("root_candidate_not_installable", Some(&node.id), true).into(),
+                );
             }
             node.current = Some(package_switches::replacement_candidate(
                 trusted, node, candidate,
             ));
         }
         let Some(candidate) = node.current.as_mut() else {
-            return Err(diagnostic("root_candidate_missing", Some(&node.id), true));
+            return Err(diagnostic("root_candidate_missing", Some(&node.id), true).into());
         };
         if let Some(member) = &root.member_key {
             let Some(plugin) = candidate
@@ -858,7 +871,7 @@ fn solve_inner(
                 .iter_mut()
                 .find(|plugin| plugin.member_key.as_ref() == Some(member))
             else {
-                return Err(diagnostic("root_member_missing", Some(&node.id), true));
+                return Err(diagnostic("root_member_missing", Some(&node.id), true).into());
             };
             plugin.enabled = root.enabled;
             if root.enabled {
@@ -912,7 +925,7 @@ fn solve_inner(
                         })
                 });
         if !identity_matches || !enabled_matches {
-            return Err(diagnostic("contradictory_roots", Some(&node.id), false));
+            return Err(diagnostic("contradictory_roots", Some(&node.id), false).into());
         }
     }
     let baseline = evaluate(inventory)
@@ -942,6 +955,7 @@ fn solve_inner(
     let mut search = Search {
         original: inventory,
         trusted,
+        loose_releases,
         replacement_only: inventory
             .nodes
             .iter()
@@ -964,22 +978,33 @@ fn solve_inner(
     };
     let solution = match search.find_solution(&state) {
         Ok(solution) => solution,
-        Err(incomplete) => {
+        Err(visit::SearchFailure::Ownership(message)) => {
+            return Err(SolveError::Ownership(message));
+        }
+        Err(visit::SearchFailure::Blocked(incomplete)) => {
             let mut blocker = search
                 .failure
                 .unwrap_or_else(|| diagnostic("search_exhausted", None, incomplete));
             blocker.incomplete |= incomplete;
             search.failure_traces.attach(&mut blocker);
-            return Err(blocker);
+            return Err(blocker.into());
         }
     };
-    let actions = super::actions::build_actions(inventory, &solution.inventory, &solution.reasons);
+    let actions = super::actions::build_actions(
+        inventory,
+        &solution.inventory,
+        &solution.reasons,
+        &solution.projected_loose_providers,
+    );
     let mut impacts = solution
         .inventory
         .nodes
         .iter()
         .enumerate()
-        .filter(|(index, _)| changed(inventory, &solution.inventory, *index))
+        .filter(|(index, _)| {
+            !solution.projected_loose_providers.contains(index)
+                && changed(inventory, &solution.inventory, *index)
+        })
         .map(|(_, node)| node.id.clone())
         .collect::<Vec<_>>();
     impacts.extend(

@@ -47,7 +47,9 @@ impl TrustedInventory {
                 return Err("modChanges.ambiguousOwnership".into());
             };
             let mut overlaps = incoming.iter().filter(|new| {
-                new.member_key.as_deref() == Some(path) || same_guid(&new.guid, &old.guid)
+                // GUID-less libraries only identify themselves by path.
+                new.member_key.as_deref() == Some(path)
+                    || (!old.guid.trim().is_empty() && same_guid(&new.guid, &old.guid))
             });
             let Some(new) = overlaps.next() else { continue };
             let legacy_diylevel = old.guid.trim().is_empty()

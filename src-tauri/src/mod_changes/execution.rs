@@ -90,8 +90,8 @@ pub(super) fn commit(
     if root != session.trusted.game_root {
         return Err("modChanges.targetChanged".into());
     }
-    if !session.residue_adoptions.is_empty() {
-        session.residue_adoptions.verify(state, session, solved)?;
+    if !session.loose_file_claims.is_empty() {
+        session.loose_file_claims.verify(state, session, solved)?;
     }
     if inventory::revision(state, &root, &config)? != session.trusted.revision {
         return Err("modChanges.targetChanged".into());

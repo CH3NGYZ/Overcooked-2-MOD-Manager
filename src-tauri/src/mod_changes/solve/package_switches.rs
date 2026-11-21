@@ -39,7 +39,7 @@ pub(super) fn replacement_candidate(
     candidate
 }
 
-impl Search<'_> {
+impl Search<'_, '_> {
     pub(super) fn whole_mod_package(&self, node: &ChangeNode) -> bool {
         self.trusted
             .is_some_and(|trusted| trusted.atomic_mod_package(&node.id))

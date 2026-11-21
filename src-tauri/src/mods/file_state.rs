@@ -170,7 +170,7 @@ pub fn canonical_dll_file(path: &Path, game: &Path) -> String {
 }
 
 pub fn canonical_dll_name(dll_file: &str) -> String {
-    if dll_file.to_ascii_lowercase().ends_with(".disabled") {
+    if is_disabled_mod_file(Path::new(dll_file)) {
         dll_file[..dll_file.len() - ".disabled".len()].to_string()
     } else {
         dll_file.to_string()

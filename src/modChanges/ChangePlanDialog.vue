@@ -27,6 +27,8 @@ const working = computed(() => ['planning', 'preparing', 'executing'].includes(s
 const completedPreparation = computed(() => state.value?.phase === 'prepared')
 const canCancel = computed(() => !isChangePlanLocked(state.value?.phase))
 const applyReview = computed(() => state.value?.applyReview)
+const untrackedOverwrites = computed(() => state.value?.phase === 'reconfirming' && applyReview.value
+  && plan.value?.status === 'ready' && plan.value.prepared ? plan.value.untracked_overwrites : undefined)
 const needsPreparation = computed(() => !applyReview.value && plan.value?.actions.some(isPackageAction))
 const confirmLabel = computed(() => applyReview.value === 'changed' && plan.value?.prepared ? 'modChanges.reconfirm'
   : needsPreparation.value ? 'modChanges.confirmPreparation' : 'modChanges.confirm')
@@ -100,6 +102,16 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
       <NAlert v-if="state?.phase === 'reconfirming' && applyReview === 'changed' && plan?.status === 'ready'" type="warning" :bordered="false">
         {{ t('modChanges.changed') }}
       </NAlert>
+      <NAlert v-if="untrackedOverwrites?.length" type="warning" :bordered="false"
+        :title="t('modChanges.overwrite.title')" data-untracked-overwrites>
+        {{ t('modChanges.overwrite.description') }}
+        <ul class="overwrite-paths">
+          <li v-for="item in untrackedOverwrites" :key="JSON.stringify([item.node_id, item.path])">
+            <strong>{{ names?.nodes.get(item.node_id) ?? t('modChanges.unnamedItem') }}</strong>
+            <code>{{ item.path }}</code>
+          </li>
+        </ul>
+      </NAlert>
       <NAlert v-if="plan && plan.status !== 'ready'" type="error" :bordered="false">
         {{ t(plan.status === 'incomplete' ? 'modChanges.incomplete' : 'modChanges.unsatisfiable') }}
         <p v-if="diagnostics.hasPaths" class="diagnostic-note">{{ t('modChanges.diagnostic.note') }}</p>
@@ -151,5 +163,8 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
 .plan-phase-spinner { flex: none; }
 .progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--oc2-text-3); margin-bottom: 8px; font-variant-numeric: tabular-nums; }
 .plan-notes { margin: 0; padding-left: 20px; overflow-wrap: anywhere; }
+.overwrite-paths { margin: 8px 0 0; padding-inline-start: 20px; overflow-wrap: anywhere; }
+.overwrite-paths li + li { margin-block-start: 4px; }
+.overwrite-paths code { display: block; white-space: pre-wrap; }
 .diagnostic-note { margin: 3px 0 0; font-size: 12px; overflow-wrap: anywhere; }
 </style>

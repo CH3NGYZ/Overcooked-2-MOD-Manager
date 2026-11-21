@@ -2,12 +2,19 @@
 use super::super::evaluate::{DUPLICATE_ENABLED_PROVIDERS, scoped_evaluations};
 use super::*;
 
-impl Search<'_> {
-    pub(super) fn find_solution(&mut self, state: &SearchState) -> Result<SearchState, bool> {
+pub(super) enum SearchFailure {
+    Blocked(bool),
+    Ownership(String),
+}
+
+type Branch = Result<SearchState, SearchFailure>;
+
+impl Search<'_, '_> {
+    pub(super) fn find_solution(&mut self, state: &SearchState) -> Branch {
         let mut limit = 0;
         while !self.prefer_newest && self.preference_remaining > 0 {
             let result = self.run_pass(SearchPass::LimitReplacements(limit), state.clone());
-            if result.is_ok() {
+            if !matches!(&result, Err(SearchFailure::Blocked(_))) {
                 return result;
             }
             if self.preference_remaining == 0 {
@@ -25,20 +32,16 @@ impl Search<'_> {
         self.try_dependency_disable(result, state)
     }
 
-    fn try_dependency_disable(
-        &mut self,
-        result: Result<SearchState, bool>,
-        state: &SearchState,
-    ) -> Result<SearchState, bool> {
+    fn try_dependency_disable(&mut self, result: Branch, state: &SearchState) -> Branch {
         // Unknown declarations, incomplete history and search limits block this.
-        if matches!(result, Err(false)) {
+        if matches!(&result, Err(SearchFailure::Blocked(false))) {
             self.run_pass(SearchPass::AllowDependencyDisable, state.clone())
         } else {
             result
         }
     }
 
-    fn run_pass(&mut self, pass: SearchPass, state: SearchState) -> Result<SearchState, bool> {
+    fn run_pass(&mut self, pass: SearchPass, state: SearchState) -> Branch {
         self.pass = pass;
         self.preference_pruned = false;
         self.visited.clear();
@@ -47,10 +50,17 @@ impl Search<'_> {
         self.visit(state)
     }
 
-    fn visit(&mut self, state: SearchState) -> Result<SearchState, bool> {
+    fn visit(&mut self, mut state: SearchState) -> Branch {
         let preference = matches!(self.pass, SearchPass::LimitReplacements(_));
         if preference && self.preference_remaining == 0 {
-            return Err(true);
+            return Err(SearchFailure::Blocked(true));
+        }
+        if let Some(releases) = self.loose_releases.as_deref() {
+            releases.project(
+                &mut state.inventory,
+                self.original,
+                &mut state.projected_loose_providers,
+            );
         }
         let key = serde_json::to_string(&(
             &state.inventory,
@@ -58,13 +68,13 @@ impl Search<'_> {
             &state.disabled_guids,
             &state.fallback_disabled_guids,
         ))
-        .map_err(|_| true)?;
+        .map_err(|_| SearchFailure::Blocked(true))?;
         if let Some(incomplete) = self.visited.get(&key) {
-            return Err(*incomplete);
+            return Err(SearchFailure::Blocked(*incomplete));
         }
         if self.visited.len() >= MAX_SEARCH_STATES {
             self.failure_traces.mark_truncated();
-            return Err(true);
+            return Err(SearchFailure::Blocked(true));
         }
         if preference {
             self.preference_remaining -= 1;
@@ -73,13 +83,13 @@ impl Search<'_> {
         // reaching them through another branch cannot unlock a disable fallback.
         self.visited.insert(key.clone(), false);
         let result = self.visit_new(state);
-        if let Err(incomplete) = &result {
+        if let Err(SearchFailure::Blocked(incomplete)) = &result {
             self.visited.insert(key, *incomplete);
         }
         result
     }
 
-    fn visit_new(&mut self, state: SearchState) -> Result<SearchState, bool> {
+    fn visit_new(&mut self, state: SearchState) -> Branch {
         let protected = self.protected(&state);
         let changed_guids = self.changed_guids(&state);
         let evaluations = evaluate(&state.inventory);
@@ -101,7 +111,7 @@ impl Search<'_> {
                     Some("candidate_relations_unknown"),
                 );
                 self.mark_failure(node, None, true, "candidate_relations_unknown");
-                return Err(true);
+                return Err(SearchFailure::Blocked(true));
             }
         }
         let mut issues = Vec::new();
@@ -119,7 +129,7 @@ impl Search<'_> {
         // A switch or installed repair is finished once the affected graph is
         // compatible. Only an exact-version request optimizes a satisfied chain.
         if issues.is_empty() && !self.prefer_newest {
-            return Ok(state);
+            return self.complete(state);
         }
         let distances = self.order(&state);
         issues.sort_by_key(|(index, _, issue)| {
@@ -183,7 +193,7 @@ impl Search<'_> {
                     true,
                     "candidate_relations_unknown",
                 );
-                return Err(true);
+                return Err(SearchFailure::Blocked(true));
             }
             let (branches, fallback) = self.repair(&state, *owner, issue, &protected);
             let mut tried_repair = !branches.is_empty();
@@ -191,16 +201,16 @@ impl Search<'_> {
             // can still produce a completely verified solution in either pass.
             for branch in branches {
                 match self.visit(branch) {
-                    Ok(solution) => return Ok(solution),
-                    Err(unknown) => incomplete |= unknown,
+                    Err(SearchFailure::Blocked(unknown)) => incomplete |= unknown,
+                    result => return result,
                 }
             }
             if !incomplete {
                 if let Some(fallback) = fallback {
                     tried_repair = true;
                     match self.visit(fallback) {
-                        Ok(solution) => return Ok(solution),
-                        Err(unknown) => incomplete |= unknown,
+                        Err(SearchFailure::Blocked(unknown)) => incomplete |= unknown,
+                        result => return result,
                     }
                 }
             }
@@ -226,7 +236,7 @@ impl Search<'_> {
                 incomplete,
                 "relation_has_no_solution",
             );
-            return Err(incomplete);
+            return Err(SearchFailure::Blocked(incomplete));
         }
         let mut pending = protected
             .iter()
@@ -256,12 +266,26 @@ impl Search<'_> {
                     self.with_candidate(&state, index, candidate, None, reason.as_ref())
                 {
                     match self.visit(next) {
-                        Ok(solution) => return Ok(solution),
-                        Err(unknown) => incomplete |= unknown,
+                        Err(SearchFailure::Blocked(unknown)) => incomplete |= unknown,
+                        result => return result,
                     }
                 }
             }
-            return Err(incomplete);
+            return Err(SearchFailure::Blocked(incomplete));
+        }
+        self.complete(state)
+    }
+
+    fn complete(&mut self, state: SearchState) -> Branch {
+        if !state.projected_loose_providers.is_empty()
+            && let Some(releases) = self.loose_releases.as_deref_mut()
+            && !releases
+                .accept(&state.inventory)
+                .map_err(SearchFailure::Ownership)?
+        {
+            // Try sibling versions, but a file conflict cannot justify disabling
+            // an installed dependent to make this branch appear compatible.
+            return Err(SearchFailure::Blocked(true));
         }
         Ok(state)
     }

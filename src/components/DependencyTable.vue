@@ -94,10 +94,10 @@ function lineLabel(line: DependencyRow['line']): string {
       <table class="dep-table">
         <thead>
           <tr>
-            <th class="dep-col-name">{{ t('tools.modColumn') }}</th>
-            <th v-if="showKind" class="dep-col-kind">{{ t('tools.relation') }}</th>
-            <th class="dep-col-req">{{ t('tools.requirement') }}</th>
-            <th class="dep-col-state">{{ t('tools.status') }}</th>
+            <th scope="col">{{ t('tools.modColumn') }}</th>
+            <th v-if="showKind" scope="col">{{ t('tools.relation') }}</th>
+            <th scope="col">{{ t('tools.requirement') }}</th>
+            <th scope="col">{{ t('tools.status') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -131,14 +131,14 @@ function lineLabel(line: DependencyRow['line']): string {
 
 <style scoped>
 .dep-block {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
+  min-inline-size: 0;
 }
 
-/* 长仓库名/长 GUID 不该把面板撑宽：超出时表格内部横向滚动 */
+/* 短表按内容收宽；超过卡片时只让表格内部滚动。 */
 .dep-scroll {
+  box-sizing: border-box;
+  inline-size: max-content;
+  max-inline-size: 100%;
   overflow-x: auto;
   border: 1px solid var(--oc2-row-line);
   border-radius: 10px;
@@ -146,7 +146,6 @@ function lineLabel(line: DependencyRow['line']): string {
 }
 
 .dep-table {
-  width: 100%;
   border-collapse: collapse;
   font-size: 12px;
   line-height: 1.5;
@@ -174,17 +173,8 @@ function lineLabel(line: DependencyRow['line']): string {
   border-bottom: 0;
 }
 
-.dep-col-name { width: 40%; }
-.dep-col-kind { width: 16%; }
-.dep-col-req { width: 16%; }
-.dep-col-state { width: 28%; }
-
 .dep-name {
-  min-width: 0;
-  max-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   color: var(--oc2-text-1);
 }
 
@@ -193,7 +183,8 @@ function lineLabel(line: DependencyRow['line']): string {
   color: var(--oc2-text-3);
 }
 
-.dep-req { overflow-wrap: anywhere; }
+/* 版本条件是整体；空间紧时优先把发布线小标移到下一行。 */
+.dep-req { white-space: nowrap; }
 
 /* 发布线小标：跟在关系名后面，说明这条关系指的是测试版还是正式版 */
 .dep-line {
@@ -215,7 +206,10 @@ function lineLabel(line: DependencyRow['line']): string {
   gap: 3px 6px;
 }
 
+.dep-verdict .state-tag { flex: none; }
+
 .dep-reason {
+  max-inline-size: 26ch;
   color: var(--oc2-text-3);
   overflow-wrap: anywhere;
 }

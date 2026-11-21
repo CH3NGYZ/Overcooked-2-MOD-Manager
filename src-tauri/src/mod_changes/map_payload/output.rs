@@ -33,7 +33,7 @@ pub(in crate::mod_changes) fn mutations(
     if let Some(migration) = &migration {
         for owned in &migration.mutations {
             if let Mutation::Tree(change) = &owned.mutation {
-                reserve(&mut targets, &change.target)?;
+                reserve(&mut targets, &change.target, "map-migration")?;
             }
         }
     }
@@ -109,10 +109,17 @@ pub(in crate::mod_changes) fn mutations(
         let disabled = crate::mods::disabled_dll_file(&canonical);
         let active = game(&canonical).resolve(roots)?;
         let inactive = game(&disabled).resolve(roots)?;
-        let has_active = Fingerprint::capture(&active)? != Fingerprint::Missing;
-        let has_inactive = Fingerprint::capture(&inactive)? != Fingerprint::Missing;
+        let active_before = Fingerprint::capture(&active)?;
+        let inactive_before = Fingerprint::capture(&inactive)?;
+        let has_active = active_before != Fingerprint::Missing;
+        let has_inactive = inactive_before != Fingerprint::Missing;
         if has_active && has_inactive {
-            return Err("modChanges.ambiguousOwnership".into());
+            for (path, before) in [(&canonical, &active_before), (&disabled, &inactive_before)] {
+                if matches!(before, Fingerprint::Directory { .. }) {
+                    return Err(InstallBlock::Directory.report(&external.node_id, path));
+                }
+            }
+            return Err(InstallBlock::BothStates.report(&external.node_id, &canonical));
         }
         let owns_existing = session
             .trusted
@@ -124,7 +131,12 @@ pub(in crate::mod_changes) fn mutations(
                 })
             });
         if (has_active || has_inactive) && !owns_existing {
-            return Err(file_conflict(&external.node_id, &canonical));
+            let (path, before) = if has_active {
+                (&canonical, &active_before)
+            } else {
+                (&disabled, &inactive_before)
+            };
+            return Err(occupied_target(before).report(&external.node_id, path));
         }
         let target = if node.enabled && member.enabled {
             canonical.clone()
@@ -163,8 +175,9 @@ pub(in crate::mod_changes) fn mutations(
     for relative in &batch.extra_files {
         let target = game(relative);
         // Unowned existing config/framework files cannot be overwritten as a map side effect.
-        if Fingerprint::capture(&target.resolve(roots)?)? != Fingerprint::Missing {
-            return Err("modChanges.ambiguousOwnership".into());
+        let existing = Fingerprint::capture(&target.resolve(roots)?)?;
+        if existing != Fingerprint::Missing {
+            return Err(occupied_target(&existing).report("map-import", relative));
         }
         push_file(
             &mut result,
@@ -214,14 +227,18 @@ fn selected<'a>(
     Ok(node)
 }
 
-fn reserve(targets: &mut BTreeSet<String>, path: &TransactionPath) -> Result<(), String> {
+fn reserve(
+    targets: &mut BTreeSet<String>,
+    path: &TransactionPath,
+    owner: &str,
+) -> Result<(), String> {
     let prefix = format!("{:?}:", path.root);
     let target = format!("{prefix}{}", key(&path.relative));
     if targets
         .iter()
         .any(|old| within(&target, old) || within(old, &target))
     {
-        return Err("modChanges.pathCollision".into());
+        return Err(InstallBlock::PathCollision.report(owner, &path.relative));
     }
     targets.insert(target);
     Ok(())
@@ -236,7 +253,7 @@ pub(super) fn push_tree(
     owner: &str,
 ) -> Result<(), String> {
     let target = game(path);
-    reserve(targets, &target)?;
+    reserve(targets, &target, owner)?;
     let expected = Fingerprint::capture(&target.resolve(roots)?)?;
     if !matches!(
         expected,
@@ -266,10 +283,10 @@ fn push_file(
     source: Option<PathBuf>,
     owner: Option<&str>,
 ) -> Result<(), String> {
-    reserve(targets, &target)?;
+    reserve(targets, &target, owner.unwrap_or("map-import"))?;
     let expected = Fingerprint::capture(&target.resolve(roots)?)?;
     if matches!(expected, Fingerprint::Directory { .. }) {
-        return Err("modChanges.pathCollision".into());
+        return Err(InstallBlock::Directory.report(owner.unwrap_or("map-import"), &target.relative));
     }
     result.push(OwnedMutation::new(
         Mutation::File(FileChange {

@@ -292,7 +292,10 @@ async fn exact_release_with_foreign_resource_is_rejected_without_trying_older_re
         assert_action(&plan, NODE, ActionKind::Upgrade, OLD_TAG);
         let outcome = preparation::prepare(f.state.clone(), plan.plan_id, |_| {}).await;
 
-        assert_eq!(outcome.error, Some(conflict(OWNED_PATH)));
+        assert_eq!(
+            outcome.error,
+            Some(blocked("modChanges.installTargetClaimed", OWNED_PATH))
+        );
         assert!(outcome.plan.is_none());
         assert_eq!(test.newer.request_count(), 1);
         assert_eq!(test.older.request_count(), 0);

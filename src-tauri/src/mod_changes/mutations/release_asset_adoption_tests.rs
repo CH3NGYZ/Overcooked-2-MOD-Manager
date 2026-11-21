@@ -11,6 +11,8 @@ const WEB_RESOURCE_5: &str = "BepInEx/plugins/OC2DIYLevelRuntimeWLoader/commonW5
 const WEB_RESOURCE_6: &str = "BepInEx/plugins/OC2DIYLevelRuntimeWLoader/commonW6";
 const OLD_MAP: &str = "BepInEx/plugins/OC2DIYLevel/levels/oc1_story/info";
 const NEW_MAP: &str = "BepInEx/plugins/OC2DIYLevel/levels/oc1_dlc/info";
+const UNVERIFIED_TARGET: &str = "modChanges.fileOwnershipConflict";
+const RECORDED_TARGET: &str = "modChanges.installTargetClaimed";
 
 fn set_old_binding(f: &mut Fixture, id: &str, primary: &str, tag: &str) {
     let repo = f
@@ -205,13 +207,10 @@ fn matching_verified_web_resources_join_new_manifest_as_both_packages_upgrade() 
     );
 }
 
-fn assert_resource_rejected(mut f: Fixture, path: &str) {
+fn assert_resource_rejected(mut f: Fixture, tag: &str, path: &str) {
     let before = fingerprint(&f);
     let error = freeze_writes(&mut f).unwrap_err();
-    assert_eq!(
-        error,
-        format!("modChanges.fileOwnershipConflict?path={path}")
-    );
+    assert_eq!(error, format!("{tag}?path={path}"));
     assert_eq!(
         fingerprint(&f),
         before,
@@ -221,7 +220,11 @@ fn assert_resource_rejected(mut f: Fixture, path: &str) {
 
 #[test]
 fn matching_bytes_without_a_release_digest_do_not_authorize_adoption() {
-    assert_resource_rejected(upgrades(false), WEB_RESOURCE_5);
+    assert_resource_rejected(
+        upgrades(false),
+        "modChanges.installTargetNeedsVerifiedRelease",
+        WEB_RESOURCE_5,
+    );
 }
 
 #[test]
@@ -258,7 +261,7 @@ fn verified_asset_cannot_adopt_a_file_claimed_by_another_manifest() {
         vec![],
         vec![WEB_RESOURCE_6.into()],
     );
-    assert_resource_rejected(f, WEB_RESOURCE_6);
+    assert_resource_rejected(f, RECORDED_TARGET, WEB_RESOURCE_6);
 }
 
 #[test]
@@ -270,7 +273,12 @@ fn a_manifest_claim_with_different_case_still_blocks_release_adoption() {
         vec![],
         vec![WEB_RESOURCE_6.replace("commonW6", "CommonW6")],
     );
-    assert_resource_rejected(f, WEB_RESOURCE_6);
+    let tag = if cfg!(windows) {
+        RECORDED_TARGET
+    } else {
+        "modChanges.installTargetAliasesOrLink"
+    };
+    assert_resource_rejected(f, tag, WEB_RESOURCE_6);
 }
 
 #[test]
@@ -290,7 +298,7 @@ fn an_unmatched_manifest_claiming_a_hard_link_blocks_release_adoption() {
     );
     archive::write_manifest(&f.roots.data_root.join("manifests"), &manifest).unwrap();
 
-    assert_resource_rejected(f, WEB_RESOURCE_6);
+    assert_resource_rejected(f, "modChanges.installTargetAliasesOrLink", WEB_RESOURCE_6);
 }
 
 #[test]
@@ -298,7 +306,7 @@ fn a_hard_link_to_a_map_file_without_a_manifest_claim_blocks_release_adoption() 
     let f = upgrades(true);
     let map_file = f.roots.game_root.join(OLD_MAP).with_file_name("map-data");
     fs::hard_link(f.roots.game_root.join(WEB_RESOURCE_6), &map_file).unwrap();
-    assert_resource_rejected(f, WEB_RESOURCE_6);
+    assert_resource_rejected(f, "modChanges.installTargetAliasesOrLink", WEB_RESOURCE_6);
 }
 
 #[test]
@@ -330,7 +338,7 @@ fn verified_asset_cannot_adopt_when_the_installed_repository_binding_differs() {
     let old = &mut f.session.trusted.files.get_mut("web").unwrap().manifests[0];
     old.repository_binding.as_mut().unwrap().owner = "other-owner".into();
     archive::write_manifest(&f.roots.data_root.join("manifests"), old).unwrap();
-    assert_resource_rejected(f, WEB_RESOURCE_5);
+    assert_resource_rejected(f, UNVERIFIED_TARGET, WEB_RESOURCE_5);
 }
 
 #[test]
@@ -344,7 +352,7 @@ fn verified_asset_cannot_adopt_a_file_in_a_prefix_matching_sibling_folder() {
     );
     let unrelated = "BepInEx/plugins/OC2DIYLevelRuntimeWLoaderArchive/commonW6";
     write(&f.roots.game_root, unrelated, b"loose");
-    assert_resource_rejected(f, unrelated);
+    assert_resource_rejected(f, "modChanges.installTargetOutsidePackage", unrelated);
 }
 
 #[test]

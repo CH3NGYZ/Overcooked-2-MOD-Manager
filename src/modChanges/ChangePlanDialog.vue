@@ -117,7 +117,7 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
         <p v-if="diagnostics.hasPaths" class="diagnostic-note">{{ t('modChanges.diagnostic.note') }}</p>
         <p v-if="diagnostics.truncated" class="diagnostic-note">{{ t('modChanges.diagnostic.truncated') }}</p>
       </NAlert>
-      <NAlert v-if="error" type="error" :bordered="false">{{ error }}</NAlert>
+      <NAlert v-if="error" type="error" :bordered="false"><span class="plan-error">{{ error }}</span></NAlert>
       <ul v-if="diagnostics.notes.length" class="plan-notes">
         <li v-for="(blocker, index) in diagnostics.notes" :key="index">
           {{ changeReasonText(blocker.message || blocker.code) }}
@@ -163,6 +163,7 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
 .plan-phase-spinner { flex: none; }
 .progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--oc2-text-3); margin-bottom: 8px; font-variant-numeric: tabular-nums; }
 .plan-notes { margin: 0; padding-left: 20px; overflow-wrap: anywhere; }
+.plan-error { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
 .overwrite-paths { margin: 8px 0 0; padding-inline-start: 20px; overflow-wrap: anywhere; }
 .overwrite-paths li + li { margin-block-start: 4px; }
 .overwrite-paths code { display: block; white-space: pre-wrap; }

@@ -1,5 +1,6 @@
 //! Consume the same physical bundle anchors as the local MOD cards.
 use super::*;
+use crate::mod_changes::mutations::InstallBlock;
 
 fn standalone_key(item: &InstalledMod) -> String {
     item.package_id
@@ -76,13 +77,22 @@ impl TrustedInventory {
                         .iter()
                         .any(|guid| same_guid(guid, &old.guid))
             });
-            if !(explicitly_declared || legacy_diylevel)
-                || overlaps.next().is_some()
-                || new.member_key.as_deref() != Some(path)
-                || !same_guid(&new.guid, &old.guid)
-            {
-                return Err(crate::mod_changes::mutations::file_conflict(id, path));
-            }
+            let reason = if !(explicitly_declared || legacy_diylevel) {
+                InstallBlock::BundleNotDeclared
+            } else if overlaps.next().is_some() {
+                InstallBlock::MultipleTargets
+            } else if new.member_key.as_deref() != Some(path) {
+                InstallBlock::BundlePathChanged
+            } else if !same_guid(&new.guid, &old.guid) {
+                if new.guid.trim().is_empty() || old.guid.trim().is_empty() {
+                    InstallBlock::PluginIdentityUnknown
+                } else {
+                    InstallBlock::PluginMismatch
+                }
+            } else {
+                continue;
+            };
+            return Err(reason.report(id, path));
         }
         Ok(())
     }

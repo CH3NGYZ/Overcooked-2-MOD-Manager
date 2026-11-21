@@ -272,21 +272,13 @@ fn unowned_destination_or_disabled_counterpart_is_never_overwritten() {
             vec![old.into()],
         );
         payload(&mut f, "mod", "BepInEx/plugins/new.dll", true);
-        write(
-            &f.roots.game_root,
-            &format!("BepInEx/plugins/new.dll{suffix}"),
-            b"user",
-        );
-        assert!(assemble(&f.session, f.roots.clone()).is_err());
+        let path = format!("BepInEx/plugins/new.dll{suffix}");
+        write(&f.roots.game_root, &path, b"user");
         assert_eq!(
-            fs::read(
-                f.roots
-                    .game_root
-                    .join(format!("BepInEx/plugins/new.dll{suffix}"))
-            )
-            .unwrap(),
-            b"user"
+            assemble(&f.session, f.roots.clone()).unwrap_err(),
+            format!("modChanges.installTargetUnrecognized?path={path}")
         );
+        assert_eq!(fs::read(f.roots.game_root.join(path)).unwrap(), b"user");
     }
 }
 
@@ -308,7 +300,11 @@ fn sharing_owned_files_blocks_replacement() {
         vec![path.into()],
     );
     payload(&mut f, "one", path, true);
-    assert!(assemble(&f.session, f.roots.clone()).is_err());
+    assert_eq!(
+        assemble(&f.session, f.roots.clone()).unwrap_err(),
+        format!("modChanges.installTargetClaimed?path={path}")
+    );
+    assert_eq!(fs::read(f.roots.game_root.join(path)).unwrap(), b"old");
 }
 
 #[test]

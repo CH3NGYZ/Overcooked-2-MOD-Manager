@@ -1,7 +1,7 @@
 use super::super::inventory::RetiredModCopy;
 use super::{
-    Builder, FileChange, Fingerprint, ItemKey, Mutation, OwnedMutation, RootKind, TransactionPath,
-    data, file_conflict, game, inventory, within,
+    Builder, FileChange, Fingerprint, InstallBlock, ItemKey, Mutation, OwnedMutation, RootKind,
+    TransactionPath, data, game, inventory, within,
 };
 use crate::mods;
 use std::{
@@ -53,7 +53,7 @@ impl Builder<'_> {
         if migration.is_some_and(|migration| within(relative, &migration.from))
             || self.protected_maps.iter().any(|map| within(relative, map))
         {
-            return Err(file_conflict(node_id, relative));
+            return Err(InstallBlock::MapProtected.report(node_id, relative));
         }
         self.ensure_owner(relative, node_id)?;
         let canonical = mods::canonical_dll_name(relative);

@@ -438,7 +438,7 @@ fn unrelated_package_cannot_write_framework_bundled_maps() {
     payload.files.push(path.into());
     assert_eq!(
         assemble(&f.session, f.roots.clone()).unwrap_err(),
-        "modChanges.pathCollision"
+        format!("modChanges.installTargetMapProtected?path={path}")
     );
     assert_eq!(
         fs::read(f.roots.game_root.join(path)).unwrap(),

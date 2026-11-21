@@ -78,7 +78,7 @@ impl LooseFileClaims {
                 .chain(&actual.0)
                 .find(|(key, _)| self.0.get(*key) != actual.0.get(*key))
             {
-                return Err(file_conflict(owner, &file.relative));
+                return Err(InstallBlock::VerificationChanged.report(owner, &file.relative));
             }
             return Err("modChanges.targetChanged".into());
         }
@@ -110,7 +110,9 @@ impl LooseFileClaims {
                 && after.current.is_none()
                 && !result.consumes(&before.id)
             {
-                return Err(file_conflict(&before.id, before.id.trim_start_matches("dll:")).into());
+                return Err(InstallBlock::Unverified
+                    .report(&before.id, before.id.trim_start_matches("dll:"))
+                    .into());
             }
         }
         Ok(result)
@@ -222,12 +224,14 @@ impl Builder<'_> {
             }
             let target = if is_dll { &canonical } else { source };
             let proof = package.get_or_init(|| self.package_scope(&node.id, payload));
-            if own && proof.is_none() {
+            if own && proof.is_err() {
                 // Existing scanned owners still use the ordinary replacement
                 // checks when a scoped claim is unavailable (e.g. no digest).
                 continue;
             }
-            let live = self.live_endpoint(&node.id, target, is_dll)?;
+            let live = self
+                .live_endpoint(target, is_dll)
+                .map_err(|error| error.report(&node.id))?;
             // A manifest still owns a missing file. Keep that path in the
             // conflict check once the endpoint lookup has succeeded.
             let foreign_manifest = !own
@@ -241,24 +245,38 @@ impl Builder<'_> {
             else {
                 continue;
             };
-            let rejected = || file_conflict(&node.id, &physical);
-            let scope = proof.as_ref().ok_or_else(rejected)?;
+            let report = |block: InstallBlock| block.report(&node.id, &physical);
+            let unknown = || report(InstallBlock::Unverified);
+            let claimed = || report(self.ownership_block(&key, &node.id));
+            let scope = proof.as_ref().map_err(|failure| {
+                if foreign_manifest {
+                    claimed()
+                } else {
+                    failure.report(&node.id, &physical)
+                }
+            })?;
             let changes_content = scope
                 .changes_file(payload, source, &key, &physical, &before, own)
-                .ok_or_else(rejected)?;
+                .map_err(|reason| {
+                    if foreign_manifest {
+                        claimed()
+                    } else {
+                        report(reason)
+                    }
+                })?;
             if !seen.insert(path_key(Path::new(&canonical))) {
-                return Err(rejected().into());
+                return Err(report(InstallBlock::PathCollision).into());
             }
             let registered = registry
                 .get_or_init(|| self.registered_map_plugins())
                 .as_ref()
-                .map_err(|_| rejected())?;
+                .map_err(|_| report(InstallBlock::MapRecordsUnreadable))?;
             // Only a positive on-disk manifest claim makes this branch eligible
             // for another version. Unclear scope, aliases and read failures do not.
             if foreign_manifest {
                 return Err(LooseClaimError::ForeignManifest {
                     owner: node.id.clone(),
-                    message: rejected(),
+                    message: claimed(),
                 });
             }
             let loose_node = if is_dll {
@@ -267,39 +285,39 @@ impl Builder<'_> {
                     .provides
                     .iter()
                     .find(|member| member.member_key.as_deref() == Some(key.as_str()))
-                    .ok_or_else(rejected)?;
+                    .ok_or_else(unknown)?;
                 if own {
-                    let original = self.physical(&node.id, &key).map_err(|_| rejected())?;
-                    if original != physical || !self.same_member(incoming, &physical) {
-                        return Err(rejected().into());
+                    let original = self.physical(&node.id, &key).map_err(|_| unknown())?;
+                    if original != physical {
+                        return Err(report(InstallBlock::AliasesOrLink).into());
                     }
+                    self.verify_member(incoming, &physical).map_err(report)?;
                     None
                 } else {
                     let loose = self
                         .loose_owner(&node.id, payload, incoming, &key, &physical)
-                        .ok_or_else(rejected)?;
+                        .map_err(report)?;
                     let after = solved
                         .nodes
                         .iter()
                         .find(|entry| entry.id == loose.id)
-                        .ok_or_else(rejected)?;
+                        .ok_or_else(unknown)?;
                     if (after != loose && (after.current.is_some() || after.enabled))
                         || !keeps_provider(node, &key, loose)
                     {
-                        return Err(rejected().into());
+                        return Err(report(InstallBlock::PathOwned).into());
                     }
                     Some(loose.id.clone())
                 }
             } else {
                 if self.ownership.contains_key(&key) {
-                    return Err(rejected().into());
+                    return Err(report(InstallBlock::PathOwned).into());
                 }
                 None
             };
             let scan_owner = loose_node.as_deref().or(own.then_some(node.id.as_str()));
-            if !self.loose_path_is_unclaimed(&physical, scope.directory, registered, scan_owner) {
-                return Err(rejected().into());
-            }
+            self.ensure_loose_path_unclaimed(&physical, scope.directory, registered, scan_owner)
+                .map_err(report)?;
             result.0.insert(
                 (node.id.clone(), key),
                 LooseFile {
@@ -313,56 +331,13 @@ impl Builder<'_> {
         Ok(())
     }
 
-    pub(super) fn live_endpoint(
-        &self,
-        owner: &str,
-        canonical: &str,
-        is_dll: bool,
-    ) -> Result<Option<(String, Fingerprint)>, String> {
-        let active = self.live_file(owner, canonical)?;
-        let inactive = if is_dll {
-            self.live_file(owner, &mods::disabled_dll_file(canonical))?
-        } else {
-            None
-        };
-        if active.is_some() && inactive.is_some() {
-            return Err(file_conflict(owner, canonical));
-        }
-        Ok(active.or(inactive))
-    }
-
-    fn live_file(
-        &self,
-        owner: &str,
-        relative: &str,
-    ) -> Result<Option<(String, Fingerprint)>, String> {
-        let path = game(relative)
-            .resolve(&self.roots)
-            .map_err(|_| file_conflict(owner, relative))?;
-        let fingerprint = match fs::symlink_metadata(&path) {
-            Ok(meta) if meta.is_file() => {
-                Fingerprint::capture(&path).map_err(|_| file_conflict(owner, relative))?
-            }
-            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-            _ => return Err(file_conflict(owner, relative)),
-        };
-        let real = fs::canonicalize(&path).map_err(|_| file_conflict(owner, relative))?;
-        let spelled = inventory::relative(&self.roots.game_root, &real)?;
-        if !matches!(fingerprint, Fingerprint::File { .. })
-            || path_key(Path::new(&spelled)) != path_key(Path::new(relative))
-        {
-            return Err(file_conflict(owner, relative));
-        }
-        Ok(Some((spelled, fingerprint)))
-    }
-
-    pub(super) fn loose_path_is_unclaimed(
+    pub(super) fn ensure_loose_path_unclaimed(
         &self,
         relative: &str,
         directory: &str,
         registered: &[crate::level_sets::RegisteredLevelSetPlugin],
         scan_owner: Option<&str>,
-    ) -> bool {
+    ) -> Result<(), InstallBlock> {
         let resolve = |name: &str| -> Option<PathBuf> {
             fs::canonicalize(game(name).resolve(&self.roots).ok()?).ok()
         };
@@ -371,37 +346,48 @@ impl Builder<'_> {
             resolve(directory),
             resolve(mods::file_state::PLUGINS_DIR),
         ) else {
-            return false;
+            return Err(InstallBlock::Unverified);
         };
         if directory == plugins
             || !directory.starts_with(&plugins)
             || !real_path.starts_with(&directory)
         {
-            return false;
+            return Err(InstallBlock::OutsidePackage);
         }
         let key = inventory::key(&mods::canonical_dll_name(relative));
         let claims = self
             .external_claims
             .iter()
-            .map(String::as_str)
-            .chain(registered.iter().map(|entry| entry.dll.as_str()))
+            .map(|file| (file.as_str(), InstallBlock::InstallRecord))
+            .chain(
+                registered
+                    .iter()
+                    .map(|entry| (entry.dll.as_str(), InstallBlock::MapProtected)),
+            )
             .chain(self.session.trusted.files.iter().flat_map(|(id, node)| {
                 let key = &key;
                 node.summary
                     .members
                     .iter()
                     .filter(move |member| Some(id.as_str()) != scan_owner || member.key != *key)
-                    .map(|m| m.dll_file.as_str())
+                    .map(|m| (m.dll_file.as_str(), InstallBlock::PathOwned))
             }));
-        self.physically_unclaimed(relative, &real_path, claims)
+        self.ensure_physically_unclaimed(relative, &real_path, claims)
     }
 
-    fn same_member(&self, incoming: &ProvidedPlugin, physical: &str) -> bool {
-        let Ok(path) = game(physical).resolve(&self.roots) else {
-            return false;
-        };
+    fn verify_member(&self, incoming: &ProvidedPlugin, physical: &str) -> Result<(), InstallBlock> {
+        let path = game(physical)
+            .resolve(&self.roots)
+            .map_err(|_| InstallBlock::Unverified)?;
         let old = mods::read_dll_details(&path, physical);
-        same_guid(old.guid.as_deref().unwrap_or_default(), &incoming.guid)
+        let old_guid = old.guid.as_deref().unwrap_or_default();
+        if same_guid(old_guid, &incoming.guid) {
+            Ok(())
+        } else if old_guid.trim().is_empty() || incoming.guid.trim().is_empty() {
+            Err(InstallBlock::PluginIdentityUnknown)
+        } else {
+            Err(InstallBlock::PluginMismatch)
+        }
     }
 
     pub(super) fn loose_owner(
@@ -411,9 +397,10 @@ impl Builder<'_> {
         verified: &ProvidedPlugin,
         key: &str,
         physical: &str,
-    ) -> Option<&ChangeNode> {
-        let owners = self.ownership.get(key)?;
-        let id = owners.first()?;
+    ) -> Result<&ChangeNode, InstallBlock> {
+        let unknown = InstallBlock::Unverified;
+        let owners = self.ownership.get(key).ok_or(InstallBlock::Unrecognized)?;
+        let id = owners.first().ok_or(unknown)?;
         if owners.len() != 1
             || id == owner
             || !id.starts_with("dll:")
@@ -426,11 +413,22 @@ impl Builder<'_> {
                 .iter()
                 .any(|root| &root.node_id == id)
         {
-            return None;
+            if owners.iter().any(|id| {
+                id.starts_with("map-dll:")
+                    || self
+                        .session
+                        .trusted
+                        .files
+                        .get(id)
+                        .is_some_and(|node| node.map_path.is_some())
+            }) {
+                return Err(InstallBlock::MapProtected);
+            }
+            return Err(InstallBlock::PathOwned);
         }
-        let files = self.session.trusted.files.get(id)?;
+        let files = self.session.trusted.files.get(id).ok_or(unknown)?;
         let [member] = files.summary.members.as_slice() else {
-            return None;
+            return Err(unknown);
         };
         let original = self
             .session
@@ -438,7 +436,8 @@ impl Builder<'_> {
             .inventory
             .nodes
             .iter()
-            .find(|old| &old.id == id)?;
+            .find(|old| &old.id == id)
+            .ok_or(unknown)?;
         let other_bundle_claim = member.guid.as_deref().is_some_and(|guid| {
             self.session.trusted.config.repositories.iter().any(|repo| {
                 Some(&repo.id) != payload.candidate.source_id.as_ref()
@@ -448,15 +447,20 @@ impl Builder<'_> {
                         .any(|candidate| crate::mod_changes::evaluate::same_guid(candidate, guid))
             })
         });
-        (original.mutable
-            && original.candidates.is_empty()
-            && files.manifests.is_empty()
-            && files.map_path.is_none()
-            && member.key == key
-            && !other_bundle_claim
-            && self.same_member(verified, physical)
-            && member.enabled == !physical.to_ascii_lowercase().ends_with(".disabled"))
-        .then_some(original)
+        if !original.mutable || !original.candidates.is_empty() || !files.manifests.is_empty() {
+            return Err(InstallBlock::PathOwned);
+        }
+        if files.map_path.is_some() {
+            return Err(InstallBlock::MapProtected);
+        }
+        if member.key != key || other_bundle_claim {
+            return Err(unknown);
+        }
+        self.verify_member(verified, physical)?;
+        if member.enabled == physical.to_ascii_lowercase().ends_with(".disabled") {
+            return Err(InstallBlock::VerificationChanged);
+        }
+        Ok(original)
     }
 }
 

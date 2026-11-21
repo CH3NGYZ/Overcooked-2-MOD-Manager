@@ -204,7 +204,7 @@ fn real_young_info_update_reports_disabled_standalone_dll_without_writing_live_f
     .unwrap_err();
     assert_eq!(
         error,
-        format!("modChanges.fileOwnershipConflict?path={external}")
+        format!("modChanges.installTargetOwned?path={external}")
     );
     assert_eq!(
         fs::read(old_map.join("info_young")).unwrap(),

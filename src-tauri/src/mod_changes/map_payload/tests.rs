@@ -555,8 +555,9 @@ fn map_tree_endpoint_collisions_and_external_active_disabled_duplicates_block() 
         "BepInEx/plugins/External/Fix.dll",
         b"unexpected second variant",
     );
-    assert!(
-        matches!(mutations(&fixture.roots, &fixture.session), Err(error) if error == "modChanges.ambiguousOwnership")
+    assert_eq!(
+        mutations(&fixture.roots, &fixture.session).unwrap_err(),
+        "modChanges.installTargetHasBothStates?path=BepInEx/plugins/External/Fix.dll"
     );
     let mut result = Vec::new();
     let mut targets = BTreeSet::new();
@@ -598,7 +599,10 @@ fn external_map_dll_collision_during_preparation_reports_path_without_writing_li
         .expect("an existing unowned file must block preparation");
     assert_eq!(
         error,
-        format!("modChanges.fileOwnershipConflict?path={path}")
+        format!(
+            "modChanges.installTargetUnrecognized?path={}",
+            crate::mods::disabled_dll_file(path)
+        )
     );
     assert_eq!(fs::read(disabled).unwrap(), original);
     assert!(!active.exists());

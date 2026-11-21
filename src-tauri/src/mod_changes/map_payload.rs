@@ -1,7 +1,11 @@
 //! Map ZIPs use the existing installer inside a private game-shaped sandbox.
 //! Only the resulting verified model and explicit transaction endpoints leave it.
 use super::{
-    inventory::*, model::*, mutations::file_conflict, session::PlanSession, transaction::*,
+    inventory::*,
+    model::*,
+    mutations::{InstallBlock, occupied_target},
+    session::PlanSession,
+    transaction::*,
 };
 use crate::{
     app_state::AppState,

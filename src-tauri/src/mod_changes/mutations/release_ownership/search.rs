@@ -77,7 +77,7 @@ impl<'a> LooseReleaseSearch<'a> {
                         installed_map_roots(session)?,
                     )?),
                 };
-                let Some(scope) = scope.get_or_init(|| builder.package_scope(id, payload)) else {
+                let Ok(scope) = scope.get_or_init(|| builder.package_scope(id, payload)) else {
                     break;
                 };
                 let Some(incoming) = candidate
@@ -87,15 +87,15 @@ impl<'a> LooseReleaseSearch<'a> {
                 else {
                     continue;
                 };
-                let Ok(Some((physical, before))) = builder.live_endpoint(id, &dll, true) else {
+                let Ok(Some((physical, before))) = builder.live_endpoint(&dll, true) else {
                     continue;
                 };
                 if scope
                     .changes_file(payload, source, &key, &physical, &before, false)
-                    .is_none()
-                    || builder
+                    .is_err()
+                    || !builder
                         .loose_owner(id, payload, incoming, &key, &physical)
-                        .is_none_or(|loose| loose.id != nodes[index].id)
+                        .is_ok_and(|loose| loose.id == nodes[index].id)
                 {
                     continue;
                 }
@@ -103,12 +103,15 @@ impl<'a> LooseReleaseSearch<'a> {
                 else {
                     continue;
                 };
-                if !builder.loose_path_is_unclaimed(
-                    &physical,
-                    scope.directory,
-                    registered,
-                    Some(&nodes[index].id),
-                ) {
+                if builder
+                    .ensure_loose_path_unclaimed(
+                        &physical,
+                        scope.directory,
+                        registered,
+                        Some(&nodes[index].id),
+                    )
+                    .is_err()
+                {
                     continue;
                 }
                 let providers = self

@@ -2,6 +2,7 @@ use super::super::progress::{ItemStage, PreparationOutcome, PreparationStage};
 use super::*;
 use crate::archive::release_download::tests::{Server, reuse_tests::served, split_zip_parts};
 use std::io::{Cursor, Write};
+use std::sync::{Arc, Mutex};
 
 const TAG: &str = "v2.0.0";
 const REPO: &str = "FixtureMod";
@@ -66,6 +67,86 @@ fn assert_private_staging(f: &Fixture, before: &Fingerprint) {
             .unwrap()
             .all(|entry| { entry.unwrap().file_type().unwrap().is_dir() })
     );
+}
+
+#[tokio::test]
+async fn hashless_release_reports_occupied_targets_without_touching_the_game() {
+    let dll = mod_dll();
+    let asset = "Selected.zip";
+    let entry = format!("{TAG}/{DLL}");
+    let bytes = zip(&[(&entry, &dll)]);
+    let target = format!("BepInEx/plugins/{REPO}/{entry}");
+    for (obstacle, tag) in [
+        ("directory", "modChanges.installTargetIsDirectory"),
+        ("both states", "modChanges.installTargetHasBothStates"),
+        ("old record", "modChanges.installTargetClaimed"),
+    ] {
+        let server = Server::new(vec![bytes.clone()], false);
+        let mut repo = repository(REPO, GUID, &["2.0.0"], vec![]);
+        let mut release_asset = served(&server, 0, asset, &bytes);
+        release_asset.digest = None;
+        repo.cached_releases[0].assets = vec![release_asset];
+        let f = versioned_fixture(repo);
+        let manifests = f.state.config.manifests_dir();
+        match obstacle {
+            "directory" => fs::create_dir_all(f.game.join(&target)).unwrap(),
+            "both states" => {
+                write(&f.game.join(&target), b"unrecognized enabled DLL");
+                write(
+                    &f.game.join(mods::disabled_dll_file(&target)),
+                    b"unrecognized disabled DLL",
+                );
+            }
+            "old record" => archive::write_manifest(
+                &manifests,
+                &archive::new_manifest(
+                    REPO,
+                    TAG,
+                    BTreeMap::new(),
+                    BTreeMap::new(),
+                    vec![target.clone()],
+                    vec![],
+                ),
+            )
+            .unwrap(),
+            _ => unreachable!(),
+        }
+        let before = (
+            Fingerprint::capture(&f.game).unwrap(),
+            Fingerprint::capture(&manifests).unwrap(),
+        );
+        let plan = select_plan(&f, REPO, TAG, asset);
+        let stages = Arc::new(Mutex::new(Vec::new()));
+        let observed = stages.clone();
+        let outcome = preparation::prepare(f.state.clone(), plan.plan_id, move |progress| {
+            observed.lock().unwrap().push(progress.stage);
+        })
+        .await;
+        let stages = stages.lock().unwrap();
+        assert_eq!(
+            outcome.progress.stage,
+            PreparationStage::Failed,
+            "{obstacle}: {stages:?}"
+        );
+        assert!(
+            !stages.contains(&PreparationStage::Finalizing),
+            "{obstacle}: {stages:?}"
+        );
+        assert!(outcome.plan.is_none());
+        assert_eq!(server.request_count(), 1);
+        assert_eq!(
+            (
+                Fingerprint::capture(&f.game).unwrap(),
+                Fingerprint::capture(&manifests).unwrap(),
+            ),
+            before,
+        );
+        assert_eq!(
+            outcome.error,
+            Some(crate::locale_tag::with_params(tag, &[("path", &target)])),
+            "{obstacle}",
+        );
+    }
 }
 
 #[tokio::test]

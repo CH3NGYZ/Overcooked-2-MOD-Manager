@@ -315,16 +315,22 @@ fn release_overwrites_only_a_verified_same_path_member_and_leaves_omitted_dll_al
 
 #[test]
 fn release_refuses_a_relocated_member_or_a_different_guid_at_its_path() {
-    for member in [
-        ("relocated.dll", HELPER),
-        ("debugLog.dll", "fixture.other-guid"),
+    for (member, tag) in [
+        (
+            ("relocated.dll", HELPER),
+            "modChanges.installBundlePathChanged",
+        ),
+        (
+            ("debugLog.dll", "fixture.other-guid"),
+            "modChanges.installBundlePluginMismatch",
+        ),
     ] {
         let f = setup(true, true, vec![requires(HELPER, "")]);
         let original = fs::read(f.game.join(HELPER_DLL)).unwrap();
         let plan = planning::create(&f.state, request("Web", Some("v4.0.0"), true)).unwrap();
         let session = take(&f, &plan);
         let err = payload(&f, &session, Some(member)).err().unwrap();
-        assert!(err.starts_with("modChanges.fileOwnershipConflict"), "{err}");
+        assert_eq!(err, format!("{tag}?path={}", inventory::key(HELPER_DLL)));
         assert_eq!(fs::read(f.game.join(HELPER_DLL)).unwrap(), original);
         assert!(!f.state.config.manifests_dir().join("Web.toml").exists());
     }
@@ -356,7 +362,10 @@ fn release_refuses_to_overwrite_a_shared_physical_member() {
     planning::resolve(&f.state, &mut session).unwrap();
     assert_atomic_action(&session.plan, ActionKind::Upgrade);
     let err = preparation::finish(&f.state, &mut session).unwrap_err();
-    assert!(err.starts_with("modChanges.fileOwnershipConflict"), "{err}");
+    assert_eq!(
+        err,
+        format!("modChanges.installTargetAliasesOrLink?path={HELPER_DLL}")
+    );
     assert_eq!(fs::read(active).unwrap(), original);
     assert_eq!(fs::read(other).unwrap(), original);
     assert!(!f.state.config.manifests_dir().join("Web.toml").exists());

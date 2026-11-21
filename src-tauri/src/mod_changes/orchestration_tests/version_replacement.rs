@@ -377,7 +377,7 @@ async fn approved_downgrade_rejects_an_equal_size_equal_mtime_edit() {
 
     assert_eq!(
         execution::commit(&f.state, &mut session, |_| {}).unwrap_err(),
-        conflict(RESOURCE)
+        blocked("modChanges.installTargetVerificationChanged", RESOURCE)
     );
     assert_eq!(fingerprint(f), now);
     assert_eq!(fs::read(path).unwrap(), external);
@@ -440,17 +440,33 @@ async fn interrupted_downgrade_restores_changed_files_and_the_old_partial_manife
     no_pending(f);
 }
 
-fn conflict(path: &str) -> String {
-    crate::locale_tag::with_params("modChanges.fileOwnershipConflict", &[("path", path)])
+fn blocked(tag: &str, path: &str) -> String {
+    crate::locale_tag::with_params(tag, &[("path", path)])
 }
 
 #[tokio::test]
 async fn precise_downgrade_cannot_claim_separate_owners_or_bypass_core_and_digest_proof() {
-    for (case, expected) in [
-        (Prohibition::IndependentSource, Some(COMPANION)),
-        (Prohibition::OtherManifest, Some(RESOURCE)),
-        (Prohibition::MissingDigest, None),
-        (Prohibition::DifferentCorePath, None),
+    for (case, tag, paths) in [
+        (
+            Prohibition::IndependentSource,
+            "modChanges.installTargetOwned",
+            &[COMPANION][..],
+        ),
+        (
+            Prohibition::OtherManifest,
+            "modChanges.installTargetClaimed",
+            &[RESOURCE][..],
+        ),
+        (
+            Prohibition::MissingDigest,
+            "modChanges.installTargetNeedsVerifiedRelease",
+            &[COMPANION, RESOURCE][..],
+        ),
+        (
+            Prohibition::DifferentCorePath,
+            "modChanges.fileOwnershipConflict",
+            &[COMPANION, RESOURCE][..],
+        ),
     ] {
         let test = replacement("2.0.0", true, false, Some(case), &[]);
         let outcome = test.prepare(ActionKind::Downgrade).await;
@@ -458,14 +474,10 @@ async fn precise_downgrade_cannot_claim_separate_owners_or_bypass_core_and_diges
         let error = outcome
             .error
             .unwrap_or_else(|| panic!("{case:?} was accepted"));
-        if let Some(expected) = expected {
-            assert_eq!(error, conflict(expected), "{case:?}");
-        } else {
-            assert!(
-                [conflict(COMPANION), conflict(RESOURCE)].contains(&error),
-                "{case:?}: expected an overlap to be refused, got {error}"
-            );
-        }
+        assert!(
+            paths.iter().any(|path| blocked(tag, path) == error),
+            "{case:?}: expected {tag} at {paths:?}, got {error}"
+        );
         no_pending(&test.fixture);
     }
 }

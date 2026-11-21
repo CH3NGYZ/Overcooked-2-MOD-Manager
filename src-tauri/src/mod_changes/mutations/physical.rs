@@ -19,19 +19,30 @@ impl Builder<'_> {
         else {
             return Ok(None);
         };
-        let rejected = || file_conflict(owner, destination);
         let physical = self.physical(owner, key)?;
         self.ensure_owner(&physical, owner)?;
         let source_path = game(&physical).resolve(&self.roots)?;
         let destination_path = game(destination).resolve(&self.roots)?;
         if path_key(&source_path) != path_key(&destination_path) {
-            return Err(rejected());
+            return Err(InstallBlock::BundlePathChanged.report(owner, destination));
         }
-        let source_file = Handle::from_path(&source_path).map_err(|_| rejected())?;
-        if Handle::from_path(&destination_path).ok().as_ref() != Some(&source_file)
-            || !has_single_link(source_file.as_file())
-        {
-            return Err(rejected());
+        let file_handle = |path: &Path, relative: &str| {
+            Handle::from_path(path).map_err(|error| {
+                log::debug!("无法核对随包插件文件：路径={relative}，系统错误={error}");
+                let reason = if error.kind() == ErrorKind::NotFound {
+                    InstallBlock::VerificationChanged
+                } else {
+                    InstallBlock::Unreadable
+                };
+                reason.report(owner, relative)
+            })
+        };
+        let source_file = file_handle(&source_path, &physical)?;
+        if file_handle(&destination_path, destination)? != source_file {
+            return Err(InstallBlock::AliasesOrLink.report(owner, destination));
+        }
+        if !has_single_link(source_file.as_file()) {
+            return Err(InstallBlock::AliasesOrLink.report(owner, destination));
         }
         // Ownership is indexed by logical keys. Also reject aliases to the same
         // file (e.g. a manifest spelling a Windows short name or APFS alias).
@@ -55,21 +66,39 @@ impl Builder<'_> {
         });
         let before = Fingerprint::capture(&source_path)?;
         let identity = mods::read_dll_details(&source_path, &physical).guid;
-        let matches_identity = if previous.guid.trim().is_empty() {
+        let identity_check = if previous.guid.trim().is_empty() {
             // The legacy GUID-less stub's structural declaration is only a
             // switch claim; an overlapping install must prove identical bytes.
-            identity.is_none() && release_stamp.is_some_and(|stamp| before.same_content(stamp))
+            match (identity, release_stamp) {
+                (None, Some(stamp)) if before.same_content(stamp) => Ok(()),
+                (None, Some(_)) => Err(InstallBlock::BundleFileDiffers),
+                (None, None) => Err(InstallBlock::NeedsVerifiedRelease),
+                (Some(_), _) => Err(InstallBlock::PluginMismatch),
+            }
         } else {
-            identity
-                .as_deref()
-                .is_some_and(|guid| crate::mod_changes::evaluate::same_guid(guid, &previous.guid))
+            match identity.as_deref() {
+                Some(guid) if crate::mod_changes::evaluate::same_guid(guid, &previous.guid) => {
+                    Ok(())
+                }
+                Some(guid) if !guid.trim().is_empty() => Err(InstallBlock::PluginMismatch),
+                _ => Err(InstallBlock::PluginIdentityUnknown),
+            }
         };
-        if has_other_claim
-            || !matches!(before, Fingerprint::File { .. })
-            || !matches_identity
-            || Fingerprint::capture(&source_path)? != before
-        {
-            return Err(rejected());
+        if has_other_claim {
+            return Err(InstallBlock::AliasesOrLink.report(owner, &physical));
+        }
+        match before {
+            Fingerprint::File { .. } => (),
+            Fingerprint::Directory { .. } => {
+                return Err(InstallBlock::Directory.report(owner, &physical));
+            }
+            Fingerprint::Missing => {
+                return Err(InstallBlock::VerificationChanged.report(owner, &physical));
+            }
+        }
+        identity_check.map_err(|reason| reason.report(owner, &physical))?;
+        if Fingerprint::capture(&source_path)? != before {
+            return Err(InstallBlock::VerificationChanged.report(owner, &physical));
         }
         Ok(Some((physical, before)))
     }
@@ -122,13 +151,14 @@ impl Builder<'_> {
             let relative = match (active.is_file(), inactive.is_file()) {
                 (true, false) => canonical,
                 (false, true) => disabled,
-                _ => return Err("modChanges.ambiguousOwnership".into()),
+                (true, true) => return Err(InstallBlock::BothStates.report(owner, &canonical)),
+                (false, false) => return Err("modChanges.ambiguousOwnership".into()),
             };
             let actual = crate::game::safe_game_path(&self.roots.game_root, &relative)?;
             physical.insert(inventory::relative(&root, &actual)?);
         }
-        if physical.len() != 1 {
-            return Err("modChanges.ambiguousOwnership".into());
+        if physical.len() > 1 {
+            return Err(InstallBlock::AliasesOrLink.report(owner, member_key));
         }
         physical
             .pop_first()

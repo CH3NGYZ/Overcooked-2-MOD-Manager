@@ -1,6 +1,8 @@
 import type { DomainMessages } from './types'
+import { modChangeInstallErrors } from './modChangeInstallErrors.ts'
 
 export const modChanges: DomainMessages = {
+  ...modChangeInstallErrors,
   title: { 'zh-CN': '处理变更', 'zh-TW': '處理變更', en: 'Process Changes', ko: '변경 처리', ja: '変更の処理' },
   detailsTable: { 'zh-CN': '变更详情', 'zh-TW': '變更詳情', en: 'Change details', ko: '변경 세부 정보', ja: '変更の詳細' },
   detailsSelection: { 'zh-CN': '所选目标', 'zh-TW': '所選目標', en: 'Selected target', ko: '선택한 대상', ja: '選択した対象' },
@@ -92,7 +94,6 @@ export const modChanges: DomainMessages = {
   completed: { 'zh-CN': '整链变更已完成。', 'zh-TW': '整鏈變更已完成。', en: 'All changes have been applied.', ko: '전체 변경이 적용되었습니다.', ja: 'すべての変更を適用しました。' },
   ambiguousOwnership: { 'zh-CN': '文件归属不唯一，无法安全应用方案。', 'zh-TW': '檔案歸屬不唯一，無法安全套用方案。', en: 'File ownership is ambiguous; the plan cannot be applied safely.', ko: '파일 소유권이 명확하지 않아 안전하게 적용할 수 없습니다.', ja: 'ファイルの所有元が不明確なため安全に適用できません。' },
   duplicatePluginRuntime: { 'zh-CN': '插件 {guid} 会同时加载多份。请确认应保留哪个版本，停用多余的一份后重试：{paths}', 'zh-TW': '外掛 {guid} 會同時載入多份。請確認要保留哪個版本，停用多餘的一份後再試：{paths}', en: 'Multiple copies of plugin {guid} would load. Check which version to keep, disable the extra copy, and try again: {paths}', ko: '{guid} 플러그인이 여러 개 로드됩니다. 유지할 버전을 확인하고 나머지를 비활성화한 뒤 다시 시도하세요: {paths}', ja: 'プラグイン {guid} が複数読み込まれます。残すバージョンを確認し、余分なものを無効にしてからやり直してください：{paths}' },
-  fileOwnershipConflict: { 'zh-CN': '无法确认文件归属，未覆盖：{path}', 'zh-TW': '無法確認檔案歸屬，未覆寫：{path}', en: 'Could not verify ownership of this file. It was left unchanged: {path}', ko: '파일의 소유권을 확인할 수 없어 덮어쓰지 않았습니다: {path}', ja: 'ファイルの所有元を確認できなかったため、上書きしませんでした：{path}' },
   payloadChanged: { 'zh-CN': '待安装文件已变化，请重新验证并确认。', 'zh-TW': '待安裝檔案已變更，請重新驗證並確認。', en: 'The installation files changed. Validate and confirm again.', ko: '설치 파일이 변경되었습니다. 다시 검증하고 확인하세요.', ja: 'インストールファイルが変更されました。再検証して確認してください。' },
   missingMetadata: { 'zh-CN': '缺少关系或版本元数据，无法确认方案。', 'zh-TW': '缺少關係或版本中繼資料，無法確認方案。', en: 'Relation or version metadata is missing; the plan cannot be confirmed.', ko: '관계 또는 버전 메타데이터가 없어 계획을 확인할 수 없습니다.', ja: '依存関係またはバージョンの情報が不足しているため計画を確認できません。' },
   installationBlocked: { 'zh-CN': '当前变更无法安全合并，已阻止应用。请分次操作或重新生成方案。', 'zh-TW': '目前變更無法安全合併，已阻止套用。請分次操作或重新產生方案。', en: 'These changes cannot be combined safely. Split the operation or create a new plan.', ko: '이 변경을 안전하게 결합할 수 없습니다. 작업을 나누거나 계획을 다시 만드세요.', ja: '変更を安全に組み合わせられません。操作を分けるか計画を再作成してください。' },

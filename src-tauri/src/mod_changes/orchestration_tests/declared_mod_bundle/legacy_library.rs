@@ -105,6 +105,36 @@ fn exact_release_replaces_changed_guidless_and_ungrouped_companions_without_a_ma
 }
 
 #[test]
+fn replacing_a_declared_stub_without_release_proof_reports_the_failed_check() {
+    let f = framework_fixture();
+    write(
+        &f.game.join(CORE_PATH),
+        &mods::plugin_blob(FRAMEWORK_GUID, "DIYLevel", "0.11.0"),
+    );
+    write(&f.game.join(STUB_PATH), b"legacy helper");
+    let new_core = mods::plugin_blob(FRAMEWORK_GUID, "DIYLevel", "0.11.1");
+    let preview = exact_preview(
+        &f,
+        [
+            (CORE_PATH, new_core.as_slice()),
+            (STUB_PATH, b"legacy helper"),
+        ],
+        false,
+    );
+    let before = Fingerprint::capture(&f.game).unwrap();
+    let plan = planning::create(&f.state, request(FRAMEWORK, Some("v0.11.1"), true)).unwrap();
+    let mut session = take(&f, &plan);
+    inject_release(&f, &mut session, &preview).unwrap();
+    planning::resolve(&f.state, &mut session).unwrap();
+    assert_eq!(
+        preparation::finish(&f.state, &mut session).unwrap_err(),
+        format!("modChanges.installTargetNeedsVerifiedRelease?path={STUB_PATH}")
+    );
+    assert_eq!(Fingerprint::capture(&f.game).unwrap(), before);
+    assert!(archive::read_manifests(&f.state.config.manifests_dir()).is_empty());
+}
+
+#[test]
 fn missing_core_reinstalls_with_disabled_identical_loose_members_and_resources() {
     let f = framework_fixture();
     let stubs = [
@@ -184,15 +214,18 @@ fn missing_core_reinstalls_with_disabled_identical_loose_members_and_resources()
 
 #[test]
 fn missing_core_refuses_unsafe_release_residues_with_their_exact_paths() {
-    for case in [
-        "different",
-        "no digest",
-        "twins",
-        "hard link",
-        "manifest",
-        "map registry",
-        "separate GUID",
-        "different resource",
+    for (case, tag) in [
+        ("different", "modChanges.installTargetResidueDiffers"),
+        ("no digest", "modChanges.installTargetNeedsVerifiedRelease"),
+        ("twins", "modChanges.installTargetHasBothStates"),
+        ("hard link", "modChanges.installTargetAliasesOrLink"),
+        ("manifest", "modChanges.installTargetClaimed"),
+        ("map registry", "modChanges.installTargetMapProtected"),
+        ("separate GUID", "modChanges.installTargetOwned"),
+        (
+            "different resource",
+            "modChanges.installTargetResidueDiffers",
+        ),
     ] {
         let f = framework_fixture();
         let core = mods::plugin_blob(FRAMEWORK_GUID, "DIYLevel", "0.11.1");
@@ -265,7 +298,7 @@ fn missing_core_refuses_unsafe_release_residues_with_their_exact_paths() {
         let error = planning::resolve(&f.state, &mut session).unwrap_err();
         assert_eq!(
             error,
-            crate::locale_tag::with_params("modChanges.fileOwnershipConflict", &[("path", path)]),
+            crate::locale_tag::with_params(tag, &[("path", path)]),
             "{case}"
         );
         assert_eq!(Fingerprint::capture(&f.game).unwrap(), before, "{case}");
@@ -295,7 +328,10 @@ fn missing_core_approval_keeps_a_changed_residue_and_refuses_to_write() {
     let before = Fingerprint::capture(&f.game).unwrap();
     assert_eq!(
         super::super::super::execution::commit(&f.state, &mut session, |_| {}).unwrap_err(),
-        crate::locale_tag::with_params("modChanges.fileOwnershipConflict", &[("path", &disabled)]),
+        crate::locale_tag::with_params(
+            "modChanges.installTargetResidueDiffers",
+            &[("path", &disabled)]
+        ),
     );
     assert_eq!(Fingerprint::capture(&f.game).unwrap(), before);
     assert!(archive::read_manifests(&f.state.config.manifests_dir()).is_empty());

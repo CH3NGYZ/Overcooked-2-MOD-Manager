@@ -61,6 +61,32 @@ test('带路径参数的错误不会破坏插值（含反斜杠与冒号）', ()
   assert.match(text, /D:\\backups\\DIYLevel\.backup-1/, `路径未正确插值：${text}`)
 })
 
+test('安装冲突先显示对应原因，再另起一行保留完整位置', () => {
+  const path = 'BepInEx/plugins/旧版 & new 100%+/HostUtilities.dll'
+  const keys = [
+    'modChanges.installTargetIsDirectory',
+    'modChanges.installTargetClaimed',
+    'modChanges.fileOwnershipConflict',
+  ]
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
+    i18n.global.locale.value = locale
+    const reasons = keys.map(key => {
+      const text = backendMessageOf({ message: `${key}?path=${encodeURIComponent(path)}` })
+      const [reason, location] = text.split('\n')
+      assert.ok(reason && !reason.includes(path))
+      assert.ok(location?.endsWith(path), text)
+      assert.equal(translateBackendMessage(text), text)
+      return reason
+    })
+    assert.equal(new Set(reasons).size, keys.length)
+    if (locale === 'zh-CN') {
+      assert.match(reasons[0], /同名文件夹.*备份/)
+      assert.match(reasons[1], /已有安装清单.*刷新 MOD 列表/)
+      assert.match(reasons[2], /无法确认.*保留现有文件/)
+    }
+  }
+})
+
 test('未登记的 tag 原样返回，便于发现漏翻译', () => {
   const text = inLocale('en', 'nothing.notRegistered')
   assert.equal(text, 'nothing.notRegistered')

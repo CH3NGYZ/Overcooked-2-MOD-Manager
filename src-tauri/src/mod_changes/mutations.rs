@@ -13,19 +13,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod install_block;
 mod order;
 mod physical;
 mod release_ownership;
 mod retirements;
 mod roots;
+pub(super) use install_block::InstallBlock;
 pub(super) use release_ownership::LooseFileClaims;
 pub(super) use release_ownership::LooseReleaseSearch;
 pub(super) use roots::{final_framework_package, final_package};
-
-pub(super) fn file_conflict(owner: &str, relative: &str) -> String {
-    log::warn!("整链安装无法确认文件归属：节点={owner}，路径={relative}");
-    crate::locale_tag::with_params("modChanges.fileOwnershipConflict", &[("path", relative)])
-}
 
 pub(super) struct Builder<'a> {
     pub roots: TransactionRoots,
@@ -35,6 +32,7 @@ pub(super) struct Builder<'a> {
     pub ownership: BTreeMap<String, BTreeSet<String>>,
     ownership_paths: BTreeSet<String>,
     external_claims: BTreeSet<String>,
+    manifest_owners: BTreeMap<String, BTreeSet<String>>,
     pub protected_maps: Vec<String>,
     pub map_paths: Vec<(String, String)>,
 }
@@ -166,6 +164,7 @@ impl Builder<'_> {
             ownership: BTreeMap::new(),
             ownership_paths: BTreeSet::new(),
             external_claims: BTreeSet::new(),
+            manifest_owners: BTreeMap::new(),
             protected_maps,
             map_paths: Vec::new(),
         };
@@ -176,16 +175,28 @@ impl Builder<'_> {
     fn index_ownership(&mut self) -> Result<(), String> {
         let manifests = self.roots.data_root.join("manifests");
         if manifests.exists() {
-            for entry in fs::read_dir(&manifests).map_err(|error| error.to_string())? {
-                let path = entry.map_err(|error| error.to_string())?.path();
+            let unreadable = |error| {
+                log::debug!("无法读取安装记录目录：路径=manifests，系统错误={error}");
+                InstallBlock::RecordUnreadable.report("install-record", "manifests")
+            };
+            for entry in fs::read_dir(&manifests).map_err(unreadable)? {
+                let path = entry.map_err(unreadable)?.path();
                 if path
                     .extension()
                     .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"))
                 {
-                    let text =
-                        fs::read_to_string(&path).map_err(|_| "modChanges.ambiguousOwnership")?;
-                    let manifest = toml::from_str::<archive::InstallManifest>(&text)
-                        .map_err(|_| "modChanges.ambiguousOwnership")?;
+                    let record_path = format!(
+                        "manifests/{}",
+                        path.file_name().unwrap_or_default().to_string_lossy()
+                    );
+                    let text = fs::read_to_string(&path).map_err(|error| {
+                        log::debug!("无法读取安装记录：路径={record_path}，系统错误={error}");
+                        InstallBlock::RecordUnreadable.report("install-record", &record_path)
+                    })?;
+                    let manifest =
+                        toml::from_str::<archive::InstallManifest>(&text).map_err(|_| {
+                            InstallBlock::RecordInvalid.report("install-record", &record_path)
+                        })?;
                     let owners = self
                         .session
                         .trusted
@@ -204,8 +215,13 @@ impl Builder<'_> {
                         format!("unknown-package:{}", manifest.repository_id)
                     };
                     for file in manifest.files {
+                        let key = inventory::key(&mods::canonical_dll_name(&file));
                         self.ownership
-                            .entry(inventory::key(&mods::canonical_dll_name(&file)))
+                            .entry(key.clone())
+                            .or_default()
+                            .insert(owner.clone());
+                        self.manifest_owners
+                            .entry(key)
                             .or_default()
                             .insert(owner.clone());
                         self.external_claims.insert(file.clone());
@@ -231,18 +247,22 @@ impl Builder<'_> {
 
     pub fn ensure_owner(&self, relative: &str, owner: &str) -> Result<(), String> {
         let key = inventory::key(&mods::canonical_dll_name(relative));
+        match self.ownership.get(&key) {
+            Some(owners) if owners.len() == 1 && owners.contains(owner) => Ok(()),
+            Some(_) => Err(self.ownership_block(&key, owner).report(owner, relative)),
+            None => Err(InstallBlock::Unverified.report(owner, relative)),
+        }
+    }
+
+    fn ownership_block(&self, key: &str, owner: &str) -> InstallBlock {
         if self
-            .ownership
-            .get(&key)
-            .is_some_and(|owners| owners.len() == 1 && owners.contains(owner))
+            .manifest_owners
+            .get(key)
+            .is_some_and(|owners| owners.iter().any(|entry| entry != owner))
         {
-            Ok(())
+            InstallBlock::InstallRecord
         } else {
-            log::warn!(
-                "整链安装归属不明确：节点={owner}，路径={relative}，已知归属={:?}",
-                self.ownership.get(&key)
-            );
-            Err("modChanges.ambiguousOwnership".into())
+            InstallBlock::PathOwned
         }
     }
 
@@ -256,13 +276,12 @@ impl Builder<'_> {
         let source = game(from).resolve(&self.roots)?;
         let target = game(to).resolve(&self.roots)?;
         let expected = Fingerprint::capture(&source)?;
-        if expected == Fingerprint::Missing
-            || Fingerprint::capture(&target)? != Fingerprint::Missing
-        {
-            log::warn!(
-                "整链移动路径冲突：节点={owner}，原路径={from}，目标路径={to}，原因=原文件缺失或目标已存在"
-            );
-            return Err("modChanges.pathCollision".into());
+        if expected == Fingerprint::Missing {
+            return Err(InstallBlock::VerificationChanged.report(owner, from));
+        }
+        let existing = Fingerprint::capture(&target)?;
+        if existing != Fingerprint::Missing {
+            return Err(occupied_target(&existing).report(owner, to));
         }
         for owned in &self.moves {
             if let Mutation::Move(change) = &owned.mutation {
@@ -274,7 +293,7 @@ impl Builder<'_> {
                             "整链移动路径冲突：节点={owner}，原路径={from}，目标路径={to}，冲突路径={}，原因=移动端点重叠",
                             existing.relative
                         );
-                        return Err("modChanges.pathCollision".into());
+                        return Err(InstallBlock::PathCollision.report(owner, &existing.relative));
                     }
                 }
             }
@@ -289,7 +308,7 @@ impl Builder<'_> {
                         "整链移动路径冲突：节点={owner}，原路径={from}，目标路径={to}，冲突路径={}，原因=写入与移动重叠",
                         change.target.relative
                     );
-                    return Err("modChanges.pathCollision".into());
+                    return Err(InstallBlock::PathCollision.report(owner, &change.target.relative));
                 }
             }
         }
@@ -322,11 +341,7 @@ impl Builder<'_> {
         } = &mut change;
         let id = format!("{:?}:{}", target.root, inventory::key(&target.relative));
         if matches!(expected, Fingerprint::Directory { .. }) {
-            log::warn!(
-                "整链写入路径冲突：节点={owner}，路径={}，原因=目标是目录",
-                target.relative
-            );
-            return Err("modChanges.pathCollision".into());
+            return Err(InstallBlock::Directory.report(owner, &target.relative));
         }
         for owned in &self.moves {
             if let Mutation::Move(change) = &owned.mutation {
@@ -338,7 +353,7 @@ impl Builder<'_> {
                         "整链写入路径冲突：节点={owner}，路径={}，原因=写入与移动重叠",
                         target.relative
                     );
-                    return Err("modChanges.pathCollision".into());
+                    return Err(InstallBlock::PathCollision.report(owner, &target.relative));
                 }
             }
         }
@@ -349,18 +364,18 @@ impl Builder<'_> {
                     "整链写入归属冲突：节点={owner}，路径={}，前一归属={previous_owner}",
                     target.relative
                 );
-                return Err("modChanges.ambiguousOwnership".into());
+                return Err(InstallBlock::PathOwned.report(owner, &target.relative));
             }
             if let Mutation::File(previous_file) = &mut previous.mutation {
                 if previous_file.expected != *expected {
-                    return Err("modChanges.targetChanged".into());
+                    return Err(InstallBlock::VerificationChanged.report(owner, &target.relative));
                 }
                 if previous_file.source.is_some() && source.is_some() {
                     log::warn!(
                         "整链写入路径冲突：节点={owner}，路径={}，原因=同一目标重复写入",
                         target.relative
                     );
-                    return Err("modChanges.pathCollision".into());
+                    return Err(InstallBlock::PathCollision.report(owner, &target.relative));
                 }
                 if previous_file.source.is_some() {
                     previous_file.require_single_link |= *require_single_link;
@@ -553,12 +568,7 @@ impl Builder<'_> {
                 .iter()
                 .any(|map| within(&destination, map))
             {
-                log::warn!(
-                    "整链安装路径冲突：节点={}，路径={}，原因=MOD资产试图覆盖地图目录",
-                    node.id,
-                    destination
-                );
-                return Err("modChanges.pathCollision".into());
+                return Err(InstallBlock::MapProtected.report(&node.id, &destination));
             }
             let ownership_key = inventory::key(&mods::canonical_dll_name(&destination));
             let loose = self.session.loose_file_claims.get(&node.id, &ownership_key);
@@ -567,16 +577,16 @@ impl Builder<'_> {
             if loose.is_none()
                 && owners.is_some_and(|owners| owners.len() != 1 || !owners.contains(&node.id))
             {
-                return Err(file_conflict(&node.id, &destination));
+                return Err(self
+                    .ownership_block(&ownership_key, &node.id)
+                    .report(&node.id, &destination));
             }
             if is_dll && loose.is_none() {
                 let canonical = mods::canonical_dll_name(&destination);
                 for variant in [&canonical, &mods::disabled_dll_file(&canonical)] {
-                    if Fingerprint::capture(&game(variant).resolve(&self.roots)?)?
-                        != Fingerprint::Missing
-                        && unowned
-                    {
-                        return Err(file_conflict(&node.id, variant));
+                    let existing = Fingerprint::capture(&game(variant).resolve(&self.roots)?)?;
+                    if existing != Fingerprint::Missing && unowned {
+                        return Err(occupied_target(&existing).report(&node.id, variant));
                     }
                 }
             }
@@ -639,7 +649,7 @@ impl Builder<'_> {
                 StagedFile::capture(path)?
             };
             if expected != Fingerprint::Missing && unowned && loose.is_none() {
-                return Err(file_conflict(&node.id, &destination));
+                return Err(occupied_target(&expected).report(&node.id, &destination));
             }
             // Do not re-sample either side after authorizing the untracked target.
             self.write(
@@ -669,7 +679,12 @@ impl Builder<'_> {
                     .any(|old| old.repository_id == manifest.repository_id)
             })
         {
-            return Err("modChanges.ambiguousOwnership".into());
+            let reason = if matches!(expected, Fingerprint::Directory { .. }) {
+                InstallBlock::Directory
+            } else {
+                InstallBlock::RecordExists
+            };
+            return Err(reason.report(&node.id, &manifest_target.relative));
         }
         let staged = generated(
             self.session,
@@ -688,6 +703,13 @@ impl Builder<'_> {
                 require_single_link: false,
             },
         )
+    }
+}
+
+pub(super) fn occupied_target(existing: &Fingerprint) -> InstallBlock {
+    match existing {
+        Fingerprint::Directory { .. } => InstallBlock::Directory,
+        _ => InstallBlock::Unrecognized,
     }
 }
 

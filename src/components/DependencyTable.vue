@@ -90,14 +90,14 @@ function lineLabel(line: DependencyRow['line']): string {
 
 <template>
   <section v-if="visible" class="dep-block">
-    <div class="dep-scroll">
-      <table class="dep-table">
+    <div class="dep-scroll oc2-table-scroll">
+      <table class="dep-table oc2-detail-table">
         <thead>
           <tr>
             <th scope="col">{{ t('tools.modColumn') }}</th>
-            <th v-if="showKind" scope="col">{{ t('tools.relation') }}</th>
-            <th scope="col">{{ t('tools.requirement') }}</th>
-            <th scope="col">{{ t('tools.status') }}</th>
+            <th v-if="showKind" scope="col" class="oc2-table-fit">{{ t('tools.relation') }}</th>
+            <th scope="col" class="oc2-table-fit">{{ t('tools.requirement') }}</th>
+            <th scope="col" class="oc2-table-fit">{{ t('tools.status') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -107,7 +107,7 @@ function lineLabel(line: DependencyRow['line']): string {
               {{ kindLabel(row) }}
               <span v-if="row.line" class="dep-line">{{ lineLabel(row.line) }}</span>
             </td>
-            <td class="dep-req mono">{{ row.requirement || '-' }}</td>
+            <td class="dep-req oc2-table-version mono">{{ row.requirement || '-' }}</td>
             <td class="dep-state">
               <div v-if="row.status" class="dep-verdict">
                 <n-tag size="tiny" :bordered="false" class="state-tag"
@@ -132,59 +132,26 @@ function lineLabel(line: DependencyRow['line']): string {
 <style scoped>
 .dep-block {
   min-inline-size: 0;
-}
-
-/* 短表按内容收宽；超过卡片时只让表格内部滚动。 */
-.dep-scroll {
-  box-sizing: border-box;
-  inline-size: max-content;
-  max-inline-size: 100%;
-  overflow-x: auto;
-  border: 1px solid var(--oc2-row-line);
-  border-radius: 10px;
-  background: var(--oc2-card);
+  container-type: inline-size;
 }
 
 .dep-table {
-  border-collapse: collapse;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.dep-table th {
-  padding: 6px 10px;
-  text-align: left;
-  font-weight: 600;
-  white-space: nowrap;
-  color: var(--oc2-text-3);
-  background: var(--oc2-sunken);
-  border-bottom: 1px solid var(--oc2-row-line);
-}
-
-.dep-table td {
-  padding: 6px 10px;
   color: var(--oc2-text-2);
-  border-bottom: 1px solid var(--oc2-row-line);
-  vertical-align: middle;
-}
-
-/* 最后一行不画线：外框已经有边框，再画一条会显得厚 */
-.dep-table tbody tr:last-child td {
-  border-bottom: 0;
 }
 
 .dep-name {
-  overflow-wrap: anywhere;
   color: var(--oc2-text-1);
+}
+
+.dep-name,
+.dep-reason {
+  overflow-wrap: anywhere;
 }
 
 .dep-kind,
 .dep-req {
   color: var(--oc2-text-3);
 }
-
-/* 版本条件是整体；空间紧时优先把发布线小标移到下一行。 */
-.dep-req { white-space: nowrap; }
 
 /* 发布线小标：跟在关系名后面，说明这条关系指的是测试版还是正式版 */
 .dep-line {
@@ -200,6 +167,10 @@ function lineLabel(line: DependencyRow['line']): string {
 }
 
 .dep-verdict {
+  /* 按标签和说明预留宽度，说明再长也给名称及版本留空间。 */
+  inline-size: max-content;
+  min-inline-size: min-content;
+  max-inline-size: min(32ch, 30cqi);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -209,9 +180,7 @@ function lineLabel(line: DependencyRow['line']): string {
 .dep-verdict .state-tag { flex: none; }
 
 .dep-reason {
-  max-inline-size: 26ch;
   color: var(--oc2-text-3);
-  overflow-wrap: anywhere;
 }
 
 /* 可点标签的手型与悬停反馈由 global.css 的 .state-tag--link 统一提供 */

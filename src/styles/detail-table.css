@@ -1,0 +1,40 @@
+/* 详情卡片和整链确认共用表框。超宽的版本条件只在框内滚动。 */
+.oc2-table-scroll {
+  --oc2-table-line: color-mix(in srgb, var(--oc2-row-line), var(--oc2-hover-line) 70%);
+  box-sizing: border-box;
+  min-inline-size: 0;
+  inline-size: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--oc2-table-line);
+  border-radius: 10px;
+  background: var(--oc2-table-surface, var(--oc2-card));
+}
+
+.oc2-detail-table {
+  inline-size: 100%;
+  border-spacing: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.oc2-detail-table :where(th, td) {
+  padding: var(--oc2-table-cell-padding, 6px 10px);
+  vertical-align: middle;
+}
+
+.oc2-detail-table thead th {
+  background: var(--oc2-sunken);
+  color: var(--oc2-text-2);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.oc2-detail-table tbody :where(th, td) {
+  border-block-start: 1px solid var(--oc2-table-line);
+}
+
+/* 自动列宽仍尊重内容的最小宽度。剩余宽度分给可折行的文字列。 */
+.oc2-detail-table thead .oc2-table-fit { inline-size: 1px; }
+.oc2-detail-table .oc2-table-version { white-space: nowrap; font-variant-numeric: tabular-nums; }

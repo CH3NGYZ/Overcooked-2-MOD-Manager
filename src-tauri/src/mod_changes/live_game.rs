@@ -52,13 +52,17 @@ pub(super) fn touches_mods(
             }
             Mutation::Tree(_) => false,
             Mutation::Move(change) => {
+                let in_game =
+                    change.from.root == RootKind::Game || change.to.root == RootKind::Game;
                 outside_maps(&change.from)
                     || outside_maps(&change.to)
-                    || dll(&change.from)
-                    || dll(&change.to)
-                    || ((change.from.root == RootKind::Game || change.to.root == RootKind::Game)
-                        && matches!(change.expected, Fingerprint::Directory { .. })
-                        && contains_dll(&change.from.resolve(roots)?)?)
+                    || (in_game
+                        && match change.expected {
+                            Fingerprint::Directory { .. } => {
+                                contains_dll(&change.from.resolve(roots)?)?
+                            }
+                            _ => dll(&change.from) || dll(&change.to),
+                        })
             }
         };
         if affects_mod {

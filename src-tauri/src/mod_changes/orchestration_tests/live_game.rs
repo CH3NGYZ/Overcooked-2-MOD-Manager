@@ -156,6 +156,46 @@ async fn running_game_commits_map_data_and_relation_snapshot() {
     assert!(!has_pending(&journal_root(&f)).unwrap());
 }
 
+#[tokio::test]
+async fn running_game_can_disable_pure_maps_with_dll_like_directory_names() {
+    for suffix in [".dll", ".dll.disabled"] {
+        let relations = vec![requires(mods::plugin_target::DIYLEVEL_GUID, ">=0.11.1")];
+        let f = setup(vec![], relations.clone());
+        let plan = planning::create(&f.state, import(&f, &[])).unwrap();
+        let prepared = ready(prepare(&f, &plan).await);
+        execution::commit(&f.state, &mut take(&f, &prepared), |_| {}).unwrap();
+
+        let name = format!("{MAP_NAME}{suffix}");
+        let source = installed_map(&f).with_file_name(&name);
+        fs::rename(installed_map(&f), &source).unwrap();
+        let destination = crate::level_sets::disabled_root(&f.game).join(&name);
+        let map = Fingerprint::capture(&source).unwrap();
+        let manifests = f.state.config.manifests_dir();
+        let before = snapshot(&f);
+
+        running(&f, true);
+        let id = format!("map:{name}");
+        let request = super::unbound_toggle::toggle(&f, &id, None, false);
+        let plan = planning::create(&f.state, request).unwrap();
+        let [action] = plan.result.actions.as_slice() else {
+            panic!("expected only the map disable: {:?}", plan.result);
+        };
+        assert_eq!(action.node_id, id);
+        assert_eq!(action.kind, ActionKind::Disable);
+        let prepared = ready(prepare(&f, &plan).await);
+        assert_eq!(snapshot(&f), before);
+        execution::commit(&f.state, &mut take(&f, &prepared), |_| {}).unwrap();
+
+        assert_eq!(Fingerprint::capture(&source).unwrap(), Fingerprint::Missing);
+        assert_eq!(Fingerprint::capture(&destination).unwrap(), map);
+        assert_eq!(fs::read(destination.join("scene")).unwrap(), SCENE);
+        assert_eq!(Fingerprint::capture(&manifests).unwrap(), before[1]);
+        let snapshots = archive::read_map_relation_snapshots(&manifests);
+        assert_eq!(snapshots.entries[MAP_REPO].relations, relations);
+        assert!(!has_pending(&journal_root(&f)).unwrap());
+    }
+}
+
 #[test]
 fn running_game_rejects_standalone_mod_and_map_induced_mod_actions() {
     let f = setup(

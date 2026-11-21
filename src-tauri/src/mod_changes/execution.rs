@@ -90,8 +90,10 @@ pub(super) fn commit(
     if root != session.trusted.game_root {
         return Err("modChanges.targetChanged".into());
     }
-    if !session.loose_file_claims.is_empty() {
-        session.loose_file_claims.verify(state, session, solved)?;
+    if !session.release_target_claims.is_empty() {
+        session
+            .release_target_claims
+            .verify(state, session, solved)?;
     }
     if inventory::revision(state, &root, &config)? != session.trusted.revision {
         return Err("modChanges.targetChanged".into());
@@ -112,7 +114,7 @@ pub(super) fn commit(
             .as_deref()
             .ok_or("modChanges.notPrepared")?,
     )?;
-    let check_game = || {
+    let check_game = || -> Result<(), String> {
         if touches_mods {
             guard::ensure_game_stopped(state, &root)?;
         }
@@ -123,6 +125,7 @@ pub(super) fn commit(
     // Consuming frozen mutations consumes approval, including prepare failures.
     session.plan.prepared = false;
     if !changes.is_empty() {
+        let written = session.release_target_claims.reinstall_writes(&changes);
         // Revoke old recompression leases before publishing Applying. No background
         // worker may write into a directory whose ownership is about to change.
         state.invalidate_local_mod_snapshot()?;
@@ -165,9 +168,23 @@ pub(super) fn commit(
         );
         // The game can start during private journal preparation. Check again
         // after verifying that journal, just before its first live write.
+        let check_targets = || {
+            check_game()?;
+            if session.release_target_claims.has_reinstalls() {
+                session
+                    .release_target_claims
+                    .verify(state, session, solved)?;
+            }
+            Ok(())
+        };
         match transaction.apply_checked(
             crate::archive::is_download_cancelled,
-            check_game,
+            check_targets,
+            || {
+                session
+                    .release_target_claims
+                    .verify_reinstalled_paths(&roots, &written)
+            },
             |event| progress.observe(event),
         ) {
             Ok(watch_paths) => state.committed_watch_paths.publish(watch_paths),

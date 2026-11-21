@@ -1,12 +1,13 @@
 //! Check verified loose-file replacements inside the branch that selected them.
-use super::loose_files::{LooseClaimError, exact_replacement, keeps_provider};
+use super::claims::ReleaseTargetError;
+use super::loose_files::{exact_replacement, keeps_provider};
 use super::*;
 
 pub(in crate::mod_changes) struct LooseReleaseSearch<'a> {
     session: &'a PlanSession,
     roots: TransactionRoots,
     by_owner: BTreeMap<usize, BTreeMap<String, Vec<Provider>>>,
-    accepted_claims: Option<LooseFileClaims>,
+    accepted_claims: Option<ReleaseTargetClaims>,
     rejection: Option<String>,
 }
 
@@ -134,7 +135,7 @@ impl<'a> LooseReleaseSearch<'a> {
         Ok(())
     }
 
-    fn claims(&self, solved: &Inventory) -> Result<LooseFileClaims, LooseClaimError> {
+    fn claims(&self, solved: &Inventory) -> Result<ReleaseTargetClaims, ReleaseTargetError> {
         // An earlier asset may be verified before DIYLevel has an actual DLL
         // path. Neither a search branch nor the final plan can guess its roots.
         if solved.nodes.iter().any(|node| {
@@ -142,9 +143,9 @@ impl<'a> LooseReleaseSearch<'a> {
                 .as_ref()
                 .is_some_and(|candidate| candidate.verification_pending)
         }) {
-            return Ok(LooseFileClaims::default());
+            return Ok(ReleaseTargetClaims::default());
         }
-        LooseFileClaims::collect(self.session, self.roots.clone(), solved)
+        ReleaseTargetClaims::collect(self.session, self.roots.clone(), solved)
     }
 
     pub fn accept(&mut self, solved: &Inventory) -> Result<bool, String> {
@@ -153,7 +154,7 @@ impl<'a> LooseReleaseSearch<'a> {
                 self.accepted_claims = Some(claims);
                 Ok(true)
             }
-            Err(LooseClaimError::ForeignManifest { owner, message })
+            Err(ReleaseTargetError::ForeignManifest { owner, message })
                 if !self
                     .session
                     .request
@@ -172,7 +173,7 @@ impl<'a> LooseReleaseSearch<'a> {
         self,
         state: &AppState,
         solved: Option<&Inventory>,
-    ) -> Result<LooseFileClaims, String> {
+    ) -> Result<ReleaseTargetClaims, String> {
         if self.rejection.is_some() {
             // Before proceeding with a different plan or a different download,
             // distinguish a stable conflict from a stale game/manifest snapshot.
@@ -188,7 +189,7 @@ impl<'a> LooseReleaseSearch<'a> {
             Some(inventory) => self.claims(inventory).map_err(Into::into),
             None => self
                 .rejection
-                .map_or_else(|| Ok(LooseFileClaims::default()), Err),
+                .map_or_else(|| Ok(ReleaseTargetClaims::default()), Err),
         }
     }
 

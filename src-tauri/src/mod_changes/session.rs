@@ -106,8 +106,8 @@ pub(crate) struct PlanSession {
     pub staging: PathBuf,
     /// Exact staged bytes, checked again before applying anything to the game.
     pub payload_fingerprints: HashMap<PathBuf, super::transaction::Fingerprint>,
-    /// Exact selected Release claims over previously unowned live files.
-    pub(super) loose_file_claims: super::mutations::LooseFileClaims,
+    /// Frozen authority for loose files and records of missing installations.
+    pub(super) release_target_claims: super::mutations::ReleaseTargetClaims,
     /// Frozen under preparation; execute must not recapture changed live targets.
     pub(super) mutations: Option<Vec<super::application_progress::OwnedMutation>>,
     pub created: std::time::Instant,

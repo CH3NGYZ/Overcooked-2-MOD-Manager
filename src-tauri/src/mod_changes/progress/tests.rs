@@ -137,7 +137,7 @@ fn session(candidate_id: &str) -> PlanSession {
         staging: PathBuf::new(),
         payload_fingerprints: HashMap::new(),
         mutations: None,
-        loose_file_claims: Default::default(),
+        release_target_claims: Default::default(),
         created: Instant::now(),
     }
 }

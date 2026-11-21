@@ -256,7 +256,9 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
     ensure_fresh(state, &session.trusted.revision)?;
     verify_fingerprints(&session.payload_fingerprints)?;
     if let Some(solved) = &session.solved {
-        session.loose_file_claims.verify(state, session, solved)?;
+        session
+            .release_target_claims
+            .verify(state, session, solved)?;
         inventory::validate_solution(
             &session.trusted,
             &session.request,
@@ -282,7 +284,7 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
     if live_game::touches_mods(session, &roots, &changes)? {
         guard::ensure_game_stopped(state, &roots.game_root)?;
     }
-    session.plan.untracked_overwrites = session.loose_file_claims.overwrites();
+    session.plan.untracked_overwrites = session.release_target_claims.overwrites();
     session.mutations = Some(changes);
     Ok(())
 }

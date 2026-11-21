@@ -16,12 +16,14 @@ use std::{
 mod install_block;
 mod order;
 mod physical;
+mod records;
 mod release_ownership;
 mod retirements;
 mod roots;
 pub(super) use install_block::InstallBlock;
-pub(super) use release_ownership::LooseFileClaims;
+use records::{InstallRecords, install_record_path};
 pub(super) use release_ownership::LooseReleaseSearch;
+pub(super) use release_ownership::ReleaseTargetClaims;
 pub(super) use roots::{final_framework_package, final_package};
 
 pub(super) struct Builder<'a> {
@@ -31,8 +33,7 @@ pub(super) struct Builder<'a> {
     pub moves: Vec<OwnedMutation>,
     pub ownership: BTreeMap<String, BTreeSet<String>>,
     ownership_paths: BTreeSet<String>,
-    external_claims: BTreeSet<String>,
-    manifest_owners: BTreeMap<String, BTreeSet<String>>,
+    records: InstallRecords,
     pub protected_maps: Vec<String>,
     pub map_paths: Vec<(String, String)>,
 }
@@ -91,7 +92,7 @@ pub(super) fn assemble(
     let mut builder = Builder::indexed(session, transaction_roots, map_roots(session, solved)?)?;
     let migration = roots::prepare(&mut builder, solved)?;
     for node in &solved.nodes {
-        if session.loose_file_claims.consumes(&node.id) {
+        if session.release_target_claims.consumes(&node.id) {
             continue;
         }
         if session
@@ -156,6 +157,7 @@ impl Builder<'_> {
         roots: TransactionRoots,
         protected_maps: Vec<String>,
     ) -> Result<Builder<'a>, String> {
+        let records = InstallRecords::read(&roots.data_root, session)?;
         let mut builder = Builder {
             roots,
             session,
@@ -163,72 +165,21 @@ impl Builder<'_> {
             moves: Vec::new(),
             ownership: BTreeMap::new(),
             ownership_paths: BTreeSet::new(),
-            external_claims: BTreeSet::new(),
-            manifest_owners: BTreeMap::new(),
+            records,
             protected_maps,
             map_paths: Vec::new(),
         };
-        builder.index_ownership()?;
+        builder.index_ownership();
         Ok(builder)
     }
 
-    fn index_ownership(&mut self) -> Result<(), String> {
-        let manifests = self.roots.data_root.join("manifests");
-        if manifests.exists() {
-            let unreadable = |error| {
-                log::debug!("无法读取安装记录目录：路径=manifests，系统错误={error}");
-                InstallBlock::RecordUnreadable.report("install-record", "manifests")
-            };
-            for entry in fs::read_dir(&manifests).map_err(unreadable)? {
-                let path = entry.map_err(unreadable)?.path();
-                if path
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"))
-                {
-                    let record_path = format!(
-                        "manifests/{}",
-                        path.file_name().unwrap_or_default().to_string_lossy()
-                    );
-                    let text = fs::read_to_string(&path).map_err(|error| {
-                        log::debug!("无法读取安装记录：路径={record_path}，系统错误={error}");
-                        InstallBlock::RecordUnreadable.report("install-record", &record_path)
-                    })?;
-                    let manifest =
-                        toml::from_str::<archive::InstallManifest>(&text).map_err(|_| {
-                            InstallBlock::RecordInvalid.report("install-record", &record_path)
-                        })?;
-                    let owners = self
-                        .session
-                        .trusted
-                        .files
-                        .iter()
-                        .filter(|(_, node)| {
-                            node.manifests
-                                .iter()
-                                .any(|owned| owned.repository_id == manifest.repository_id)
-                        })
-                        .map(|(id, _)| id.clone())
-                        .collect::<Vec<_>>();
-                    let owner = if owners.len() == 1 {
-                        owners[0].clone()
-                    } else {
-                        format!("unknown-package:{}", manifest.repository_id)
-                    };
-                    for file in manifest.files {
-                        let key = inventory::key(&mods::canonical_dll_name(&file));
-                        self.ownership
-                            .entry(key.clone())
-                            .or_default()
-                            .insert(owner.clone());
-                        self.manifest_owners
-                            .entry(key)
-                            .or_default()
-                            .insert(owner.clone());
-                        self.external_claims.insert(file.clone());
-                        self.ownership_paths.insert(file);
-                    }
-                }
-            }
+    fn index_ownership(&mut self) {
+        for (file, owner) in self.records.members() {
+            self.ownership
+                .entry(inventory::key(&mods::canonical_dll_name(file)))
+                .or_default()
+                .insert(owner.into());
+            self.ownership_paths.insert(file.into());
         }
         for (id, node) in &self.session.trusted.files {
             for member in &node.summary.members {
@@ -242,7 +193,6 @@ impl Builder<'_> {
                 self.protected_maps.push(path.clone());
             }
         }
-        Ok(())
     }
 
     pub fn ensure_owner(&self, relative: &str, owner: &str) -> Result<(), String> {
@@ -255,11 +205,7 @@ impl Builder<'_> {
     }
 
     fn ownership_block(&self, key: &str, owner: &str) -> InstallBlock {
-        if self
-            .manifest_owners
-            .get(key)
-            .is_some_and(|owners| owners.iter().any(|entry| entry != owner))
-        {
+        if self.records.claims(key).any(|record| record.owner != owner) {
             InstallBlock::InstallRecord
         } else {
             InstallBlock::PathOwned
@@ -433,6 +379,7 @@ impl Builder<'_> {
             return Err("modChanges.targetChanged".into());
         }
         let mut manifest = payload.manifest.clone().ok_or("modChanges.notPrepared")?;
+        let reinstall = self.session.release_target_claims.missing_record(&node.id);
         let bundled_levels = super::level_trees::bundled_level_root(self.session, &node.id)?;
         let copies = self
             .session
@@ -464,7 +411,7 @@ impl Builder<'_> {
                 let member_key = inventory::key(&canonical);
                 if self
                     .session
-                    .loose_file_claims
+                    .release_target_claims
                     .get(&node.id, &member_key)
                     .is_some()
                 {
@@ -526,10 +473,7 @@ impl Builder<'_> {
                 {
                     continue;
                 }
-                self.remove(
-                    &node.id,
-                    data(&format!("manifests/{}.toml", old.repository_id)),
-                )?;
+                self.remove(&node.id, install_record_path(&old.repository_id))?;
             }
         }
         let mut final_files = Vec::new();
@@ -571,17 +515,25 @@ impl Builder<'_> {
                 return Err(InstallBlock::MapProtected.report(&node.id, &destination));
             }
             let ownership_key = inventory::key(&mods::canonical_dll_name(&destination));
-            let loose = self.session.loose_file_claims.get(&node.id, &ownership_key);
+            let loose = self
+                .session
+                .release_target_claims
+                .get(&node.id, &ownership_key);
+            let restoring_owned =
+                reinstall.is_some_and(|record| record.owns_previous_path(&ownership_key));
+            let restoring_missing =
+                reinstall.is_some_and(|record| record.expects_missing(&destination));
             let owners = self.ownership.get(&ownership_key);
             let unowned = owners.is_none();
             if loose.is_none()
+                && !restoring_owned
                 && owners.is_some_and(|owners| owners.len() != 1 || !owners.contains(&node.id))
             {
                 return Err(self
                     .ownership_block(&ownership_key, &node.id)
                     .report(&node.id, &destination));
             }
-            if is_dll && loose.is_none() {
+            if is_dll && loose.is_none() && !restoring_owned {
                 let canonical = mods::canonical_dll_name(&destination);
                 for variant in [&canonical, &mods::disabled_dll_file(&canonical)] {
                     let existing = Fingerprint::capture(&game(variant).resolve(&self.roots)?)?;
@@ -594,7 +546,9 @@ impl Builder<'_> {
                 .release_files
                 .as_ref()
                 .and_then(|files| files.get(&path_key(Path::new(source_relative))));
-            let (target, expected, guarded) = if let Some(loose) = loose {
+            let (target, expected, guarded) = if restoring_missing {
+                (game(&destination), Fingerprint::Missing, false)
+            } else if let Some(loose) = loose {
                 let expected = if !is_dll
                     || inventory::key(&loose.relative) == inventory::key(&destination)
                 {
@@ -670,9 +624,16 @@ impl Builder<'_> {
             final_files.push(destination);
         }
         manifest.files = final_files;
-        let manifest_target = data(&format!("manifests/{}.toml", manifest.repository_id));
-        let expected = Fingerprint::capture(&manifest_target.resolve(&self.roots)?)?;
+        let (manifest_target, expected) = match reinstall {
+            Some(record) => (data(&record.relative), record.expected.clone()),
+            None => {
+                let target = install_record_path(&manifest.repository_id);
+                let expected = Fingerprint::capture(&target.resolve(&self.roots)?)?;
+                (target, expected)
+            }
+        };
         if expected != Fingerprint::Missing
+            && reinstall.is_none()
             && !old_files.is_some_and(|old| {
                 old.manifests
                     .iter()
@@ -700,7 +661,7 @@ impl Builder<'_> {
                 target: manifest_target,
                 source: Some(StagedFile::capture(staged)?),
                 expected,
-                require_single_link: false,
+                require_single_link: reinstall.is_some(),
             },
         )
     }

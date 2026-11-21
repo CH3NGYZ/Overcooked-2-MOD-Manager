@@ -2,14 +2,32 @@
 use super::*;
 use crate::mod_changes::evaluate::same_guid;
 use crate::mod_changes::session::Payload;
+use crate::models::{ModRepositoryBinding, ModRepositoryConfig};
 use same_file::Handle;
 use std::io::ErrorKind;
 
+mod claims;
 mod endpoints;
 mod loose_files;
+mod missing_install;
 mod search;
-pub(in crate::mod_changes) use loose_files::LooseFileClaims;
+pub(in crate::mod_changes) use claims::ReleaseTargetClaims;
 pub(in crate::mod_changes) use search::LooseReleaseSearch;
+
+struct ReleaseCore<'repo, 'payload> {
+    repo: &'repo ModRepositoryConfig,
+    binding: &'payload ModRepositoryBinding,
+    key: &'payload str,
+    path: &'payload str,
+}
+
+impl ReleaseCore<'_, '_> {
+    fn matches_prior_binding(&self, previous: &ModRepositoryBinding) -> bool {
+        previous.is_valid()
+            && previous.matches_repository(self.repo)
+            && previous.channel == self.binding.channel
+    }
+}
 
 enum PackageProof {
     /// The live core is absent, so the precise bytes must prove provenance.
@@ -151,17 +169,8 @@ impl Builder<'_> {
         Ok(())
     }
 
-    fn package_scope<'a>(
-        &self,
-        owner: &str,
-        payload: &'a Payload,
-    ) -> Result<PackageScope<'a>, ScopeFailure> {
+    fn release_core<'a>(&self, payload: &'a Payload) -> Result<ReleaseCore<'_, 'a>, InstallBlock> {
         let unknown = InstallBlock::Unverified;
-        // A tag or preview origin alone doesn't prove ZIP contents.
-        payload
-            .release_files
-            .as_ref()
-            .ok_or(InstallBlock::NeedsVerifiedRelease)?;
         let manifest = payload.manifest.as_ref().ok_or(unknown)?;
         let binding = manifest.repository_binding.as_ref().ok_or(unknown)?;
         let repo = self
@@ -178,26 +187,49 @@ impl Builder<'_> {
             || !binding.matches_repository(repo)
             || Some(&binding.tag) != payload.candidate.tag.as_ref()
         {
-            return Err(unknown.into());
+            return Err(unknown);
         }
         let mut incoming = payload
             .candidate
             .provides
             .iter()
             .filter(|member| same_guid(&member.guid, guid));
-        let primary_key = incoming
+        let key = incoming
             .next()
             .and_then(|member| member.member_key.as_deref())
             .ok_or(unknown)?;
         if incoming.next().is_some() {
-            return Err(unknown.into());
+            return Err(unknown);
         }
-        let primary = payload
+        let path = payload
             .files
             .iter()
-            .find(|path| inventory::key(&mods::canonical_dll_name(path)) == primary_key)
+            .find(|path| inventory::key(&mods::canonical_dll_name(path)) == key)
             .ok_or(unknown)?;
-        let directory = Path::new(primary)
+        Ok(ReleaseCore {
+            repo,
+            binding,
+            key,
+            path,
+        })
+    }
+
+    fn package_scope<'a>(
+        &self,
+        owner: &str,
+        payload: &'a Payload,
+    ) -> Result<PackageScope<'a>, ScopeFailure> {
+        let unknown = InstallBlock::Unverified;
+        // A tag or preview origin alone doesn't prove ZIP contents.
+        payload
+            .release_files
+            .as_ref()
+            .ok_or(InstallBlock::NeedsVerifiedRelease)?;
+        let manifest = payload.manifest.as_ref().ok_or(unknown)?;
+        let core = self.release_core(payload)?;
+        let primary_key = core.key;
+        let guid = core.repo.plugin_guid.trim();
+        let directory = Path::new(core.path)
             .parent()
             .and_then(Path::to_str)
             .ok_or(unknown)?;
@@ -235,7 +267,7 @@ impl Builder<'_> {
         if installed.next().is_some()
             || installed_node.id != owner
             || !installed_node.mutable
-            || candidate.source_id.as_ref() != Some(&repo.id)
+            || candidate.source_id.as_ref() != Some(&core.repo.id)
             || installed_core.member_key.as_deref() != Some(primary_key)
             || old.manifests.len() > 1
             || old.manifests.iter().any(|previous| {
@@ -244,9 +276,7 @@ impl Builder<'_> {
                         .repository_binding
                         .as_ref()
                         .is_some_and(|previous_binding| {
-                            !previous_binding.is_valid()
-                                || !previous_binding.matches_repository(repo)
-                                || previous_binding.channel != binding.channel
+                            !core.matches_prior_binding(previous_binding)
                         })
             })
         {
@@ -257,7 +287,7 @@ impl Builder<'_> {
         let live = game(&physical).resolve(&self.roots).map_err(|_| unknown)?;
         // The original on-disk path must be the same physical file that the
         // selected Release would replace; normalized keys alone are not proof.
-        let canonical = mods::canonical_dll_name(primary);
+        let canonical = mods::canonical_dll_name(core.path);
         let requested = if physical.to_ascii_lowercase().ends_with(".dll.disabled") {
             mods::disabled_dll_file(&canonical)
         } else {

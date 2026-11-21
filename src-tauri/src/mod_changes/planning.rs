@@ -231,7 +231,7 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
         payload_fingerprints: HashMap::new(),
         map_payload: None,
         mutations: None,
-        loose_file_claims: Default::default(),
+        release_target_claims: Default::default(),
         created: std::time::Instant::now(),
     };
     let result = (|| {
@@ -636,7 +636,7 @@ pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(),
         duplicate_release::explain_blockers(&session.trusted, &mut result);
         Default::default()
     };
-    session.loose_file_claims = claims;
+    session.release_target_claims = claims;
     session.plan = presentation(
         &session.trusted,
         &session.request,

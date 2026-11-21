@@ -1,152 +1,13 @@
 //! Freeze existing loose endpoints for the selected Release and its final solve.
+use super::claims::ReleaseTargetError;
 use super::*;
-use crate::mod_changes::session::UntrackedOverwrite;
-
-#[derive(Debug)]
-pub(in crate::mod_changes) enum LooseClaimError {
-    ForeignManifest { owner: String, message: String },
-    Unverified(String),
-}
-
-impl From<String> for LooseClaimError {
-    fn from(message: String) -> Self {
-        Self::Unverified(message)
-    }
-}
-
-impl From<LooseClaimError> for String {
-    fn from(error: LooseClaimError) -> Self {
-        match error {
-            LooseClaimError::ForeignManifest { message, .. }
-            | LooseClaimError::Unverified(message) => message,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(in crate::mod_changes) struct LooseFileClaims(BTreeMap<(String, String), LooseFile>);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::mod_changes::mutations) struct LooseFile {
     pub relative: String,
     pub expected: Fingerprint,
-    loose_node: Option<String>,
-    changes_content: bool,
-}
-
-impl LooseFileClaims {
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    pub fn overwrites(&self) -> Vec<UntrackedOverwrite> {
-        self.0
-            .iter()
-            .filter(|(_, file)| file.changes_content)
-            .map(|((id, _), file)| UntrackedOverwrite {
-                node_id: id.clone(),
-                path: file.relative.clone(),
-            })
-            .collect()
-    }
-    pub(in crate::mod_changes::mutations) fn get(
-        &self,
-        owner: &str,
-        key: &str,
-    ) -> Option<&LooseFile> {
-        self.0.get(&(owner.into(), key.into()))
-    }
-
-    pub fn consumes(&self, node: &str) -> bool {
-        self.0
-            .values()
-            .any(|file| file.loose_node.as_deref() == Some(node))
-    }
-
-    pub fn verify(
-        &self,
-        state: &AppState,
-        session: &PlanSession,
-        solved: &Inventory,
-    ) -> Result<(), String> {
-        let roots = transaction_roots(state, session)?;
-        let actual = Self::collect(session, roots, solved)?;
-        if self != &actual {
-            if let Some(((owner, _), file)) = self
-                .0
-                .iter()
-                .chain(&actual.0)
-                .find(|(key, _)| self.0.get(*key) != actual.0.get(*key))
-            {
-                return Err(InstallBlock::VerificationChanged.report(owner, &file.relative));
-            }
-            return Err("modChanges.targetChanged".into());
-        }
-        Ok(())
-    }
-
-    pub fn collect(
-        session: &PlanSession,
-        roots: TransactionRoots,
-        solved: &Inventory,
-    ) -> Result<Self, LooseClaimError> {
-        let mut releases = solved
-            .nodes
-            .iter()
-            .filter_map(|node| selected_release(session, node));
-        let Some(first) = releases.next() else {
-            return Ok(Self::default());
-        };
-        let builder = Builder::indexed(session, roots, map_roots(session, solved)?)?;
-        let mut result = Self::default();
-        let mut seen = BTreeSet::new();
-        for (node, payload) in std::iter::once(first).chain(releases) {
-            builder.collect_loose_files(solved, node, payload, &mut result, &mut seen)?;
-        }
-        // Only the final selected Release may account for an omitted loose node.
-        for (before, after) in session.trusted.inventory.nodes.iter().zip(&solved.nodes) {
-            if before.id.starts_with("dll:")
-                && before.current.is_some()
-                && after.current.is_none()
-                && !result.consumes(&before.id)
-            {
-                return Err(InstallBlock::Unverified
-                    .report(&before.id, before.id.trim_start_matches("dll:"))
-                    .into());
-            }
-        }
-        Ok(result)
-    }
-}
-
-// A downloaded candidate may be retained for retries after it loses the solve.
-// Only the candidate actually selected in the current graph can claim files.
-fn selected_release<'a>(
-    session: &'a PlanSession,
-    node: &'a ChangeNode,
-) -> Option<(&'a ChangeNode, &'a Payload)> {
-    let chosen = node.current.as_ref()?;
-    let payload = session
-        .verified_payloads
-        .get(&(node.id.clone(), chosen.id.clone()))
-        .or_else(|| {
-            session
-                .payloads
-                .get(&node.id)
-                .filter(|payload| payload.candidate.id == chosen.id)
-        })?;
-    exact_replacement(
-        node,
-        chosen,
-        payload,
-        session
-            .trusted
-            .inventory
-            .nodes
-            .iter()
-            .find(|old| old.id == node.id)?,
-    )
-    .then_some((node, payload))
+    pub(super) loose_node: Option<String>,
+    pub(super) changes_content: bool,
 }
 
 pub(super) fn exact_replacement(
@@ -167,14 +28,15 @@ pub(super) fn exact_replacement(
 }
 
 impl Builder<'_> {
-    fn collect_loose_files(
+    pub(super) fn collect_loose_files(
         &self,
         solved: &Inventory,
         node: &ChangeNode,
         payload: &Payload,
-        result: &mut LooseFileClaims,
+        bundled_levels: Option<&str>,
+        result: &mut ReleaseTargetClaims,
         seen: &mut BTreeSet<String>,
-    ) -> Result<(), LooseClaimError> {
+    ) -> Result<(), ReleaseTargetError> {
         let old = self
             .session
             .trusted
@@ -197,20 +59,21 @@ impl Builder<'_> {
             .duplicate_releases
             .copies_for(&node.id, &current.id);
         let package = std::cell::OnceCell::new();
-        let bundled_levels =
-            crate::mod_changes::level_trees::selected_bundled_level_root(solved, current, payload)?;
         let registry = std::cell::OnceCell::new();
         for source in &payload.files {
             // Existing user maps are preserved by the shared tree composer.
-            if bundled_levels
-                .as_ref()
-                .is_some_and(|levels| within(source, levels))
-            {
+            if bundled_levels.is_some_and(|levels| within(source, levels)) {
                 continue;
             }
             let canonical = mods::canonical_dll_name(source);
             let key = inventory::key(&canonical);
             let is_dll = canonical.to_ascii_lowercase().ends_with(".dll");
+            if result
+                .missing_record(&node.id)
+                .is_some_and(|record| record.owns_previous_path(&key))
+            {
+                continue;
+            }
             // Existing manifest writes and explicitly retired copies already
             // have their own transaction authority and are not loose claims.
             let own = self
@@ -236,10 +99,7 @@ impl Builder<'_> {
             // conflict check once the endpoint lookup has succeeded.
             let foreign_manifest = !own
                 && self.ownership.contains_key(&key)
-                && self
-                    .external_claims
-                    .iter()
-                    .any(|claim| inventory::key(&mods::canonical_dll_name(claim)) == key);
+                && self.records.claims(&key).next().is_some();
             let Some((physical, before)) =
                 live.or_else(|| foreign_manifest.then(|| (target.clone(), Fingerprint::Missing)))
             else {
@@ -274,7 +134,7 @@ impl Builder<'_> {
             // Only a positive on-disk manifest claim makes this branch eligible
             // for another version. Unclear scope, aliases and read failures do not.
             if foreign_manifest {
-                return Err(LooseClaimError::ForeignManifest {
+                return Err(ReleaseTargetError::ForeignManifest {
                     owner: node.id.clone(),
                     message: claimed(),
                 });
@@ -318,7 +178,7 @@ impl Builder<'_> {
             let scan_owner = loose_node.as_deref().or(own.then_some(node.id.as_str()));
             self.ensure_loose_path_unclaimed(&physical, scope.directory, registered, scan_owner)
                 .map_err(report)?;
-            result.0.insert(
+            result.loose.insert(
                 (node.id.clone(), key),
                 LooseFile {
                     relative: physical,
@@ -356,9 +216,9 @@ impl Builder<'_> {
         }
         let key = inventory::key(&mods::canonical_dll_name(relative));
         let claims = self
-            .external_claims
-            .iter()
-            .map(|file| (file.as_str(), InstallBlock::InstallRecord))
+            .records
+            .members()
+            .map(|(file, _)| (file, InstallBlock::InstallRecord))
             .chain(
                 registered
                     .iter()

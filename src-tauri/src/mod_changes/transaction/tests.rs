@@ -119,6 +119,7 @@ fn domain_check_before_apply_rejects_with_no_live_writes_or_pending_journal() {
                     );
                     Err("game.running".into())
                 },
+                || panic!("a rejected transaction must not commit"),
                 |_| panic!("a rejected transaction must not start applying"),
             )
             .unwrap_err(),

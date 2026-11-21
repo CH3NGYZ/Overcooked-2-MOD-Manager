@@ -278,7 +278,7 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
         staging,
         payload_fingerprints: HashMap::new(),
         mutations: None,
-        loose_file_claims: Default::default(),
+        release_target_claims: Default::default(),
         created: Instant::now(),
     };
     let mut batch = MapBatch {

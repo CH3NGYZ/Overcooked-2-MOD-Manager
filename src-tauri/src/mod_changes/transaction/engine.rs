@@ -109,18 +109,19 @@ impl PreparedTransaction {
         cancelled: impl Fn() -> bool,
         observe: impl FnMut(RecordProgress),
     ) -> Result<CommittedPaths, String> {
-        self.apply_checked(cancelled, || Ok(()), observe)
+        self.apply_checked(cancelled, || Ok(()), || Ok(()), observe)
     }
 
-    /// Run the last domain check after private verification and before live writes.
+    /// Run domain checks around live writes before publishing a durable commit.
     /// Cancellation is observed between atomic filesystem operations and rolls back the batch.
     pub(in crate::mod_changes) fn apply_checked(
         mut self,
         cancelled: impl Fn() -> bool,
         before_apply: impl FnOnce() -> Result<(), String>,
+        before_commit: impl FnOnce() -> Result<(), String>,
         mut observe: impl FnMut(RecordProgress),
     ) -> Result<CommittedPaths, String> {
-        let result = self.apply_inner(&cancelled, before_apply, &mut observe);
+        let result = self.apply_inner(&cancelled, before_apply, before_commit, &mut observe);
         let mut committed = match result {
             Ok(committed) => committed,
             Err(error) => {
@@ -151,6 +152,7 @@ impl PreparedTransaction {
         &mut self,
         cancelled: &impl Fn() -> bool,
         before_apply: impl FnOnce() -> Result<(), String>,
+        before_commit: impl FnOnce() -> Result<(), String>,
         observe: &mut impl FnMut(RecordProgress),
     ) -> Result<CommittedPaths, String> {
         if self.journal.state != JournalState::Prepared {
@@ -194,6 +196,7 @@ impl PreparedTransaction {
             })
             .inspect_err(|_| observe(RecordProgress::Failed(index)))?;
         }
+        before_commit()?;
         self.journal.state = JournalState::Committed;
         self.persist()?;
         Ok(committed)

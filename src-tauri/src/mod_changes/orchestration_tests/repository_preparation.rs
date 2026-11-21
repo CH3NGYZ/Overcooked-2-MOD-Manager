@@ -4,6 +4,9 @@ use crate::archive::release_download::tests::{Server, reuse_tests::served, split
 use std::io::{Cursor, Write};
 use std::sync::{Arc, Mutex};
 
+#[path = "repository_preparation/missing_dll.rs"]
+mod missing_dll;
+
 const TAG: &str = "v2.0.0";
 const REPO: &str = "FixtureMod";
 const GUID: &str = "com.example.preparation";
@@ -100,7 +103,7 @@ async fn hashless_release_reports_occupied_targets_without_touching_the_game() {
             "old record" => archive::write_manifest(
                 &manifests,
                 &archive::new_manifest(
-                    REPO,
+                    "AnotherRepository",
                     TAG,
                     BTreeMap::new(),
                     BTreeMap::new(),

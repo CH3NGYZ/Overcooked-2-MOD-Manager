@@ -81,8 +81,9 @@ function setup() {
     },
     refreshMapSources: async (_pass, force, progress) => {
       calls.push(['maps.toml', force])
-      progress({ nodes: [node('maps-root'), node('maps-child', 'maps-root')], maps: [map('fresh-map')] })
-      return [map('fresh-map')]
+      const result = { nodes: [node('maps-root'), node('maps-child', 'maps-root')], maps: [map('fresh-map')], excluded_map_identities: [] }
+      progress(result)
+      return result
     },
     refreshModRepository: async (id, force) => { calls.push(['mod-release', id, force]); return { cached_releases: [{ tag_name: 'new' }] } },
     refreshMapReleases: async (id, force) => { calls.push(['map-release', id, force]); return { ...map(id), latest_tag: 'new' } },
@@ -183,12 +184,13 @@ test('invalidated old map channel callbacks cannot mutate trusted cards while th
   await dashboard.loadBase(); await maps.loadMaps()
   const old = deferred(); let publish
   const refreshFresh = f.api.refreshMapSources
-  f.api.refreshMapSources = async (_pass, _force, onProgress) => { publish = onProgress; await old.promise; return [map('obsolete-map')] }
+  const obsolete = { nodes: [node('old-map-root')], maps: [map('obsolete-map')], excluded_map_identities: [] }
+  f.api.refreshMapSources = async (_pass, _force, onProgress) => { publish = onProgress; await old.promise; return obsolete }
   const oldBatch = maps.refreshAll()
   await tick()
   const pending = useDataProviderSwitch().switchSelection({ data_provider: 'gitcode' })
   await tick()
-  publish({ nodes: [node('old-map-root')], maps: [map('obsolete-map')] })
+  publish(obsolete)
   assert.deepEqual(maps.maps.value.map(item => item.id), ['trusted-map'])
   f.api.refreshMapSources = refreshFresh
   old.resolve(); await oldBatch
@@ -269,7 +271,7 @@ test('an invalidated map source finally cannot roll the selected provider back t
   await dashboard.loadBase(); await maps.loadMaps()
   const old = deferred(), refreshFresh = f.api.refreshMapSources, configFresh = f.api.config
   const staleConfig = structuredClone(f.config)
-  f.api.refreshMapSources = async () => { await old.promise; return [map('obsolete-map')] }
+  f.api.refreshMapSources = async () => { await old.promise; return { nodes: [], maps: [map('obsolete-map')], excluded_map_identities: [] } }
   const oldTask = maps.refreshAll()
   await tick()
   const pending = useDataProviderSwitch().switchSelection({ data_provider: 'cloudflare' })
@@ -366,14 +368,15 @@ test('changing region invalidates old MOD results, map channels and config proje
   const staleConfig = structuredClone(f.config), old = deferred()
   const mapFresh = f.api.refreshMapSources, modFresh = f.api.refreshModRepository, configFresh = f.api.config
   let publish
-  f.api.refreshMapSources = async (_pass, _force, progress) => { publish = progress; await old.promise; return [map('obsolete-map')] }
+  const obsolete = { nodes: [node('obsolete-map-root')], maps: [map('obsolete-map')], excluded_map_identities: [] }
+  f.api.refreshMapSources = async (_pass, _force, progress) => { publish = progress; await old.promise; return obsolete }
   f.api.refreshModRepository = async () => { await old.promise; return { cached_releases: [{ tag_name: 'obsolete' }] } }
   const oldMap = maps.refreshAll(), oldMod = mods.refreshOne(repository('trusted-mod'))
   await tick()
   const pending = useDataProviderSwitch().switchSelection({ region: 'cn' })
   await tick()
   assert.equal(dashboard.config.value.data_provider, 'gitcode')
-  publish({ nodes: [node('obsolete-map-root')], maps: [map('obsolete-map')] })
+  publish(obsolete)
   f.api.config = async () => staleConfig
   old.resolve(); await Promise.all([oldMap, oldMod])
   assert.equal(dashboard.config.value.region, 'cn')

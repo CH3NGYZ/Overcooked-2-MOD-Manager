@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { levelSetCardAction, levelSetCardTags, levelSetState, mapVersionForLevelSet, mapVersionRefs } from '../src/levelSetStatus.ts'
+import { aggregateLevelSetVersion, levelSetAggregateState, levelSetCardAction, levelSetCardTags } from '../src/levelSetStatus.ts'
 
 const installed = { dir_name: 'map', name: 'Map', author: 'Author', enabled: false, version: '1.0' }
 const remote = { id: 'online-map', level_set_name: 'Map', author: 'Author', latest_tag: 'v2.0', latest_info_version: '2.0' }
@@ -12,7 +12,7 @@ for (const [name, local, online] of [
   ] }],
 ]) {
   test(`disabled maps retain their update reminder and action using ${name}`, () => {
-    assert.equal(levelSetState(local, mapVersionForLevelSet(local, mapVersionRefs([online]))), 'update_available')
+    assert.equal(levelSetAggregateState(local, aggregateLevelSetVersion(local, [online])), 'update_available')
     assert.ok(levelSetCardTags(local, [online], [], false).some(tag => tag.text === 'tools.update'))
     assert.equal(levelSetCardAction(local, [online], [], false)?.kind, 'update')
     assert.equal(levelSetCardAction(local, [online], [], false)?.mapId, online.id)
@@ -23,7 +23,7 @@ for (const [name, local, online] of [
 test('disabled maps without an update keep their disabled status and no update action', () => {
   for (const online of [undefined, { ...remote, latest_tag: 'v1.0', latest_info_version: '1.0' }, { ...remote, latest_tag: 'v0.9', latest_info_version: '0.9' }]) {
     const maps = online ? [online] : []
-    assert.equal(levelSetState(installed, mapVersionForLevelSet(installed, mapVersionRefs(maps))), 'disabled')
+    assert.equal(levelSetAggregateState(installed, aggregateLevelSetVersion(installed, maps)), 'disabled')
     assert.equal(levelSetCardAction(installed, maps, [], false), undefined)
   }
 })

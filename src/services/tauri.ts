@@ -316,10 +316,8 @@ export const api = {
   /** 列出当前地区可用的地图（只读，不联网）。 */
   maps: () => invoke<MapInfo[]>('get_maps'),
   /**
-   * 刷新整棵地图源树（索引 → 子源 → 地图），返回刷新后的地图列表。
-   *
-   * 与 MOD 仓库源的区别：地图源树不持久化成一棵可编辑的源树，只是归类
-   * 方式，所以没有「刷新单个源」这个粒度。
+   * 刷新地图源或分支。Channel 用于逐步展示；命令成功返回已提交的源树、
+   * 下载列表和本轮查到的过滤身份，后者只用于确认收录情况。
    *
    * `passId` 是「同一次用户点击」的批次号，与随后的 `refreshMapReleases`
    * 共用：tag 模式下同一次加载要为同一个仓库的多个版本取资产，后端按它去重。
@@ -327,7 +325,7 @@ export const api = {
   refreshMapSources: (passId?: string, force = false, onProgress?: (progress: MapTreeProgress) => void, sourceId?: string) => {
     const onUpdate = new Channel<MapTreeProgress>()
     onUpdate.onmessage = progress => onProgress?.(progress)
-    return invoke<MapInfo[]>('refresh_map_sources', { passId, force, onUpdate, sourceId })
+    return invoke<MapTreeProgress>('refresh_map_sources', { passId, force, onUpdate, sourceId })
   },
   /**
    * 刷新一个地图的 Release 列表（5 分钟缓存）。

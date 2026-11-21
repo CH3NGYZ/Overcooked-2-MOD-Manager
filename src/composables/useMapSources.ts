@@ -15,7 +15,7 @@
  * MOD 使用 Dashboard 的可信配置及引擎在线展示投影；地图列表与进度快照独立
  * 存放在这里。两域共用刷新状态机、源树状态与局部替换规则。
  */
-import { computed, ref } from 'vue'
+import { computed, ref, shallowRef } from 'vue'
 import { api } from '../services/tauri'
 import { useDashboard } from './useDashboardStore'
 import { createSourceTreeState, replaceScopedItems, sourceActivity, sourceDescendantIds } from '../sourceTreeState'
@@ -26,7 +26,7 @@ import { useNotify, type Notify } from '../useNotify'
 import { useLevelSetScan } from './useLevelSetScan'
 import { mapsForLevelSet, type LevelSetRefreshingHint } from '../levelSetStatus'
 import { demoActive, isDemoId } from '../tutorial/demo'
-import type { MapInfo, SourceNode } from '../types'
+import type { MapCatalogIdentity, MapInfo, SourceNode } from '../types'
 
 /** 并行上限（4 组），与仓库侧 `useModRepositoryRefresh` 的取值保持一致。 */
 const REFRESH_CONCURRENCY = 4
@@ -66,6 +66,21 @@ const installing = ref<Record<string, boolean>>({})
  */
 const state = createRefreshState(REFRESH_CONCURRENCY)
 const sourceTree = createSourceTreeState()
+const catalogEvidence = shallowRef<{
+  generation: number
+  excluded: readonly MapCatalogIdentity[]
+  unverifiedBranches: ReadonlySet<string>
+}>()
+const catalog = computed<NonNullable<LevelSetRefreshingHint['catalog']>>(() => {
+  const proof = catalogEvidence.value
+  const nodes = sourceTree.nodes.value
+  const current = proof?.generation === state.generation.value && !state.schedulingPaused.value && !demoActive.value
+  return {
+    ready: current && !state.preparingSources.value && !proof.unverifiedBranches.size
+      && nodes.some(node => !node.parent_id) && nodes.every(node => node.status === 'ready'),
+    excluded: current ? proof.excluded : [],
+  }
+})
 /** Persisted map snapshots can display their source notes before a tree refresh. */
 const sourceNodes = computed<SourceNode[]>(() => {
   if (sourceTree.nodes.value.length) return sourceTree.nodes.value
@@ -113,6 +128,7 @@ const refreshingHint = computed<LevelSetRefreshingHint>(() => ({
   queued: new Set(Object.keys(queued.value)),
   sources: new Set(Object.keys(refreshingSources.value)),
   sourceOrder: sourceNodes.value.map(node => node.id),
+  catalog: catalog.value,
 }))
 
 /**
@@ -149,6 +165,7 @@ async function loadMaps(options: { force?: boolean } = {}) {
     const result = await api.maps()
     if (revision === mapsRevision && ticket === state.generation.value) maps.value = result
   } catch (reason) {
+    if (revision === mapsRevision && ticket === state.generation.value) catalogEvidence.value = undefined
     message?.error(backendMessageOf(reason))
   } finally {
     loading.value = false
@@ -311,14 +328,48 @@ export interface MapBoundRefreshSummary {
 /** Load all map declarations first. Bundle entries project their versions from
  * the shared repository snapshot; ordinary single-map sources use the same API
  * refresh queue. Failed nodes stay empty and never roll successful siblings back. */
-async function prepareMapSources(passId: string, force = false, sourceId?: string, preparedIds?: Set<string>): Promise<string[]> {
+async function prepareMapSources(passId: string, options: {
+  force?: boolean; sourceId?: string; preparedIds?: Set<string>; previousScope?: Set<string>
+} = {}): Promise<string[]> {
   if (demoActive.value) return []
+  const { force = false, sourceId, preparedIds, previousScope } = options
   const ticket = state.generation.value
   mapsRevision += 1
   const branch = sourceId && sourceId !== 'official-map-index' ? sourceId : undefined
   let rootReady = !!branch
   let acceptProgress = true
-  const scope = branch ? sourceTree.descendants(branch) : undefined
+  const scope = branch ? previousScope ?? sourceTree.descendants(branch) : undefined
+  if (!branch) catalogEvidence.value = undefined
+  else if (branch && scope) {
+    const proof = catalogEvidence.value
+    // A failed refresh may already have removed descendants from the tree.
+    // Retire their old evidence now, while the previous scope is still known.
+    if (proof?.generation === ticket) catalogEvidence.value = {
+      ...proof,
+      excluded: proof.excluded.filter(entry => !scope.has(entry.source_id)),
+      unverifiedBranches: new Set([...proof.unverifiedBranches, branch]),
+    }
+  }
+  const isCurrent = () => ticket === state.generation.value && !state.schedulingPaused.value && !demoActive.value
+  const applyNodes = (nodes: SourceNode[]) => {
+    if (branch && scope) {
+      for (const id of sourceDescendantIds(nodes, branch)) scope.add(id)
+      sourceTree.replace(replaceScopedItems(sourceTree.nodes.value, nodes, node => scope.has(node.id)))
+    } else sourceTree.replace(nodes)
+  }
+  const commitCatalog = (excluded: MapCatalogIdentity[]) => {
+    if (!scope) {
+      catalogEvidence.value = { generation: ticket, excluded, unverifiedBranches: new Set() }
+    } else {
+      const proof = catalogEvidence.value
+      if (proof?.generation !== ticket) return
+      catalogEvidence.value = {
+        generation: ticket,
+        excluded: replaceScopedItems(proof.excluded, excluded, entry => scope.has(entry.source_id)),
+        unverifiedBranches: new Set([...proof.unverifiedBranches].filter(id => !scope.has(id))),
+      }
+    }
+  }
   const apply = (incoming: MapInfo[]) => {
     mapsRevision += 1
     if (scope) maps.value = replaceScopedItems(maps.value, incoming, map => !!map.source_id && scope.has(map.source_id))
@@ -330,12 +381,9 @@ async function prepareMapSources(passId: string, force = false, sourceId?: strin
   }
   try {
     const result = await api.refreshMapSources(passId, force, progress => {
-      if (!acceptProgress || ticket !== state.generation.value) return
+      if (!acceptProgress || !isCurrent()) return
       mapsRevision += 1
-      if (branch && scope) {
-        for (const id of sourceDescendantIds(progress.nodes, branch)) scope.add(id)
-        sourceTree.replace(replaceScopedItems(sourceTree.nodes.value, progress.nodes, node => scope.has(node.id)))
-      } else {
+      if (!branch) {
         const root = progress.nodes.find(node => !node.parent_id)
         rootReady ||= root?.status === 'ready'
         if (!rootReady) {
@@ -344,14 +392,17 @@ async function prepareMapSources(passId: string, force = false, sourceId?: strin
           if (root) sourceTree.replace(replaceScopedItems(sourceTree.nodes.value, [root], node => node.id === root.id))
           return
         }
-        sourceTree.replace(progress.nodes)
       }
+      applyNodes(progress.nodes)
       apply(progress.maps)
     }, sourceId)
     acceptProgress = false
-    if (ticket !== state.generation.value) return []
-    // A successful IPC result also covers a cache hit without intermediate events.
-    apply(result)
+    if (!isCurrent()) return []
+    // Apply nodes before selecting maps: a branch can declare new children
+    // even if its last Channel message has not arrived yet.
+    applyNodes(result.nodes)
+    apply(result.maps)
+    commitCatalog(result.excluded_map_identities)
     return sourceTree.nodes.value.flatMap(node => node.error && (!scope || scope.has(node.id)) ? [backendMessageOf(node.error)] : [])
   } catch (reason) {
     if (ticket !== state.generation.value) return []
@@ -394,7 +445,7 @@ async function refreshSource(node: { id: string }) {
   const result = await runSourceReleaseRefresh({
     state,
     trigger: 'partial',
-    prepare: () => state.runSource(node.id, () => prepareMapSources(passId, false, node.id, preparedIds)),
+    prepare: () => state.runSource(node.id, () => prepareMapSources(passId, { sourceId: node.id, preparedIds, previousScope: removed })),
     refresh: () => {
       const targets = maps.value.filter((map) => preparedIds.has(map.id))
       return refreshReleases(targets, { trigger: 'single', passId, sourcePrepared: true })
@@ -413,10 +464,7 @@ async function refreshAll(
   const result = await runSourceReleaseRefresh({
     state,
     trigger: 'full',
-    prepare: async () => {
-      const errors = await prepareMapSources(passId, options.force, undefined, preparedIds)
-      return errors
-    },
+    prepare: () => prepareMapSources(passId, { force: options.force, preparedIds }),
     refresh: () => refreshReleases(maps.value.filter(map => preparedIds.has(map.id)), { ...options, trigger: 'single', passId, sourcePrepared: true }),
   })
   result.errors.forEach((error) => message?.error(error))

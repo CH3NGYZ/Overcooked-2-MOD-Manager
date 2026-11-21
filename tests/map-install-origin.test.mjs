@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { levelSetState, mapVersionRefs } from '../src/levelSetStatus.ts'
+import { aggregateLevelSetVersion, levelSetAggregateState } from '../src/levelSetStatus.ts'
 import { mapCardState, mapCardAction } from '../src/mapCardStatus.ts'
 
 const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
@@ -25,14 +25,15 @@ test('两张地图各用自己的版本空间，更新提示与安装按钮一�
   const oldPear = local('pear', '10.5', '10.5')
   const newPear = local('pear', '11.0', '11.0')
   const bundled = local('Music', '1.1', '')
-  assert.equal(levelSetState(oldPear, mapVersionRefs([online('pear', '10.5')])[0]), 'latest')
-  assert.equal(levelSetState(oldPear, mapVersionRefs([pear])[0]), 'update_available')
-  assert.equal(levelSetState(newPear, mapVersionRefs([pear])[0]), 'latest')
-  assert.equal(levelSetState(bundled, mapVersionRefs([music])[0]), 'latest')
+  const state = (set, maps) => levelSetAggregateState(set, aggregateLevelSetVersion(set, maps))
+  assert.equal(state(oldPear, [online('pear', '10.5'), music]), 'latest')
+  assert.equal(state(oldPear, [pear, music]), 'update_available')
+  assert.equal(state(newPear, [pear, music]), 'latest')
+  assert.equal(state(bundled, [pear, music]), 'latest')
   assert.equal(mapCardState(pear, [bundled, newPear]), 'latest')
   assert.equal(mapCardAction(pear, [bundled, newPear]), 'reinstall')
   assert.equal(mapCardState(music, [newPear, bundled]), 'latest')
   assert.equal(mapCardAction(music, [newPear, bundled]), 'reinstall')
   // 不属于此地图的随包记录不能覆盖可信info；缺共同表时不能报更新。
-  assert.equal(levelSetState({ ...bundled, installed_mapset_version: '10.5' }, mapVersionRefs([music])[0]), 'latest')
+  assert.equal(state({ ...bundled, installed_mapset_version: '10.5' }, [pear, music]), 'latest')
 })

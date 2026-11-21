@@ -14,8 +14,9 @@ afterEach(clearEvaluation)
  * 与动作投影由 `src/mapCardStatus.ts` 单独持有，但复用本模块的身份和版本规则。
  */
 const {
+  aggregateLevelSetVersion,
   isSameLevelSet,
-  levelSetState,
+  levelSetAggregateState,
   levelSetDisplayName,
   mapVersionForLevelSet,
   mapVersionRefs,
@@ -24,6 +25,7 @@ const {
   mapRelationSubject,
   frameworkStates,
   mapDependencyMissing,
+  levelSetCardAction,
   levelSetCardTags,
   levelSetGroup,
   levelSetAuthorNames,
@@ -77,6 +79,8 @@ function map(overrides = {}) {
     ...overrides,
   }
 }
+
+const managementState = (local, maps) => levelSetAggregateState(local, aggregateLevelSetVersion(local, maps))
 
 /** 本地 MOD：关系判定只读 guid / version / prerelease。 */
 function mod(overrides = {}) {
@@ -181,49 +185,85 @@ test('uid 随版本变化，不能当身份', () => {
 })
 
 test('停用地图仍提醒更新，开关只影响游戏加载', () => {
-  assert.equal(levelSetState(set({ enabled: false, version: '0.1' }), {
-    tag: 'v9.9.9', latestInfoVersion: '9.9.9', levelSetName: 'RW_LevelSet', author: 'RW',
-  }), 'update_available')
+  assert.equal(managementState(set({ enabled: false, version: '0.1' }), [map({ latest_tag: 'v9.9.9' })]), 'update_available')
 })
 
 test('解析失败优先于版本比较', () => {
-  assert.equal(levelSetState(set({ error: 'levelSet.infoMissing' }), null), 'unreadable')
+  assert.equal(managementState(set({ error: 'levelSet.infoMissing' }), [map()]), 'unreadable')
 })
 
-test('没有绑定仓库时是未绑定，不猜版本', () => {
-  assert.equal(levelSetState(set(), undefined), 'unbound')
-  assert.equal(levelSetState(set(), null), 'unbound')
+test('当前适用源已读全，且无匹配或来源证据时才显示未收录', () => {
+  const local = set({ relations: [{ kind: 'requires', guid: 'local.runtime', version: '>=1' }] })
+  const maps = [map({ level_set_name: 'Other_Set' })]
+  const catalog = { ready: true, excluded: [{
+    source_id: 'hidden', level_set_name: local.name, level_set_name_zh: '另一张地图', author: local.author,
+  }] }
+  const aggregate = aggregateLevelSetVersion(local, maps)
+  assert.deepEqual(aggregate.candidates, [])
+  assert.equal(levelSetAggregateState(local, aggregate, catalog), 'unlisted')
+  const hint = { maps: new Set(), sources: new Set(), catalog }
+  const [tag] = levelSetCardTags(local, maps, [], false, [], hint)
+  assert.deepEqual(tag, { kind: 'state', text: 'modsLocal.unlisted', tone: 'muted', mapId: undefined })
+  assert.equal(levelSetCardAction(local, maps, [], false, [], hint), undefined)
+})
+
+test('缺候选不等于未收录：缓存、缺失来源或保留的来源证据都不生成跳转', () => {
+  const ready = { ready: true, excluded: [] }
+  const cases = [
+    ['仅缓存，无实读证明', set(), [map({ level_set_name: 'Other_Set' })], undefined],
+    ['全树未读完', set(), [], { ready: false, excluded: [] }],
+    ['缺少可匹配的集名', set({ name: ' ' }), [], ready],
+    ['扫描仍有仓库 ID', set({ map_id: 'removed-map' }), [], ready],
+    ['已安装来源的快照', set({ has_map_source_snapshot: true }), [], ready],
+    ['被过滤但同身份的声明', set(), [], { ready: true, excluded: [{
+      source_id: 'hidden', level_set_name: ' rw_levelset ', level_set_name_zh: 'RW_关卡合集', author: ' rw ',
+    }] }],
+  ]
+  for (const [reason, local, maps, catalog] of cases) {
+    const aggregate = aggregateLevelSetVersion(local, maps)
+    assert.deepEqual(aggregate.candidates, [], reason)
+    assert.equal(levelSetAggregateState(local, aggregate, catalog), 'source_unconfirmed', reason)
+    const hint = { maps: new Set(), sources: new Set(), catalog }
+    const [tag] = levelSetCardTags(local, maps, [], true, [], hint)
+    assert.deepEqual(tag, { kind: 'state', text: 'modsLocal.sourceUnconfirmed', tone: 'muted', mapId: undefined }, reason)
+    assert.equal(levelSetCardAction(local, maps, [], true, [], hint), undefined, reason)
+  }
+})
+
+test('页头筛选与摘要分别统计未收录和来源未确认', () => {
+  const local = set()
+  const imported = set({ dir_name: 'Other_Set', name: 'Other_Set' })
+  const historical = set({ dir_name: 'Old_Set', name: 'Old_Set', has_map_source_snapshot: true })
+  const hint = { maps: new Set(), sources: new Set(), catalog: { ready: true, excluded: [] } }
+  const tagsOf = (set) => levelSetCardTags(set, [], [], true, [], hint)
+
+  assert.deepEqual(levelSetStatusKeys(local, tagsOf(local)), ['tag:state:modsLocal.unlisted', 'enabled'])
+  assert.deepEqual(levelSetStatusKeys(historical, tagsOf(historical)), ['tag:state:modsLocal.sourceUnconfirmed', 'enabled'])
+  assert.deepEqual(summarizeLevelSetTags([historical, local, imported], tagsOf), [
+    { key: 'tag:state:modsLocal.unlisted', text: 'modsLocal.unlisted', tone: 'muted', count: 2 },
+    { key: 'tag:state:modsLocal.sourceUnconfirmed', text: 'modsLocal.sourceUnconfirmed', tone: 'muted', count: 1 },
+  ])
 })
 
 test('本地版本低于 Release tag → 可更新', () => {
-  assert.equal(levelSetState(set({ version: '0.73' }), {
-    tag: 'v0.74', latestInfoVersion: '0.74', levelSetName: 'RW_LevelSet', author: 'RW',
-  }), 'update_available')
+  assert.equal(managementState(set({ version: '0.73' }), [map({ latest_tag: 'v0.74' })]), 'update_available')
 })
 
 test('版本一致 → 最新版（tag 的 v 前缀要能剥掉）', () => {
-  assert.equal(levelSetState(set({ version: '0.73' }), {
-    tag: 'v0.73', latestInfoVersion: '0.73', levelSetName: 'RW_LevelSet', author: 'RW',
-  }), 'latest')
-  assert.equal(levelSetState(set({ version: 'v0.73' }), {
-    tag: '0.73', latestInfoVersion: '0.73', levelSetName: 'RW_LevelSet', author: 'RW',
-  }), 'latest')
+  assert.equal(managementState(set({ version: '0.73' }), [map({ latest_tag: 'v0.73' })]), 'latest')
+  assert.equal(managementState(set({ version: 'v0.73' }), [map({ latest_tag: '0.73' })]), 'latest')
 })
 
 test('本地版本反而更高 → ahead，不显示成待更新', () => {
   // 作者的预发布版本，或仓库 tag 回退
-  assert.equal(levelSetState(set({ version: '0.80' }), {
-    tag: 'v0.73', latestInfoVersion: '0.73', levelSetName: 'RW_LevelSet', author: 'RW',
-  }), 'ahead')
+  assert.equal(managementState(set({ version: '0.80' }), [map()]), 'ahead')
 })
 
 test('任一侧版本缺失 → unknown，不误判为最新', () => {
-  assert.equal(levelSetState(set({ version: '' }), {
-    tag: 'v0.73', latestInfoVersion: '0.73', levelSetName: 'RW_LevelSet', author: 'RW',
-  }), 'unknown')
+  assert.equal(managementState(set({ version: '' }), [map()]), 'unknown')
 })
 
-test('按身份找仓库版本，找不到就是未绑定', () => {
+test('按身份找仓库版本，不把缺少版本声明当成版本结论', () => {
   const refs = [
     { tag: 'v1.0', levelSetName: 'Other', author: 'RW' },
     { tag: 'v0.73', latestInfoVersion: '0.73', levelSetName: 'RW_LevelSet', author: 'RW' },
@@ -247,16 +287,11 @@ test('状态标签的 i18n key：解析失败与更高版本各有专属文案',
   assert.equal(LEVEL_SET_STATE_TAGS.unreadable, 'levelSet.parseFailed')
   assert.equal(LEVEL_SET_STATE_TAGS.ahead, 'levelSet.higherVersion')
   assert.equal(LEVEL_SET_STATE_TAGS.update_available, 'tools.update')
-  assert.equal(LEVEL_SET_STATE_TAGS.unbound, 'modsLocal.unbound')
+  assert.equal(LEVEL_SET_STATE_TAGS.unlisted, 'modsLocal.unlisted')
+  assert.equal(LEVEL_SET_STATE_TAGS.source_unconfirmed, 'modsLocal.sourceUnconfirmed')
 })
 
-/*
- * 界面层要守住的一条：**只有刷新到 Release 的地图才产生版本声明**。
- * 没刷过 Release 的地图没有 tag，此时本地关卡集必须显示「未绑定」，
- * 而不是被当成「最新版」—— 把「还没查」说成「已是最新」是错的结论，
- * 用户会因此错过真实更新。
- */
-test('地图没刷新到 Release 时不产生版本声明', () => {
+test('已收录的旧声明没有 Release 时仍能跳转，只显示版本未知', () => {
   const maps = [
     // 刷新成功
     map({ level_set_name: 'RW_LevelSet', author: 'RW', latest_tag: 'v0.73' }),
@@ -269,12 +304,15 @@ test('地图没刷新到 Release 时不产生版本声明', () => {
 
   assert.deepEqual(refs, [{ tag: 'v0.73', latestInfoVersion: '0.73', levelSetName: 'RW_LevelSet', author: 'RW' }])
   assert.equal(mapVersionForLevelSet({ name: 'RW_LevelSet', author: 'RW' }, refs)?.tag, 'v0.73')
-  // 没刷新 → 没有声明 → 状态必须是未绑定
-  assert.equal(mapVersionForLevelSet({ name: 'Other_Set', author: 'RW' }, refs), undefined)
-  assert.equal(levelSetState(set({ name: 'Other_Set', version: '1.0' }),
-    mapVersionForLevelSet({ name: 'Other_Set', author: 'RW' }, refs)), 'unbound')
-  assert.equal(levelSetState(set({ name: 'Third_Set', version: '1.0' }),
-    mapVersionForLevelSet({ name: 'Third_Set', author: 'RW' }, refs)), 'unbound')
+  const hint = { maps: new Set(), sources: new Set(), catalog: { ready: true, excluded: [] } }
+  for (const online of maps.slice(1)) {
+    const local = set({ name: online.level_set_name, version: '1.0' })
+    assert.equal(mapVersionForLevelSet(local, refs), undefined)
+    assert.equal(levelSetAggregateState(local, aggregateLevelSetVersion(local, maps), hint.catalog), 'unknown')
+    const [tag] = levelSetCardTags(local, maps, [], true, [], hint)
+    assert.deepEqual(tag, { kind: 'state', text: 'tools.versionUnknown', tone: 'muted', mapId: online.id })
+    assert.equal(levelSetCardAction(local, maps, [], true, [], hint), undefined)
+  }
 })
 
 test('找绑定地图：忽略大小写与空白，集名为空时不匹配', () => {
@@ -528,16 +566,12 @@ test('卡片标签：已确认缺依赖时显示「需处理」，点标签修�
   assert.equal(tags[0].repositoryId, undefined, 'the owner is repaired as a complete plan rather than navigating to a locally chosen candidate')
 })
 
-test('卡片标签：最新版也带跳转目标（与 MOD 管理页一致），未绑定没有目标', () => {
+test('卡片标签：最新版也带跳转目标（与 MOD 管理页一致）', () => {
   const latest = levelSetCardTags(set(), [map({ latest_tag: 'v0.73' })], [], true)
   assert.deepEqual(latest.map((tag) => tag.text), ['modsLocal.latest'])
   // 「最新版」也可以点：跳到下载页看那张卡，与 MOD 管理页的「最新版」一致
   assert.equal(latest[0].mapId, 'map-rw')
   assert.equal(latest[0].tone, 'accent')
-
-  const unbound = levelSetCardTags(set({ name: 'Local_Only' }), [map()], [], true)
-  assert.deepEqual(unbound.map((tag) => tag.text), ['modsLocal.unbound'])
-  assert.equal(unbound[0].mapId, undefined)
 })
 
 test('卡片标签：游戏未探测时不显示依赖缺失，但版本结论照旧', () => {
@@ -583,14 +617,14 @@ test('卡片标签：绑定地图（或它所在的地图源）在刷新时显�
   // 与版本结论互斥：不能一边说「刷新中」一边还挂着过期的「有更新」
   assert.equal(mapRefreshing[0].mapId, 'map-rw')
 
-  // 源文档在重拉：此刻一个 Release 都还没回来，也不能显示成「未绑定」
+  // 源文档在重拉：此刻一个 Release 都还没回来，继续显示刷新中。
   const sourceRefreshing = levelSetCardTags(
     set({ version: '0.73' }), [map({ source_id: 'rw', latest_tag: undefined })], [], true, [],
     { maps: new Set(), sources: new Set(['rw']) },
   )
   assert.deepEqual(sourceRefreshing.map((tag) => tag.text), ['tools.refreshing'])
 
-  // 整源刷新：共享列表被清空重建，绑定暂时查不到 —— 也不能显示「未绑定」
+  // 整源刷新：共享列表正在重建，暂时不能对收录情况下结论。
   const allRefreshing = levelSetCardTags(
     set({ version: '0.73' }), [], [], true, [],
     { entryStateUnavailable: true, maps: new Set(), sources: new Set() },
@@ -700,23 +734,24 @@ test('下载页动作：无 Release 只能刷新，已装同版本是重装', ()
 // ---------------------------------------------------------------------------
 // 旧标量只声明包版本，不能替代完整历史或同身份 info 版本。
 // ---------------------------------------------------------------------------
-const pinnedMap = () => map({ latest_mapset_version: '0.70', latest_info_version: null })
-const pinnedRef = () => ({ tag: 'v1.0', latestMapsetVersion: '0.70', levelSetName: 'RW_LevelSet', author: 'RW' })
+const pinnedMap = () => map({ latest_tag: 'v1.0', latest_mapset_version: '0.70', latest_info_version: null })
 
 test('只有包号或tag，不能根据大小或不等值推断更新', () => {
+  const bound = pinnedMap()
   for (const version of ['0.80', '0.69', '0.70', '']) {
-    assert.equal(levelSetState(set({ version }), pinnedRef()), 'unknown')
-    assert.equal(mapCardState(pinnedMap(), [set({ version })]), 'unknown')
-    assert.equal(mapCardAction(pinnedMap(), [set({ version })]), 'install')
+    const local = set({ version })
+    assert.equal(managementState(local, [bound]), 'unknown')
+    assert.equal(mapCardState(bound, [local]), 'unknown')
+    assert.equal(mapCardAction(bound, [local]), 'install')
   }
 })
 
 test('无完整历史时使用同身份info，不能用钉死包号强制回退', () => {
-  const ref = { ...pinnedRef(), latestInfoVersion: '0.70' }
-  assert.equal(levelSetState(set({ version: '0.80' }), ref), 'ahead')
-  assert.equal(levelSetState(set({ version: '0.69' }), ref), 'update_available')
-  assert.equal(levelSetState(set({ version: 'v0.70' }), ref), 'latest')
-  assert.equal(levelSetState(set({ version: '' }), ref), 'unknown')
+  const maps = [{ ...pinnedMap(), latest_info_version: '0.70' }]
+  assert.equal(managementState(set({ version: '0.80' }), maps), 'ahead')
+  assert.equal(managementState(set({ version: '0.69' }), maps), 'update_available')
+  assert.equal(managementState(set({ version: 'v0.70' }), maps), 'latest')
+  assert.equal(managementState(set({ version: '' }), maps), 'unknown')
 })
 
 test('旧标量与info投影分别透传，缺info不伪造版本结论', () => {
@@ -724,7 +759,7 @@ test('旧标量与info投影分别透传，缺info不伪造版本结论', () => 
   const refs = mapVersionRefs([bound])
   assert.equal(refs[0].latestMapsetVersion, '0.70')
   assert.equal(refs[0].latestInfoVersion, undefined)
-  assert.equal(levelSetState(set(), mapVersionForLevelSet(set(), refs)), 'unknown')
+  assert.equal(managementState(set(), [bound]), 'unknown')
 })
 
 test('没有可安装Release时标量不会产生版本声明', () => {
@@ -767,7 +802,7 @@ test('info 版本相等：本地 info 版本更低也判最新版，不再催更
   // 没有info不能拿另一空间的tag数值推断ahead
   assert.equal(mapUpdateState('0.69', { tag: 'v0.7' }), 'unknown')
   // 管理页与下载页必须同一个结论
-  assert.equal(levelSetState(local, infoVersionRef('0.69')), 'latest')
+  assert.equal(managementState(local, [infoVersionMap('0.69')]), 'latest')
   assert.equal(mapCardState(infoVersionMap('0.69'), [local]), 'latest')
   // 按钮是幂等的「重装」，不是「更新」
   assert.equal(mapCardAction(infoVersionMap('0.69'), [local]), 'reinstall')
@@ -776,14 +811,14 @@ test('info 版本相等：本地 info 版本更低也判最新版，不再催更
 test('info 版本更高：本地 info 版本确实落后才提示更新', () => {
   const local = set({ version: '0.68' })
   assert.equal(mapUpdateState('0.68', infoVersionRef('0.69')), 'update_available')
-  assert.equal(levelSetState(local, infoVersionRef('0.69')), 'update_available')
+  assert.equal(managementState(local, [infoVersionMap('0.69')]), 'update_available')
   assert.equal(mapCardState(infoVersionMap('0.69'), [local]), 'update_available')
   assert.equal(mapCardAction(infoVersionMap('0.69'), [local]), 'update')
 })
 
 test('本地 info 版本比线上 info 版本更高 → ahead，不催更新', () => {
   assert.equal(mapUpdateState('0.70', infoVersionRef('0.69')), 'ahead')
-  assert.equal(levelSetState(set({ version: '0.70' }), infoVersionRef('0.69')), 'ahead')
+  assert.equal(managementState(set({ version: '0.70' }), [infoVersionMap('0.69')]), 'ahead')
 })
 
 test('没有info或共同表时不比较包号，存在info时按info比较', () => {
@@ -792,28 +827,18 @@ test('没有info或共同表时不比较包号，存在info时按info比较', ()
     for (const version of ['0.69', '0.70', '0.73', '0.74']) assert.equal(mapUpdateState(version, remote), 'unknown')
   }
   // 两个都声明时 info 版本优先：按包版本 0.70 会催更新，按 info 版本 0.69 已是最新
-  const both = {
-    tag: 'v1.0',
-    latestMapsetVersion: '0.70',
-    latestInfoVersion: '0.69',
-    levelSetName: 'RW_LevelSet',
-    author: 'RW',
-  }
-  assert.equal(mapUpdateState('0.69', both), 'latest')
-  assert.equal(levelSetState(set({ version: '0.69' }), both), 'latest')
+  const both = map({ latest_tag: 'v1.0', latest_mapset_version: '0.70', latest_info_version: '0.69' })
+  assert.equal(mapUpdateState('0.69', mapVersionRefs([both])[0]), 'latest')
+  assert.equal(managementState(set({ version: '0.69' }), [both]), 'latest')
 })
 
 test('mapVersionRefs 带出最新 Release 的 info 版本，空值不塞', () => {
-  const refs = mapVersionRefs([
-    map({ latest_tag: 'v0.7', latest_mapset_version: '0.7', latest_info_version: ' 0.69 ' }),
-  ])
+  const maps = [map({ latest_tag: 'v0.7', latest_mapset_version: '0.7', latest_info_version: ' 0.69 ' })]
+  const refs = mapVersionRefs(maps)
   assert.equal(refs[0].latestMapsetVersion, '0.7')
   assert.equal(refs[0].latestInfoVersion, '0.69')
   // 端到端：管理页从声明里拿 info 版本，判「最新版」
-  assert.equal(
-    levelSetState(set({ version: '0.69' }), mapVersionForLevelSet(set(), refs)),
-    'latest',
-  )
+  assert.equal(managementState(set({ version: '0.69' }), maps), 'latest')
   // 空白 / 缺失都不产生字段（与 nameZh、latestMapsetVersion 同一写法）
   assert.equal('latestInfoVersion' in mapVersionRefs([map({ latest_info_version: '   ' })])[0], false)
   assert.deepEqual(
@@ -884,12 +909,12 @@ test('管理页、下载页卡片与按钮都用资产版本判定', () => {
     asset_versions: fixRef.assetVersions,
   })
   const installed = set({ version: '3.4.1', installed_mapset_version: '3.4.1' })
-  assert.equal(levelSetState(installed, mapVersionForLevelSet(installed, mapVersionRefs([bound]))), 'update_available')
+  assert.equal(managementState(installed, [bound]), 'update_available')
   assert.equal(mapCardState(bound, [installed]), 'update_available')
   assert.equal(mapCardAction(bound, [installed]), 'update')
   // 装了修复版：三处都判最新 / 重装
   const fixed = set({ version: '3.4.1', installed_mapset_version: '3.4.1-fix' })
-  assert.equal(levelSetState(fixed, mapVersionForLevelSet(fixed, mapVersionRefs([bound]))), 'latest')
+  assert.equal(managementState(fixed, [bound]), 'latest')
   assert.equal(mapCardState(bound, [fixed]), 'latest')
   assert.equal(mapCardAction(bound, [fixed]), 'reinstall')
 })

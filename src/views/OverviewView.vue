@@ -309,7 +309,7 @@ const mapVersionsOf = (set: LevelSetInfo) => aggregateLevelSetVersion(set, maps.
 
 /** 单张本地地图的状态：口径与地图管理页的 `stateOf` 完全一致。 */
 function mapStateOf(set: LevelSetInfo) {
-  return levelSetAggregateState(set, mapVersionsOf(set))
+  return levelSetAggregateState(set, mapVersionsOf(set), refreshingHint.value.catalog)
 }
 
 /** 其中 Release 刷新失败的地图源条目（`last_error` 非空）。 */

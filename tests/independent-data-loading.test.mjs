@@ -109,7 +109,7 @@ test('map engine honors cache on cards/checks, forces only full refresh, and upd
   const requests = []
   const fastSnapshot = { ...mapSnapshot(singleMap, 'v2'), latest_info_version: '2.0', note: 'Refreshed declaration' }
   globalThis.__loadingApi = {
-    refreshMapSources: async (pass, force) => { requests.push(['source', force, pass]); await source.promise; return [singleMap, slowMap] },
+    refreshMapSources: async (pass, force) => { requests.push(['source', force, pass]); await source.promise; return { nodes: [], maps: [singleMap, slowMap], excluded_map_identities: [] } },
     refreshMapReleases: async (id, force, pass) => {
       requests.push([id, force, pass])
       return id === 'slow' ? slow.promise : fastSnapshot
@@ -148,7 +148,7 @@ test('a late initial map snapshot cannot overwrite a newer source/Release result
   globalThis.__loadingApi.maps = () => stale.promise
   const initial = engine.loadMaps()
   const newMap = { id: 'new-map', level_set_name: 'New', author: 'A' }
-  globalThis.__loadingApi.refreshMapSources = async () => [newMap]
+  globalThis.__loadingApi.refreshMapSources = async () => ({ nodes: [], maps: [newMap], excluded_map_identities: [] })
   globalThis.__loadingApi.refreshMapReleases = async () => mapSnapshot(newMap, 'v3')
   globalThis.__loadingApi.maps = async () => engine.maps.value
   await engine.refreshAll()
@@ -198,7 +198,7 @@ test('release-tags source results are already update evidence and do not fan out
   const ordinary = { id: 'ordinary', source_id: 'toml', level_set_name: 'Ordinary', author: 'B' }
   const requests = []
   globalThis.__loadingApi = {
-    refreshMapSources: async (_pass, force) => {requests.push(['source',force]); return [derived,ordinary]},
+    refreshMapSources: async (_pass, force) => {requests.push(['source',force]); return { nodes: [], maps: [derived,ordinary], excluded_map_identities: [] }},
     refreshMapReleases: async (id,force) => {requests.push([id,force]);return mapSnapshot(id === derived.id ? derived : ordinary, '3.0')},
     maps: async () => engine.maps.value,
     syncDependencySnapshots: async () => {},

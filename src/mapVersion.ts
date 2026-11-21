@@ -27,10 +27,10 @@ export function isSameLevelSet(left: MapIdentity, right: MapIdentity): boolean {
   const rightZh = norm(right.nameZh ?? '')
   return !leftZh || !rightZh || leftZh === rightZh
 }
-export function mapsForLevelSet(
+export function mapsForLevelSet<T extends Pick<MapInfo, 'level_set_name' | 'level_set_name_zh' | 'author'>>(
   set: Pick<LevelSetInfo, 'name' | 'author' | 'name_zh'>,
-  maps: readonly MapInfo[],
-): MapInfo[] {
+  maps: readonly T[],
+): T[] {
   if (!set.name.trim()) return []
   // Every candidate is anchored to the local identity. A missing Chinese name
   // cannot bridge two distinct GAODA maps through a third online declaration.

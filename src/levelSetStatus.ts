@@ -1,11 +1,12 @@
 import type { RelationSubject } from './modRelations'
-import { aggregateLevelSetVersion, isSameLevelSet, mapUpdateState, mapVersionRef, type MapVersionRef } from './mapVersion.ts'
+import { aggregateLevelSetVersion, isSameLevelSet, mapsForLevelSet, mapVersionRef,
+  type MapRefreshHint, type MapVersionRef } from './mapVersion.ts'
 export { aggregateLevelSetVersion, isSameLevelSet, mapsForLevelSet, mapUpdateState, type MapVersionRef, type MapVersionOrder } from './mapVersion.ts'
 import {
   conflictRemovalTarget, dependencyTagFor, relationsForMapRelease, relationStatusesForSubject, unmetRelations,
   type RelationStatus,
 } from './modRelations.ts'
-import type { InstalledMod, LevelSetInfo, MapInfo, ModRepository, RepositoryRelation } from './types'
+import type { InstalledMod, LevelSetInfo, MapCatalogIdentity, MapInfo, ModRepository, RepositoryRelation } from './types'
 
 /**
  * 关卡集（地图）的状态判定。
@@ -41,8 +42,10 @@ export type LevelSetState =
   | 'latest'
   /** 本地版本比远端还高（作者的预发布，或仓库 tag 回退）。 */
   | 'ahead'
-  /** 没有绑定任何地图仓库（本地导入的，或仓库已下线）。 */
-  | 'unbound'
+  /** 当前适用地图源已读全，未找到收录证据。 */
+  | 'unlisted'
+  /** 没有可用匹配，但现有证据不足以判断是否收录。 */
+  | 'source_unconfirmed'
   /** 无法比较版本（任一侧缺失）。 */
   | 'unknown'
 
@@ -55,32 +58,18 @@ export type LevelSetState =
  */
 export type LevelSetTone = 'accent' | 'moderate' | 'muted' | 'critical'
 
-/**
- * 从一个关卡集与其绑定的仓库版本，算出展示状态。
- *
- * `remote` 为 `undefined` 表示没有绑定（本地导入）或仓库还没刷新。
- */
-export function levelSetState(
-  set: Pick<LevelSetInfo, 'enabled' | 'version' | 'error'> & { installed_mapset_version?: string },
-  remote?: MapVersionRef | null,
-): LevelSetState {
-  // 停用只影响游戏加载，仍须提醒已经安装的地图有更新。
-  const order = remote && !set.error ? mapUpdateState(set.version, remote, set.installed_mapset_version) : 'unknown'
-  if (!set.enabled) return order === 'update_available' ? order : 'disabled'
-  if (set.error) return 'unreadable'
-  if (!remote) return 'unbound'
-  // 除 `unknown` 外，版本结论与 `LevelSetState` 的版本分支同名，直接透传
-  if (order === 'unknown') return 'unknown'
-  return order
-}
-
 /** Local state uses all matching sources; dependency binding remains first-source. */
 export function levelSetAggregateState(
-  set: Pick<LevelSetInfo, 'enabled' | 'error'>,
+  set: LevelSetInfo,
   aggregate: ReturnType<typeof aggregateLevelSetVersion>,
+  catalog?: LevelSetRefreshingHint['catalog'],
 ): LevelSetState {
   if (!set.enabled) return aggregate.order === 'update_available' ? 'update_available' : 'disabled'
   if (set.error) return 'unreadable'
+  if (aggregate.order === 'unbound') {
+    if (!catalog?.ready || !set.name.trim() || set.map_id || set.has_map_source_snapshot) return 'source_unconfirmed'
+    return mapsForLevelSet(set, catalog.excluded).length ? 'source_unconfirmed' : 'unlisted'
+  }
   return aggregate.order === 'refreshing' ? 'unknown' : aggregate.order
 }
 
@@ -93,7 +82,8 @@ export const LEVEL_SET_STATE_TAGS: Record<LevelSetState, string> = {
   // 「更高版本」不是「最新版」：本地比线上还新，结论与 MOD 页
   // 「存在更高版本，建议卸载」同档，必须分开说，否则用户会以为不用更新
   ahead: 'levelSet.higherVersion',
-  unbound: 'modsLocal.unbound',
+  unlisted: 'modsLocal.unlisted',
+  source_unconfirmed: 'modsLocal.sourceUnconfirmed',
   unknown: 'tools.versionUnknown',
 }
 
@@ -104,7 +94,8 @@ export const LEVEL_SET_STATE_TONES: Record<LevelSetState, LevelSetTone> = {
   update_available: 'moderate',
   latest: 'accent',
   ahead: 'accent',
-  unbound: 'muted',
+  unlisted: 'muted',
+  source_unconfirmed: 'muted',
   unknown: 'muted',
 }
 
@@ -130,7 +121,7 @@ export function mapVersionForLevelSet(
  * 把地图源列表压成版本声明表。
  *
  * **只有刷新到 Release 的地图才产生声明。** 没刷过的地图 `latest_tag` 为空，
- * 此时本地关卡集必须保持「未绑定」而不是被当成「最新版」—— 把「还没查」
+ * 此时至多知道来源，不能当成「最新版」—— 把「还没查」
  * 说成「已是最新」是错的结论，用户会因此错过真实更新。
  *
  * 源文档钉死的 `latest_mapset_version` 与最新 Release 的 info 版本号随声明一起带出：
@@ -339,30 +330,9 @@ export interface LevelSetCardTag {
  * 由视图层从单例里取出来传进来，本模块只做纯计算：这里不认 Vue、也不认
  * 「刷新进行中」这个全局标志，只回答「这张图 / 它所在的源现在是否在刷」。
  */
-export interface LevelSetRefreshingHint {
-  /**
-   * 地图列表正在清空/重建（整源刷新的源树阶段）。
-   *
-   * 它会把共享的地图列表清空再重建，这段时间所有关卡集都查不到绑定 ——
-   * 只看 id 集合的话卡片会集体退化成「未绑定」，比过期结论更误导。
-   *
-   * 只该覆盖源树阶段：列表填回来之后条目级状态就是准确的，再用整源标志
-   * 盖住所有卡片，逐个返回的结果会被压成整批一起返回。
-   */
-  entryStateUnavailable?: boolean
-  /** 源树声明顺序，用于不可比更新目标的稳定选择。 */
-  sourceOrder?: readonly string[]
-  /** 正在重抓 Release 的地图 id。 */
-  maps: ReadonlySet<string>
-  /**
-   * 这一批里排队、还没轮到重抓的地图 id。
-   *
-   * 与 `maps` 同等对待：并发只有 4，排队的不显示「刷新中」会让人以为
-   * 「只有那几张在查」。图标转不转另算，那是视图层的事。
-   */
-  queued?: ReadonlySet<string>
-  /** 正在重拉文档的地图源 id。 */
-  sources: ReadonlySet<string>
+export interface LevelSetRefreshingHint extends MapRefreshHint {
+  /** Source lookup evidence only. Excluded entries cannot supply versions, links or actions. */
+  catalog?: { ready: boolean; excluded: readonly MapCatalogIdentity[] }
 }
 
 /** Local comparisons wait for sources, then only their own queued/in-flight API. */
@@ -405,14 +375,14 @@ export function levelSetCardTags(
 
   const aggregate = aggregateLevelSetVersion(set, maps, refreshing)
   const refreshingNow = aggregate.order === 'refreshing'
-  const state = refreshingNow ? undefined : levelSetAggregateState(set, aggregate)
+  const state = levelSetAggregateState(set, aggregate, refreshing?.catalog)
   tags.push({
-    text: refreshingNow ? 'tools.refreshing' : LEVEL_SET_STATE_TAGS[state!],
-    tone: refreshingNow ? 'muted' : LEVEL_SET_STATE_TONES[state!],
+    text: refreshingNow ? 'tools.refreshing' : LEVEL_SET_STATE_TAGS[state],
+    tone: refreshingNow ? 'muted' : LEVEL_SET_STATE_TONES[state],
     kind: 'state',
     // 只要这个集绑定了地图，状态标签就允许跳回下载页并高亮那张卡 ——
     // 与 MOD 管理页一致：「最新版」和「有更新」都是「去下载页看看」的入口。
-    // 未绑定（或没匹配上地图）没有目标，自然不可点。
+    // 无可用地图时没有目标，自然不可点。
     mapId: aggregate.primaryTarget?.mapId ?? aggregate.candidates[0]?.mapId ?? bound?.id,
   })
   return tags

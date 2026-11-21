@@ -414,7 +414,7 @@ function updateSourcesOf(set: LevelSetInfo) {
 }
 
 function stateOf(set: LevelSetInfo) {
-  return levelSetAggregateState(set, versionsOf(set))
+  return levelSetAggregateState(set, versionsOf(set), refreshingHint.value.catalog)
 }
 
 /**
@@ -427,24 +427,6 @@ function stateOf(set: LevelSetInfo) {
 function authorNamesOf(set: LevelSetInfo) {
   return levelSetAuthorNames(set, maps.value)
 }
-
-/**
- * 正在重抓 Release 的地图 id 与正在重拉文档的地图源 id。
- *
- * 刷新期间版本结论标签要换成「刷新中」（`levelSetCardTags` 的第 6 个参数）：
- * 刷新完成前「有更新 / 最新版」都是马上会被推翻的结论，用户点完「检查更新」
- * 却还看到刷新前的标签会以为按钮没生效。
- *
- * `entryStateUnavailable` 是列表清空/重建（下载页「刷新全部」的源树阶段）
- * 那一档：它会把共享的 `maps` 清空再重建，这段时间**所有**关卡集都找不到
- * 绑定，只传 id 集合的话卡片会集体退化成「未绑定」——那比过期结论更误导。
- * 列表填回来之后就必须关掉它，否则整源标志会把每张卡按住，逐个返回的结果
- * 被压成整批一起返回。
- *
- * 每次重算都新建两个 Set：一次刷新最多几十个 id，且只在 `refreshing` /
- * `refreshingSources` / `entryStateUnavailable` 变化（刷新的开始与结束）时重算，成本可忽略。
- */
-
 
 /** 卡片状态标签：先依赖提醒，再版本结论（由 `levelSetStatus` 统一排序）。 */
 function tagsOf(set: LevelSetInfo): LevelSetCardTag[] {
@@ -546,11 +528,12 @@ function onTagClick(set: LevelSetInfo, tag: LevelSetCardTag) {
 }
 
 /**
- * 状态说明：为什么是「未绑定」、为什么能更新。没有额外信息时返回空串。
+ * 用同一结论解释收录状态或更新目标。
  */
 function hintOf(set: LevelSetInfo): string {
   const state = stateOf(set)
-  if (state === 'unbound') return t('levelSet.unboundHint')
+  if (state === 'unlisted') return t('levelSet.unlistedHint')
+  if (state === 'source_unconfirmed') return t('levelSet.sourceUnconfirmedHint')
   if (state === 'update_available') {
     const tag = versionsOf(set).primaryTarget?.tag
     return tag ? t('levelSet.updateAvailableHint', { version: tag }) : ''

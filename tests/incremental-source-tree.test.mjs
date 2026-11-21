@@ -40,12 +40,15 @@ const { useDashboard } = await import('../src/composables/useDashboardStore.ts')
 const { useMapSources } = await import('../src/composables/useMapSources.ts')
 const { useModRepositoryRefresh } = await import('../src/composables/useModRepositoryRefresh.ts')
 const { runtimeModStatus } = await import('../src/modRuntimeStatus.ts')
+const { levelSetCardTags } = await import('../src/levelSetStatus.ts')
+const { setRefreshSchedulingPaused } = await import('../src/refreshState.ts')
 const { createSourceTreeState } = await import('../src/sourceTreeState.ts')
 const { buildSourceGroupTree } = await import('../src/composables/useSourceGroupTree.ts')
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
 function deferred() { let resolve, reject; const promise = new Promise((a,b) => { resolve=a; reject=b }); return {promise,resolve,reject} }
 const node = (id, parent_id, status = 'pending', error = null) => ({id,parent_id,label:id,url:id+'.toml',status,error})
 const repo = (id, source_id) => ({id,source_id,provider:'github',username:'u',repository:id,name:id,enabled:true,download_mode:'release',cached_releases:[]})
+const mapTree = (nodes, maps = [], excluded_map_identities = []) => ({ nodes, maps, excluded_map_identities })
 
 test('shared source state clears only descendants and keeps failed empty declarations retryable', () => {
   const state = createSourceTreeState()
@@ -199,6 +202,7 @@ test('cached maps reconstruct source titles and notes before an incremental tree
   assert.deepEqual(e.sourceNodes.value[0].label_i18n, { en: 'English source' })
   assert.deepEqual(e.sourceNodes.value[0].note_i18n, { en: 'Source instructions' })
   assert.equal(e.sourceNodes.value[1].note_i18n, undefined)
+  assert.equal(e.refreshingHint.value.catalog.ready, false, 'cached ready titles do not prove a catalog read')
 })
 
 test('map engine publishes channel snapshots immediately, keeps successful siblings after failure and scopes retry to the requested branch', async () => {
@@ -208,24 +212,25 @@ test('map engine publishes channel snapshots immediately, keeps successful sibli
   const nested={...repo('nested-map','child'),level_set_name:'Nested',author:'A'}
   const nodes=[{...node('root',null,'ready'),note_i18n:{en:'Root source'}},{...node('child','root','loading'),note_i18n:{ja:'子ソース'}},node('failed','root')]
   globalThis.__loadingApi={
-    refreshMapSources:async(pass,force,onProgress,id)=>{requests.push(['toml',force,id]);progress=onProgress;await source.promise;return[first,nested]},
+    refreshMapSources:async(pass,force,onProgress,id)=>{requests.push(['toml',force,id]);progress=onProgress;await source.promise;return mapTree(nodes,[first,nested])},
     refreshMapReleases:async(id,force)=>{requests.push(['api',id,force]);return{...[first,nested].find(map=>map.id===id),builtin:false,latest_release:null,latest_tag:null,cached_release_count:0,cached_at:123,last_error:null}},
     syncDependencySnapshots:async()=>{},maps:async()=>e.maps.value,
   }
   const pending=e.refreshAll();await tick()
-  progress({nodes,maps:[first]});await tick()
+  progress(mapTree(nodes,[first]));await tick()
   assert.deepEqual(e.maps.value.map(m=>m.id),['root-map'])
   assert.equal(e.sourceNodes.value[1].status,'loading')
   assert.deepEqual(e.sourceNodes.value[1].note_i18n,{ja:'子ソース'})
   assert.equal(requests.length,1)
   nodes[1].status='ready';nodes[2].status='error';nodes[2].error='offline'
-  progress({nodes,maps:[first,nested]});source.resolve();await pending
+  progress(mapTree(nodes,[first,nested]));source.resolve();await pending
   assert.equal(e.maps.value.length,2,'one failed source cannot restore or erase successful cards')
   globalThis.__loadingApi.refreshMapSources=async(pass,force,onProgress,id)=>{
     requests.push(['retry',force,id]);
     assert.deepEqual(e.maps.value.map(m=>m.id),['root-map'],'branch cards are removed before HTTP')
-    onProgress({nodes:nodes.map(n=>n.id==='child'?{...n,status:'ready'}:n),maps:[first,nested]})
-    return[first,nested]
+    const result = mapTree(nodes.map(n=>n.id==='child'?{...n,status:'ready'}:n),[first,nested])
+    onProgress(result)
+    return result
   }
   requests.length=0;await e.refreshSource({id:'child'})
   assert.deepEqual(requests,[['retry',false,'child'],['api','nested-map',false]])
@@ -316,7 +321,7 @@ test('map branch progress only publishes its scope, including newly declared des
   const other = { ...repo('scope-b', 'other-scope'), level_set_name: 'B', latest_tag: '1' }
   const nodes = [node('scope', null, 'ready'), node('other-scope', null, 'ready')]
   globalThis.__loadingApi = {
-    refreshMapSources: async (_pass, _force, progress) => { progress({ nodes, maps: [first, other] }); return [first, other] },
+    refreshMapSources: async (_pass, _force, progress) => { const result = mapTree(nodes, [first, other]); progress(result); return result },
     refreshMapReleases: async id => [first, other].find(map => map.id === id),
     syncDependencySnapshots: async () => {}, config: async () => useDashboard().config.value,
   }
@@ -326,11 +331,11 @@ test('map branch progress only publishes its scope, including newly declared des
   const added = { ...repo('scope-child', 'new-scope-child'), level_set_name: 'Child' }
   const updated = { ...first, latest_tag: '2' }
   const staleSibling = { ...other, latest_tag: '999' }
-  globalThis.__loadingApi.refreshMapSources = async (_pass, _force, progress, sourceId) => {
+  globalThis.__loadingApi.refreshMapSources = async (_pass, _force, _progress, sourceId) => {
     assert.equal(sourceId, 'scope')
-    progress({ nodes: [...nodes, node('new-scope-child', 'scope', 'ready')], maps: [updated, staleSibling, added] })
+    // No progress event declares the child before invoke finishes.
     await gate.promise
-    return [updated, staleSibling, added]
+    return mapTree([...nodes, node('new-scope-child', 'scope', 'ready')], [updated, staleSibling, added])
   }
   globalThis.__loadingApi.refreshMapReleases = async id => { requests.push(id); return [updated, added].find(map => map.id === id) }
   const pending = e.refreshSource({ id: 'scope' })
@@ -458,7 +463,7 @@ test('map main failure preserves the old tree/cards and starts zero ordinary Rel
     localMods: async () => ({ generation: 33, mods: [] }), modUpdates: async () => [],
     config: async () => ({ ...structuredClone(trustedConfig), data_provider: 'cloudflare', repositories: [{ ...trustedConfig.repositories[0], name: 'Unexpected changed MOD' }] }),
     maps: async () => [old], syncDependencySnapshots: async () => {},
-    refreshMapSources: async (_pass, _force, callback) => { callback({ nodes, maps: [old] }); return [old] },
+    refreshMapSources: async (_pass, _force, callback) => { const result = mapTree(nodes, [old]); callback(result); return result },
     refreshMapReleases: async id => { calls.push(id); return old },
   }
   await d.load(); await e.refreshAll()
@@ -466,9 +471,9 @@ test('map main failure preserves the old tree/cards and starts zero ordinary Rel
   calls.length = 0
   globalThis.__loadingApi.refreshMapSources = async (_pass, _force, callback) => {
     progress = callback
-    callback({ nodes: [node('failure-map-root', null, 'loading')], maps: [] })
+    callback(mapTree([node('failure-map-root', null, 'loading')]))
     await gate.promise
-    callback({ nodes: [node('failure-map-root', null, 'error', 'main offline')], maps: [] })
+    callback(mapTree([node('failure-map-root', null, 'error', 'main offline')]))
     throw Error('main offline')
   }
   const pending = e.refreshAll(); await tick()
@@ -482,7 +487,7 @@ test('map main failure preserves the old tree/cards and starts zero ordinary Rel
   assert.equal(d.config.value.repositories[0], trustedMod, 'provider reread cannot replace unrelated MOD objects')
   assert.equal(d.config.value.data_provider, 'cloudflare')
   assert.equal(e.anyRefreshing.value, false)
-  progress({ nodes, maps: [{ ...old, latest_tag: 'stale-after-failure' }] })
+  progress(mapTree(nodes, [{ ...old, latest_tag: 'stale-after-failure' }]))
   assert.equal(e.maps.value[0], oldMap, 'a closed source pass rejects late Channel callbacks')
 })
 
@@ -491,22 +496,22 @@ test('map full pass switches at root ready, fills successful children and reject
   const main = { ...repo('timed-main', 'timed-root'), level_set_name: 'Main' }
   const nested = { ...repo('timed-child-map', 'timed-child'), level_set_name: 'Child' }
   const fresh = { ...main, latest_tag: 'new-release' }
+  const nodes = [node('timed-root', null, 'ready'), node('timed-child', 'timed-root', 'loading'), node('timed-failure', 'timed-root', 'pending')]
   let progress
   globalThis.__loadingApi = {
     config: async () => useDashboard().config.value,
-    refreshMapSources: async (_pass, _force, callback) => { progress = callback; callback({ nodes: [node('timed-root', null, 'loading')], maps: [] }); await treeGate.promise; return [main, nested] },
+    refreshMapSources: async (_pass, _force, callback) => { progress = callback; callback(mapTree([node('timed-root', null, 'loading')])); await treeGate.promise; return mapTree(nodes, [main, nested]) },
     refreshMapReleases: async id => { calls.push(id); await releaseGate.promise; return id === main.id ? fresh : nested },
     syncDependencySnapshots: async () => {},
   }
   const before = e.maps.value, pending = e.refreshAll(); await tick()
   assert.equal(e.maps.value, before)
-  const nodes = [node('timed-root', null, 'ready'), node('timed-child', 'timed-root', 'loading'), node('timed-failure', 'timed-root', 'pending')]
-  progress({ nodes, maps: [main] }); await tick()
+  progress(mapTree(nodes, [main])); await tick()
   assert.deepEqual(e.maps.value.map(row => row.id), [main.id])
   assert.deepEqual(e.sourceNodes.value.map(row => row.id), nodes.map(row => row.id))
   assert.deepEqual(calls, [])
   nodes[1] = node('timed-child', 'timed-root', 'ready'); nodes[2] = node('timed-failure', 'timed-root', 'error', 'child offline')
-  progress({ nodes, maps: [main, nested] }); await tick()
+  progress(mapTree(nodes, [main, nested])); await tick()
   assert.deepEqual(e.maps.value.map(row => row.id), [main.id, nested.id])
   assert.deepEqual(calls, [])
   treeGate.resolve(); await tick(); await tick()
@@ -514,7 +519,7 @@ test('map full pass switches at root ready, fills successful children and reject
   assert.equal(e.refreshingAll.value, true)
   releaseGate.resolve(); await pending
   assert.equal(e.maps.value.find(row => row.id === main.id).latest_tag, 'new-release')
-  progress({ nodes, maps: [main] })
+  progress(mapTree(nodes, [main]))
   assert.deepEqual(e.maps.value.map(row => row.id), [main.id, nested.id])
   assert.equal(e.maps.value.find(row => row.id === main.id).latest_tag, 'new-release', 'late source snapshot cannot roll back a fresher Release result')
   assert.equal(e.refreshingAll.value, false)
@@ -531,7 +536,7 @@ test('map provider reread cannot supersede a pending MOD source projection and l
     localMods: async () => ({ generation: 34, mods: [] }), modUpdates: async () => [],
     config: async () => { reads++; if (reads === 1) return firstRead.promise; if (reads === 2) return secondRead.promise; return structuredClone(next) },
     importRepositorySource: async id => { requests.push('source:' + id); return { access_error: null } },
-    refreshMapSources: async () => [], syncDependencySnapshots: async () => {},
+    refreshMapSources: async () => mapTree([]), syncDependencySnapshots: async () => {},
     refreshModRepository: async id => { requests.push('api:' + id); return { cached_releases: [], release_prerelease_metadata: {} } },
   }
   const d = useDashboard(), e = useModRepositoryRefresh()
@@ -545,6 +550,83 @@ test('map provider reread cannot supersede a pending MOD source projection and l
   assert.deepEqual(requests.filter(id => id.startsWith('api:')).sort(), ['api:cross-child-repo', 'api:cross-fresh'])
   assert.deepEqual(d.config.value.repository_sources.map(row => row.id), ['cross-root', 'cross-child'])
   assert.equal(d.config.value.data_provider, 'cloudflare')
+})
+
+test('map catalog coverage waits for the committed tree and repairs only the retried branch', async () => {
+  const e = useMapSources(), gate = deferred()
+  const root = node('catalog-root', null, 'ready')
+  const branch = node('catalog-branch', root.id, 'ready')
+  const child = node('catalog-obsolete-child', branch.id, 'ready')
+  const side = node('catalog-sibling', root.id, 'ready')
+  const good = [root, branch, child, side]
+  const failed = [root, branch, child, { ...side, status: 'error', error: 'offline' }]
+  const identity = (level_set_name, source_id) => ({ level_set_name, author: 'Author', source_id })
+  const oldEntry = identity('Old child map', child.id), rootEntry = identity('Root map', root.id)
+  const hidden = identity('New child map', branch.id)
+  const key = name => levelSetCardTags({ name, author: 'Author', enabled: true }, e.maps.value, [], true, [], e.refreshingHint.value).at(-1).text
+  const notListed = 'modsLocal.unlisted', unconfirmed = 'modsLocal.sourceUnconfirmed'
+  const ready = () => e.refreshingHint.value.catalog.ready
+  let progress
+  e.invalidateRefresh()
+  globalThis.__loadingApi = {
+    config: async () => useDashboard().config.value, syncDependencySnapshots: async () => {}, maps: async () => [],
+    refreshMapSources: async (_pass, _force, callback) => {
+      progress = callback
+      callback(mapTree(good))
+      await gate.promise
+      return mapTree(failed, [], [oldEntry, rootEntry])
+    },
+  }
+  const pending = e.refreshAll()
+  await tick()
+  assert.equal(key('Local only'), 'tools.refreshing')
+  assert.equal(ready(), false, 'a ready-looking progress tree is not a committed read')
+  gate.resolve(); await pending
+  assert.equal(key('Local only'), unconfirmed)
+  progress(mapTree(good))
+  assert.equal(ready(), false, 'a late progress snapshot cannot replace the failed terminal node')
+
+  globalThis.__loadingApi.refreshMapSources = async (_pass, _force, _progress, scope) => {
+    assert.equal(scope, side.id)
+    return mapTree(good)
+  }
+  await e.refreshSource(side)
+  assert.equal(key('Local only'), notListed)
+  assert.equal(key('Old child map'), unconfirmed)
+
+  globalThis.__loadingApi.refreshMapSources = async (_pass, _force, callback, scope) => {
+    assert.equal(scope, branch.id)
+    callback(mapTree([root, branch, side]))
+    throw Error('configuration save failed')
+  }
+  await e.refreshSource(branch)
+  assert.ok(e.sourceNodes.value.every(node => node.id !== child.id), 'the failed pass can still remove old nodes')
+  assert.equal(key('Local only'), unconfirmed, 'ready progress followed by a failed save revokes absence')
+  globalThis.__loadingApi.refreshMapSources = async () => mapTree([root, branch, side], [], [hidden])
+  await e.refreshSource(branch)
+  assert.deepEqual(e.refreshingHint.value.catalog.excluded, [rootEntry, hidden])
+  assert.equal(key('Old child map'), notListed, 'removed descendants lose their excluded evidence on parent retry')
+  assert.equal(key('New child map'), unconfirmed)
+  assert.equal(key('Root map'), unconfirmed)
+
+  setRefreshSchedulingPaused(true)
+  try { assert.equal(key('Local only'), unconfirmed) } finally { setRefreshSchedulingPaused(false) }
+  assert.equal(ready(), true)
+  e.invalidateRefresh()
+  await e.refreshSource(branch)
+  assert.equal(key('Local only'), unconfirmed, 'a lone successful branch cannot establish a root read in a new generation')
+  const stale = deferred()
+  globalThis.__loadingApi.refreshMapSources = async () => { await stale.promise; return mapTree(good) }
+  const outstanding = e.refreshAll()
+  await tick(); e.invalidateRefresh(); stale.resolve(); await outstanding
+  assert.equal(key('Local only'), unconfirmed, 'invalidated in-flight invoke does not bring back absence evidence')
+
+  globalThis.__loadingApi.refreshMapSources = async () => mapTree(good)
+  await e.refreshAll()
+  assert.equal(ready(), true)
+  globalThis.__loadingApi.maps = async () => { throw Error('map cache read failed') }
+  await e.loadMaps()
+  assert.equal(ready(), false)
 })
 
 test('a failed MOD root keeps its child status when another root succeeds, and a successful root still refreshes manual repositories', async () => {

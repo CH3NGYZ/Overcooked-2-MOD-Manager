@@ -434,12 +434,19 @@ export const levelSet: DomainMessages = {
     ja: 'マップソースを更新',
   },
   // 地图管理页：绑定与版本对照
-  unboundHint: {
-    'zh-CN': '没有地图源声明这一组关卡集，所以无法检查更新（本地导入或源已下线）',
-    'zh-TW': '沒有地圖源宣告這一組關卡集，因此無法檢查更新（本機匯入或源已下線）',
-    en: 'No map source declares this level set, so updates cannot be checked (locally imported, or the source is gone)',
-    ko: '이 레벨 세트를 선언한 지도 소스가 없어 업데이트를 확인할 수 없습니다(로컬 가져오기 또는 소스 제거됨)',
-    ja: 'このレベルセットを宣言したマップソースがないため、更新を確認できません（ローカルインポート、またはソースが削除済み）',
+  unlistedHint: {
+    'zh-CN': '当前地图源未收录这组关卡，无法检查更新',
+    'zh-TW': '目前的地圖來源未收錄這組關卡，無法檢查更新',
+    en: 'This level set is not listed in the current map sources, so updates cannot be checked.',
+    ko: '현재 지도 소스에 이 레벨 세트가 등록되어 있지 않아 업데이트를 확인할 수 없습니다.',
+    ja: '現在のマップソースにこのレベルセットが掲載されていないため、更新を確認できません。',
+  },
+  sourceUnconfirmedHint: {
+    'zh-CN': '暂时无法确认这组关卡的在线来源。可刷新地图源后重试',
+    'zh-TW': '暫時無法確認這組關卡的線上來源。可重新整理地圖來源後再試一次',
+    en: 'The online source for this level set could not be confirmed. Refresh the map sources to try again.',
+    ko: '이 레벨 세트의 온라인 소스를 확인할 수 없습니다. 지도 소스를 새로 고친 후 다시 시도할 수 있습니다.',
+    ja: 'このレベルセットのオンラインソースを確認できません。マップソースを更新してから再試行できます。',
   },
   updateAvailableHint: {
     'zh-CN': '地图源有更新的版本：{version}',

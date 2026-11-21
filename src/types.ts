@@ -358,6 +358,8 @@ export interface LevelSetInfo {
    * 比每个使用点各匹配一次更不容易漂移。未绑定时为空。
    */
   map_id?: string | null
+  /** A matching historical source or online install record exists even without a current download target. */
+  has_map_source_snapshot?: boolean
   /**
    * 线上声明的分组多语言表（地图的分组语义就是作者）。
    *
@@ -1076,6 +1078,12 @@ export interface SourceNode {
   id: string; parent_id?: string | null; label: string; label_i18n?: Record<string, string>; note_i18n?: Record<string, string>;
   url?: string; status: 'pending' | 'loading' | 'ready' | 'error'; error?: string | null
 }
-export interface MapTreeProgress { nodes: SourceNode[]; maps: MapInfo[] }
+export type MapCatalogIdentity = Pick<MapInfo, 'level_set_name' | 'level_set_name_zh' | 'author'> & { source_id: string }
+export interface MapTreeProgress {
+  nodes: SourceNode[]
+  maps: MapInfo[]
+  /** Empty in progress events; the committed read includes filtered declarations. */
+  excluded_map_identities: MapCatalogIdentity[]
+}
 
 export type { LevelPreview, LevelPreviewPicture, LevelPreviewRecipe, LevelPreviewDetail, LevelPreviewMenuIcon, LevelPreviewMenuTile } from './levelPreviewTypes'

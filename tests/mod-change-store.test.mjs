@@ -6,6 +6,8 @@ registerHooks({resolve(specifier,context,next){if(specifier.startsWith('.')&&!/\
 const {useModChanges,registerEvaluationSubject}=await import('../src/modChanges/store.ts')
 const {changeStatusKey}=await import('../src/modChanges/presentation.ts')
 const {downloadTaskState,updateDownloadProgress}=await import('../src/downloadTask.ts')
+const {backendMessageOf}=await import('../src/locale/backend.ts')
+const {i18n}=await import('../src/locale/index.ts')
 const tick=()=>new Promise(resolve=>setImmediate(resolve)),deferred=()=>{let resolve;const promise=new Promise(yes=>resolve=yes);return{promise,resolve}}
 const snapshot=revision=>({revision,nodes:[],evaluations:[]})
 test('newer evaluation refresh wins even when an older IPC finishes last',async()=>{
@@ -118,6 +120,38 @@ test('preparation failure retains item context and never shows a second download
  assert.equal(store.preparation.value.items[0].stage,'failed')
  await store.cancel();assert.equal(await pending,null);assert.equal(store.preparation.value,null)
  emit({plan_id:'initial',stage:'ready',actions:[],items:[]});assert.equal(store.preparation.value,null)
+})
+
+test('a map ZIP rejected as game.running during preparation never applies and can be replanned',async t=>{
+ const store=useModChanges(),calls=[]
+ const request={roots:[],map_import:{zip_path:'map.zip',selected:['Map-A']}}
+ const mapPlan={...plan(),actions:[{node_id:'map:root',kind:'install'}]}
+ const locale=i18n.global.locale
+ const previousLocale=locale.value
+ t.after(()=>{locale.value=previousLocale})
+ locale.value='zh-CN'
+ globalThis.__changeStoreApi=async(name,args)=>{
+   calls.push([name,args[0]])
+   if(name==='planModChanges')return mapPlan
+   if(name==='prepareModChanges')throw new Error('game.running')
+   if(name==='cancelModChanges')return
+   assert.fail(`Unexpected IPC: ${name}`)
+ }
+ const revision=store.appliedRevision.value
+ const pending=store.run(request);await tick()
+ assert.equal(store.state.value.phase,'confirming')
+ await store.confirm()
+ assert.equal(store.state.value.phase,'failed')
+ assert.equal(backendMessageOf(store.state.value.error),'《胡闹厨房2》正在运行，请先关闭后重试')
+ await store.confirm()
+ assert.deepEqual(calls,[['planModChanges',request],['prepareModChanges','initial']])
+ assert.equal(store.appliedRevision.value,revision)
+ assert.equal(downloadTaskState.failure,null)
+ await store.retry()
+ assert.equal(store.state.value.phase,'confirming')
+ assert.equal(store.state.value.error,null)
+ assert.deepEqual(calls.slice(2),[['cancelModChanges','initial'],['planModChanges',request]])
+ await store.cancel();assert.equal(await pending,null)
 })
 
 test('preparation cancellation hides progress only after the downloader accepts it',async()=>{

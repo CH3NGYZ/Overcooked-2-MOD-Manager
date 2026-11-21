@@ -178,7 +178,6 @@ const { levelExpansion, activate, togglePlugin } = useLevelSetCardExpansion()
 const enabledCount = computed(() => sets.value.filter((set) => set.enabled).length)
 /** 游戏是否探测到 —— 没探测到时本地 MOD 列表必然为空，不能因此判「缺依赖」。 */
 const gameProbed = computed(() => !!game.value?.path)
-const kitchenRunning = computed(() => !!game.value?.kitchen_running)
 /** 删除走回收站还是直接删（与设置页同一开关，文案与后端行为都跟它走）。 */
 const recyclesOnDelete = computed(() => config.value?.recycle_deleted_mods !== false)
 
@@ -832,7 +831,6 @@ provide(
     expansion: levelExpansion,
     highlightId,
     toolsMinWidth,
-    kitchenRunning,
     toggle,
     activate,
     tagsOf,

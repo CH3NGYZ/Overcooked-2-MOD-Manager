@@ -16,7 +16,7 @@ registerHooks({
         export const api=new Proxy({}, {get:(_,key)=>(...args)=>globalThis.__chainEntry.api(key,args)})`,
       '/src/modChanges/store.ts': 'export const useModChanges=()=>({run:request=>globalThis.__chainEntry.run(request)})',
       '/src/composables/useDashboardStore.ts': 'export const useDashboard=()=>({game:{get value(){return {kitchen_running:globalThis.__chainEntry.running}}}})',
-      '/src/composables/useMapSources.ts': 'export const useMapSources=()=>({maps:{value:[]}})',
+      '/src/composables/useMapSources.ts': 'export const useMapSources=()=>({maps:{value:globalThis.__chainEntry.maps}})',
       '/src/useNotify.ts': 'export const useNotify=()=>new Proxy({}, {get:(_,kind)=>text=>globalThis.__chainEntry.notices.push([kind,text])})',
       '/src/i18n.ts': 'export const t=key=>key; export const pickI18n=(_,fallback)=>fallback',
       '/src/locale/backend.ts': 'export const backendMessageOf=String; export const translateBackendMessage=String',
@@ -27,12 +27,14 @@ registerHooks({
 })
 const { useModInstallFlow } = await import('../src/composables/useModInstallFlow.ts')
 const { useLevelSetImport } = await import('../src/composables/useLevelSetImport.ts')
+const { useModRepositoryPreview } = await import('../src/composables/useModRepositoryPreview.ts')
+const { gameOperationNotice, useGameOperationGate } = await import('../src/composables/useGameOperationGate.ts')
 const tick = () => new Promise(resolve => setImmediate(resolve))
 function fixture(extra={}) {
-  const f={calls:[],plans:[],notices:[],running:false,
+  const f={calls:[],plans:[],notices:[],maps:[],running:false,
     api(key,args){this.calls.push([key,...args]); if(key==='analyzeModSource')return Promise.resolve({preview_id:'preview-1'});
       if(key==='cancelModPreview'||key==='discardMapSource')return Promise.resolve({ok:true,message:''});
-      if(key==='stageMapSource')return Promise.resolve(this.staged); throw new Error(`Unexpected API ${key}`)},
+      if(key==='stageMapSource'||key==='stageMapRelease')return Promise.resolve(this.staged); throw new Error(`Unexpected API ${key}`)},
     async run(request){this.plans.push(request);return {ok:true,message:'modChanges.completed'}},...extra}
   globalThis.__chainEntry=f; return f
 }
@@ -51,9 +53,20 @@ for(const result of [null,new Error('blocked')])test(`cancelled or failed batch 
   assert.deepEqual(f.calls,[['cancelModPreview','preview-1']]);assert.equal(f.notices.some(([kind])=>kind==='success'),false)
 })
 
-test('running game prevents manual analysis and a received preview is still cleaned',async()=>{
+test('running game blocks manual and online MOD installation and still cleans a submitted preview',async t=>{
+  gameOperationNotice.value=false
+  t.after(()=>{gameOperationNotice.value=false})
   const f=fixture({running:true}),flow=useModInstallFlow()
-  await flow.handleSourceSelect({kind:'file',value:'sample.zip'})
+  flow.openSource()
+  assert.equal(flow.sourceOpen.value,false)
+  assert.equal(gameOperationNotice.value,true)
+  await flow.handleSourceSelect({kind:'local',value:'sample.zip'})
+  gameOperationNotice.value=false
+  const {blockModOperation}=useGameOperationGate()
+  await useModRepositoryPreview({gameBlocked:blockModOperation}).previewModRepository({
+    id:'mod',cached_releases:[{tag_name:'v1.0',assets:[]}],
+  })
+  assert.equal(gameOperationNotice.value,true)
   assert.deepEqual(f.calls,[]);assert.deepEqual(f.plans,[])
   await flow.openPreview({preview_id:'preview-1'})
   assert.deepEqual(f.calls,[['cancelModPreview','preview-1']])
@@ -67,17 +80,37 @@ test('source re-entry is blocked until its whole batch finishes',async()=>{
   finish(null);await pending;assert.equal(flow.sourceBusy.value,false)
 })
 
-for(const staged of [false,true])test(`map detail hands the actual selected ZIP to one batch; staged=${staged}`,async t=>{
-  const item={dir_name:'Map-A',name:'Map A',author:'Author',version:'1.0',level_count:1,plugins:[],conflicts:[{handle:'old-map'}]}
-  const f=fixture({staged:{path:'map.zip',staged,sets:[item],origin:{map_id:'online'}}})
+const mapItem={dir_name:'Map-A',name:'Map A',author:'Author',version:'1.0',level_count:1,plugins:[],conflicts:[{handle:'old-map'}]}
+for(const kind of ['local','url'])test(`running game allows ${kind} maps to reach the shared installation plan`,async t=>{
+  const staged=kind==='url'
+  const value=staged?'https://example.com/map.zip':'map.zip'
+  const f=fixture({running:true,staged:{path:'map.zip',staged,sets:[mapItem],origin:null}})
   const scope=effectScope();const flow=scope.run(()=>useLevelSetImport());t.after(()=>scope.stop())
-  const pending=flow.importSource({kind:'file',value:'map.zip'})
+  const pending=flow.importSource({kind,value})
   await tick();assert.equal(flow.previewOpen.value,true);assert.deepEqual(f.plans,[])
+  assert.deepEqual(f.calls,[['stageMapSource',kind,value]])
   flow.confirmImport();await nextTick();await pending
-  assert.deepEqual(f.plans,[{roots:[],map_import:{zip_path:'map.zip',selected:['Map-A'],origin:{map_id:'online'}}}])
+  assert.deepEqual(f.plans,[{roots:[],map_import:{zip_path:'map.zip',selected:['Map-A'],origin:null}}])
   assert.deepEqual(f.notices,[['success','levelSet.imported']])
   assert.deepEqual(f.calls.filter(([key])=>key==='discardMapSource'),staged?[['discardMapSource','map.zip']]:[])
   assert.equal(f.calls.some(([key])=>['deleteLevelSet','uninstallLocalMod','importLevelSets'].includes(key)),false)
+})
+
+for(const [tag,asset] of [[undefined,undefined],['v1.0','chosen.zip']])test(`running game allows the online map ${tag?'selected asset':'card default'}`,async t=>{
+  const targetTag=tag??'v2.0'
+  const origin={map_id:'online',tag:targetTag}
+  const f=fixture({running:true,maps:[{id:'online',name:'Map A',latest_tag:'v2.0',cached_releases:[{tag_name:'v2.0'},{tag_name:'v1.0'}]}],
+    staged:{path:'cache-map.zip',staged:true,sets:[mapItem],origin}})
+  const scope=effectScope();const flow=scope.run(()=>useLevelSetImport());t.after(()=>scope.stop())
+  const pending=flow.installRelease('online',tag,asset)
+  await tick()
+  assert.deepEqual(f.calls,[['stageMapRelease','online',targetTag,asset]])
+  assert.equal(flow.previewOpen.value,true)
+  assert.deepEqual(f.plans,[])
+  flow.confirmImport()
+  assert.equal(await pending,true)
+  assert.deepEqual(f.plans,[{roots:[],map_import:{zip_path:'cache-map.zip',selected:['Map-A'],origin}}])
+  assert.deepEqual(f.calls.at(-1),['discardMapSource','cache-map.zip'])
 })
 
 test('cancelling map detail makes no plan and preserves the user ZIP',async t=>{

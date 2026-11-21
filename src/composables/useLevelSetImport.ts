@@ -156,6 +156,7 @@ export function useLevelSetImport() {
     const sets = staged.sets
     if (!(await askApproval(staged.path, sets))) return false
     closePreview()
+    // 运行中的游戏仍可安装纯地图，涉及 MOD 的方案由后端拒绝。
     const result = await changes.run({ roots: [], map_import: {
       zip_path: staged.path, selected: sets.map(set => set.dir_name), origin: staged.origin,
     } })

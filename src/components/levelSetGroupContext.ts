@@ -53,7 +53,6 @@ export interface LevelSetGroupContext {
   expansion: GroupExpansion
   highlightId: Ref<string | null>
   toolsMinWidth: ComputedRef<number>
-  kitchenRunning: ComputedRef<boolean>
   toggle(set: LevelSetInfo, enabled: boolean): void | Promise<void>
   activate(set: LevelSetInfo, card?: HTMLElement): void | Promise<void>
   tagsOf(set: LevelSetInfo): LevelSetCardTag[]

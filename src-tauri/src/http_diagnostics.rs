@@ -1,7 +1,7 @@
 //! Shared diagnostics for application HTTP, after API admission where applicable.
 //! Status handling, retries, redirects and cancellation remain with their owners.
 mod redaction;
-pub(crate) use redaction::redact_text;
+pub(crate) use redaction::{redact_field, redact_text};
 
 use bytes::{Bytes, BytesMut};
 use http_body::{Body, Frame, SizeHint};
@@ -28,6 +28,7 @@ pub(crate) fn body_preview(response: &reqwest::Response) -> Option<&str> {
 
 pub(crate) trait HttpRequestExt {
     async fn send_logged(self) -> Result<reqwest::Response, reqwest::Error>;
+    async fn send_logged_metadata(self) -> Result<reqwest::Response, reqwest::Error>;
 }
 
 impl HttpRequestExt for reqwest::RequestBuilder {
@@ -35,19 +36,50 @@ impl HttpRequestExt for reqwest::RequestBuilder {
         let (client, request) = self.build_split();
         execute(client, request?).await
     }
+
+    async fn send_logged_metadata(self) -> Result<reqwest::Response, reqwest::Error> {
+        let (client, request) = self.build_split();
+        execute_with(client, request?, false).await
+    }
 }
 
 pub(crate) async fn execute(
     client: reqwest::Client,
     request: reqwest::Request,
 ) -> Result<reqwest::Response, reqwest::Error> {
-    let redactor = Redactor::new(&request);
+    execute_with(client, request, true).await
+}
+
+async fn execute_with(
+    client: reqwest::Client,
+    request: reqwest::Request,
+    preview_body: bool,
+) -> Result<reqwest::Response, reqwest::Error> {
     let method = request.method().clone();
-    let address = crate::repository_sources::safe_log_address(request.url().as_str());
+    let address = if preview_body {
+        crate::repository_sources::safe_log_address(request.url().as_str())
+    } else {
+        request.url().origin().ascii_serialization()
+    };
     // Request bodies can be one-shot upload streams; never poll or clone them.
-    let request_body = redactor.request_body(&request);
+    let preview = preview_body.then(|| {
+        let redactor = Redactor::new(&request);
+        let request_body = redactor.request_body(&request);
+        (redactor, request_body)
+    });
     match client.execute(request).await {
-        Ok(response) => Ok(inspect(response, method, address, request_body, redactor).await),
+        Ok(response) => {
+            if let Some((redactor, request_body)) = preview {
+                return Ok(inspect(response, method, address, request_body, redactor).await);
+            }
+            log::debug!(
+                "HTTP 响应元数据：方法={method}，来源={address:?}，最终来源={:?}，状态={}，长度={:?}，未记录正文",
+                response.url().origin().ascii_serialization(),
+                response.status().as_u16(),
+                response.content_length(),
+            );
+            Ok(response)
+        }
         Err(error) => {
             log::warn!(
                 "HTTP 请求未收到响应：方法={}，地址={:?}，超时={}，连接错误={}",
@@ -355,5 +387,7 @@ impl Drop for PreviewBody {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::capture_test_logs;
 #[cfg(test)]
 mod transport_tests;

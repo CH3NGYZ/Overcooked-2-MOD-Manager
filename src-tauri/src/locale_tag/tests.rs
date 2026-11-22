@@ -1,6 +1,28 @@
 use super::*;
 
 #[test]
+fn diagnostic_tag_does_not_copy_encoded_or_raw_error_details() {
+    let error = with_params(
+        "archive.zipReadFailed",
+        &[(
+            "reason",
+            "https://example.invalid/archive?token=fixture-secret",
+        )],
+    );
+    assert!(!is_bare_tag(&error));
+    assert_eq!(diagnostic_tag(&error), "archive.zipReadFailed");
+    assert_eq!(
+        diagnostic_tag("mods.fileMissing: raw details"),
+        "mods.fileMissing"
+    );
+    assert_eq!(
+        diagnostic_tag("https://example.invalid/?token=fixture-secret"),
+        "unclassified"
+    );
+    assert!(!is_bare_tag("config.readFailed\nprivate"));
+}
+
+#[test]
 fn keeps_readable_path_characters() {
     // Windows 路径里的盘符、反斜杠、点号都保留，日志与调试时能直接读
     assert_eq!(

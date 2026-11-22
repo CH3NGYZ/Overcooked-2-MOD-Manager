@@ -1,10 +1,49 @@
 use super::*;
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, Once};
 
 struct Logger(Mutex<Vec<(log::Level, String)>>);
 static LOGGER: Logger = Logger(Mutex::new(Vec::new()));
+static CAPTURES: Mutex<BTreeMap<usize, Capture>> = Mutex::new(BTreeMap::new());
+
+struct Capture {
+    target: &'static str,
+    needle: String,
+    messages: Vec<String>,
+}
+
+pub(crate) struct LogCapture(usize);
+
+impl LogCapture {
+    pub(crate) fn messages(&self) -> Vec<String> {
+        CAPTURES.lock().unwrap()[&self.0].messages.clone()
+    }
+}
+
+impl Drop for LogCapture {
+    fn drop(&mut self) {
+        CAPTURES.lock().unwrap().remove(&self.0);
+    }
+}
+
+pub(crate) fn capture_test_logs(target: &'static str, needle: &str) -> LogCapture {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    init_log();
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    CAPTURES.lock().unwrap().insert(
+        id,
+        Capture {
+            target,
+            needle: needle.into(),
+            messages: Vec::new(),
+        },
+    );
+    LogCapture(id)
+}
+
 impl log::Log for Logger {
     fn enabled(&self, _: &log::Metadata<'_>) -> bool {
         true
@@ -15,6 +54,17 @@ impl log::Log for Logger {
                 .lock()
                 .unwrap()
                 .push((record.level(), record.args().to_string()));
+        }
+        let mut captures = CAPTURES.lock().unwrap();
+        let mut matching = captures
+            .values_mut()
+            .filter(|capture| capture.target == record.target())
+            .peekable();
+        if matching.peek().is_some() {
+            let message = record.args().to_string();
+            for capture in matching.filter(|capture| message.contains(capture.needle.as_str())) {
+                capture.messages.push(message.clone());
+            }
         }
     }
     fn flush(&self) {}
@@ -46,6 +96,26 @@ pub(super) fn client() -> reqwest::Client {
         .timeout(Duration::from_secs(3))
         .build()
         .unwrap()
+}
+
+#[tokio::test]
+async fn metadata_only_logs_status_without_paths_or_bodies() {
+    let body = b"unlabelled private response fixture";
+    let (address, worker) = fixture(403, "text/plain", body.to_vec(), body.len(), Duration::ZERO);
+    let origin = reqwest::Url::parse(&address)
+        .unwrap()
+        .origin()
+        .ascii_serialization();
+    let capture = capture_test_logs("app_lib::http_diagnostics", &origin);
+    let response = client().get(&address).send_logged_metadata().await.unwrap();
+    assert_eq!(response.status(), 403);
+    assert_eq!(response.bytes().await.unwrap().as_ref(), body);
+    worker.join().unwrap();
+    let entries = capture.messages();
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert!(entries[0].contains("状态=403"));
+    assert!(!entries[0].contains(&address));
+    assert!(!entries[0].contains("unlabelled private response"));
 }
 
 pub(super) fn fixture(

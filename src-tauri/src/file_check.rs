@@ -13,14 +13,30 @@ pub(crate) const PERMISSIONS: &str = "error.checkedFilePermissions";
 pub(crate) const WRITE: &str = "error.checkedFileWrite";
 pub(crate) const COPY: &str = "error.checkedFileCopy";
 
+pub(crate) fn log_field(value: &str) -> String {
+    let redacted = crate::http_diagnostics::redact_field(value);
+    let mut chars = redacted.chars();
+    let mut display = chars.by_ref().take(512).collect::<String>();
+    if chars.next().is_some() {
+        display.push('…');
+    }
+    display
+}
+
+pub(crate) fn log_path(path: &Path) -> String {
+    log_field(&crate::display_path::display_path(path))
+}
+
 pub(crate) fn report(stage: &str, path: &Path, reason: &str) -> String {
     let path = crate::display_path::display_path(path);
-    log::warn!("文件操作检查未通过：步骤={stage}，路径={path}，原因={reason}");
+    log::warn!(
+        "文件操作检查未通过：步骤={stage}，路径={:?}，原因={reason}",
+        log_field(&path)
+    );
     crate::locale_tag::with_params(stage, &[("path", &path), ("reason", reason)])
 }
 
-pub(crate) fn io_reason(error: io::Error, fallback: &'static str) -> &'static str {
-    log::warn!("文件系统操作失败：{error}");
+fn io_reason(error: &io::Error, fallback: &'static str) -> &'static str {
     if cfg!(windows) && matches!(error.raw_os_error(), Some(32 | 33)) {
         return BUSY;
     }
@@ -38,5 +54,18 @@ pub(crate) fn report_io(
     error: io::Error,
     fallback: &'static str,
 ) -> String {
-    report(stage, path, io_reason(error, fallback))
+    let reason = io_reason(&error, fallback);
+    log::warn!(
+        "文件系统操作失败：步骤={stage}，路径={:?}，原因={reason}，OS码={:?}，分类={:?}",
+        log_path(path),
+        error.raw_os_error(),
+        error.kind()
+    );
+    crate::locale_tag::with_params(
+        stage,
+        &[
+            ("path", &crate::display_path::display_path(path)),
+            ("reason", reason),
+        ],
+    )
 }

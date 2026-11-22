@@ -94,7 +94,7 @@ impl ResetPaths {
         })
     }
 
-    fn journal(&self) -> PathBuf {
+    pub(super) fn journal(&self) -> PathBuf {
         self.parent.join(".OC2ModManager-reset.json")
     }
 

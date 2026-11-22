@@ -1,5 +1,20 @@
 use super::*;
 
+#[test]
+fn updater_diagnostics_exclude_remote_payloads_and_keep_io_evidence() {
+    use tauri_plugin_updater::Error;
+    let error = Error::SignatureUtf8("raw-signature-fixture".to_owned());
+    assert_eq!(updater_error_details(&error), "invalid_signature");
+    let error = Error::Serialization(
+        serde_json::from_str::<bool>("\"manifest-credential-fixture\"").unwrap_err(),
+    );
+    let detail = updater_error_details(&error);
+    assert!(detail.contains("kind=Data, line=1, column="));
+    assert!(!detail.contains("manifest-credential-fixture"));
+    let error = Error::Io(std::io::Error::from_raw_os_error(5));
+    assert!(updater_error_details(&error).contains("os_code=Some(5)"));
+}
+
 fn target(os: &str, arch: &str, kind: &str) -> UpdateTarget {
     UpdateTarget::from_parts(os, arch, Some(kind)).unwrap()
 }

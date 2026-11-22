@@ -17,6 +17,13 @@ pub async fn clear_all_config(
     })
     .await
     .map_err(|error| {
+        if let tauri::Error::JoinError(join) = &error {
+            log::error!(
+                "[data] 清除数据的工作线程异常：取消={}，panic={}",
+                join.is_cancelled(),
+                join.is_panic()
+            );
+        }
         crate::locale_tag::with_params(
             "tools.clearAllConfigFailed",
             &[("reason", &error.to_string())],
@@ -40,6 +47,13 @@ pub async fn migrate_manager_data(
     })
     .await
     .map_err(|error| {
+        if let tauri::Error::JoinError(join) = &error {
+            log::error!(
+                "[data] 迁移数据的工作线程异常：取消={}，panic={}",
+                join.is_cancelled(),
+                join.is_panic()
+            );
+        }
         crate::locale_tag::with_params("tools.migrateDataFailed", &[("reason", &error.to_string())])
     })?
 }

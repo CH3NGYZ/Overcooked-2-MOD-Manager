@@ -1,9 +1,30 @@
 use super::paths::normalize_path;
+use crate::display_path::display_path;
 use std::path::Path;
 use sysinfo::{Process, ProcessRefreshKind, ProcessStatus, System, UpdateKind};
 
 pub fn is_game_running(game: &Path) -> bool {
-    let running = is_game_running_with_system(game, &mut System::new());
+    let mut system = System::new();
+    let mut matches = matching_processes(game, &mut system);
+    let running = if log::log_enabled!(log::Level::Debug) {
+        let matching = matches
+            .by_ref()
+            .take(9)
+            .map(process_diagnostic)
+            .collect::<Vec<_>>();
+        if matching.is_empty() {
+            false
+        } else {
+            log::debug!(
+                "[game] 判定为运行中的游戏进程：游戏根={game:?}，进程={:?}，已截断={}",
+                &matching[..matching.len().min(8)],
+                matching.len() > 8
+            );
+            true
+        }
+    } else {
+        matches.next().is_some()
+    };
     log::trace!("游戏进程检查：运行中={}", running);
     running
 }
@@ -11,6 +32,13 @@ pub fn is_game_running(game: &Path) -> bool {
 /// Reuse process metadata in the observer without logging unchanged checks.
 /// File operations still call `is_game_running` with a fresh process snapshot.
 pub(crate) fn is_game_running_with_system(game: &Path, system: &mut System) -> bool {
+    matching_processes(game, system).next().is_some()
+}
+
+fn matching_processes<'a>(
+    game: &Path,
+    system: &'a mut System,
+) -> impl Iterator<Item = &'a Process> {
     system.refresh_processes_specifics(
         ProcessRefreshKind::new()
             .with_exe(UpdateKind::OnlyIfNotSet)
@@ -20,7 +48,7 @@ pub(crate) fn is_game_running_with_system(game: &Path, system: &mut System) -> b
     system
         .processes()
         .values()
-        .any(|process| process_looks_running(&game, process))
+        .filter(move |process| process_looks_running(&game, process))
 }
 
 /// 当前被判定成「游戏」的进程，格式 `名字(PID)`，仅供诊断日志使用。
@@ -28,19 +56,22 @@ pub(crate) fn is_game_running_with_system(game: &Path, system: &mut System) -> b
 /// 误判时最需要知道的正是「到底是哪个进程」，而它只在这类低频路径
 /// （停止失败、用户手动重算）里取，不进入每秒一次的观察器热路径。
 pub(crate) fn running_processes(game: &Path) -> Vec<String> {
-    let mut system = System::new();
-    system.refresh_processes_specifics(
-        ProcessRefreshKind::new()
-            .with_exe(UpdateKind::OnlyIfNotSet)
-            .with_cmd(UpdateKind::OnlyIfNotSet),
-    );
-    let game = normalize_path(game);
-    system
-        .processes()
-        .values()
-        .filter(|process| process_looks_running(&game, process))
-        .map(|process| format!("{}({})", process.name(), process.pid()))
+    matching_processes(game, &mut System::new())
+        .take(8)
+        .map(process_diagnostic)
         .collect()
+}
+
+fn process_diagnostic(process: &Process) -> String {
+    format!(
+        "name={:?}, pid={}, parent={:?}, start_unix={}, status={:?}, exe={:?}",
+        process.name(),
+        process.pid(),
+        process.parent(),
+        process.start_time(),
+        process.status(),
+        process.exe().map(display_path),
+    )
 }
 
 /// 活着、且就是这款游戏的进程才算数。
@@ -152,7 +183,7 @@ pub fn is_crossover_running() -> bool {
 
 pub fn ensure_game_stopped(game: &Path) -> Result<(), String> {
     if is_game_running(game) {
-        log::warn!("文件操作被拒绝：游戏仍在运行");
+        log::warn!("文件操作被拒绝：游戏仍在运行，游戏根={game:?}");
         Err("game.running".into())
     } else {
         log::debug!("确认游戏已停止，可以执行文件操作");

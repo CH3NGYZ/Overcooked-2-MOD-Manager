@@ -2,11 +2,43 @@ use super::*;
 use std::fs;
 
 #[test]
+fn rust_session_header_survives_rollover_and_active_clear() {
+    let temp = tempfile::tempdir().unwrap();
+    let header = "session=example\n";
+    let mut history = History::start(temp.path(), 28, header).unwrap();
+    history.append(LogKind::Rust, b"first record\n").unwrap();
+    history.append(LogKind::Rust, b"next record\n").unwrap();
+    let entries = history.list(LogKind::Rust).unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(
+        history.read(LogKind::Rust, &entries[1].id).unwrap().content,
+        format!("{header}first record\n")
+    );
+    let active = &entries[0].id;
+    assert_eq!(
+        history.read(LogKind::Rust, active).unwrap().content,
+        format!("{header}next record\n")
+    );
+    assert!(
+        history
+            .clear(LogKind::Rust, active)
+            .unwrap()
+            .content
+            .is_empty()
+    );
+    history.append(LogKind::Rust, b"after clear\n").unwrap();
+    assert_eq!(
+        history.read(LogKind::Rust, active).unwrap().content,
+        format!("{header}after clear\n")
+    );
+}
+
+#[test]
 fn successive_startups_create_fresh_logs_and_keep_five_per_kind() {
     let temp = tempfile::tempdir().unwrap();
     let mut previous = Vec::new();
     for launch in 0..7 {
-        let mut history = History::start(temp.path(), MAX_RUST_BYTES).unwrap();
+        let mut history = History::start(temp.path(), MAX_RUST_BYTES, "").unwrap();
         for kind in LogKind::ALL {
             let entries = history.list(kind).unwrap();
             assert_eq!(entries.len(), usize::min(5, launch + 1));
@@ -43,7 +75,7 @@ fn rust_rollover_shares_retention_with_legacy_segments_and_preserves_existing_id
     make("rust_unrelated.log");
     make("frontend.log");
     make("crash.log");
-    let mut history = History::start(temp.path(), MAX_RUST_BYTES).unwrap();
+    let mut history = History::start(temp.path(), MAX_RUST_BYTES, "").unwrap();
     let rust = history.list(LogKind::Rust).unwrap();
     let frontend = history.list(LogKind::Frontend).unwrap();
     let crash = history.list(LogKind::Crash).unwrap();
@@ -94,7 +126,7 @@ fn reopening_a_log_only_reads_the_tail_and_preserves_timestamps() {
     let content = format!("{}final existing record\n", "old record\n".repeat(100_000));
     fs::write(&path, &content).unwrap();
     let before = fs::metadata(&path).unwrap().modified().unwrap();
-    let mut history = History::start(temp.path(), MAX_RUST_BYTES).unwrap();
+    let mut history = History::start(temp.path(), MAX_RUST_BYTES, "").unwrap();
     let files = history.list(LogKind::Frontend).unwrap();
     let id = &files[1].id;
     let first = history.read(LogKind::Frontend, id).unwrap();
@@ -111,7 +143,7 @@ fn clear_only_affects_the_selected_file_and_active_log_can_still_append() {
     let temp = tempfile::tempdir().unwrap();
     let archived = temp.path().join("rust.log");
     fs::write(&archived, "older file\n").unwrap();
-    let mut history = History::start(temp.path(), 28).unwrap();
+    let mut history = History::start(temp.path(), 28, "").unwrap();
     history.append(LogKind::Rust, b"active record\n").unwrap();
     let files = history.list(LogKind::Rust).unwrap();
     let prior = history.clear(LogKind::Rust, &files[1].id).unwrap();
@@ -149,7 +181,7 @@ fn log_selection_refuses_a_path_cross_kind_hardlink_and_replacement() {
     fs::hard_link(&outside, data.join("crash.log")).unwrap();
     let legacy = data.join("frontend.log");
     fs::write(&legacy, "legacy").unwrap();
-    let mut history = History::start(&data, MAX_RUST_BYTES).unwrap();
+    let mut history = History::start(&data, MAX_RUST_BYTES, "").unwrap();
     assert_eq!(history.list(LogKind::Crash).unwrap().len(), 1);
     let frontend = history.list(LogKind::Frontend).unwrap();
     let old_id = &frontend[1].id;
@@ -189,14 +221,14 @@ fn reparse_log_directory_and_symlink_file_are_not_followed() {
         }
         panic!("Could not build log link fixture: {error}");
     }
-    assert!(History::start(&directory_link, MAX_RUST_BYTES).is_err());
+    assert!(History::start(&directory_link, MAX_RUST_BYTES, "").is_err());
     let file = target.join("actual.txt");
     fs::write(&file, "sentinel").unwrap();
     #[cfg(windows)]
     std::os::windows::fs::symlink_file(&file, target.join("rust.log")).unwrap();
     #[cfg(unix)]
     std::os::unix::fs::symlink(&file, target.join("rust.log")).unwrap();
-    let mut history = History::start(&target, MAX_RUST_BYTES).unwrap();
+    let mut history = History::start(&target, MAX_RUST_BYTES, "").unwrap();
     assert_eq!(history.list(LogKind::Rust).unwrap().len(), 1);
     assert_eq!(fs::read_to_string(file).unwrap(), "sentinel");
 }
@@ -214,7 +246,7 @@ fn fallback_appends_to_the_panic_log_without_history() {
 #[ignore = "Overwrites the system clipboard; run only in a disposable desktop session"]
 fn native_clipboard_contains_the_selected_log_file_list() {
     let temp = tempfile::tempdir().unwrap();
-    let mut history = History::start(temp.path(), MAX_RUST_BYTES).unwrap();
+    let mut history = History::start(temp.path(), MAX_RUST_BYTES, "").unwrap();
     let files = history.list(LogKind::Crash).unwrap();
     let selected = history.selected_path(LogKind::Crash, &files[0].id).unwrap();
     copy_to_clipboard(&selected).unwrap();

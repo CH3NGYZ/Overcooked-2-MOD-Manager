@@ -78,6 +78,37 @@ fn verified_phase_uses_recorded_pointer_to_choose_next_action() {
 }
 
 #[test]
+fn persisted_migration_diagnostics_correlate_the_pointer_without_error_payload() {
+    let mut record = legacy_failure();
+    let source = Path::new("before/OC2ModManager");
+    let target = Path::new("after/OC2ModManager");
+    record.action = DataAction::Migrate {
+        source: source.to_owned(),
+        target: target.to_owned(),
+    };
+    record.failed_from = Some(ResetPhase::Cleaning);
+    record.error = Some(crate::locale_tag::with_params(
+        "tools.migrateDataFailed",
+        &[("reason", "fixture-secret (os error 32)")],
+    ));
+    let failure = diagnostics(&record, target);
+    assert!(failure.contains(&record.token.to_string()));
+    assert!(failure.contains("状态=Failed，失败前阶段=Cleaning"));
+    assert!(failure.contains(&format!("当前数据根={:?}", display_path(target))));
+    assert!(failure.contains("原因=tools.migrateDataFailed"));
+    assert!(failure.contains("指向=目标"));
+    assert!(failure.contains("OS码=Some(32)"));
+    assert!(!failure.contains("fixture-secret"));
+
+    record.phase = ResetPhase::Completed;
+    record.failed_from = None;
+    record.error = None;
+    let completed = diagnostics(&record, target);
+    assert!(completed.contains("操作已完成"));
+    assert!(completed.contains(&format!("目标数据根=Some({:?})", display_path(target))));
+}
+
+#[test]
 fn simultaneous_notifiers_only_claim_one_and_persist_reported() {
     let temp = tempfile::tempdir().unwrap();
     let paths = ResetPaths::new(&temp.path().join("OC2ModManager")).unwrap();

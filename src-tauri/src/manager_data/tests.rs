@@ -205,16 +205,12 @@ fn final_validation_reloads_game_path_changed_during_helper_preparation() {
 #[test]
 fn final_protected_path_validation_is_under_operation_before_helper_commit() {
     let source = include_str!("../manager_data.rs");
-    let clear = source.split("pub(crate) fn clear_and_exit").nth(1).unwrap();
-    let final_lock = clear
-        .rfind("let _operation = state.operation.try_lock()")
-        .unwrap();
+    let clear = source.split("fn change_and_exit").nth(1).unwrap();
+    let final_lock = clear.rfind("state.operation.try_lock()").unwrap();
     let validation = clear
         .rfind("validate_protected_paths(&paths, state, &executable)?;")
         .unwrap();
-    let commit = clear
-        .find("helper.commit(&paths, action, locale)?;")
-        .unwrap();
+    let commit = clear.find("helper.commit(&paths, action, locale)").unwrap();
     assert!(final_lock < validation && validation < commit);
     assert!(!clear[final_lock..commit].contains("drop(_operation)"));
 }

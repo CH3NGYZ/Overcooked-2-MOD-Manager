@@ -81,6 +81,12 @@ mod wine;
 use tauri::{Emitter, Manager};
 use tauri_plugin_log::{Target, TargetKind};
 
+macro_rules! audited_handler {
+    ($($command:path),* $(,)?) => {
+        commands::logs::trace_ipc(tauri::generate_handler![$($command),*], &[$(stringify!($command)),*])
+    };
+}
+
 pub fn run() {
     install_guard::run_if_requested();
     update_migration::run_if_requested();
@@ -97,7 +103,10 @@ pub fn run() {
         }
     };
     let skip_legacy_migration = _data_session.skip_legacy_migration;
+    let data_startup = _data_session.startup_diagnostics.clone();
+    let data_operation_completed = _data_session.completed_operation_diagnostics.clone();
     let data_operation_failure = _data_session.failure_diagnostics.clone();
+    let data_helper_failure = _data_session.helper_failure_diagnostics.clone();
     commands::logs::install_panic_logger();
     /*
      * 不再在启动时无条件自提权。
@@ -123,6 +132,11 @@ pub fn run() {
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
+                }
+                if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) =
+                    event
+                {
+                    commands::logs::trace_native_drop(paths);
                 }
             }
             // Keep the main window alive even before the frontend close owner
@@ -155,20 +169,31 @@ pub fn run() {
                 user_paths::migrate_legacy_root()
             };
             let data_root = user_paths::root()?;
-            let log_path = user_paths::logs_dir()?;
-            let history_target = commands::logs::start(&log_path)?;
+            let logs_directory = user_paths::logs_dir()?;
+            let history_target = commands::logs::start(&logs_directory, &data_root)?;
             app.handle().plugin(
                 tauri_plugin_log::Builder::default()
                     .targets([Target::new(TargetKind::Stdout), history_target])
                     .level(log::LevelFilter::Trace)
                     .level_for("tao", log::LevelFilter::Info)
+                    .level_for("tauri_plugin_updater", log::LevelFilter::Off)
                     .build(),
             )?;
+            log::info!("{data_startup}");
+            if let Some(diagnostic) = &data_operation_completed {
+                log::info!("{diagnostic}");
+            }
             if let Some(diagnostic) = &data_operation_failure {
                 log::warn!("{diagnostic}");
             }
+            if let Some(diagnostic) = &data_helper_failure {
+                log::warn!("{diagnostic}");
+            }
             let state = app_state::AppState::new().map_err(|error| {
-                log::error!("初始化应用状态失败：{error}");
+                log::error!(
+                    "初始化应用状态失败：原因={}",
+                    crate::locale_tag::diagnostic_tag(&error)
+                );
                 std::io::Error::other(error.to_string())
             })?;
             let proxy_config = state.config.clone();
@@ -184,26 +209,31 @@ pub fn run() {
             app.manage(state.clone());
             main_webview::create(app)?;
             tauri::async_runtime::spawn(async move {
-                if proxy_config.refresh_proxies().await.is_err() {
-                    log::warn!("启动数据来源不可用，继续使用随包网络默认");
+                if let Err(error) = proxy_config.refresh_proxies().await {
+                    log::warn!(
+                        "启动代理策略刷新未完成：原因={}，当前会话来源={:?}",
+                        crate::locale_tag::diagnostic_tag(&error),
+                        proxy_config.data_selection().0,
+                    );
                 }
             });
             // 迁移发生在日志插件初始化之前，结果在这里补记。
             match migration {
                 user_paths::LegacyMigration::Moved { legacy, target } => log::info!(
-                    "已将旧数据目录迁移到新位置：旧={}，新={}",
-                    legacy.display(),
-                    target.display()
+                    "已将旧数据目录迁移到新位置：旧={:?}，新={:?}",
+                    crate::file_check::log_path(&legacy),
+                    crate::file_check::log_path(&target)
                 ),
                 user_paths::LegacyMigration::Failed {
                     legacy,
                     target,
                     error,
                 } => log::warn!(
-                    "旧数据目录迁移未完成，继续使用新位置：旧={}，新={}，原因={}",
-                    legacy.display(),
-                    target.display(),
-                    error
+                    "旧数据目录迁移未完成，继续使用新位置：旧={:?}，新={:?}，分类={:?}，OS码={:?}",
+                    crate::file_check::log_path(&legacy),
+                    crate::file_check::log_path(&target),
+                    error.kind(),
+                    error.raw_os_error()
                 ),
                 user_paths::LegacyMigration::None => {}
             }
@@ -213,10 +243,10 @@ pub fn run() {
             );
             if let Ok(executable) = std::env::current_exe() {
                 log::info!(
-                    "当前运行程序={}，数据根={}，Rust 日志目录={}",
-                    executable.display(),
-                    data_root.display(),
-                    log_path.display()
+                    "当前运行程序={:?}，数据根={:?}，Rust 日志目录={:?}",
+                    crate::file_check::log_path(&executable),
+                    crate::file_check::log_path(&data_root),
+                    crate::file_check::log_path(&logs_directory)
                 );
             }
             set_initial_window_size(app);
@@ -224,7 +254,7 @@ pub fn run() {
             game_state::start_observer(app.handle().clone());
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(audited_handler![
             commands::mod_changes::evaluate_mod_changes,
             commands::mod_changes::plan_mod_changes,
             commands::mod_changes::prepare_mod_changes,
@@ -255,6 +285,8 @@ pub fn run() {
             commands::logs::copy_log_file,
             commands::logs::clear_log,
             commands::logs::write_frontend_log,
+            commands::logs::record_ipc_failure,
+            commands::logs::record_file_drop,
             commands::mods_local::save_mod_note,
             commands::mods_local::install_local_mod,
             direct_mod::install_online_mod,

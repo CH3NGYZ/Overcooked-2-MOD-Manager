@@ -1,5 +1,6 @@
 //! Mutate the selected data root only after every manager process releases it.
 //! A fixed bootstrap lock/journal coordinates reset and migration across roots.
+use crate::file_check::log_path;
 use std::fs::File;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,6 +10,7 @@ mod handoff;
 mod legacy;
 mod migration;
 mod notice;
+mod receipt;
 mod storage;
 #[cfg(test)]
 mod tests;
@@ -36,7 +38,34 @@ pub(crate) struct DataSession {
     _legacy_lock: Option<File>,
     pub(crate) skip_legacy_migration: bool,
     pub(crate) completed_reset_token: Option<uuid::Uuid>,
+    pub(crate) startup_diagnostics: String,
+    pub(crate) completed_operation_diagnostics: Option<String>,
     pub(crate) failure_diagnostics: Option<String>,
+    pub(crate) helper_failure_diagnostics: Option<String>,
+}
+
+fn startup_diagnostics(
+    paths: &storage::ResetPaths,
+    pointer: bool,
+    root_dir: Option<bool>,
+    journal: &str,
+) -> String {
+    let source = if pointer {
+        "固定定位文件"
+    } else {
+        "系统默认位置"
+    };
+    let root_status = match root_dir {
+        Some(true) => "目录存在",
+        Some(false) => "目录不存在或不可读",
+        None => "未检查",
+    };
+    format!(
+        "[data] 启动数据定位：来源={source}，定位文件={:?}，定位文件存在={}，数据根={:?}，根目录状态={root_status}，操作记录={journal}",
+        log_path(&paths.parent.join("data-location.json")),
+        pointer,
+        log_path(&paths.root)
+    )
 }
 
 fn completed_reset_token(record: Option<&storage::ResetRecord>) -> Option<uuid::Uuid> {
@@ -66,7 +95,9 @@ pub(crate) fn initialize() -> Result<DataSession, String> {
             Err(error) => {
                 // A damaged coordination record must not repeatedly delete data
                 // or strand the application before its diagnostic UI can start.
-                if paths.parent.join("data-location.json").is_file() && !paths.root.is_dir() {
+                let pointer = paths.parent.join("data-location.json").is_file();
+                let root_dir = pointer.then(|| paths.root.is_dir());
+                if root_dir == Some(false) {
                     return Err("config.directoryUnavailable".into());
                 }
                 notice::show_unrecorded(&error, None);
@@ -76,7 +107,14 @@ pub(crate) fn initialize() -> Result<DataSession, String> {
                     _legacy_lock: legacy_lock,
                     skip_legacy_migration: true,
                     completed_reset_token: None,
-                    failure_diagnostics: Some(format!("无法读取管理器数据操作记录：{error}")),
+                    startup_diagnostics: startup_diagnostics(&paths, pointer, root_dir, "不可读"),
+                    completed_operation_diagnostics: None,
+                    failure_diagnostics: Some(format!(
+                        "[data] 无法读取管理器数据操作记录：文件={:?}，原因={}",
+                        log_path(&paths.journal()),
+                        notice::diagnostic_reason(&error)
+                    )),
+                    helper_failure_diagnostics: receipt::diagnostics(&paths.parent, None),
                 });
             }
         };
@@ -117,11 +155,12 @@ pub(crate) fn initialize() -> Result<DataSession, String> {
                 if !record.reported {
                     notice::show_once(&paths, record);
                 }
-                notice::diagnostics(record)
+                notice::diagnostics(record, &paths.root)
             });
         // Only a completed clear deliberately leaves the selected root absent.
-        if paths.parent.join("data-location.json").is_file()
-            && !paths.root.is_dir()
+        let pointer = paths.parent.join("data-location.json").is_file();
+        let root_dir = pointer.then(|| paths.root.is_dir());
+        if root_dir == Some(false)
             && !record.as_ref().is_some_and(|record| {
                 record.phase == storage::ResetPhase::Completed
                     && matches!(record.action, storage::DataAction::Clear)
@@ -137,7 +176,22 @@ pub(crate) fn initialize() -> Result<DataSession, String> {
             _legacy_lock: legacy_lock,
             skip_legacy_migration: record.is_some(),
             completed_reset_token: completed_reset_token(record.as_ref()),
+            startup_diagnostics: startup_diagnostics(
+                &paths,
+                pointer,
+                root_dir,
+                if record.is_some() {
+                    "存在"
+                } else {
+                    "不存在"
+                },
+            ),
+            completed_operation_diagnostics: record
+                .as_ref()
+                .filter(|record| record.phase == storage::ResetPhase::Completed)
+                .map(|record| notice::diagnostics(record, &paths.root)),
             failure_diagnostics,
+            helper_failure_diagnostics: receipt::diagnostics(&paths.parent, record.as_ref()),
         });
     }
 }
@@ -158,15 +212,22 @@ pub(crate) fn run_if_requested() {
         if args.next().is_some() {
             return Err(failed("Invalid reset-helper arguments"));
         }
-        let paths = storage::ResetPaths::current()?;
-        if let Err(error) = handoff::run_helper(&paths, token) {
+        let paths = storage::ResetPaths::current().inspect_err(|error| {
+            if let Ok(location) = crate::user_paths::location_file()
+                && let Some(control) = location.parent()
+            {
+                receipt::record_failure(control, token, receipt::Stage::LocateDataRoot, error);
+            }
+        })?;
+        let mut stage = receipt::Stage::ValidateDataRoot;
+        if let Err(error) = handoff::run_helper(&paths, token, &mut stage) {
             if let Ok(Some(record)) = paths.record()
                 && record.token == token
                 && record.phase == storage::ResetPhase::Failed
             {
                 notice::show_once(&paths, &record);
             } else {
-                eprintln!("Data operation helper stopped ({token}): {error}");
+                receipt::record_failure(&paths.parent, token, stage, &error);
             }
             return Ok(false);
         }
@@ -194,11 +255,14 @@ fn validate_protected_paths(
     state: &crate::app_state::AppState,
     executable: &Path,
 ) -> Result<(), String> {
-    paths.validate_root()?;
-    paths.protect(executable)?;
+    check_step("数据根安全校验", paths.validate_root())?;
+    check_step("检查数据根与管理器程序是否交叠", paths.protect(executable))?;
     let config = state.config.load_or_default();
     if !config.game.path.trim().is_empty() {
-        paths.protect(Path::new(&config.game.path))?;
+        check_step(
+            "检查数据根与已配置游戏目录是否交叠",
+            paths.protect(Path::new(&config.game.path)),
+        )?;
     }
     if let Some(game) = state
         .game_state
@@ -207,9 +271,21 @@ fn validate_protected_paths(
         .as_ref()
         .and_then(|game| game.path.as_ref())
     {
-        paths.protect(Path::new(game))?;
+        check_step(
+            "检查数据根与已探测游戏目录是否交叠",
+            paths.protect(Path::new(game)),
+        )?;
     }
     Ok(())
+}
+
+fn check_step<Value>(step: &str, result: Result<Value, String>) -> Result<Value, String> {
+    result.inspect_err(|error| {
+        log::warn!(
+            "[data] 管理器数据操作停止：步骤={step}，原因={}",
+            notice::diagnostic_reason(error)
+        );
+    })
 }
 
 /// All locks, native-process preparation and shutdown stay on the blocking worker.
@@ -234,51 +310,103 @@ fn change_and_exit(
     parent: Option<&Path>,
     locale: Option<String>,
 ) -> Result<(), String> {
-    RESETTING
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .map_err(|_| BUSY.to_string())?;
+    check_step(
+        "获取数据操作门禁",
+        RESETTING
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| BUSY.to_string()),
+    )?;
     let _reset = ResetGuard;
     // Share the updater's atomic exclusion so an update cannot begin mid-reset.
-    let _updater = crate::archive::begin_app_update()?;
-    let paths = storage::ResetPaths::current()?;
-    let executable = std::env::current_exe().map_err(failed)?;
+    let _updater = check_step("获取更新互斥门禁", crate::archive::begin_app_update())?;
+    let paths = check_step("定位当前数据根", storage::ResetPaths::current())?;
+    let executable = check_step(
+        "定位当前管理器程序",
+        std::env::current_exe().map_err(failed),
+    )?;
+    log::info!(
+        "[data] 准备{}：数据根={:?}，目标父目录={:?}",
+        if parent.is_some() {
+            "迁移管理器数据"
+        } else {
+            "清除管理器数据"
+        },
+        log_path(&paths.root),
+        parent.filter(|path| path.is_absolute()).map(log_path)
+    );
     validate_protected_paths(&paths, state, &executable)?;
     let action = match parent {
         Some(parent) => storage::DataAction::Migrate {
             source: paths.root.clone(),
-            target: migration::prepare(&paths, parent, state, &executable)?,
+            target: check_step(
+                "预先验证迁移目标",
+                migration::prepare(&paths, parent, state, &executable),
+            )?,
         },
         None => storage::DataAction::Clear,
     };
     // Keep the established repository_cache -> operation order. Do not wait for
     // an installation/download to finish while a destructive confirmation is open.
-    let _repositories = state.repository_cache.try_lock().map_err(|_| BUSY)?;
+    let _repositories = check_step(
+        "获取仓库操作门禁",
+        state
+            .repository_cache
+            .try_lock()
+            .map_err(|_| BUSY.to_owned()),
+    )?;
     {
-        let _operation = state.operation.try_lock().map_err(|_| BUSY)?;
-        crate::mod_changes::guard::ensure_recovered(state)?;
+        let _operation = check_step(
+            "获取数据写入门禁",
+            state.operation.try_lock().map_err(|_| BUSY.to_owned()),
+        )?;
+        check_step(
+            "恢复既有安装事务",
+            crate::mod_changes::guard::ensure_recovered(state),
+        )?;
     }
-    let mut helper = handoff::PreparedHelper::start(&paths, &executable)?;
+    let mut helper = check_step(
+        "等待原生辅助进程就绪",
+        handoff::PreparedHelper::start(&paths, &executable),
+    )?;
     crate::level_sets::recompress::shutdown().map_err(|error| {
-        log::error!("地图资源恢复未完成，保留管理器数据：{error}");
+        log::error!(
+            "[data] 地图资源恢复未完成，保留管理器数据：原因={}",
+            notice::diagnostic_reason(&error)
+        );
         "assetBundle.recoveryPending".to_string()
     })?;
-    let _operation = state.operation.try_lock().map_err(|_| BUSY)?;
-    crate::mod_changes::guard::ensure_recovered(state)?;
-    if crate::mod_changes::transaction::has_pending(&paths.root.join("mod-change-transactions"))? {
+    let _operation = check_step(
+        "交接前重新获取数据写入门禁",
+        state.operation.try_lock().map_err(|_| BUSY.to_owned()),
+    )?;
+    check_step(
+        "交接前恢复既有安装事务",
+        crate::mod_changes::guard::ensure_recovered(state),
+    )?;
+    if check_step(
+        "检查待恢复安装事务",
+        crate::mod_changes::transaction::has_pending(&paths.root.join("mod-change-transactions")),
+    )? {
+        log::warn!("[data] 仍有待恢复的安装事务，未交接：原因=modChanges.recoveryRequired");
         return Err("modChanges.recoveryRequired".into());
     }
     // Helper preparation/shutdown may take time. Re-read both game-path sources
     // under operation so a settings change cannot bypass the final handoff gate.
     validate_protected_paths(&paths, state, &executable)?;
     if let Some(parent) = parent {
-        migration::prepare(&paths, parent, state, &executable)?;
+        check_step(
+            "交接前复核迁移目标",
+            migration::prepare(&paths, parent, state, &executable),
+        )?;
     }
     let locale = locale
         .as_deref()
         .and_then(notice::supported_language)
         .map(str::to_owned);
-    helper.commit(&paths, action, locale)?;
-    log::info!("管理器数据操作已交接；退出后由原生辅助进程完成");
+    check_step(
+        "写入待处理请求并交接",
+        helper.commit(&paths, action, locale),
+    )?;
     log::logger().flush();
     std::process::exit(0)
 }

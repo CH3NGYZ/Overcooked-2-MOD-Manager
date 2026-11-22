@@ -221,16 +221,83 @@ fn format_failure(record: &ResetRecord, current: Option<&Path>, language: &str) 
     lines.join("\n")
 }
 
-pub(super) fn diagnostics(record: &ResetRecord) -> String {
-    let current = crate::user_paths::root().ok();
+pub(super) fn diagnostic_reason(error: &str) -> &str {
+    let code = error.split('?').next().unwrap_or_default();
+    if [
+        "tools.",
+        "config.",
+        "modChanges.",
+        "assetBundle.",
+        "update.",
+        "appUpdate.",
+        "lock.",
+        "recycle.",
+    ]
+    .iter()
+    .any(|prefix| code.starts_with(prefix))
+        && code.len() <= 80
+        && code
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '.')
+    {
+        code
+    } else {
+        "unknown"
+    }
+}
+
+pub(super) fn diagnostic_os_code(error: &str) -> Option<i32> {
+    let (_, query) = error.split_once('?')?;
+    let (_, reason) =
+        url::form_urlencoded::parse(query.as_bytes()).find(|(key, _)| key == "reason")?;
+    reason
+        .rsplit_once("(os error ")?
+        .1
+        .strip_suffix(')')?
+        .parse()
+        .ok()
+}
+
+pub(super) fn diagnostics(record: &ResetRecord, current: &Path) -> String {
+    let (action, source, target) = match &record.action {
+        DataAction::Clear => ("清除", record.data_root.as_deref(), None),
+        DataAction::Migrate { source, target } => {
+            ("迁移", Some(source.as_path()), Some(target.as_path()))
+        }
+    };
+    let outcome = match record.phase {
+        ResetPhase::Pending => "操作已交接",
+        ResetPhase::Completed => "操作已完成",
+        ResetPhase::Failed => "操作失败",
+        _ => "操作未结束",
+    };
+    let selected = match (source, target) {
+        (_, Some(target)) if normalized(target) == normalized(current) => "目标",
+        (Some(source), _) if normalized(source) == normalized(current) => "原位置",
+        _ => "其他或未知",
+    };
+    let target_observation = match (
+        &record.action,
+        record.phase,
+        record.error.as_deref().map(diagnostic_reason),
+    ) {
+        (DataAction::Migrate { .. }, ResetPhase::Pending, _) => "交接复核时不存在",
+        (_, _, Some("tools.migrateDataTargetExists")) => "校验时已存在",
+        _ => "无记录",
+    };
+    let os_code = record.error.as_deref().and_then(diagnostic_os_code);
+    let log_path = crate::file_check::log_path;
     format!(
-        "管理器数据操作失败：请求={}，阶段={:?}，操作={:?}，原数据根={:?}，当前数据根={:?}，原因={}",
+        "[data] 管理器数据{outcome}：请求={}，状态={:?}，失败前阶段={}，操作={action}，原数据根={:?}，目标数据根={:?}，当前数据根={:?}，指向={selected}，目标状态={target_observation}，原因={}，OS码={os_code:?}",
         record.token,
-        record.failed_from,
-        record.action,
-        record.data_root,
-        current,
-        record.error.as_deref().unwrap_or("unknown"),
+        record.phase,
+        record
+            .failed_from
+            .map_or_else(|| "无记录".into(), |phase| format!("{phase:?}")),
+        source.map(log_path),
+        target.map(log_path),
+        log_path(current),
+        record.error.as_deref().map_or("无", diagnostic_reason),
     )
 }
 

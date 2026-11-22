@@ -182,7 +182,11 @@ pub(crate) fn emit_installer_channel_status(
             "安装器更新渠道失败: id={} mode={} error={}",
             status.id,
             status.mode,
-            status.error.as_deref().unwrap_or_default()
+            status
+                .error
+                .as_deref()
+                .map(crate::locale_tag::diagnostic_tag)
+                .unwrap_or("unclassified")
         ),
         _ => log::info!(
             "安装器更新渠道状态: id={} mode={} status={}",

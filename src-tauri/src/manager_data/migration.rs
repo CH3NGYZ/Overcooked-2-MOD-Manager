@@ -1,5 +1,6 @@
 //! Exit-time migration reuses the installer transaction's verified tree copier.
 //! The fixed control journal remains accessible when either data volume is offline.
+use super::check_step;
 use super::storage::{ResetPaths, ResetPhase, ResetRecord, normalized, reject_link_if_present};
 use crate::mod_changes::transaction::{self, Fingerprint};
 #[cfg(test)]
@@ -58,7 +59,10 @@ fn require_new_target(target: &Path) -> Result<(), String> {
     // Reject even an empty existing directory: it was not created by this request.
     if target.try_exists().map_err(failed)? {
         let path = crate::display_path::display_path(target);
-        log::warn!("取消配置迁移：目标已存在，地址={path}");
+        log::warn!(
+            "[data] 取消数据迁移：目标已存在，路径={:?}，原因=tools.migrateDataTargetExists",
+            crate::file_check::log_field(&path),
+        );
         return Err(crate::locale_tag::with_params(
             "tools.migrateDataTargetExists",
             &[("path", &path)],
@@ -73,12 +77,19 @@ pub(super) fn prepare(
     state: &crate::app_state::AppState,
     executable: &Path,
 ) -> Result<PathBuf, String> {
-    let parent = checked(parent)?;
+    let parent = check_step("校验迁移目标父目录路径", checked(parent))?;
     if !parent.is_dir() {
+        log::warn!(
+            "[data] 迁移目标父目录不是可用目录：路径={:?}",
+            crate::file_check::log_path(&parent)
+        );
         return Err(UNSAFE.into());
     }
     let target = parent.join("OC2ModManager");
-    validate_pair(paths, &paths.root, &target)?;
+    check_step(
+        "校验源与目标路径、启动控制目录和挂载",
+        validate_pair(paths, &paths.root, &target),
+    )?;
     require_new_target(&target)?;
     let destination = ResetPaths::with_control(&target, &paths.parent)?;
     destination
@@ -107,7 +118,15 @@ pub(super) fn prepare(
         destination.protect(Path::new(game)).map_err(|_| UNSAFE)?;
     }
     // A read-only destination must fail while the user can still cancel.
-    tempfile::NamedTempFile::new_in(parent).map_err(failed)?;
+    tempfile::NamedTempFile::new_in(&parent).map_err(|error| {
+        log::warn!(
+            "[data] 目标父目录写入检查失败：路径={:?}，系统错误={:?}，OS码={:?}",
+            crate::file_check::log_path(&parent),
+            error.kind(),
+            error.raw_os_error()
+        );
+        failed(error)
+    })?;
     Ok(target)
 }
 

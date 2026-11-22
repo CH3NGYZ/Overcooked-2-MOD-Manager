@@ -324,6 +324,13 @@ impl Redactor {
 /// Shared plain-text rule for detailed logs and the short publish UI reason.
 /// Redact before any display truncation; do not return control/format characters.
 pub(crate) fn redact_text(value: &str) -> String {
+    redact_field(value)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub(crate) fn redact_field(value: &str) -> String {
     static SECRETS: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(concat!(
         r#"(?is)\b(?:[a-z0-9_-]*(?:token|secret|password|passwd|authorization|authentication|cookie|signature|credential|api[_-]?key|access[_-]?key|private[_-]?key)[a-z0-9_-]*|auth|code|verifier|code[_-]?verifier|code[_-]?challenge|(?:oauth|auth)[_-]?code|oauth[_-]?verifier)\b\s*["']?\s*[:=].*"#,
@@ -336,7 +343,6 @@ pub(crate) fn redact_text(value: &str) -> String {
     });
     let redacted = SECRETS.replace_all(value, HIDDEN);
     redacted.chars().map(|ch| if ch.is_control() || matches!(ch, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}') { ' ' } else { ch }).collect::<String>()
-        .split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[cfg(test)]

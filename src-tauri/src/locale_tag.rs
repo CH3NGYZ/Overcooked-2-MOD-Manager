@@ -58,6 +58,24 @@ pub(crate) fn with_params(base: &str, pairs: &[(&str, &str)]) -> String {
     format!("{base}?{query}")
 }
 
+pub(crate) fn is_bare_tag(value: &str) -> bool {
+    value.len() <= 96
+        && value.contains('.')
+        && value.split('.').all(|part| {
+            part.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+                && part.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        })
+}
+
+pub(crate) fn diagnostic_tag(error: &str) -> &str {
+    let tag = error.split(['?', ':', '：']).next().unwrap_or_default();
+    if is_bare_tag(tag) {
+        tag
+    } else {
+        "unclassified"
+    }
+}
+
 #[cfg(test)]
 #[path = "locale_tag/tests.rs"]
 mod tests;

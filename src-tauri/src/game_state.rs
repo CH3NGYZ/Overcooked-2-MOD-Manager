@@ -67,13 +67,7 @@ pub(crate) fn start_observer(app: AppHandle) {
                         });
                     }
                     if let Some(info) = change {
-                        log::info!(
-                            "游戏状态变化：已找到游戏={}，BepInEx已安装={}，游戏运行={}，WinHTTP={:?}",
-                            info.game_exists,
-                            info.bepinex.installed,
-                            info.kitchen_running,
-                            info.winhttp_state
-                        );
+                        game::log_game_snapshot("游戏状态变化", &info);
                         if let Err(error) = app.emit(GAME_STATE_EVENT, &info) {
                             log::warn!("发送游戏状态变化事件失败：{error}");
                         }

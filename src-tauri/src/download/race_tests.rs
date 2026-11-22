@@ -45,6 +45,48 @@ fn connection_progress_identifies_route_without_leaking_asset_or_secrets() {
 }
 
 #[tokio::test]
+async fn download_candidate_failure_logs_partial_bytes_and_hides_query_and_url() {
+    let candidate = AssetDownloadCandidate {
+        route: AssetDownloadRoute::Proxy,
+        url: "https://private-download-fixture.example/private-file?token=fixture-secret".into(),
+    };
+    let capture = crate::http_diagnostics::capture_test_logs(
+        "app_lib::download",
+        "下载候选失败，补充其他候选：任务=fixture-download-log",
+    );
+    let result: Result<Vec<u8>, String> = try_asset_download_candidates(
+        vec![candidate],
+        || false,
+        |_, reporter| {
+            reporter.received(13);
+            std::future::ready(Err("download.httpStatus?status=403".into()))
+        },
+        &NetworkConfig::default(),
+        Some(super::DownloadContext {
+            execution: None,
+            app: None,
+            label: "fixture-download-log",
+            file_name: None,
+            expected_size: Some(20),
+        }),
+    )
+    .await;
+    assert_eq!(result.unwrap_err(), "download.httpStatus?status=403");
+    let messages = capture.messages();
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    for field in [
+        "private-download-fixture.example",
+        "已收字节=13",
+        "预期字节=Some(20)",
+        "原因=download.httpStatus",
+    ] {
+        assert!(messages[0].contains(field), "{messages:?}");
+    }
+    assert!(!messages[0].contains("private-file"));
+    assert!(!messages[0].contains("fixture-secret"));
+}
+
+#[tokio::test]
 async fn every_fallback_candidate_can_announce_context_before_waiting() {
     let candidates = plan_asset_download_candidates(
         ProxyMode::AutoProxy,

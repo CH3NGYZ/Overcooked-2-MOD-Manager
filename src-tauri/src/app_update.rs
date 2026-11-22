@@ -148,6 +148,54 @@ pub(crate) fn verify_with_key(
     })
 }
 
+pub(crate) fn updater_error_details(error: &tauri_plugin_updater::Error) -> String {
+    use tauri_plugin_updater::Error;
+    match error {
+        Error::Io(error) => format!(
+            "io: kind={:?}, os_code={:?}",
+            error.kind(),
+            error.raw_os_error()
+        ),
+        Error::Reqwest(error) => format!(
+            "http: status={:?}, timeout={}, connect={}, body={}, decode={}",
+            error.status().map(|status| status.as_u16()),
+            error.is_timeout(),
+            error.is_connect(),
+            error.is_body(),
+            error.is_decode(),
+        ),
+        Error::Serialization(error) => format!(
+            "json: kind={:?}, line={}, column={}",
+            error.classify(),
+            error.line(),
+            error.column(),
+        ),
+        Error::PreviousAppNotRestored(path) => {
+            format!(
+                "previous_app_not_restored: backup={:?}",
+                crate::file_check::log_path(path)
+            )
+        }
+        _ => match error {
+            Error::ReleaseNotFound => "release_not_found",
+            Error::TargetNotFound(_) | Error::TargetsNotFound(_) => "target_not_found",
+            Error::SignatureUtf8(_) | Error::Base64(_) | Error::Minisign(_) => "invalid_signature",
+            Error::SignedVersionMismatch { .. } => "signed_version_mismatch",
+            Error::MissingSignedVersion => "missing_signed_version",
+            Error::BinaryNotFoundInArchive => "binary_not_found_in_archive",
+            Error::InvalidUpdaterFormat => "invalid_updater_format",
+            Error::TempDirNotFound | Error::TempDirNotOnSameMountPoint => {
+                "temporary_directory_unavailable"
+            }
+            Error::InsecureTransportProtocol => "insecure_transport",
+            Error::InvalidHeaderName(_) | Error::InvalidHeaderValue(_) => "invalid_header",
+            Error::AuthenticationFailed => "authentication_failed",
+            _ => "updater_error",
+        }
+        .to_owned(),
+    }
+}
+
 pub(crate) fn validate_update_metadata(
     version: &str,
     download_url: &url::Url,
@@ -158,12 +206,15 @@ pub(crate) fn validate_update_metadata(
     let downloaded_name = download_url
         .path_segments()
         .and_then(|mut segments| segments.next_back());
-    if version != info.version
-        || downloaded_name != Some(expected_name)
-        || signature.trim().is_empty()
-        || info.installer_url.as_deref() != Some(download_url.as_str())
-        || signature != info.installer_signature
-    {
+    let version_matches = version == info.version;
+    let file_matches = downloaded_name == Some(expected_name);
+    let signature_present = !signature.trim().is_empty();
+    let url_matches = info.installer_url.as_deref() == Some(download_url.as_str());
+    let signature_matches = signature == info.installer_signature;
+    if !(version_matches && file_matches && signature_present && url_matches && signature_matches) {
+        log::warn!(
+            "安装器更新清单复核未通过：version_matches={version_matches}，file_matches={file_matches}，signature_present={signature_present}，url_matches={url_matches}，signature_matches={signature_matches}"
+        );
         return Err("update.manifestPlatformMismatch".into());
     }
     Ok(())

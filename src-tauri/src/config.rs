@@ -1,7 +1,7 @@
 //! 配置共享状态与领域入口；读写、源同步、仓库定义和密钥各归其模块。
 
 use crate::models::AppConfig;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 mod availability;
 mod bundle;
@@ -70,6 +70,49 @@ impl std::fmt::Display for ConfigError {
 }
 
 impl std::error::Error for ConfigError {}
+
+impl ConfigError {
+    pub(crate) fn diagnostic_code(&self) -> &str {
+        match self {
+            Self::Directory(_) => "config.directoryUnavailableReason",
+            Self::Read(_) => "config.readFailedReason",
+            Self::Parse(_) => "config.parseFailedReason",
+            Self::Write(_) => "config.writeFailedReason",
+            Self::Invalid(reason) => {
+                let reason = reason
+                    .strip_prefix("Release operation failed: ")
+                    .unwrap_or(reason);
+                let code = reason.split(['?', ':']).next().unwrap_or_default();
+                if ["config.", "proxy.", "source.", "release.", "releases."]
+                    .iter()
+                    .any(|prefix| code.starts_with(prefix))
+                    && code.len() <= 80
+                    && code
+                        .chars()
+                        .all(|value| value.is_ascii_alphanumeric() || value == '.')
+                {
+                    code
+                } else {
+                    "config.invalidFormatReason"
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn diagnostic_game_path(value: &str) -> String {
+    let path = Path::new(value);
+    if value.trim().is_empty() {
+        "自动探测".into()
+    } else if path.is_absolute() {
+        format!(
+            "{:?}",
+            crate::file_check::log_field(&crate::display_path::display_path(path))
+        )
+    } else {
+        "不是绝对路径".into()
+    }
+}
 
 #[derive(Clone)]
 pub struct ConfigService {

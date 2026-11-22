@@ -208,7 +208,10 @@ pub async fn install_app_update(
             });
         }
         InstallerDownloadAttempt::Failed(message) => {
-            log::warn!("安装器自更新未完成：{}", message);
+            log::warn!(
+                "安装器自更新未完成：{}",
+                crate::locale_tag::diagnostic_tag(&message)
+            );
             return Ok(OperationResult { ok: false, message });
         }
     };
@@ -230,7 +233,10 @@ pub async fn install_app_update(
     .await
     .map_err(|_| "update.installFailed")?
     .map_err(|error| {
-        log::error!("Tauri Updater 安装失败：{error}");
+        log::error!(
+            "Tauri Updater 安装失败：{}",
+            crate::app_update::updater_error_details(&error)
+        );
         "update.installFailedManual".to_string()
     })?;
     #[cfg(not(windows))]

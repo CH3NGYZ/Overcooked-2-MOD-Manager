@@ -42,3 +42,37 @@ fn config_errors_preserve_nested_tags_as_a_single_reason_parameter() {
     assert_eq!(decoded.len(), 1);
     assert_eq!(decoded[0].1, nested);
 }
+
+#[test]
+fn config_diagnostics_never_include_toml_or_validation_parameters() {
+    let secret = "fixture-config-secret";
+    assert_eq!(
+        ConfigError::Parse(secret.into()).diagnostic_code(),
+        "config.parseFailedReason"
+    );
+    assert_eq!(
+        ConfigError::Write(secret.into()).diagnostic_code(),
+        "config.writeFailedReason"
+    );
+    assert_eq!(
+        ConfigError::Invalid(crate::locale_tag::with_params(
+            "config.relationValueInvalid",
+            &[("repo", secret), ("value", secret)],
+        ))
+        .diagnostic_code(),
+        "config.relationValueInvalid"
+    );
+    assert_eq!(
+        ConfigError::Invalid(format!("config.rejected {secret}")).diagnostic_code(),
+        "config.invalidFormatReason"
+    );
+    assert_eq!(
+        ConfigError::Invalid("Release operation failed: source.fileModePathUnsafe".into())
+            .diagnostic_code(),
+        "source.fileModePathUnsafe"
+    );
+    assert_eq!(
+        crate::config::diagnostic_game_path("https://example.invalid/?token=secret"),
+        "不是绝对路径"
+    );
+}

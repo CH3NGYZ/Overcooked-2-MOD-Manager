@@ -1,3 +1,4 @@
+use crate::file_check::log_path;
 use crate::models::{LogFileEntry, RustLog};
 use chrono::Utc;
 use history::{History, MAX_RUST_BYTES};
@@ -7,8 +8,11 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use tauri_plugin_log::{Target, TargetKind, fern};
 
+mod audit;
 mod files;
 mod history;
+
+pub(crate) use audit::{trace_ipc, trace_native_drop};
 
 static HISTORY: OnceLock<Mutex<History>> = OnceLock::new();
 
@@ -52,8 +56,24 @@ fn file_error(error: io::Error) -> String {
     }
 }
 
-pub(crate) fn start(directory: &Path) -> io::Result<Target> {
-    let history = History::start(directory, MAX_RUST_BYTES)?;
+pub(crate) fn start(directory: &Path, data_root: &Path) -> io::Result<Target> {
+    let header = format!(
+        "[{}][会话] id={}，version={}，pid={}，platform={}/{}，os={:?}，build={:?}，elevated={}，distribution={:?}，exe={:?}，data_root={:?}，logs={:?}\n",
+        Utc::now().to_rfc3339(),
+        uuid::Uuid::new_v4(),
+        env!("CARGO_PKG_VERSION"),
+        std::process::id(),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        sysinfo::System::os_version(),
+        sysinfo::System::kernel_version(),
+        crate::is_elevated(),
+        crate::app_update::distribution::current(),
+        std::env::current_exe().ok().as_deref().map(log_path),
+        log_path(data_root),
+        log_path(directory),
+    );
+    let history = History::start(directory, MAX_RUST_BYTES, &header)?;
     HISTORY
         .set(Mutex::new(history))
         .map_err(|_| io::Error::other("Log history already initialized"))?;
@@ -150,6 +170,43 @@ pub async fn write_frontend_log(level: String, message: String) -> Result<(), St
         history.append(kind, line.as_bytes())
     })
     .await
+}
+
+#[tauri::command]
+pub fn record_ipc_failure(command: String, elapsed_ms: u32, rejected: bool, tag: Option<String>) {
+    let Some(command) = audit::command_name(&command) else {
+        return;
+    };
+    let tag = tag
+        .as_deref()
+        .filter(|tag| crate::locale_tag::is_bare_tag(tag))
+        .unwrap_or("unclassified");
+    let status = if rejected {
+        "rejected"
+    } else {
+        "returned_not_ok"
+    };
+    log::warn!(
+        "[ipc] 命令未成功：command={command}，status={status}，tag={tag}，elapsed_ms={elapsed_ms}（界面回执）"
+    );
+}
+
+#[tauri::command]
+pub fn record_file_drop(
+    result: audit::FileDropResult,
+    update_stage: audit::UpdateStage,
+    file_type: audit::DropFileType,
+    count: u32,
+) {
+    let level = if matches!(result, audit::FileDropResult::Dispatched) {
+        log::Level::Debug
+    } else {
+        log::Level::Warn
+    };
+    log::log!(
+        level,
+        "[drop] 文件拖放：result={result:?}，update_stage={update_stage:?}，type={file_type:?}，count={count}"
+    );
 }
 
 pub(crate) fn install_panic_logger() {

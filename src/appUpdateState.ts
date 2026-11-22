@@ -1,7 +1,7 @@
 import { readonly, shallowReactive } from 'vue'
 import type { AppDistribution, AppUpdateCheckResult, AppUpdateInfo, DownloadProgress } from './types.ts'
 
-type UpdateStage = 'idle' | 'required' | 'installing' | 'handoff' | 'manual'
+export type UpdateStage = 'idle' | 'required' | 'installing' | 'handoff' | 'manual'
   | 'backgroundRequired' | 'downloading' | 'stageFailed' | 'ready' | 'applying'
 
 // 启动与手动检查共用一个门；路由卸载不能让已知新版被跳过。

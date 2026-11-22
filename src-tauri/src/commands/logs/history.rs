@@ -27,18 +27,25 @@ pub(super) struct History {
     directory: PathBuf,
     streams: [Stream; 3],
     rust_limit: u64,
+    rust_header: String,
 }
 
 impl History {
-    pub(super) fn start(directory: &Path, rust_limit: u64) -> io::Result<Self> {
+    pub(super) fn start(directory: &Path, rust_limit: u64, rust_header: &str) -> io::Result<Self> {
         fs::create_dir_all(directory)?;
         ensure_directory(directory)?;
         let streams = LogKind::ALL.map(|kind| -> io::Result<Stream> {
-            let (path, writer) = create_log(directory, kind)?;
+            let (path, mut writer) = create_log(directory, kind)?;
+            let header = if kind == LogKind::Rust {
+                rust_header
+            } else {
+                ""
+            };
+            writer.write_all(header.as_bytes())?;
             let stream = Stream {
                 path,
                 writer,
-                length: 0,
+                length: header.len() as u64,
                 listed: Vec::new(),
             };
             Self::prune(directory, kind, &stream.path)?;
@@ -49,6 +56,7 @@ impl History {
             directory: directory.to_path_buf(),
             streams: [rust?, frontend?, crash?],
             rust_limit,
+            rust_header: rust_header.into(),
         })
     }
 
@@ -139,17 +147,22 @@ impl History {
 
     pub(super) fn append(&mut self, kind: LogKind, bytes: &[u8]) -> io::Result<()> {
         let stream = &mut self.streams[kind as usize];
-        if kind == LogKind::Rust
-            && stream.length > 0
-            && stream.length.saturating_add(bytes.len() as u64) > self.rust_limit
-        {
-            let (path, writer) = create_log(&self.directory, kind)?;
-            stream.path = path;
-            stream.writer = writer;
-            stream.length = 0;
-            if let Err(error) = Self::prune(&self.directory, kind, &stream.path) {
-                // Still keep the ongoing diagnostics if an archived file cannot be removed.
-                eprintln!("Could not prune log history: {error}");
+        if kind == LogKind::Rust {
+            let header = self.rust_header.as_bytes();
+            if stream.length > header.len() as u64
+                && stream.length.saturating_add(bytes.len() as u64) > self.rust_limit
+            {
+                let (path, writer) = create_log(&self.directory, kind)?;
+                stream.path = path;
+                stream.writer = writer;
+                stream.length = 0;
+                if let Err(error) = Self::prune(&self.directory, kind, &stream.path) {
+                    eprintln!("Could not prune log history: {error}");
+                }
+            }
+            if stream.length == 0 {
+                stream.writer.write_all(header)?;
+                stream.length = header.len() as u64;
             }
         }
         stream.writer.write_all(bytes)?;

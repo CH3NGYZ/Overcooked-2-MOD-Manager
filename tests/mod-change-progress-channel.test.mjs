@@ -60,8 +60,12 @@ test('a resolving incomplete outcome stays unresolved and is never manufactured 
 })
 
 test('application shows the rollback and exact failed row even when the terminal channel is delayed', async () => {
-  const outcome = defer(), seen = []
+  const outcome = defer(), seen = [], failures = []
   boundary.invoke = (name, args) => {
+    if (name === 'record_ipc_failure') {
+      failures.push(args)
+      return Promise.resolve()
+    }
     assert.equal(name, 'execute_mod_changes')
     assert.equal(args.planId, 'one')
     return outcome.promise
@@ -78,4 +82,7 @@ test('application shows the rollback and exact failed row even when the terminal
   assert.deepEqual(await pending, error)
   channel.onmessage(provisional)
   assert.deepEqual(seen, [provisional, terminal])
+  assert.deepEqual(failures.map(({ elapsedMs, ...failure }) => failure), [
+    { command: 'execute_mod_changes', rejected: false, tag: 'recycle.payloadModified' },
+  ])
 })

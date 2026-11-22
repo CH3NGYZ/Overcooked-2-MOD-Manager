@@ -25,6 +25,7 @@ fn source(bytes: u64) -> ActiveSource {
         reporter,
         abort,
         speed: SourceSpeed::default(),
+        started: Instant::now(),
     }
 }
 

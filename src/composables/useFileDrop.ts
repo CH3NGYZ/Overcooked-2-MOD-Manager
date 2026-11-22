@@ -23,6 +23,7 @@ import { t } from '../i18n'
 import { useNotify, type Notify } from '../useNotify'
 import { appUpdateState } from '../appUpdateState'
 import { acceptLabel, matchesFileAccept } from '../dropAccept'
+import { recordFileDrop } from '../services/invoke'
 
 /**
  * 拖拽是否悬停在窗口上。
@@ -69,11 +70,12 @@ async function registerListener() {
   listener = (async () => {
     try {
       await getCurrentWebview().onDragDropEvent((event) => {
+        const payload = event.payload
         if (appUpdateState.stage !== 'idle') {
+          if (payload.type === 'drop') recordFileDrop('update_gate', appUpdateState.stage, payload.paths)
           dragActive.value = false
           return
         }
-        const payload = event.payload
         if (payload.type === 'over' || payload.type === 'enter') {
           dragActive.value = true
           return
@@ -84,19 +86,29 @@ async function registerListener() {
         }
         if (payload.type !== 'drop') return
         dragActive.value = false
+        const updateStage = appUpdateState.stage
         const consumer = consumers[consumers.length - 1]
         const path = payload.paths?.[0]
-        if (!consumer || !path) return
-        if (consumer.busy?.()) return
+        if (!consumer || !path) {
+          recordFileDrop(consumer ? 'no_path' : 'no_consumer', updateStage, payload.paths)
+          return
+        }
+        if (consumer.busy?.()) {
+          recordFileDrop('busy', updateStage, payload.paths)
+          return
+        }
         if (!matchesFileAccept(path, consumer.accept)) {
+          recordFileDrop('unsupported_type', updateStage, payload.paths)
           consumer.notify.warning(
             t('tools.onlyFileTypesAreSupported', { types: acceptLabel(consumer.accept) }),
           )
           return
         }
+        recordFileDrop('dispatched', updateStage, payload.paths)
         consumer.onDrop(path)
       })
     } catch (reason) {
+      recordFileDrop('listener_failed', appUpdateState.stage)
       // 注册失败只让拖放不可用，页面其余功能照常；但必须留痕，不能静默
       console.error('[drop] listener registration failed', reason)
       listener = null

@@ -3,9 +3,10 @@ import type { ChangeRequest, ChangePlan, ChangePreparationOutcome, ChangePrepara
 import type { LocalModSnapshot, ChefEditorOpen, ChefEditorSnapshot, ChefDraft, ChefValidation, ChefFilesChanged } from '../diychef/types'
 import type { ChefPreviewScene } from '../diychef/preview/types'
 import type { PublishProvider } from '../types'
-import { Channel, invoke } from '@tauri-apps/api/core'
+import { Channel } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
+import { invoke } from './invoke'
 // 只读当前界面语言（用于让后端选择仓库的本地化名称）；不引入任何 UI 依赖
 import { locale } from '../i18n'
 import type {

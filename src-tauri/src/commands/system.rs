@@ -40,6 +40,7 @@ pub(crate) fn request_user_exit(
     restart: bool,
 ) -> Result<tauri::async_runtime::JoinHandle<Result<(), String>>, String> {
     let exit = archive::begin_app_update()?;
+    log::info!("接受管理器退出请求：应用更新后重启={restart}");
     Ok(tauri::async_runtime::spawn_blocking(move || {
         let _exit = exit;
         let _compression = pause_map_compression_for_exit()?;
@@ -50,6 +51,7 @@ pub(crate) fn request_user_exit(
         if restart {
             return Err("update.formatUnsupported".into());
         }
+        log::info!("管理器退出条件已满足：应用更新后重启={restart}");
         log::logger().flush();
         std::process::exit(0)
     }))
@@ -83,30 +85,78 @@ pub fn permission_status(state: State<'_, AppState>) -> Result<PermissionStatus,
     let game_root = game::detect_game(&config).path;
     let game_writable = game_root
         .as_deref()
-        .map(|path| probe_writable(&Path::new(path).join("BepInEx/plugins")))
+        .map(|path| probe_writable(&Path::new(path).join("BepInEx").join("plugins")))
         .unwrap_or(false);
-    let data_writable = crate::user_paths::root()
-        .map(|root| probe_writable(&root))
-        .unwrap_or(false);
-    Ok(PermissionStatus {
+    let data_root = crate::user_paths::root();
+    let data_writable = match &data_root {
+        Ok(root) => probe_writable(root),
+        Err(error) => {
+            log::warn!("[permission] 无法确定数据目录，未探测可写性：原因={error}");
+            false
+        }
+    };
+    let status = PermissionStatus {
         elevated: crate::is_elevated(),
         game_writable,
         data_writable,
-    })
+    };
+    log::info!(
+        "[permission] 可写性探测：管理员权限={}，游戏目录={game_root:?}，插件目录可写={}，数据目录={:?}，数据目录可写={}",
+        status.elevated,
+        status.game_writable,
+        data_root.as_ref().ok(),
+        status.data_writable,
+    );
+    Ok(status)
 }
 
 /// 探测目录是否可写：创建并删除一个临时文件，不改动任何既有内容。
 fn probe_writable(dir: &Path) -> bool {
-    if std::fs::create_dir_all(dir).is_err() {
+    if let Err(error) = std::fs::create_dir_all(dir) {
+        log_permission_probe_error("create_directory", dir, &error);
         return false;
     }
     let probe = dir.join(format!(".oc2-write-probe-{}", uuid::Uuid::new_v4()));
     match std::fs::write(&probe, b"") {
         Ok(()) => {
-            let _ = std::fs::remove_file(&probe);
+            if let Err(error) = std::fs::remove_file(&probe) {
+                log_permission_probe_error("remove_probe", &probe, &error);
+            }
             true
         }
-        Err(_) => false,
+        Err(error) => {
+            log_permission_probe_error("write_probe", &probe, &error);
+            false
+        }
+    }
+}
+
+fn log_permission_probe_error(stage: &str, path: &Path, error: &std::io::Error) {
+    log::warn!(
+        "[permission] 可写性探测遇到文件操作错误：stage={stage}，path={path:?}，kind={:?}，os_code={:?}，reason={error}",
+        error.kind(),
+        error.raw_os_error(),
+    );
+}
+
+#[cfg(test)]
+mod permission_diagnostics_tests {
+    use super::*;
+
+    #[test]
+    fn permission_probe_reports_the_exact_blocked_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let blocked = root.path().join("plugins-as-file");
+        std::fs::write(&blocked, "private fixture contents").unwrap();
+        let needle = root.path().file_name().unwrap().to_str().unwrap();
+        let capture =
+            crate::http_diagnostics::capture_test_logs("app_lib::commands::system", needle);
+        assert!(!probe_writable(&blocked));
+        let messages = capture.messages().join("\n");
+        assert!(messages.contains("stage=create_directory"), "{messages}");
+        assert!(messages.contains("plugins-as-file"), "{messages}");
+        assert!(messages.contains("os_code=Some("), "{messages}");
+        assert!(!messages.contains("private fixture contents"));
     }
 }
 

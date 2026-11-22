@@ -4,26 +4,27 @@ import test from 'node:test'
 
 /**
  * IPC 注册表一致性：services/tauri.ts 里 invoke 的每个命令必须已在
- * src-tauri/src/lib.rs 的 generate_handler! 注册，反之未封装的命令允许存在。
+ * src-tauri/src/lib.rs 的 audited_handler! 注册，反之未封装的命令允许存在。
  */
-const service = readFileSync(new URL('../src/services/tauri.ts', import.meta.url), 'utf8')
+const service = ['tauri.ts', 'invoke.ts'].map(file =>
+  readFileSync(new URL(`../src/services/${file}`, import.meta.url), 'utf8')).join('\n')
 const lib = readFileSync(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8')
 
-const invoked = new Set([...service.matchAll(/invoke<[^>]*>\(\s*'([a-z_]+)'/g)].map((m) => m[1]))
+const invoked = new Set([...service.matchAll(/invoke(?:Native)?<[^>]*>\(\s*'([a-z_]+)'/g)].map((m) => m[1]))
 function registeredPaths(source) {
-  const block = source.match(/generate_handler!\s*\[([\s\S]*?)\]/)?.[1]
-  assert.ok(block, '缺少 generate_handler 注册块')
+  const block = source.match(/audited_handler!\s*\[([\s\S]*?)\]/)?.[1]
+  assert.ok(block, '缺少 audited_handler 注册块')
   return [...block.matchAll(/\b[a-z_][a-z_0-9]*(?:::[a-z_][a-z_0-9]*)+\b/g)].map(m => m[0])
 }
 const registered = new Set(registeredPaths(lib).map(path => path.split('::').at(-1)))
 
 test('注册解析只取完整路径末段，支持嵌套域且不扫描 handler 之外的代码', () => {
-  const paths = registeredPaths('generate_handler![community::refresh, commands::settings::get_config] other::not_registered')
+  const paths = registeredPaths('audited_handler![community::refresh, commands::settings::get_config] other::not_registered')
   assert.deepEqual(paths, ['community::refresh', 'commands::settings::get_config'])
   assert.deepEqual(paths.map(path => path.split('::').at(-1)), ['refresh', 'get_config'])
 })
 
-test('every frontend invoke target is registered in generate_handler', () => {
+test('every frontend invoke target is registered in audited_handler', () => {
   const missing = [...invoked].filter((name) => !registered.has(name))
   assert.deepEqual(missing, [], `未注册的 IPC 命令: ${missing.join(', ')}`)
 })

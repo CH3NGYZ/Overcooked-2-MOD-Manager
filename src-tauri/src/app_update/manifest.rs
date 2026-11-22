@@ -17,7 +17,6 @@ use crate::models::{
     AppConfig, AppUpdateChannelStatus, AppUpdateCheckResult, AppUpdateInfo, Provider,
 };
 use crate::releases;
-use crate::repository_sources;
 use futures_util::StreamExt;
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -123,9 +122,11 @@ pub(super) async fn fetch_installer_manifest(
 ) -> Result<Option<AppUpdateInfo>, String> {
     const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
     log::info!(
-        "正在请求程序更新清单：渠道={}，地址={}",
+        "正在请求程序更新清单：渠道={:?}，来源={:?}",
         channel.id,
-        repository_sources::safe_log_address(&channel.endpoint)
+        url::Url::parse(&channel.endpoint)
+            .ok()
+            .map(|url| url.origin().ascii_serialization())
     );
     let request = async {
         let response = client
@@ -133,7 +134,7 @@ pub(super) async fn fetch_installer_manifest(
             .header("User-Agent", releases::APP_USER_AGENT)
             .header("Cache-Control", "no-cache, no-store")
             .header("Pragma", "no-cache")
-            .send_logged()
+            .send_logged_metadata()
             .await
             .map_err(|_| "update.manifestRequestFailed")?;
         if !response.status().is_success() {
@@ -162,7 +163,17 @@ pub(super) async fn fetch_installer_manifest(
                 reporter.update(progress);
             }
         }
-        let document = serde_json::from_slice(&bytes).map_err(|_| "update.manifestInvalid")?;
+        let document = serde_json::from_slice(&bytes).map_err(|error| {
+            log::warn!(
+                "更新清单解析失败：渠道={:?}，字节数={}，JSON错误={:?}，行={}，列={}",
+                channel.id,
+                bytes.len(),
+                error.classify(),
+                error.line(),
+                error.column()
+            );
+            "update.manifestInvalid"
+        })?;
         inspect_installer_manifest(channel, &document, target, current_version)
     };
     let cancellation = async {

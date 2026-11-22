@@ -254,7 +254,10 @@ impl ConfigService {
                 bundle.repository_sources.len(),
                 text.len()
             ),
-            Err(error) => log::error!("仓库配置导出失败：原因={}", error),
+            Err(error) => log::error!(
+                "[config] 仓库配置导出失败：原因={}",
+                error.diagnostic_code()
+            ),
         }
         result
     }
@@ -262,26 +265,45 @@ impl ConfigService {
     pub fn validate_bundle(&self, text: &str) -> Result<ModRepositoryBundle, ConfigError> {
         log::debug!("开始校验仓库配置包：字节数={}", text.len());
         if text.len() > 1024 * 1024 {
+            log::warn!(
+                "[config] 仓库配置包校验失败：阶段=大小检查，字节数={}，原因=source.tooLarge",
+                text.len()
+            );
             return Err(ConfigError::Invalid("source.tooLarge".into()));
         }
         let mut bundle: ModRepositoryBundle = toml::from_str(text).map_err(|e| {
+            log::warn!("[config] 仓库配置包校验失败：阶段=TOML解析，错误字节位置={:?}，原因=config.tomlParseFailed", e.span());
             ConfigError::Invalid(crate::locale_tag::with_params(
                 "config.tomlParseFailed",
                 &[("reason", &e.to_string())],
             ))
         })?;
         if bundle.format != BUNDLE_FORMAT {
+            log::warn!(
+                "[config] 仓库配置包校验失败：阶段=格式检查，原因=config.bundleFormatInvalid"
+            );
             return Err(ConfigError::Invalid("config.bundleFormatInvalid".into()));
         }
         if bundle.schema_version != 1 {
+            log::warn!(
+                "[config] 仓库配置包校验失败：阶段=schema检查，schema={}，原因=config.unsupportedSchemaVersion",
+                bundle.schema_version
+            );
             return Err(ConfigError::Invalid(crate::locale_tag::with_params(
                 "config.unsupportedSchemaVersion",
                 &[("version", &bundle.schema_version.to_string())],
             )));
         }
-        for repo in &mut bundle.repositories {
-            normalize_repository_i18n(repo)?;
-            validate_mod_repository(repo)?;
+        for (index, repo) in bundle.repositories.iter_mut().enumerate() {
+            normalize_repository_i18n(repo)
+                .and_then(|()| validate_mod_repository(repo))
+                .inspect_err(|error| {
+                    log::warn!(
+                        "[config] 仓库配置包校验失败：仓库条目={}，原因={}",
+                        index + 1,
+                        error.diagnostic_code()
+                    );
+                })?;
             repo.region = super::availability::normalize_repository_region_for_storage(
                 repo.region.as_deref(),
                 &repo.name,
@@ -375,7 +397,10 @@ impl ConfigService {
             "开始导入仓库配置：仓库={}，仓库源={}，冲突策略={}",
             bundle.repositories.len(),
             bundle.repository_sources.len(),
-            conflict
+            match conflict {
+                "overwrite" | "skip" | "keep_both" => conflict,
+                _ => "未知",
+            }
         );
         for source in &bundle.repository_sources {
             if crate::community::is_source(&source.id)

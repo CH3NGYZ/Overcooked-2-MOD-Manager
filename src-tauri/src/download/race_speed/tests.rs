@@ -20,6 +20,7 @@ fn measured(progress: DownloadProgress, rate: u64, now: Instant) -> ActiveSource
         reporter,
         abort,
         speed,
+        started: now - window,
     }
 }
 

@@ -7,7 +7,7 @@ mod selection;
 mod steam;
 mod stop;
 
-pub(crate) use discovery::{detect_game, detect_game_from_settings};
+pub(crate) use discovery::{detect_game, detect_game_from_settings, log_game_snapshot};
 pub(crate) use paths::{resolve_existing_ancestor, safe_game_path};
 pub(crate) use process::{
     ensure_game_stopped, is_crossover_running, is_game_running, is_game_running_with_system,

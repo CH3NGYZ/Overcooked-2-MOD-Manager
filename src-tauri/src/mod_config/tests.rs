@@ -1,4 +1,47 @@
 use super::*;
+
+#[test]
+fn config_diagnostics_identify_missing_and_changed_files_without_contents() {
+    let root = tempfile::tempdir().unwrap();
+    let config = root.path().join("BepInEx").join("config");
+    fs::create_dir_all(&config).unwrap();
+    let needle = root.path().file_name().unwrap().to_str().unwrap();
+    let capture = crate::http_diagnostics::capture_test_logs("app_lib::mod_config", needle);
+    assert!(!exists(root.path(), "absent"));
+    assert!(capture.messages().is_empty());
+    assert_eq!(
+        read(root.path(), "absent").err().as_deref(),
+        Some("modConfig.notFound")
+    );
+    fs::write(config.join("example.cfg"), "user-secret-fixture-original").unwrap();
+    let loaded = read(root.path(), "example").unwrap();
+    fs::write(config.join("example.cfg"), "user-secret-fixture-external").unwrap();
+    assert_eq!(
+        save(
+            root.path(),
+            "example",
+            &loaded.revision,
+            "user-secret-fixture-edit"
+        )
+        .err()
+        .as_deref(),
+        Some(CHANGED)
+    );
+    let messages = capture.messages().join("\n");
+    assert!(
+        messages.contains("stage=path_metadata") && messages.contains("absent.cfg"),
+        "{messages}"
+    );
+    assert!(
+        messages.contains("kind=NotFound") && messages.contains("stage=initial_revision"),
+        "{messages}"
+    );
+    assert!(
+        messages.contains("example.cfg") && !messages.contains("user-secret-fixture"),
+        "{messages}"
+    );
+}
+
 #[test]
 fn config_directory_junction_is_rejected() {
     let root = std::env::temp_dir().join(format!("oc2-config-test-{}", uuid::Uuid::new_v4()));

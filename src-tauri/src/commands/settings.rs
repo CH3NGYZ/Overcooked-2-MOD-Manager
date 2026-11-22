@@ -7,7 +7,6 @@ use tauri::State;
 
 #[tauri::command]
 pub fn get_config(state: State<'_, AppState>) -> Result<PublicConfig, String> {
-    log::debug!("读取应用配置");
     // Source imports and proxy sync can commit concurrently with this read.
     // Config loading may migrate and save, so share their short commit lock.
     let _guard = state
@@ -29,15 +28,17 @@ pub fn save_settings(
     state: State<'_, AppState>,
     patch: SettingsPatch,
 ) -> Result<PublicConfig, String> {
-    log::info!("保存应用设置");
     let previous_game = if let Some(runtime) = patch.game_runtime {
         if cfg!(windows) && runtime != GameRuntime::Native {
+            log::warn!("[config] 拒绝保存游戏运行方式：请求={runtime:?}，原因=game.windowsOnly");
             return Err("game.windowsOnly".into());
         }
         let previous = state.config.load_or_default();
         if previous.game.runtime != runtime {
             if let Some(path) = game::detect_game(&previous).path {
-                game::ensure_game_stopped(Path::new(&path))?;
+                game::ensure_game_stopped(Path::new(&path)).inspect_err(|_| {
+                    log::warn!("[config] 切换游戏运行方式前未通过游戏退出检查：请求={runtime:?}，游戏路径={}", crate::config::diagnostic_game_path(&path));
+                })?;
             }
         }
         Some(previous.game)
@@ -54,18 +55,24 @@ pub fn save_settings(
         .as_ref()
         .is_some_and(|previous| *previous != config.game)
     {
+        log::warn!("[config] 拒绝保存已过期的游戏设置：原因=game.settingsChanged");
         return Err("game.settingsChanged".into());
     }
-    if patch
+    let game_changed = patch
         .game_runtime
         .is_some_and(|runtime| runtime != config.game.runtime)
         || patch
             .game_path
             .as_ref()
-            .is_some_and(|path| *path != config.game.path)
-    {
+            .is_some_and(|path| *path != config.game.path);
+    if game_changed {
         state.invalidate_local_mod_snapshot()?;
     }
+    let previous_game_path =
+        game_changed.then(|| crate::config::diagnostic_game_path(&config.game.path));
+    let previous_game_runtime = config.game.runtime;
+    let previous_official_api_only = config.auth.official_api_only;
+    let previous_network = config.network.clone();
     if let Some(runtime) = patch.game_runtime {
         config.game.switch_runtime(runtime);
     }
@@ -136,7 +143,29 @@ pub fn save_settings(
         .save_with_selection(&mut config, patch.region.as_deref(), patch.data_provider)
         .map_err(|e| e.to_string())?;
     crate::diychef::preview::configure_concurrency(config.diychef_preview_concurrency);
-    log::info!("应用设置保存完成：界面缩放={}", config.ui_zoom);
+    if let Some(previous_path) = previous_game_path {
+        log::info!(
+            "[config] 游戏设置已保存：运行方式={previous_game_runtime:?}→{:?}，游戏路径={previous_path}→{}",
+            config.game.runtime,
+            crate::config::diagnostic_game_path(&config.game.path)
+        );
+    }
+    if previous_official_api_only != config.auth.official_api_only
+        || previous_network != config.network
+    {
+        log::info!(
+            "[config] 网络设置已保存：仅官方API={}，下载并行={}，API超时秒={}，首字节超时秒={}，竞速最低速度KiB/s={}，竞速窗口秒={}",
+            config.auth.official_api_only,
+            config.network.download_threads,
+            config.network.api_timeout_seconds,
+            config.network.first_byte_timeout_seconds,
+            config.network.race_min_speed_kbps,
+            config.network.race_window_seconds
+        );
+    }
+    if patch.ui_zoom.is_some() {
+        log::info!("[config] 界面缩放设置已保存：缩放={}", config.ui_zoom);
+    }
     Ok(state.config.public_config(&config))
 }
 
@@ -154,9 +183,11 @@ pub async fn refresh_github_proxies(
 #[tauri::command]
 pub fn save_tokens(state: State<'_, AppState>, patch: TokenPatch) -> Result<PublicConfig, String> {
     log::info!(
-        "保存 API Token 配置：GitHub token 已提供={}，Gitee token 已提供={}",
+        "[config] 保存 API Token 设置：提供 GitHub/Gitee/GitCode={}/{}/{}，请求清除={}",
         !patch.github_token.trim().is_empty(),
-        !patch.gitee_token.trim().is_empty()
+        !patch.gitee_token.trim().is_empty(),
+        !patch.gitcode_token.trim().is_empty(),
+        patch.clear
     );
     let _guard = state
         .operation
@@ -168,7 +199,6 @@ pub fn save_tokens(state: State<'_, AppState>, patch: TokenPatch) -> Result<Publ
         config.auth.github_token.clear();
         config.auth.gitee_token.clear();
         config.auth.gitcode_token.clear();
-        log::info!("已清除全部 API Token");
     } else {
         state
             .config
@@ -178,10 +208,18 @@ pub fn save_tokens(state: State<'_, AppState>, patch: TokenPatch) -> Result<Publ
                 &patch.gitee_token,
                 &patch.gitcode_token,
             )
-            .map_err(|_| "config.tokenProtectionFailed")?;
+            .map_err(|_| {
+                log::warn!("[config] 未保存 API Token 设置：原因=config.tokenProtectionFailed");
+                "config.tokenProtectionFailed"
+            })?;
     }
     state.config.save(&config).map_err(|e| e.to_string())?;
-    log::info!("API Token 配置保存完成");
+    log::info!(
+        "[config] API Token 设置已保存：已配置 GitHub/Gitee/GitCode={}/{}/{}",
+        !config.auth.github_token.is_empty(),
+        !config.auth.gitee_token.is_empty(),
+        !config.auth.gitcode_token.is_empty()
+    );
     Ok(state.config.public_config(&config))
 }
 

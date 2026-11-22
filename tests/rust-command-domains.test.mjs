@@ -10,10 +10,12 @@ test('commands root only declares domains; registered IPC points at the real imp
   const index = read('commands.rs').replace(/^\/\/.*$/gm, '').trim()
   assert.ok(index)
   assert.match(index, /^(?:pub\(crate\) mod [a-z_]+;\s*)+$/)
-  const handler = read('lib.rs').match(/generate_handler!\s*\[([\s\S]*?)\]/)?.[1]
+  const handler = read('lib.rs').match(/audited_handler!\s*\[([\s\S]*?)\]/)?.[1]
   assert.ok(handler)
   const paths = [...handler.matchAll(/\bcommands::([a-z_]+)::([a-z_]+)\b/g)]
-  assert.equal(paths.length, 136, '添加后台更新命令后必须保留既有 IPC')
+  assert.equal(paths.length, 138, '添加诊断命令后必须保留既有 IPC')
+  assert.ok(paths.some(([, domain, name]) => domain === 'logs' && name === 'record_ipc_failure'))
+  assert.ok(paths.some(([, domain, name]) => domain === 'logs' && name === 'record_file_drop'))
   assert.ok(paths.some(([, domain, name]) => domain === 'system' && name === 'open_external_page'))
   assert.ok(paths.some(([, domain, name]) => domain === 'system' && name === 'apply_staged_app_update'))
   assert.ok(paths.some(([, domain, name]) => domain === 'update' && name === 'get_app_distribution'))

@@ -13,8 +13,9 @@ pub fn detect_game(config: &crate::models::AppConfig) -> GameInfo {
 
 pub(crate) fn detect_game_from_settings(config: &crate::models::GameConfig) -> GameInfo {
     log::debug!(
-        "开始探测游戏状态：配置路径非空={}",
-        !config.path.trim().is_empty()
+        "开始探测游戏状态：运行方式={:?}，配置路径={:?}",
+        config.runtime,
+        crate::config::diagnostic_game_path(&config.path),
     );
     let detected = find_game_path(config);
     let path = detected.as_ref().map(|location| location.game.clone());
@@ -66,16 +67,26 @@ pub(crate) fn detect_game_from_settings(config: &crate::models::GameConfig) -> G
         kitchen_running,
         winhttp_state,
     };
-    log::info!(
-        "游戏状态探测完成：已找到路径={}，游戏文件存在={}，BepInEx已安装={}，残留目录={}，游戏运行={}，WinHTTP={:?}",
-        result.path.is_some(),
-        result.game_exists,
-        result.bepinex.installed,
-        result.bepinex.has_residue,
-        result.kitchen_running,
-        result.winhttp_state
-    );
+    log_game_snapshot("游戏状态探测完成", &result);
     result
+}
+
+pub(crate) fn log_game_snapshot(event: &str, info: &GameInfo) {
+    log::info!(
+        "[game] {event}：游戏根={:?}，Steam库={:?}，Wine容器={:?}，游戏文件存在={}，BepInEx已安装={}，框架版本={:?}，版本来源={:?}，有配置={}，残留目录={}，框架备份数={}，游戏运行={}，WinHTTP={:?}",
+        info.path,
+        info.steam_library,
+        info.wine_prefix,
+        info.game_exists,
+        info.bepinex.installed,
+        info.bepinex.version,
+        info.bepinex.version_source,
+        info.bepinex.has_config,
+        info.bepinex.has_residue,
+        info.bepinex.backups.len(),
+        info.kitchen_running,
+        info.winhttp_state,
+    );
 }
 
 struct GameLocation {

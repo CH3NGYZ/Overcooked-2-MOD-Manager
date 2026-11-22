@@ -25,22 +25,17 @@ pub(crate) fn normalize_repository_region(region: Option<&str>) -> String {
 /// mean that the repository applies to every region.
 pub(crate) fn normalize_repository_region_for_storage(
     region: Option<&str>,
-    context: &str,
+    _context: &str,
 ) -> Option<String> {
     let Some(value) = region.map(str::trim) else {
         return None;
     };
     if value.is_empty() {
-        log::debug!("仓库地区为空，按全部地区处理：对象={}", context.trim());
         return None;
     }
     let normalized = normalize_repository_region(Some(value));
     if normalized.is_empty() {
-        log::warn!(
-            "仓库地区无法识别，按全部地区处理：对象={}，值={}",
-            context.trim(),
-            value
-        );
+        log::warn!("[config] 仓库地区无法识别，按全部地区处理：原因=config.invalidRegion");
         None
     } else {
         Some(normalized)
@@ -108,8 +103,8 @@ pub(crate) fn normalize_repository_platform(platform: Option<&str>) -> Option<St
     match value.to_ascii_lowercase().as_str() {
         PLATFORM_WINDOWS | "win" => Some(PLATFORM_WINDOWS.into()),
         PLATFORM_MACOS | "mac" | "osx" | "darwin" => Some(PLATFORM_MACOS.into()),
-        unknown => {
-            log::warn!("仓库平台无法识别，按全平台处理：值={}", unknown);
+        _ => {
+            log::warn!("[config] 仓库平台无法识别，按全平台处理：原因=config.invalidPlatform");
             None
         }
     }

@@ -1,5 +1,6 @@
 //! 同目录临时文件、旧配置恢复与 Windows 短时共享冲突处理。
 
+use crate::file_check::log_path;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
@@ -11,36 +12,74 @@ pub(super) fn write_config(root: &Path, target: &Path, text: &[u8]) -> io::Resul
         .prefix("config.")
         .suffix(".tmp")
         .tempfile_in(root)
-        .inspect_err(|error| log::error!("创建配置临时文件失败：原因={error}"))?;
-    temporary
-        .write_all(text)
-        .inspect_err(|error| log::error!("写入配置临时文件失败：原因={error}"))?;
+        .inspect_err(|error| {
+            log::error!(
+                "[config] 创建配置临时文件失败：目录={:?}，分类={:?}，OS码={:?}",
+                log_path(root),
+                error.kind(),
+                error.raw_os_error(),
+            )
+        })?;
+    temporary.write_all(text).inspect_err(|error| {
+        log::error!(
+            "[config] 写入配置临时文件失败：文件={:?}，分类={:?}，OS码={:?}",
+            log_path(temporary.path()),
+            error.kind(),
+            error.raw_os_error(),
+        )
+    })?;
     let temporary = temporary.into_temp_path();
     let previous = root.join("config.previous.toml");
     let result = replace_with_backup(&temporary, target, &previous);
+    let temporary_path = log_path(&temporary);
     if let Err(error) = temporary.close()
         && error.kind() != io::ErrorKind::NotFound
     {
-        log::warn!("清理本次配置临时文件失败：原因={error}");
+        log::warn!(
+            "[config] 清理本次配置临时文件失败：文件={temporary_path:?}，分类={:?}，OS码={:?}",
+            error.kind(),
+            error.raw_os_error(),
+        );
     }
     result
 }
 
 fn replace_with_backup(temporary: &Path, target: &Path, previous: &Path) -> io::Result<()> {
-    let backed_up = target.try_exists()?;
+    let backed_up = target.try_exists().inspect_err(|error| {
+        log::error!(
+            "[config] 保存前无法检查主配置位置：文件={:?}，原因={error}",
+            log_path(target)
+        );
+    })?;
     if backed_up {
         if let Err(error) = retry_sharing_violation(|| fs::remove_file(previous))
             && error.kind() != io::ErrorKind::NotFound
         {
             // Do not replace recovery material that could not be removed.
-            log::error!("删除旧配置备份失败，保留原配置和备份：原因={error}");
+            log::error!(
+                "[config] 删除旧配置备份失败，保留原配置和备份：主文件={:?}，备份={:?}，原因={error}",
+                log_path(target),
+                log_path(previous)
+            );
             return Err(error);
         }
         retry_sharing_violation(|| fs::rename(target, previous)).inspect_err(|error| {
-            log::error!("备份旧配置失败：原因={error}");
+            log::error!(
+                "[config] 备份旧配置失败：主文件={:?}，备份={:?}，原因={error}",
+                log_path(target),
+                log_path(previous)
+            );
         })?;
     }
     if let Err(error) = retry_sharing_violation(|| fs::rename(temporary, target)) {
+        log::error!(
+            "[config] 发布新配置失败：临时={:?}，目标={:?}，备份={:?}，本次已移走旧文件={backed_up}，分类={:?}，OS码={:?}",
+            log_path(temporary),
+            log_path(target),
+            log_path(previous),
+            error.kind(),
+            error.raw_os_error(),
+        );
         // Only restore the original moved by this transaction. A pre-existing
         // previous file or an externally created target must stay recoverable.
         if backed_up {
@@ -50,25 +89,46 @@ fn replace_with_backup(temporary: &Path, target: &Path, previous: &Path) -> io::
                         retry_sharing_violation(|| fs::rename(previous, target))
                     {
                         log::error!(
-                            "替换配置失败且恢复旧配置失败，保留备份：恢复原因={rollback_error}"
+                            "[config] 替换及恢复旧配置均失败，保留备份：主文件={:?}，备份={:?}，替换原因={error}，恢复原因={rollback_error}",
+                            log_path(target),
+                            log_path(previous)
                         );
                     } else {
-                        log::warn!("替换配置失败，已恢复旧配置");
+                        log::warn!(
+                            "[config] 替换配置失败，已恢复旧配置：主文件={:?}，原因={error}",
+                            log_path(target)
+                        );
                     }
                 }
-                Ok(true) => log::warn!("替换配置失败，目标已存在，保留旧配置备份以供恢复"),
+                Ok(true) => log::warn!(
+                    "[config] 替换配置失败，目标已存在，保留旧配置备份：主文件={:?}，备份={:?}，原因={error}",
+                    log_path(target),
+                    log_path(previous)
+                ),
                 Err(inspection_error) => {
-                    log::error!("检查配置恢复目标失败，保留旧配置备份：原因={inspection_error}");
+                    log::error!(
+                        "[config] 替换配置失败且无法检查恢复目标，保留旧配置备份：主文件={:?}，备份={:?}，替换原因={error}，检查原因={inspection_error}",
+                        log_path(target),
+                        log_path(previous)
+                    );
                 }
             }
+        } else {
+            log::error!(
+                "[config] 替换配置失败，本次未移动旧配置，不恢复既有备份：主文件={:?}，备份={:?}，原因={error}",
+                log_path(target),
+                log_path(previous)
+            );
         }
-        log::error!("替换配置文件失败：原因={error}");
         return Err(error);
     }
     if let Err(error) = retry_sharing_violation(|| fs::remove_file(previous))
         && error.kind() != io::ErrorKind::NotFound
     {
-        log::warn!("配置保存成功但旧备份清理失败：原因={error}");
+        log::warn!(
+            "[config] 配置保存成功但旧备份清理失败：备份={:?}，原因={error}",
+            log_path(previous)
+        );
     }
     Ok(())
 }

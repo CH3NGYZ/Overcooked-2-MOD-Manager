@@ -139,7 +139,7 @@ test('production API request owners keep send_api rather than bypassing provider
     if (!/\bApiRequestExt\b/.test(code) || path === 'api_scheduler.rs') continue
     assert.match(code, /\.\s*send_api\s*\(/, path)
     // Signed asset PUTs share this owner with scheduled API requests.
-    if (path !== 'map_publish/assets.rs') assert.doesNotMatch(code, /\.\s*send_logged\s*\(/, path)
+    if (path !== 'map_publish/assets.rs') assert.doesNotMatch(code, /\.\s*send_logged(?:_metadata)?\s*\(/, path)
   }
 })
 
@@ -166,7 +166,8 @@ test('all non-API HTTP owners retain shared diagnostics directly or through the 
       assert.match(code, /\b(?:crate::)?archive::first_nonempty_chunk\s*\(/, path)
     } else {
       assert.match(code, /\buse\s+crate::http_diagnostics::/, path)
-      assert.match(code, /\.\s*send_logged\s*\(\s*\)/, path)
+      const send = path === 'app_update/manifest.rs' ? 'send_logged_metadata' : 'send_logged'
+      assert.match(code, new RegExp(`\\.\\s*${send}\\s*\\(\\s*\\)`), path)
     }
   }
 })

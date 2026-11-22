@@ -1,3 +1,4 @@
+use super::receipt::Stage;
 use super::storage::{ResetPaths, ResetPhase, ResetRecord};
 use super::{HELPER_FLAG, LOCK_TIMEOUT, failed};
 use std::fs::{self, OpenOptions};
@@ -73,7 +74,7 @@ impl PreparedHelper {
             .process(Pid::from_u32(owner_pid))
             .ok_or_else(|| failed("Could not identify the current manager process"))?
             .start_time();
-        paths.write_record(&ResetRecord {
+        let record = ResetRecord {
             token: self.token,
             owner_pid,
             owner_started,
@@ -85,8 +86,13 @@ impl PreparedHelper {
             action,
             fingerprint: None,
             data_root: Some(paths.root.clone()),
-        })?;
+        };
+        paths.write_record(&record)?;
         self.committed = true;
+        log::info!(
+            "{}，退出后由原生辅助进程完成",
+            super::notice::diagnostics(&record, &paths.root)
+        );
         Ok(())
     }
 }
@@ -101,10 +107,16 @@ impl Drop for PreparedHelper {
     }
 }
 
-pub(super) fn run_helper(paths: &ResetPaths, token: uuid::Uuid) -> Result<(), String> {
+pub(super) fn run_helper(
+    paths: &ResetPaths,
+    token: uuid::Uuid,
+    stage: &mut Stage,
+) -> Result<(), String> {
+    *stage = Stage::ValidateDataRoot;
     paths.validate_root()?;
     let ready = paths.ready(token);
     let _ready = ReadyFile(ready.clone());
+    *stage = Stage::SignalReadiness;
     OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -112,6 +124,7 @@ pub(super) fn run_helper(paths: &ResetPaths, token: uuid::Uuid) -> Result<(), St
         .map_err(failed)?;
     let deadline = Instant::now() + LOCK_TIMEOUT;
     // No journal is changed until the IPC has prepared everything successfully.
+    *stage = Stage::WaitForRequest;
     loop {
         if let Some(record) = paths.record()?.filter(|record| record.token == token) {
             if !record.pending() {
@@ -124,29 +137,37 @@ pub(super) fn run_helper(paths: &ResetPaths, token: uuid::Uuid) -> Result<(), St
         }
         std::thread::sleep(Duration::from_millis(40));
     }
+    *stage = Stage::OpenSessionLock;
     let lock = paths.open_lock()?;
     loop {
         // A startup may complete this exact request before this helper gets the
         // lock. Do not wait behind its fresh session or delete that new session.
+        *stage = Stage::ReadCommittedRequest;
         let record = paths
             .record()?
             .ok_or_else(|| failed("Reset journal disappeared"))?;
         if record.token != token || !record.pending() {
             return Ok(());
         }
+        *stage = Stage::WaitForSessionLock;
         match lock.try_lock() {
             Ok(()) => {
+                *stage = Stage::ReadCommittedRequest;
                 let record = paths
                     .record()?
                     .ok_or_else(|| failed("Reset journal disappeared"))?;
                 if record.token != token || !record.pending() {
                     return Ok(());
                 }
+                *stage = Stage::CheckLegacyController;
                 let _legacy = super::legacy::exclusive_for_request(paths, &record)?;
+                *stage = Stage::WaitForOwner;
                 if let Err(error) = wait_for_owner(&record) {
+                    *stage = Stage::PersistOwnerWaitFailure;
                     paths.mark_failed(record, &error)?;
                     return Err(error);
                 }
+                *stage = Stage::FinishRequest;
                 return paths.finish(record);
             }
             Err(fs::TryLockError::WouldBlock) if Instant::now() < deadline => {

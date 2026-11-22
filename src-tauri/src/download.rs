@@ -30,12 +30,7 @@ pub fn candidate_progress(
     attempt: usize,
     attempt_total: usize,
 ) -> DownloadProgress {
-    let source = url::Url::parse(&candidate.url).ok().and_then(|url| {
-        url.host().map(|host| match url.port() {
-            Some(port) => format!("{host}:{port}"),
-            None => host.to_string(),
-        })
-    });
+    let source = source_host(&candidate.url);
     DownloadProgress {
         label: label.into(),
         file_name: None,
@@ -55,6 +50,14 @@ pub fn candidate_progress(
         parallel_sources: None,
         volumes: Vec::new(),
     }
+}
+
+fn source_host(url: &str) -> Option<String> {
+    let url = url::Url::parse(url).ok()?;
+    url.host().map(|host| match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_string(),
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -128,6 +131,7 @@ struct ActiveSource {
     reporter: Arc<DownloadReporter>,
     abort: AbortHandle,
     speed: SourceSpeed,
+    started: Instant,
 }
 
 fn leading_source(
@@ -344,6 +348,7 @@ where
                     reporter,
                     abort,
                     speed: SourceSpeed::default(),
+                    started: Instant::now(),
                 },
             );
             active.push(async move {
@@ -389,17 +394,22 @@ where
                             progress.finished = true;
                             progress.phase = DownloadPhase::Finished;
                             progress.parallel_sources = Some(1);
+                            log::info!("下载竞速完成：任务={}，胜出地址={:?}，已收字节={}，elapsed_ms={}", context.label,
+                                progress.source, progress.downloaded, source.started.elapsed().as_millis());
                             report_progress(progress);
-                            log::info!("下载竞速完成：任务={}，胜出地址={}", context.label,
-                                source.candidate.url.parse::<url::Url>().ok()
-                                    .and_then(|url| url.host_str().map(str::to_string)).unwrap_or_default());
                         }
                         return Ok(completed.0.take().unwrap());
                     }
                     Ok(Err(error)) if error == "download.cancelled" || is_cancelled() => return Err("download.cancelled".into()),
                     Ok(Err(error)) if policy.terminal_error == Some(error.as_str()) => return Err(error),
                     Ok(Err(error)) => {
-                        log::warn!("下载候选失败，补充其他候选：候选序号={}", id + 1);
+                        let label = context.as_ref().map(|context| context.label).unwrap_or("unknown");
+                        if let Some(source) = source {
+                            let snapshot = source.reporter.snapshot();
+                            log::warn!("下载候选失败，补充其他候选：任务={}，候选={}/{}，渠道={:?}，地址={:?}，已收字节={}，预期字节={:?}，elapsed_ms={}，原因={}",
+                                label, id + 1, total_candidates, source.candidate.route, source_host(&source.candidate.url),
+                                source.reporter.transferred(), snapshot.total.or(expected_size), source.started.elapsed().as_millis(), crate::locale_tag::diagnostic_tag(&error));
+                        }
                         last_error = Some(error);
                     }
                     Err(_) => {} // A slow source was aborted; its slot is already free.

@@ -16,7 +16,6 @@ use crate::download::DownloadContext;
 use crate::download::try_download_candidates as try_asset_download_candidates;
 use crate::models::{AppUpdateChannelStatus, AppUpdateInfo, GitHubProxyConfig};
 use crate::releases;
-use crate::repository_sources;
 use futures_util::StreamExt;
 use tauri::AppHandle;
 use url::Url;
@@ -51,7 +50,7 @@ pub(super) async fn download_installer(
     let first_chunk = archive::first_nonempty_chunk(&mut stream, deadline).await?;
     let mut next_chunk = first_chunk.map(Ok::<_, reqwest::Error>);
     while let Some(chunk) = next_chunk {
-        let chunk = chunk.map_err(|error| error.to_string())?;
+        let chunk = chunk.map_err(|error| error.without_url().to_string())?;
         reporter.received(chunk.len() as u64);
         bytes.extend_from_slice(&chunk);
         downloaded += chunk.len() as u64;
@@ -256,6 +255,8 @@ async fn resolve_app_update_at(
         return Err("download.cancelled".into());
     }
     let endpoint = Url::parse(url).map_err(|_| "update.manifestUrlInvalid")?;
+    let address = endpoint.origin().ascii_serialization();
+    let started = std::time::Instant::now();
     let builder = app
         .updater_builder()
         .target(target.manifest_key())
@@ -281,7 +282,10 @@ async fn resolve_app_update_at(
     {
         Ok(updater) => updater,
         Err(error) => {
-            log::warn!("更新清单入口不可用：原因={error}");
+            log::warn!(
+                "更新清单入口不可用：来源={address:?}，原因={}",
+                super::updater_error_details(&error)
+            );
             return Err(error.to_string());
         }
     };
@@ -307,10 +311,11 @@ async fn resolve_app_update_at(
                 Err(error) => return Err(error),
             }
         }
-        Ok(None) => log::warn!("更新清单没有所选 Release 的更新版本"),
-        Err(_) => log::warn!(
-            "更新清单读取失败：来源={}",
-            repository_sources::safe_log_address(url)
+        Ok(None) => log::warn!("更新清单没有所选 Release 的更新版本：来源={address:?}"),
+        Err(error) => log::warn!(
+            "更新清单读取失败：来源={address:?}，elapsed_ms={}，原因={}",
+            started.elapsed().as_millis(),
+            super::updater_error_details(&error)
         ),
     }
     Err("update.manifestOrSignatureUnavailable".into())
@@ -402,8 +407,11 @@ pub(crate) async fn discover_and_download_installer_update(
                 });
             }
             Err(errors) => log::warn!(
-                "按已检查的渠道下载更新失败，将重新检查：渠道={channel}，原因={}",
-                errors.join("；")
+                "按已检查的渠道下载更新失败，将重新检查：渠道={channel:?}，原因={:?}",
+                errors
+                    .iter()
+                    .map(|error| crate::locale_tag::diagnostic_tag(error))
+                    .collect::<Vec<_>>()
             ),
         }
     }

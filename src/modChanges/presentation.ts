@@ -65,6 +65,7 @@ interface ChangePlanDetailRow {
   memberOnly?: boolean
   bundled?: boolean
   retired?: string
+  remainsDisabled?: boolean
   bundleReason?: 'enabled' | 'disabled' | 'included'
   selected?: boolean
   reason?: string
@@ -217,6 +218,7 @@ export function changePlanDetails(plan: DeepReadonly<ChangePlan>, progress?: Dee
     const category = memberKey && (node?.kind === 'map' || node?.presentation_kind === 'mod_package') ? memberCategory(member) : nodeCategory(node)
     return { key: JSON.stringify([nodeId, kind, memberKey ?? null]), nodeId, statusKey, kind, category, label: labels.get(nodeId),
       member: plugin, memberOnly: !!memberKey, bundled, reason: action.reason, reasons, causes, version,
+      remainsDisabled: !memberKey && changesVersion && node?.kind === 'map' && node.enabled === false,
       preparationStage: changesVersion ? item?.stage : undefined, waitsForPackage: changesVersion }
   }
   const rows: ChangePlanDetailRow[] = []

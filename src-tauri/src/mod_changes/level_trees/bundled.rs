@@ -13,6 +13,26 @@ fn map_directory(path: &str, levels: &str) -> Option<(String, String)> {
     Some((parts[depth].into(), parts[..=depth].join("/")))
 }
 
+pub(in crate::mod_changes) fn has_verified_bundled_map(
+    payload: &crate::mod_changes::session::Payload,
+    levels: &str,
+    name: &str,
+) -> bool {
+    payload
+        .files
+        .iter()
+        .filter_map(|path| {
+            if !mutations::within(path, levels) {
+                return None;
+            }
+            let (directory, physical) = map_directory(path, levels)?;
+            (key(&directory) == name).then_some(physical)
+        })
+        .next()
+        .and_then(|path| crate::level_sets::locate_info_file(&payload.stage_root.join(path)))
+        .is_some_and(|path| crate::level_sets::read_info_metadata(&path).is_ok())
+}
+
 pub(in crate::mod_changes) fn unique_framework_member<'a>(
     owner: &str,
     provides: &'a [ProvidedPlugin],

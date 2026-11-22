@@ -96,6 +96,7 @@ fn real_zip_update_accepts_normal_windows_data_path() {
     let request = PlanRequest {
         map_import: Some(MapImport {
             zip_path: zip.to_string_lossy().into_owned(),
+            download_id: None,
             selected: vec![selected.dir_name.clone()],
             origin: None,
         }),
@@ -123,9 +124,9 @@ fn real_zip_update_accepts_normal_windows_data_path() {
     );
 }
 
-#[test]
+#[tokio::test]
 #[ignore = "需要本地 .tmp/plugin-zips/young.zip；单独运行，以便隔离地图解析缓存"]
-fn real_young_info_update_reports_disabled_standalone_dll_without_writing_live_files() {
+async fn real_young_info_requires_download_approval_to_adopt_disabled_standalone_dll() {
     let sample = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.tmp/plugin-zips/young.zip");
     let mut archive = zip::ZipArchive::new(fs::File::open(sample).unwrap()).unwrap();
     let info = (0..archive.len())
@@ -190,18 +191,16 @@ fn real_young_info_update_reports_disabled_standalone_dll_without_writing_live_f
     previous.version = "0.4".into();
     level_sets::seed_info_metadata(&old_map.join("info_young"), previous);
 
-    let error = planning::create(
-        &state,
-        PlanRequest {
-            map_import: Some(MapImport {
-                zip_path: zip.to_string_lossy().into_owned(),
-                selected: vec![selected.dir_name.clone()],
-                origin: None,
-            }),
-            ..Default::default()
-        },
-    )
-    .unwrap_err();
+    let request = |download_id| PlanRequest {
+        map_import: Some(MapImport {
+            zip_path: zip.to_string_lossy().into_owned(),
+            download_id,
+            selected: vec![selected.dir_name.clone()],
+            origin: None,
+        }),
+        ..Default::default()
+    };
+    let error = planning::create(&state, request(None)).unwrap_err();
     assert_eq!(
         error,
         format!("modChanges.installTargetOwned?path={external}")
@@ -214,7 +213,7 @@ fn real_young_info_update_reports_disabled_standalone_dll_without_writing_live_f
         fs::read(old_map.join("old-level")).unwrap(),
         b"previous map bytes"
     );
-    assert_eq!(fs::read(game.join(standalone)).unwrap(), standalone_bytes);
+    assert_eq!(fs::read(game.join(&standalone)).unwrap(), standalone_bytes);
     assert!(!game.join(external).exists());
     assert!(!new_map.exists());
     assert!(state.mod_changes.lock().unwrap().plans.is_empty());
@@ -225,4 +224,121 @@ fn real_young_info_update_reports_disabled_standalone_dll_without_writing_live_f
             .join(level_sets::LEVEL_SET_PLUGIN_REGISTRY)
             .exists()
     );
+    let receipt = uuid::Uuid::new_v4();
+    state
+        .downloaded_sources
+        .record(
+            receipt,
+            &zip,
+            Fingerprint::capture(&zip).unwrap(),
+            crate::mod_changes::downloaded_source::Source::Map(None),
+        )
+        .unwrap();
+    for phase in ["cancel", "modified", "rollback", "counterpart", "commit"] {
+        let plan = planning::create(&state, request(Some(receipt))).unwrap();
+        assert_eq!(plan.result.status, SolveStatus::Ready, "{:?}", plan.result);
+        let outcome = preparation::prepare(state.clone(), plan.plan_id.clone(), |_| {}).await;
+        assert_eq!(outcome.error, None);
+        let prepared = outcome.plan.unwrap();
+        assert_ne!(prepared.plan_id, plan.plan_id);
+        assert!(
+            !state
+                .mod_changes
+                .lock()
+                .unwrap()
+                .plans
+                .contains_key(&plan.plan_id)
+        );
+        let mut session = state
+            .mod_changes
+            .lock()
+            .unwrap()
+            .plans
+            .remove(&prepared.plan_id)
+            .unwrap();
+        assert_eq!(session.plan.untracked_overwrites.len(), 1);
+        assert_eq!(
+            key(&session.plan.untracked_overwrites[0].path),
+            key(&standalone)
+        );
+        match phase {
+            "cancel" => {
+                drop(session);
+                assert_eq!(fs::read(game.join(&standalone)).unwrap(), standalone_bytes);
+                assert_eq!(
+                    fs::read(old_map.join("info_young")).unwrap(),
+                    b"previous bundle"
+                );
+            }
+            "modified" => {
+                fs::write(game.join(&standalone), b"external change").unwrap();
+                assert!(execution::commit(&state, &mut session, |_| {}).is_err());
+                assert_eq!(
+                    fs::read(old_map.join("info_young")).unwrap(),
+                    b"previous bundle"
+                );
+                fs::write(game.join(&standalone), &standalone_bytes).unwrap();
+            }
+            "rollback" => {
+                crate::archive::start_download();
+                let mut saw_dll_write = false;
+                let result = execution::commit(&state, &mut session, |_| {
+                    if fs::read(game.join(&standalone)).is_ok_and(|bytes| bytes == candidate) {
+                        saw_dll_write = true;
+                        crate::archive::cancel_download();
+                    }
+                });
+                crate::archive::start_download();
+                assert!(saw_dll_write);
+                assert_eq!(result.unwrap_err(), "download.cancelled");
+                assert_eq!(fs::read(game.join(&standalone)).unwrap(), standalone_bytes);
+                assert_eq!(
+                    fs::read(old_map.join("info_young")).unwrap(),
+                    b"previous bundle"
+                );
+                assert!(
+                    level_sets::read_registered_plugins(&state.config.manifests_dir()).is_empty()
+                );
+            }
+            "counterpart" => {
+                let mut injected = false;
+                let result = execution::commit(&state, &mut session, |_| {
+                    if !injected
+                        && fs::read(game.join(&standalone)).is_ok_and(|bytes| bytes == candidate)
+                    {
+                        write(&game, external, b"outside active copy");
+                        injected = true;
+                    }
+                });
+                assert!(injected);
+                assert_eq!(
+                    result.unwrap_err(),
+                    format!("modChanges.installTargetHasBothStates?path={external}")
+                );
+                assert_eq!(
+                    fs::read(game.join(external)).unwrap(),
+                    b"outside active copy"
+                );
+                assert_eq!(fs::read(game.join(&standalone)).unwrap(), standalone_bytes);
+                assert_eq!(
+                    fs::read(old_map.join("info_young")).unwrap(),
+                    b"previous bundle"
+                );
+                assert!(
+                    level_sets::read_registered_plugins(&state.config.manifests_dir()).is_empty()
+                );
+                fs::remove_file(game.join(external)).unwrap();
+            }
+            _ => {
+                execution::commit(&state, &mut session, |_| {}).unwrap();
+                assert_eq!(fs::read(game.join(&standalone)).unwrap(), candidate);
+                assert!(!game.join(external).exists());
+                assert!(!new_map.exists());
+                assert_eq!(fs::read(old_map.join("info_young")).unwrap(), info);
+                let registered = level_sets::read_registered_plugins(&state.config.manifests_dir());
+                assert_eq!(registered.len(), 1);
+                assert_eq!(key(&registered[0].dll), key(external));
+            }
+        }
+    }
 }

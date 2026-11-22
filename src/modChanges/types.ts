@@ -6,7 +6,7 @@ export type DependencyRepairTarget = Pick<RootIntent, 'node_id' | 'candidate_id'
 export type ChangeRequest = {
   roots: RootIntent[]
   repair_dependencies_of?: never
-  map_import?: { zip_path: string; selected: string[]; origin?: MapInstallOrigin | null }
+  map_import?: { zip_path: string; selected: string[]; origin?: MapInstallOrigin | null; download_id?: string }
   /** Local scan seen at click and trusted inventory used to resolve its root. */
   toggle_scope?: { generation: number; revision: string }
   bulk_toggle?: boolean

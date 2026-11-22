@@ -40,6 +40,7 @@ struct PayloadSource<'a> {
     path: &'a Path,
     file_name: &'a str,
     origin: SourceOrigin<'a>,
+    downloaded: bool,
 }
 
 pub(super) fn from_downloaded(
@@ -66,6 +67,7 @@ pub(super) fn from_downloaded(
                 prerelease: download.prerelease,
                 split_proof: proof.as_ref(),
             },
+            downloaded: true,
         },
         node_id,
         candidate,
@@ -143,6 +145,7 @@ pub(crate) fn from_preview(
             path: &source,
             file_name,
             origin,
+            downloaded: false,
         },
         node_id,
         candidate,
@@ -164,9 +167,22 @@ fn stage_asset(
         path: source,
         file_name,
         origin,
+        downloaded,
     } = input;
     archive::validate_asset_file_name(file_name)?;
     let source_fingerprint = Fingerprint::capture(source)?;
+    let downloaded = if let SourceOrigin::Manual(preview) = &origin {
+        use super::downloaded_source::Source;
+        state.downloaded_sources.verify(
+            uuid::Uuid::parse_str(preview).map_err(|_| "modPreview.invalidId")?,
+            source,
+            &source_fingerprint,
+            &Source::ModUrl,
+            false,
+        )?
+    } else {
+        downloaded
+    };
     let Fingerprint::File { size, sha256, .. } = &source_fingerprint else {
         return Err("archive.pathEscape".into());
     };
@@ -466,6 +482,7 @@ fn stage_asset(
             stage_root: stage_root.to_path_buf(),
             stage_fingerprint,
             release_files,
+            downloaded,
             files,
             manifest: Some(manifest),
             member_roles,

@@ -159,6 +159,7 @@ impl Search<'_, '_> {
             {
                 if issue.state.is_issue()
                     && self.relevant(&state, index, &issue.relation, &protected, &changed_guids)
+                    && !self.preserves_detached_map_issue(&state, index, owned, issue, &protected)
                     && !(protected.contains(&index)
                         && matches!(
                             issue.state,
@@ -181,15 +182,27 @@ impl Search<'_, '_> {
             )
         });
         let next_issue = issues.first().map(|first| {
+            let first = if self.detached_map_members.is_empty() {
+                first
+            } else {
+                issues
+                    .iter()
+                    .find(|(owner, owned, issue)| {
+                        self.repair_allowed(&state, *owner, owned, issue, &protected)
+                    })
+                    .unwrap_or(first)
+            };
             // Resolve a known conflict that can remove the ambiguous provider,
             // then let the next visit check the requirement against the survivor.
             if first.2.reason == DUPLICATE_ENABLED_PROVIDERS {
                 issues
                     .iter()
-                    .find(|(_, _, issue)| {
+                    .find(|(owner, owned, issue)| {
                         issue.state == EvaluationState::Conflict
                             && issue.relation.kind == RelationKind::Conflicts
                             && same_guid(&issue.relation.guid, &first.2.relation.guid)
+                            && (self.detached_map_members.is_empty()
+                                || self.repair_allowed(&state, *owner, owned, issue, &protected))
                     })
                     .unwrap_or(first)
             } else {
@@ -242,7 +255,12 @@ impl Search<'_, '_> {
                 );
                 return Err(SearchFailure::Blocked(true));
             }
-            let (branches, fallback) = self.repair(&state, *owner, issue, &protected);
+            let (branches, fallback) =
+                if self.repair_allowed(&state, *owner, owned, issue, &protected) {
+                    self.repair(&state, *owner, issue, &protected)
+                } else {
+                    (Vec::new(), None)
+                };
             let mut tried_repair = !branches.is_empty();
             // Missing history prevents discarding an owner, but a known candidate
             // can still produce a completely verified solution in either pass.

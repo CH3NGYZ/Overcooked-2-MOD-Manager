@@ -106,6 +106,7 @@ pub(in crate::mod_changes) fn solve_toggle(
             Some(trusted),
             Some(&mut *loose_releases),
             session.dependency_policy,
+            Default::default(),
             Some(session.operation_id()),
         )
     };

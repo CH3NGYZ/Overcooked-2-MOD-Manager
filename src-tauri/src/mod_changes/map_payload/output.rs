@@ -14,8 +14,7 @@ pub(in crate::mod_changes) fn mutations(
         return Err("modChanges.payloadChanged".into());
     }
     let solved = session.solved.as_ref().ok_or("modChanges.notPrepared")?;
-    let package =
-        super::super::mutations::final_package(solved)?.ok_or("framework.diyLevelMissing")?;
+    let package = super::super::mutations::final_package(solved)?;
     let mut result = Vec::new();
     let mut targets = BTreeSet::new();
     let replacements = batch
@@ -54,14 +53,12 @@ pub(in crate::mod_changes) fn mutations(
             &map.member_prefix,
             current,
         )?;
-        let target = if node.enabled {
-            format!("{package}/levels/{}", map.target_dir)
-        } else {
-            relative(
-                &roots.game_root,
-                &level_sets::disabled_root(&roots.game_root).join(&map.target_dir),
-            )?
-        };
+        let target = crate::mod_changes::level_trees::map_destination(
+            &roots.game_root,
+            &map.target_dir,
+            node.enabled,
+            package.as_deref(),
+        )?;
         if migration
             .as_ref()
             .is_some_and(|composition| composition.handled_maps.contains(&map.node_id))
@@ -103,12 +100,7 @@ pub(in crate::mod_changes) fn mutations(
         result.extend(migration.mutations);
     }
     for external in &batch.external {
-        let node = selected(solved, &external.node_id, &external.candidate_id)?;
-        let current = node.current.as_ref().ok_or("modChanges.targetChanged")?;
-        if current.provides.len() != 1 {
-            return Err(InstallBlock::Unrecognized.report(&external.node_id, &external.target));
-        }
-        let member = &current.provides[0];
+        let enabled = external_enabled(solved, external)?;
         let canonical = crate::mods::canonical_dll_name(&external.target);
         let disabled = crate::mods::disabled_dll_file(&canonical);
         let active = game(&canonical).resolve(roots)?;
@@ -142,18 +134,45 @@ pub(in crate::mod_changes) fn mutations(
             };
             return Err(occupied_target(before).report(&external.node_id, path));
         }
-        let target = if node.enabled && member.enabled {
+        let target = if enabled {
             canonical.clone()
         } else {
             disabled.clone()
         };
-        let old = if has_active {
+        let scanned_old = if has_active {
             Some(&canonical)
         } else if has_inactive {
             Some(&disabled)
         } else {
             None
         };
+        let old = external
+            .claimed
+            .as_ref()
+            .map(|(path, _)| path)
+            .or(scanned_old);
+        let target = old
+            .filter(|old| key(old) == key(&target))
+            .cloned()
+            .unwrap_or(target);
+        let source = batch.stage_root.join(&external.stage_path);
+        if let Some((path, fingerprint)) = &external.claimed {
+            if path != &target {
+                return Err(InstallBlock::VerificationChanged.report(&external.node_id, path));
+            }
+            let target = game(path);
+            reserve(&mut targets, &target, &external.node_id)?;
+            result.push(OwnedMutation::new(
+                Mutation::File(FileChange {
+                    target,
+                    source: Some(StagedFile::capture(source)?),
+                    expected: fingerprint.clone(),
+                    require_single_link: true,
+                }),
+                Some(ItemKey::new(&external.node_id, None)),
+            ));
+            continue;
+        }
         if let Some(old) = old {
             if key(old) != key(&target) {
                 push_file(
@@ -166,7 +185,6 @@ pub(in crate::mod_changes) fn mutations(
                 )?;
             }
         }
-        let source = batch.stage_root.join(&external.stage_path);
         push_file(
             &mut result,
             &mut targets,
@@ -209,6 +227,37 @@ pub(in crate::mod_changes) fn mutations(
         }
     }
     Ok(result)
+}
+
+pub(in crate::mod_changes) fn verify_external_counterparts(
+    batch: &MapBatch,
+    roots: &TransactionRoots,
+    solved: &Inventory,
+) -> Result<(), String> {
+    for external in &batch.external {
+        let canonical = crate::mods::canonical_dll_name(&external.target);
+        let counterpart = if external_enabled(solved, external)? {
+            crate::mods::disabled_dll_file(&canonical)
+        } else {
+            canonical.clone()
+        };
+        crate::mod_changes::mutations::verify_missing_dll_variant(
+            roots,
+            &external.node_id,
+            &canonical,
+            &counterpart,
+        )?;
+    }
+    Ok(())
+}
+
+fn external_enabled(solved: &Inventory, external: &StagedExternal) -> Result<bool, String> {
+    let node = selected(solved, &external.node_id, &external.candidate_id)?;
+    let current = node.current.as_ref().ok_or("modChanges.targetChanged")?;
+    let [member] = current.provides.as_slice() else {
+        return Err(InstallBlock::Unrecognized.report(&external.node_id, &external.target));
+    };
+    Ok(node.enabled && member.enabled)
 }
 
 fn selected<'a>(

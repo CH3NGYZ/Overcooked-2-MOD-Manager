@@ -320,7 +320,7 @@ async fn exact_reinstall_without_manifest_treats_non_dll_suffix_twins_as_distinc
     );
     let f = &test.fixture;
     let plan = test.ready(ActionKind::Replace).await;
-    assert_overwrites(&plan, vec![RESOURCE, RESOURCE_TWIN]);
+    assert_overwrites(&plan, vec![CORE, RESOURCE, RESOURCE_TWIN]);
     execution::commit(&f.state, &mut take(f, &plan), |_| {}).unwrap();
     assert_common_resources(f);
     assert_eq!(

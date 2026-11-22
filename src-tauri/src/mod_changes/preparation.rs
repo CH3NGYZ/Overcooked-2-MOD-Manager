@@ -320,6 +320,9 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
         )?;
     }
     let roots = mutations::transaction_roots(state, session)?;
+    if let Some(batch) = &session.map_payload {
+        batch.verify_claims(&roots, session)?;
+    }
     let changes = mutations::assemble(session, roots.clone())?;
     // FileChange already keeps the exact file source stamps. Freeze composed map
     // trees too, without replacing the proofs captured during Release verification.
@@ -338,6 +341,9 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
         guard::ensure_game_stopped(state, &roots.game_root)?;
     }
     session.plan.untracked_overwrites = session.release_target_claims.overwrites();
+    if let Some(batch) = &session.map_payload {
+        session.plan.untracked_overwrites.extend(batch.overwrites());
+    }
     session.mutations = Some(changes);
     Ok(())
 }

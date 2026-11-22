@@ -3,6 +3,7 @@ use super::conflicts::attach_install_conflicts;
 use super::model::{ModPreview, ModSource, ModSourceKind};
 use super::staging::{cleanup_stale_previews, preview_root, stage_local};
 use crate::app_state::AppState;
+use crate::mod_changes::{downloaded_source::Source, transaction::Fingerprint};
 use crate::models::OperationResult;
 use std::fs;
 use std::path::PathBuf;
@@ -35,6 +36,9 @@ pub async fn analyze_mod_source(
             (path, name)
         }
     };
+    let downloaded = matches!(source.kind, ModSourceKind::Url)
+        .then(|| Fingerprint::capture(&local_path))
+        .transpose()?;
     let extension = source_extension(&file_name).ok_or("modPreview.unknownType")?;
     if extension != "dll" && extension != "zip" {
         return Err("modPreview.unsupportedType".into());
@@ -56,9 +60,21 @@ pub async fn analyze_mod_source(
 
     // 暂存目录用 preview_id 命名，confirm / cancel 靠它找回文件。
     stage_local(&state, &preview, &local_path)?;
-    if matches!(source.kind, ModSourceKind::Url) {
-        // 在线源的原始下载文件已经复制进暂存，删掉避免占用 cache。
+    if let Some(downloaded) = downloaded {
+        let path = preview_root(&state)
+            .join(&preview.preview_id)
+            .join(&preview.file_name);
+        let fingerprint = Fingerprint::capture(&path)?;
         let _ = fs::remove_file(&local_path);
+        if !fingerprint.same_content(&downloaded) {
+            return Err("modChanges.payloadChanged".into());
+        }
+        state.downloaded_sources.record(
+            Uuid::parse_str(&preview.preview_id).map_err(|_| "modPreview.invalidId")?,
+            &path,
+            fingerprint,
+            Source::ModUrl,
+        )?;
     }
     log::info!(
         "MOD 安装源解析完成：预览={}，DLL 数={}，MOD 数={}，依赖数={}",
@@ -73,6 +89,7 @@ pub async fn analyze_mod_source(
 #[tauri::command]
 pub fn cancel_mod_preview(state: State<'_, AppState>, preview_id: String) -> Result<(), String> {
     let dir = preview_root(&state).join(safe_preview_id(&preview_id)?);
+    state.downloaded_sources.forget_path(&dir);
     if dir.is_dir() {
         fs::remove_dir_all(&dir).map_err(|error| error.to_string())?;
         log::debug!("已清理 MOD 安装预览暂存：预览={preview_id}");

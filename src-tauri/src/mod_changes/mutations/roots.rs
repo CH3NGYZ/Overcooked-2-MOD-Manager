@@ -170,25 +170,23 @@ pub(super) fn toggle_map(
             .map_dir_name
             .as_deref()
             .ok_or_else(missing_owner)?;
-        if name.is_empty() || name.contains(['/', '\\']) {
-            return Err("archive.pathEscape".into());
-        }
-        let target = if node.enabled {
-            let package = final_package(
+        let package = if node.enabled {
+            final_package(
                 builder
                     .session
                     .solved
                     .as_ref()
                     .ok_or("modChanges.notPrepared")?,
             )?
-            .ok_or("framework.diyLevelMissing")?;
-            format!("{package}/levels/{name}")
         } else {
-            inventory::relative(
-                &builder.roots.game_root,
-                &crate::level_sets::disabled_root(&builder.roots.game_root).join(name),
-            )?
+            None
         };
+        let target = super::super::level_trees::map_destination(
+            &builder.roots.game_root,
+            name,
+            node.enabled,
+            package.as_deref(),
+        )?;
         if !internal.is_empty() {
             let source = game(directory).resolve(&builder.roots)?;
             let staged = builder

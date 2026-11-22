@@ -1,16 +1,9 @@
 use crate::asset_bundle::LevelSetMetadata;
-use crate::level_sets::conflicts::conflicts_with_installed;
-use crate::level_sets::conflicts::find_install_conflicts;
-use crate::level_sets::identity::level_set_display_name;
 use crate::level_sets::install::existing_level_set_metadata;
 use crate::level_sets::install::install_from_zip;
 use crate::level_sets::paths::disabled_root;
 use crate::level_sets::paths::levels_root;
-use crate::level_sets::scan::LevelSetOnDisk;
 use crate::level_sets::seed_info_metadata;
-use crate::level_sets::zip_inspect::ImportedLevelSet;
-use crate::level_sets::zip_inspect::inspect_zip;
-use crate::models::LevelSetLayout;
 use std::path::PathBuf;
 
 fn metadata(name: &str, name_zh: Option<&str>, author: &str, version: &str) -> LevelSetMetadata {
@@ -23,116 +16,6 @@ fn metadata(name: &str, name_zh: Option<&str>, author: &str, version: &str) -> L
         base_uid: None,
         levels: Vec::new(),
     }
-}
-
-fn installed(dir_name: &str, enabled: bool, metadata: LevelSetMetadata) -> LevelSetOnDisk {
-    LevelSetOnDisk {
-        dir_name: dir_name.into(),
-        enabled,
-        path: PathBuf::from(dir_name),
-        metadata: Some(metadata),
-        error: None,
-        required_runtime: None,
-        plugins: Vec::new(),
-    }
-}
-
-fn imported(dir_name: &str, metadata: LevelSetMetadata) -> ImportedLevelSet {
-    ImportedLevelSet {
-        dir_name: dir_name.into(),
-        metadata,
-        files: Vec::new(),
-        plugins: Vec::new(),
-        layout: LevelSetLayout::Flattened,
-    }
-}
-
-#[test]
-fn conflicts_report_every_installed_copy_in_both_roots() {
-    // 启用 + 停用各一份：两份都要卸，关着的那份也要报（否则装完仍有两份）。
-    let installed = vec![
-        installed(
-            "RW_LevelSet",
-            true,
-            metadata("RW_LevelSet", None, "RW", "0.73"),
-        ),
-        installed(
-            "RW_LevelSet_copy",
-            false,
-            metadata("RW_LevelSet", None, "RW", "0.71"),
-        ),
-    ];
-    let sets = vec![imported(
-        "RW_LevelSet",
-        metadata("RW_LevelSet", None, "RW", "v0.73.0"),
-    )];
-
-    let conflicts = conflicts_with_installed(&installed, &sets);
-    assert_eq!(conflicts.len(), 2);
-    assert_eq!(conflicts[0].handle, "RW_LevelSet");
-    assert_eq!(conflicts[0].name, "RW_LevelSet");
-    assert_eq!(conflicts[0].version, "0.73");
-    assert!(conflicts[0].enabled);
-    assert!(conflicts[0].same_version, "0.73 与 v0.73.0 应提示重装");
-    assert_eq!(conflicts[1].handle, "RW_LevelSet_copy");
-    assert!(!conflicts[1].enabled);
-    assert!(!conflicts[1].same_version, "0.71 不是 0.73");
-}
-
-#[test]
-fn conflicts_ignore_same_named_sets_with_another_identity() {
-    // 实测「胡闹糕中」与「胡闹达学」的英文名与作者都叫 GAODA，只有中文名不同。
-    let installed = vec![installed(
-        "GAODA",
-        true,
-        metadata("GAODA", Some("胡闹糕中"), "GAODA", "1.0"),
-    )];
-    let other_map = vec![imported(
-        "GAODA",
-        metadata("GAODA", Some("胡闹达学"), "GAODA", "1.0"),
-    )];
-    assert!(conflicts_with_installed(&installed, &other_map).is_empty());
-
-    let no_chinese_name = vec![imported("GAODA", metadata("GAODA", None, "GAODA", "1.0"))];
-    assert!(conflicts_with_installed(&installed, &no_chinese_name).is_empty());
-
-    // 反过来：目录名不同但身份相同，照样是同一张图（目录名不是身份）
-    let renamed_copy = vec![imported(
-        "GAODA_0405",
-        metadata("GAODA", Some("胡闹糕中"), "GAODA", "1.0"),
-    )];
-    assert_eq!(conflicts_with_installed(&installed, &renamed_copy).len(), 1);
-}
-
-#[test]
-fn conflicts_report_each_installed_copy_once() {
-    // 一个 ZIP 里有两张同身份的图：同一份已装副本只报一条，不重复展示。
-    let installed = vec![installed(
-        "RW_LevelSet",
-        true,
-        metadata("RW_LevelSet", None, "RW", "0.73"),
-    )];
-    let sets = vec![
-        imported("RW_A", metadata("RW_LevelSet", None, "RW", "0.73")),
-        imported("RW_B", metadata("RW_LevelSet", None, "RW", "0.73")),
-    ];
-    assert_eq!(conflicts_with_installed(&installed, &sets).len(), 1);
-}
-
-#[test]
-fn display_name_falls_back_to_the_chinese_name() {
-    assert_eq!(
-        level_set_display_name(&metadata("RW_LevelSet", None, "RW", "1.0")),
-        "RW_LevelSet"
-    );
-    assert_eq!(
-        level_set_display_name(&metadata("", Some("胡闹糕中"), "GAODA", "1.0")),
-        "胡闹糕中"
-    );
-    assert_eq!(
-        level_set_display_name(&metadata("", None, "GAODA", "1.0")),
-        ""
-    );
 }
 
 #[test]
@@ -184,13 +67,6 @@ fn a_same_named_set_in_disabled_with_another_identity_is_renamed() {
     seed_info_metadata(
         &info,
         metadata("AnotherMap", Some("另一张图"), "Someone", "2.0"),
-    );
-
-    // 停用根里那张是另一张图：导入前不该报冲突
-    let sets = inspect_zip(&zip).unwrap();
-    assert!(
-        find_install_conflicts(&game, &sets).is_empty(),
-        "同名但身份不同的停用目录不算冲突"
     );
 
     let installed = install_from_zip(

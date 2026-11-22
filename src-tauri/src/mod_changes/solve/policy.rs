@@ -1,4 +1,7 @@
-use super::{Search, SearchState, changed, matches, provides, targets};
+use super::{
+    Search, SearchState, changed, matches, provides, same_guid, scoped_relations, targets,
+};
+use crate::mod_changes::evaluate::{evaluate_relation, owned_targets};
 use crate::mod_changes::model::*;
 use crate::models::{RelationKind, RepositoryRelation};
 use crate::mods::plugin_target::{DIYLEVEL_GUID, RUNTIME_WLOADER_GUID};
@@ -30,6 +33,7 @@ pub(crate) enum DependencyPolicy {
     #[default]
     KeepInstalled,
     MapInstall,
+    MapFilesOnly,
     PreferNewest,
 }
 
@@ -72,6 +76,82 @@ impl DependencyPolicy {
 }
 
 impl Search<'_, '_> {
+    pub(super) fn preserves_detached_map_issue(
+        &self,
+        state: &SearchState,
+        owner: usize,
+        owned: &OwnedRelation,
+        issue: &RelationEvaluation,
+        protected: &BTreeSet<usize>,
+    ) -> bool {
+        if !self.detached_map_members.contains(&owner) || protected.contains(&owner) {
+            return false;
+        }
+        let previous = &self.original.nodes[owner];
+        let updated = &state.inventory.nodes[owner];
+        let Some((previous_candidate, updated_candidate)) =
+            previous.current.as_ref().zip(updated.current.as_ref())
+        else {
+            return false;
+        };
+        let ([previous_member], [updated_member]) = (
+            previous_candidate.provides.as_slice(),
+            updated_candidate.provides.as_slice(),
+        ) else {
+            return false;
+        };
+        previous_candidate.relations_known
+            && !previous_member.guid.trim().is_empty()
+            && same_guid(&previous_member.guid, &updated_member.guid)
+            && previous_member.member_key == updated_member.member_key
+            && scoped_relations(previous, false).any(|relation| relation == owned)
+            && evaluate_relation(self.original, previous, owned, RelationScope::Runtime) == *issue
+            && [false, true].into_iter().all(|enabled_only| {
+                owned_targets(self.original, previous, owned, enabled_only)
+                    == owned_targets(&state.inventory, updated, owned, enabled_only)
+            })
+    }
+
+    pub(super) fn repair_allowed(
+        &self,
+        state: &SearchState,
+        owner: usize,
+        owned: &OwnedRelation,
+        issue: &RelationEvaluation,
+        protected: &BTreeSet<usize>,
+    ) -> bool {
+        if self.policy == DependencyPolicy::MapFilesOnly
+            || (self.detached_map_members.contains(&owner) && !protected.contains(&owner))
+        {
+            return false;
+        }
+        let mut restored = None;
+        for index in self.detached_map_members.difference(protected).copied() {
+            let previous = &self.original.nodes[index];
+            let current = &state.inventory.nodes[index];
+            if previous
+                .current
+                .iter()
+                .chain(&current.current)
+                .any(|candidate| provides(candidate, &owned.relation.guid))
+            {
+                let restored = restored.get_or_insert_with(|| state.inventory.clone());
+                restored.nodes[index].current.clone_from(&previous.current);
+                restored.nodes[index].enabled = previous.enabled;
+            }
+        }
+        restored.is_none_or(|inventory| {
+            evaluate_relation(
+                &inventory,
+                &inventory.nodes[owner],
+                owned,
+                issue.scope.clone(),
+            )
+            .state
+            .is_issue()
+        })
+    }
+
     pub(super) fn accepts_partial_declarations(&self, state: &SearchState, index: usize) -> bool {
         let node = &state.inventory.nodes[index];
         self.can_keep_unconfirmed(state, index)

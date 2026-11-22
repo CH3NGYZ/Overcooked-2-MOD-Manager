@@ -120,6 +120,7 @@ fn diagnostic(value: &impl std::fmt::Debug) -> String {
 
 pub(super) fn merge(
     session: &mut PlanSession,
+    roots: &TransactionRoots,
     batch: &mut MapBatch,
     projected: Inventory,
     projected_files: BTreeMap<String, NodeFiles>,
@@ -194,7 +195,7 @@ pub(super) fn merge(
             .map_dir_name
             .as_deref()
             .ok_or("modChanges.targetChanged")?;
-        let (id, name, old_path) = if let Some((id, old)) = matches.first() {
+        let (id, name, old_path, enabled) = if let Some((id, old)) = matches.first() {
             if !previous_matches.insert(id.clone()) {
                 return Err(InstallBlock::PathCollision
                     .report(id, old.map_path.as_deref().unwrap_or(&stage_path)));
@@ -206,6 +207,7 @@ pub(super) fn merge(
                     .clone()
                     .ok_or("modChanges.targetChanged")?,
                 old.map_path.clone(),
+                old.summary.enabled,
             )
         } else {
             let name = level_sets::allocate_dir_name(original_name, &metadata, &mut taken, true);
@@ -213,7 +215,7 @@ pub(super) fn merge(
             if session.trusted.files.contains_key(&id) {
                 id = format!("map-import:{}:{name}", session.plan.plan_id);
             }
-            (id, name, None)
+            (id, name, None, true)
         };
         let package = session
             .trusted
@@ -222,7 +224,12 @@ pub(super) fn merge(
             .map(|root| relative(&session.trusted.game_root, root))
             .transpose()?
             .unwrap_or_else(|| crate::framework::DIYLEVEL_DIR.to_string());
-        let target_prefix = format!("{package}/levels/{name}");
+        let target_prefix = super::super::level_trees::map_destination(
+            &session.trusted.game_root,
+            &name,
+            enabled,
+            Some(&package),
+        )?;
         let mut candidate = node.current.take().ok_or("modChanges.targetChanged")?;
         candidate.id = format!("map-import:{}:{id}", session.plan.plan_id);
         let mut roles = BTreeMap::new();
@@ -240,7 +247,7 @@ pub(super) fn merge(
             remap_key(&mut owned.owner_member_key, &stage_path, &target_prefix)?;
         }
         log::info!(
-            "规划地图安装：操作={}，地图={}，版本={}，节点={}，旧位置={}，目标位置={}，依赖={}",
+            "规划地图安装：操作={}，地图={}，版本={}，节点={}，启用={enabled}，旧位置={}，目标位置={}，依赖={}",
             session.operation_id(),
             diagnostic(&metadata.name),
             diagnostic(&metadata.version),
@@ -298,12 +305,13 @@ pub(super) fn merge(
         let staged = StagedMap {
             node_id: id.clone(),
             candidate_id: candidate.id.clone(),
+            enabled,
             stage_path,
             member_prefix: target_prefix,
             target_dir: name,
             old_path,
         };
-        insert_candidate(session, &id, candidate, files, NodeKind::Map)?;
+        insert_candidate(session, &id, candidate, files, NodeKind::Map, enabled)?;
         batch.node_ids.insert(id);
         batch.maps.push(staged);
         imported.push(metadata);
@@ -346,14 +354,18 @@ pub(super) fn merge(
                     &format!("manifests/{}", level_sets::LEVEL_SET_PLUGIN_REGISTRY),
                 )
             })?;
-        if imported
+        let mut matching_maps = batch
+            .maps
             .iter()
-            .filter(|metadata| entry.owner.matches_install(metadata))
-            .count()
-            != 1
-        {
+            .zip(&imported)
+            .filter(|(_, metadata)| entry.owner.matches_install(metadata));
+        let Some((map, _)) = matching_maps.next() else {
+            return Err(InstallBlock::Unrecognized.report(&node.id, &canonical));
+        };
+        if matching_maps.next().is_some() {
             return Err(InstallBlock::Unrecognized.report(&node.id, &canonical));
         }
+        let map_enabled = map.enabled;
         if previous_registry.iter().any(|old| {
             key(&old.dll) == key(&canonical)
                 && !imported.iter().any(|metadata| {
@@ -371,19 +383,61 @@ pub(super) fn merge(
                     key(&crate::mods::canonical_dll_name(&member.dll_file)) == key(&canonical)
                 })
             })
+            .map(|(id, _)| id.clone())
             .collect::<Vec<_>>();
-        if owners.len() > 1
-            || owners
-                .first()
-                .is_some_and(|(id, _)| !id.starts_with("map-dll:"))
-        {
+        if owners.len() > 1 {
             return Err(InstallBlock::PathOwned.report(&node.id, &canonical));
         }
-        let id = owners
-            .first()
-            .map(|(id, _)| (*id).clone())
-            .unwrap_or_else(|| node.id.clone());
         let mut candidate = node.current.take().ok_or("modChanges.targetChanged")?;
+        let mut claimed = None;
+        let id = node.id.clone();
+        if let Some(owner) = owners
+            .first()
+            .filter(|owner| !owner.starts_with("map-dll:"))
+        {
+            if !batch.downloaded
+                || session
+                    .request
+                    .roots
+                    .iter()
+                    .any(|root| &root.node_id == owner)
+                || session.request.repair_dependencies_of.as_ref() == Some(owner)
+            {
+                return Err(InstallBlock::PathOwned.report(&id, &canonical));
+            }
+            let [plugin] = candidate.provides.as_slice() else {
+                return Err(InstallBlock::Unrecognized.report(&id, &canonical));
+            };
+            claimed = Some(crate::mod_changes::mutations::prove_loose_dll(
+                session,
+                roots.clone(),
+                owner,
+                &canonical,
+                plugin,
+            )?);
+            let old = session
+                .trusted
+                .inventory
+                .nodes
+                .iter_mut()
+                .find(|old| &old.id == owner)
+                .filter(|old| old.mutable)
+                .ok_or_else(|| InstallBlock::PathOwned.report(&id, &canonical))?;
+            old.id.clone_from(&id);
+            old.candidates.clear();
+            old.candidates_complete = true;
+            let mut prior = session
+                .trusted
+                .files
+                .remove(owner)
+                .ok_or("modChanges.targetChanged")?;
+            prior.summary.node_id.clone_from(&id);
+            prior.summary.map_id.clone_from(&files.summary.map_id);
+            prior.summary.repository_id = None;
+            prior.summary.candidates.clear();
+            session.trusted.files.insert(id.clone(), prior);
+            session.trusted.toggle_unbound_nodes.remove(owner);
+        }
         candidate.id = format!("map-import:{}:{id}", session.plan.plan_id);
         batch.member_roles.insert(
             candidate.id.clone(),
@@ -394,15 +448,22 @@ pub(super) fn merge(
                 .filter_map(|member| Some((member.key.clone(), member.role?)))
                 .collect(),
         );
+        let mut enabled = map_enabled;
         if let Some(old) = session
             .trusted
             .inventory
             .nodes
             .iter()
             .find(|node| node.id == id)
-            .and_then(|node| node.current.as_ref())
         {
-            inherit_switches(old, &mut candidate)?;
+            if let Some(current) = old.current.as_ref() {
+                enabled = old.enabled;
+                inherit_switches(current, &mut candidate)?;
+            }
+        } else {
+            for member in &mut candidate.provides {
+                member.enabled = enabled;
+            }
         }
         let physical = if batch.stage_root.join(&canonical).is_file() {
             canonical.clone()
@@ -415,8 +476,12 @@ pub(super) fn merge(
             candidate_id: candidate.id.clone(),
             stage_path: physical,
             target: canonical,
+            claimed,
+            detached_active: !map_enabled
+                && enabled
+                && candidate.provides.iter().any(|member| member.enabled),
         };
-        insert_candidate(session, &id, candidate, files, NodeKind::Mod)?;
+        insert_candidate(session, &id, candidate, files, NodeKind::Mod, enabled)?;
         batch.node_ids.insert(id);
         batch.external.push(external);
     }
@@ -429,6 +494,7 @@ fn insert_candidate(
     candidate: Candidate,
     mut files: NodeFiles,
     kind: NodeKind,
+    enabled: bool,
 ) -> Result<(), String> {
     if session.request.roots.iter().any(|root| root.node_id == id) {
         return Err("modChanges.targetChanged".into());
@@ -483,7 +549,7 @@ fn insert_candidate(
     session.request.roots.push(RootIntent {
         node_id: id.into(),
         candidate_id: Some(candidate_id),
-        enabled: true,
+        enabled,
         member_key: None,
     });
     Ok(())

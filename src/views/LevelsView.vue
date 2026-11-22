@@ -39,7 +39,6 @@ import HeaderSearch from '../components/HeaderSearch.vue'
 import HeaderBulkSwitch from '../components/HeaderBulkSwitch.vue'
 import type { DependencyRow } from '../components/DependencyTable.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
-import InstallDetailDialog from '../components/InstallDetailDialog.vue'
 import BusyOverlay from '../components/BusyOverlay.vue'
 import { useFileDrop } from '../composables/useFileDrop'
 import { takePendingDrop } from '../composables/useDropRouting'
@@ -300,8 +299,6 @@ async function reloadSets() {
 const {
   sourceOpen: installSourceOpen,
   importing, importSource, installRelease,
-  previewOpen: importPreviewOpen, detail: importDetail,
-  confirmImport, discardImport,
   zipProgress, zipProgressText,
 } = useLevelSetImport()
 
@@ -908,25 +905,6 @@ visibility.reconcileStatuses(computed(() => [...statusSummary.value, ...toggleSu
     那行文案同一份数据，避免两处各写一套「到第几个了」。
   -->
   <BusyOverlay :show="showZipOverlay" :status="zipProgressText" />
-
-  <!--
-    同身份冲突的检查：在「安装详情」之前挡一道（已有同一张地图时先卸载）。
-    与 MOD 安装、地图下载页共用同一个弹窗与同一套执行顺序。
-  -->
-
-
-  <!--
-    卡片「更新」与地图下载页共用整链方案，统一确认依赖影响与执行顺序。
-  -->
-
-
-  <!--
-    导入前的「安装详情」：和 MOD 安装同一张卡片，一个地图集当一个 MOD。
-    不接 `busy`：它在「等待确认」期间也为真（整个导入流程都算 busy），
-    而那时取消与立即安装恰恰必须能点；写盘期间弹窗已经收起，进度由页面按钮显示。
-  -->
-  <InstallDetailDialog v-model:show="importPreviewOpen" :model="importDetail"
-    @confirm="confirmImport" @discard="discardImport" />
 
   <LevelPreviewDialog ref="levelPreview" />
   <PageLoading :show="loading">

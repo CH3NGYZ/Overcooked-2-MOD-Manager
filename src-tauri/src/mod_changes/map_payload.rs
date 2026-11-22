@@ -20,7 +20,7 @@ use std::{
 
 mod output;
 mod projection;
-pub(super) use output::mutations;
+pub(super) use output::{mutations, verify_external_counterparts};
 
 type MapSource<'metadata, 'source> = (
     &'metadata crate::asset_bundle::LevelSetMetadata,
@@ -32,6 +32,7 @@ pub(crate) struct MapBatch {
     pub manifests_root: PathBuf,
     pub source_path: PathBuf,
     pub source_fingerprint: Fingerprint,
+    downloaded: bool,
     pub node_ids: BTreeSet<String>,
     pub(crate) notices: Vec<String>,
     /// Candidate-specific roles for the staged maps and their registered DLLs.
@@ -42,6 +43,74 @@ pub(crate) struct MapBatch {
 }
 
 impl MapBatch {
+    pub(super) fn overwrites(
+        &self,
+    ) -> impl Iterator<Item = super::session::UntrackedOverwrite> + '_ {
+        self.external.iter().filter_map(|external| {
+            external
+                .claimed
+                .as_ref()
+                .map(|(path, _)| super::session::UntrackedOverwrite {
+                    node_id: external.node_id.clone(),
+                    path: path.clone(),
+                })
+        })
+    }
+
+    pub(super) fn verify_claims(
+        &self,
+        roots: &TransactionRoots,
+        session: &PlanSession,
+    ) -> Result<(), String> {
+        if !self.has_claims() {
+            return Ok(());
+        }
+        let solved = session.solved.as_ref().ok_or("modChanges.notPrepared")?;
+        for external in &self.external {
+            let Some(expected) = &external.claimed else {
+                continue;
+            };
+            let plugin = solved
+                .nodes
+                .iter()
+                .find(|node| node.id == external.node_id)
+                .and_then(|node| node.current.as_ref())
+                .filter(|candidate| candidate.id == external.candidate_id)
+                .and_then(|candidate| candidate.provides.first())
+                .ok_or("modChanges.targetChanged")?;
+            let actual = super::mutations::prove_loose_dll(
+                session,
+                roots.clone(),
+                &external.node_id,
+                &external.target,
+                plugin,
+            )?;
+            if &actual != expected {
+                return Err(
+                    InstallBlock::VerificationChanged.report(&external.node_id, &expected.0)
+                );
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn has_claims(&self) -> bool {
+        self.external
+            .iter()
+            .any(|external| external.claimed.is_some())
+    }
+    pub(super) fn keeps_all_maps_disabled(&self) -> bool {
+        self.maps.iter().all(|map| !map.enabled)
+    }
+
+    pub(super) fn detached_active_members(&self) -> BTreeSet<&str> {
+        self.external
+            .iter()
+            .filter(|member| member.detached_active)
+            .map(|member| member.node_id.as_str())
+            .collect()
+    }
+
     pub(super) fn has_external_plugin(&self, id: &str) -> bool {
         self.external.iter().any(|plugin| plugin.node_id == id)
     }
@@ -63,6 +132,7 @@ impl MapBatch {
 struct StagedMap {
     node_id: String,
     candidate_id: String,
+    enabled: bool,
     stage_path: String,
     member_prefix: String,
     target_dir: String,
@@ -74,6 +144,8 @@ struct StagedExternal {
     candidate_id: String,
     stage_path: String,
     target: String,
+    claimed: Option<(String, Fingerprint)>,
+    detached_active: bool,
 }
 
 pub(crate) fn attach(state: &AppState, session: &mut PlanSession) -> Result<(), String> {
@@ -91,6 +163,17 @@ pub(crate) fn attach(state: &AppState, session: &mut PlanSession) -> Result<(), 
         crate::http_diagnostics::redact_text(&format!("{:?}", request.origin)),
     );
     let source_fingerprint = Fingerprint::capture(&source)?;
+    let downloaded = if let Some(id) = request.download_id {
+        state.downloaded_sources.verify(
+            id,
+            &source,
+            &source_fingerprint,
+            &super::downloaded_source::Source::Map(request.origin.clone()),
+            true,
+        )?
+    } else {
+        false
+    };
     match &source_fingerprint {
         Fingerprint::Missing => return Err("mods.fileMissing".into()),
         Fingerprint::Directory { .. } => return Err("modPreview.unsupportedType".into()),
@@ -194,6 +277,7 @@ pub(crate) fn attach(state: &AppState, session: &mut PlanSession) -> Result<(), 
         manifests_root,
         source_path: source,
         source_fingerprint,
+        downloaded,
         node_ids: BTreeSet::new(),
         notices,
         member_roles: BTreeMap::new(),
@@ -201,10 +285,18 @@ pub(crate) fn attach(state: &AppState, session: &mut PlanSession) -> Result<(), 
         external: vec![],
         extra_files: vec![],
     };
-    let registered = level_sets::read_registered_plugins(&state.config.manifests_dir());
+    let registered = level_sets::checked_registered_plugins(&state.config.manifests_dir(), true)
+        .map_err(|_| {
+            InstallBlock::MapRecordsUnreadable.report(
+                "map-import",
+                &format!("manifests/{}", level_sets::LEVEL_SET_PLUGIN_REGISTRY),
+            )
+        })?;
     let primary = primary.map(|(metadata, source)| (metadata, source.clone()));
+    let transaction_roots = super::mutations::transaction_roots(state, session)?;
     projection::merge(
         session,
+        &transaction_roots,
         &mut batch,
         inventory,
         files,

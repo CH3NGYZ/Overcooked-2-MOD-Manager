@@ -5,23 +5,11 @@ use std::path::PathBuf;
 use tauri::AppHandle;
 use tauri::Emitter;
 
-/// 把 ZIP 里识别出的关卡集转成 IPC 模型（冲突列表依赖当前游戏目录）。
-///
-/// `stage_map_source`（本地 / 直链地图来源）与 `stage_map_release`（在线地图
-/// Release）必须给出完全相同的行，否则同一个 ZIP 在不同入口上的「会卸载本地
-/// 旧副本」提示会不一致。
-///
-/// 识别期间逐份发 `level-set-zip-progress`：一个上百 MB 的合集在 debug 构建
-/// 里要几十秒，界面只有转圈的话用户判断不了是在跑还是卡死。
-///
-/// 冲突是**批次级**的：它回答「这次导入会与本地哪些副本撞身份」，与批次里
-/// 具体是哪一张无关，所以同一份列表挂到每个 `ZipLevelSet` 上，界面按
-/// `handle` 去重展示（单集 ZIP 与逐集拆分完全等价）。
+/// ZIP 暂存只识别包内地图；本地归属由整链规划检查。
 pub(crate) fn zip_level_sets(
     app: &AppHandle,
     config: &AppConfig,
     path: &Path,
-    roots: Option<&super::LevelSetRoots>,
 ) -> Result<Vec<ZipLevelSet>, String> {
     crate::level_sets::require_map_only_zip(path)?;
     // `info` 是地图线、随包插件是 DLL（MOD 线），两条线各有自己的并行度设置。
@@ -42,19 +30,9 @@ pub(crate) fn zip_level_sets(
             );
         },
     )?;
-    let conflicts = roots
-        .map(|roots| {
-            crate::level_sets::find_install_conflicts_with_workers(
-                roots,
-                &sets,
-                crate::concurrency::workers_from(config.map_info_concurrency),
-            )
-        })
-        .unwrap_or_default();
     Ok(sets
         .into_iter()
         .map(|set| ZipLevelSet {
-            conflicts: conflicts.clone(),
             dir_name: set.dir_name,
             layout: set.layout,
             name: set.metadata.name,

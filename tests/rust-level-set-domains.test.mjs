@@ -9,7 +9,6 @@ const owners = {
   scan: ['scan_level_sets_inner', 'collect_level_set_targets', 'assemble_level_set', 'locate_info_file'],
   info_cache: ['read_info_metadata', 'clear_info_cache', 'content_sha256'],
   identity: ['level_set_identity_matches', 'allocate_dir_name'],
-  conflicts: ['find_install_conflicts_with_workers', 'conflicts_with_installed'],
   plugin_registry: ['read_registered_plugins', 'write_registered_plugins', 'registered_plugin_paths'],
   plugin_assignment: ['assign_plugins'],
   requirements: ['runtime_relation'],

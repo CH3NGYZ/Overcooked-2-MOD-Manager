@@ -210,6 +210,7 @@ fn payload(fixture: &mut Fixture, id: &str, path: &str, enabled: bool) {
             stage_fingerprint: Fingerprint::capture(&stage).unwrap(),
             stage_root: stage,
             release_files: None,
+            downloaded: false,
             files: vec![path.into()],
             manifest: Some(crate::archive::new_manifest(
                 id,

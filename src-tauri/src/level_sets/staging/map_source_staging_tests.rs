@@ -242,10 +242,9 @@ fn real_pear_bundle_install_and_scan_keep_versions_separate() {
 }
 
 #[test]
-fn zip_level_set_json_carries_conflicts_and_no_exists_flag() {
-    // 前端契约：`exists`（同名即冲突）已删除，改为 `conflicts` 列表 ——
-    // 同名不同身份的目录允许并存，不能再用「有同名目录」当冲突判据。
+fn zip_level_set_json_only_describes_the_archive() {
     let value = serde_json::to_value(zip_level_set("RW_LevelSet", None, "RW")).unwrap();
-    assert!(value.get("conflicts").is_some(), "{value}");
+    assert_eq!(value["dir_name"], "RW_LevelSet");
+    assert!(value.get("conflicts").is_none(), "{value}");
     assert!(value.get("exists").is_none(), "{value}");
 }

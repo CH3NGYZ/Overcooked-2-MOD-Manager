@@ -68,6 +68,11 @@ impl Builder<'_> {
             let canonical = mods::canonical_dll_name(source);
             let key = inventory::key(&canonical);
             let is_dll = canonical.to_ascii_lowercase().ends_with(".dll");
+            let scoped_release =
+                current.tag.is_some() && !current.raw && payload.candidate.source_id.is_some();
+            if !is_dll && !scoped_release {
+                continue;
+            }
             if result
                 .missing_record(&node.id)
                 .is_some_and(|record| record.owns_previous_path(&key))
@@ -83,6 +88,44 @@ impl Builder<'_> {
             if (own && manifest_keys.contains(&key))
                 || retirement.is_some_and(|copies| copies.iter().any(|copy| copy.member_key == key))
             {
+                continue;
+            }
+            if is_dll
+                && payload.downloaded
+                && own
+                && old.manifests.is_empty()
+                && old.summary.members.len() == 1
+                && !self
+                    .session
+                    .trusted
+                    .declared_bundle_switch_members
+                    .contains_key(&node.id)
+            {
+                let incoming = current
+                    .provides
+                    .iter()
+                    .find(|member| member.member_key.as_deref() == Some(&key))
+                    .ok_or_else(|| {
+                        InstallBlock::PluginIdentityUnknown.report(&node.id, &canonical)
+                    })?;
+                let (relative, expected) = self.prove_loose_dll(&node.id, &canonical, incoming)?;
+                if !seen.insert(path_key(Path::new(&canonical))) {
+                    return Err(InstallBlock::PathCollision
+                        .report(&node.id, &relative)
+                        .into());
+                }
+                result.loose.insert(
+                    (node.id.clone(), key),
+                    LooseFile {
+                        relative,
+                        expected,
+                        loose_node: None,
+                        changes_content: true,
+                    },
+                );
+                continue;
+            }
+            if !scoped_release {
                 continue;
             }
             let target = if is_dll { &canonical } else { source };
@@ -176,8 +219,14 @@ impl Builder<'_> {
                 None
             };
             let scan_owner = loose_node.as_deref().or(own.then_some(node.id.as_str()));
-            self.ensure_loose_path_unclaimed(&physical, scope.directory, registered, scan_owner)
-                .map_err(report)?;
+            self.ensure_loose_path_unclaimed(
+                &physical,
+                scope.directory,
+                registered,
+                scan_owner,
+                false,
+            )
+            .map_err(report)?;
             result.loose.insert(
                 (node.id.clone(), key),
                 LooseFile {
@@ -197,6 +246,7 @@ impl Builder<'_> {
         directory: &str,
         registered: &[crate::level_sets::RegisteredLevelSetPlugin],
         scan_owner: Option<&str>,
+        standalone: bool,
     ) -> Result<(), InstallBlock> {
         let resolve = |name: &str| -> Option<PathBuf> {
             fs::canonicalize(game(name).resolve(&self.roots).ok()?).ok()
@@ -208,7 +258,7 @@ impl Builder<'_> {
         ) else {
             return Err(InstallBlock::Unverified);
         };
-        if directory == plugins
+        if (!standalone && directory == plugins)
             || !directory.starts_with(&plugins)
             || !real_path.starts_with(&directory)
         {
@@ -235,7 +285,11 @@ impl Builder<'_> {
         self.ensure_physically_unclaimed(relative, &real_path, claims)
     }
 
-    fn verify_member(&self, incoming: &ProvidedPlugin, physical: &str) -> Result<(), InstallBlock> {
+    pub(super) fn verify_member(
+        &self,
+        incoming: &ProvidedPlugin,
+        physical: &str,
+    ) -> Result<(), InstallBlock> {
         let path = game(physical)
             .resolve(&self.roots)
             .map_err(|_| InstallBlock::Unverified)?;

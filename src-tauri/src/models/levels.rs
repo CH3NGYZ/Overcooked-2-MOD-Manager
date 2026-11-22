@@ -1,5 +1,4 @@
 use super::mods::DllPluginInfo;
-use super::operations::InstallConflict;
 use super::relations::RepositoryRelation;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -215,12 +214,6 @@ pub struct ZipLevelSet {
     /// 该关卡集在 ZIP 里的文件数。
     #[serde(default)]
     pub file_count: usize,
-    /// 本地已有的同身份副本（导入前要卸载的那些）。
-    ///
-    /// 同一批识别结果共用一份列表：地图冲突是「这次导入会与本地哪些副本
-    /// 撞身份」，与批次里具体是哪一张无关，界面按 `handle` 去重展示。
-    #[serde(default)]
-    pub conflicts: Vec<InstallConflict>,
     /// 随这个关卡集一起装进集目录的插件（作者随包的修复 DLL）。
     ///
     /// 界面展示每个插件的名称/版本/作者等详情；插件按布局留在表层登记位置或
@@ -236,7 +229,7 @@ pub struct LevelSetImportResult {
 }
 
 /// 在线暂存实际选中的版本及其主地图身份；资产版本不能广播给 ZIP 内其它地图。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MapInstallOrigin {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository_id: Option<String>,
@@ -254,6 +247,8 @@ pub struct MapInstallOrigin {
 #[derive(Debug, Clone, Serialize)]
 pub struct StagedMapSource {
     pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_id: Option<uuid::Uuid>,
     pub staged: bool,
     pub sets: Vec<ZipLevelSet>,
     pub origin: Option<MapInstallOrigin>,

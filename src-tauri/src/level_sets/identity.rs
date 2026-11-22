@@ -90,16 +90,6 @@ pub(crate) fn same_level_set(left: &LevelSetMetadata, right: &LevelSetMetadata) 
     )
 }
 
-/// 冲突行展示名：英文集名优先（界面其余地方也按它显示），空则中文名。
-pub(super) fn level_set_display_name(metadata: &LevelSetMetadata) -> String {
-    let name = metadata.name.trim();
-    if name.is_empty() {
-        metadata.name_zh.clone().unwrap_or_default()
-    } else {
-        metadata.name.clone()
-    }
-}
-
 /// 把集名变成合法目录名。
 ///
 /// 去掉 Windows 不允许的字符与空白；结果为空时返回 `None`，由调用方换用

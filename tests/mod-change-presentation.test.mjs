@@ -2,6 +2,19 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { changePlanDetails, changeStatusKey, preparationCompletion } from '../src/modChanges/presentation.ts'
 
+test('map package changes indicate a final disabled state without inventing a toggle', () => {
+  const nodes = [
+    { node_id: 'map:disabled', kind: 'map', enabled: false, label: 'Disabled' },
+    { node_id: 'map:active', kind: 'map', enabled: true, label: 'Enabled' },
+    { node_id: 'map:toggle', kind: 'map', enabled: false, label: 'Toggle' },
+    { node_id: 'mod:disabled', kind: 'mod', enabled: false, label: 'Mod' },
+  ]
+  const actions = nodes.map(node => ({ node_id: node.node_id, kind: node.node_id === 'map:toggle' ? 'disable' : 'upgrade',
+    from_tag: 'v1', to_tag: 'v2', reason: 'requested', caused_by: [] }))
+  const { rows } = changePlanDetails({ ...plan, nodes, actions })
+  assert.deepEqual(rows.filter(row => row.remainsDisabled).map(row => [row.nodeId, row.kind]), [['map:disabled', 'upgrade']])
+})
+
 const action = (node, kind = 'downgrade', extra = {}) => ({ node_id: node, kind, reason: '', caused_by: [], ...extra })
 const node = (id, label) => ({ node_id: id, label, members: [], dll_files: [], candidates: [] })
 const plan = { status: 'ready', blockers: [], nodes: [node('web', 'DIYLevel Web 前置'), node('level', 'DIYLevel - 自定义关卡')], roots: [],

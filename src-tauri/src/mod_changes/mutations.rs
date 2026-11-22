@@ -24,6 +24,7 @@ pub(super) use install_block::{InstallBlock, package_identity_conflict, report_i
 use records::{InstallRecords, install_record_path};
 pub(super) use release_ownership::LooseReleaseSearch;
 pub(super) use release_ownership::ReleaseTargetClaims;
+pub(super) use release_ownership::{prove_loose_dll, verify_missing_dll_variant};
 pub(super) use roots::{final_framework_package, final_package};
 
 pub(super) struct Builder<'a> {

@@ -5,6 +5,7 @@ use crate::http_diagnostics::redact_text;
 use crate::level_sets::staging::cache_file_to_discard;
 use crate::level_sets::staging::validate_map_release_sets;
 use crate::level_sets::staging::zip_level_sets;
+use crate::mod_changes::{downloaded_source::Source, transaction::Fingerprint};
 use crate::models::{
     AppConfig, LevelSetImportResult, MapInstallOrigin, MapRepositoryConfig, StagedMapSource,
 };
@@ -80,12 +81,14 @@ async fn inspect_staged_zip(
 ) -> Result<StagedMapSource, String> {
     let zip = redact_text(&format!("{:?}", path.file_name()));
     log::info!("开始识别地图 ZIP stage={stage} zip={zip} downloaded={downloaded}");
-    let parse_state = state.clone();
     let parse_app = app.clone();
     let parse_path = path.clone();
+    let downloaded_sources = state.downloaded_sources.clone();
     let parsed = tauri::async_runtime::spawn_blocking(move || {
-        let roots = crate::mods::snapshot::optional_level_roots(&parse_state)?;
-        let sets = zip_level_sets(&parse_app, &config, &parse_path, roots.as_ref())?;
+        let downloaded_fingerprint = downloaded
+            .then(|| Fingerprint::capture(&parse_path))
+            .transpose()?;
+        let sets = zip_level_sets(&parse_app, &config, &parse_path)?;
         let origin = if let Some((map, tag)) = release {
             let primary = validate_map_release_sets(&sets, &map)?;
             Some(MapInstallOrigin {
@@ -98,6 +101,17 @@ async fn inspect_staged_zip(
         } else {
             None
         };
+        if let Some(fingerprint) = downloaded_fingerprint {
+            if Fingerprint::capture(&parse_path)? != fingerprint {
+                return Err("modChanges.payloadChanged".into());
+            }
+            downloaded_sources.record(
+                stage,
+                &parse_path,
+                fingerprint,
+                Source::Map(origin.clone()),
+            )?;
+        }
         Ok::<_, String>((sets, origin))
     })
     .await
@@ -127,14 +141,14 @@ async fn inspect_staged_zip(
             return Err(error);
         }
     };
-    let conflicts = sets.first().map_or(0, |set| set.conflicts.len());
     log::info!(
-        "地图来源已就绪 stage={stage} zip={zip} maps={} conflicts={conflicts} plugins={}",
+        "地图来源已就绪 stage={stage} zip={zip} maps={} plugins={}",
         sets.len(),
         sets.iter().map(|set| set.plugins.len()).sum::<usize>(),
     );
     Ok(StagedMapSource {
         path: display_path(&path),
+        download_id: downloaded.then_some(stage),
         staged: downloaded,
         sets,
         origin,
@@ -150,6 +164,7 @@ pub fn discard_map_source(state: State<'_, AppState>, path: String) -> Result<()
     let Some(target) = cache_file_to_discard(&state.config.cache_dir(), &path)? else {
         return Ok(());
     };
+    state.downloaded_sources.forget_path(&target);
     fs::remove_file(&target).map_err(|error| {
         crate::locale_tag::with_params("levelSet.deleteFailed", &[("reason", &error.to_string())])
     })?;

@@ -34,6 +34,34 @@ impl EndpointError {
     }
 }
 
+pub(in crate::mod_changes) fn verify_missing_dll_variant(
+    roots: &TransactionRoots,
+    owner: &str,
+    canonical: &str,
+    counterpart: &str,
+) -> Result<(), String> {
+    match endpoint_metadata(roots, counterpart).map_err(|error| error.report(owner))? {
+        None => Ok(()),
+        Some(_) => Err(InstallBlock::BothStates.report(owner, canonical)),
+    }
+}
+
+fn endpoint_metadata(
+    roots: &TransactionRoots,
+    relative: &str,
+) -> Result<Option<PathBuf>, EndpointError> {
+    let path = game(relative)
+        .resolve(roots)
+        .map_err(|error| EndpointError::from_transaction(&error, relative))?;
+    match fs::symlink_metadata(&path) {
+        Ok(meta) if meta.is_file() => Ok(Some(path)),
+        Ok(meta) if meta.is_dir() => Err(EndpointError::new(InstallBlock::Directory, relative)),
+        Ok(_) => Err(EndpointError::new(InstallBlock::Unsafe, relative)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(EndpointError::from_io(error, relative)),
+    }
+}
+
 impl Builder<'_> {
     pub(super) fn live_endpoint(
         &self,
@@ -53,19 +81,11 @@ impl Builder<'_> {
     }
 
     fn live_file(&self, relative: &str) -> Result<Option<(String, Fingerprint)>, EndpointError> {
-        let path = game(relative)
-            .resolve(&self.roots)
-            .map_err(|error| EndpointError::from_transaction(&error, relative))?;
-        let fingerprint = match fs::symlink_metadata(&path) {
-            Ok(meta) if meta.is_file() => Fingerprint::capture(&path)
-                .map_err(|error| EndpointError::from_transaction(&error, relative))?,
-            Ok(meta) if meta.is_dir() => {
-                return Err(EndpointError::new(InstallBlock::Directory, relative));
-            }
-            Ok(_) => return Err(EndpointError::new(InstallBlock::Unsafe, relative)),
-            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(EndpointError::from_io(error, relative)),
+        let Some(path) = endpoint_metadata(&self.roots, relative)? else {
+            return Ok(None);
         };
+        let fingerprint = Fingerprint::capture(&path)
+            .map_err(|error| EndpointError::from_transaction(&error, relative))?;
         let real =
             fs::canonicalize(&path).map_err(|error| EndpointError::from_io(error, relative))?;
         let spelled = inventory::relative(&self.roots.game_root, &real)

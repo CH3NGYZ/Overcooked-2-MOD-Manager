@@ -97,6 +97,115 @@ fn assert_framework_upgrade(plan: &ChangePlan) {
 }
 
 #[tokio::test]
+async fn downloaded_mod_preview_freezes_a_same_path_dll_for_final_approval() {
+    const NAME: &str = "UrlMod.dll";
+    const GUID: &str = "fixture-downloaded-mod";
+    let fixture = fixture(vec![]);
+    let physical = fixture.game.join("BepInEx/plugins").join(NAME);
+    let old = mods::plugin_blob(GUID, "UrlMod", "1.0.0");
+    let replacement = mods::plugin_blob(GUID, "UrlMod", "2.0.0");
+    write(&physical, &old);
+    let preview = stage_preview(&fixture, NAME, &replacement);
+    let id = preview.strip_prefix("preview:").unwrap();
+    let path = crate::mod_preview::staging::preview_root(&fixture.state)
+        .join(id)
+        .join(NAME);
+    let local = planning::create(&fixture.state, manual_request(preview.clone())).unwrap();
+    let outcome = preparation::prepare(fixture.state.clone(), local.plan_id, |_| {}).await;
+    assert!(outcome.plan.unwrap().untracked_overwrites.is_empty());
+    fixture
+        .state
+        .downloaded_sources
+        .record(
+            uuid::Uuid::parse_str(id).unwrap(),
+            &path,
+            Fingerprint::capture(&path).unwrap(),
+            crate::mod_changes::downloaded_source::Source::ModUrl,
+        )
+        .unwrap();
+    let plan = planning::create(&fixture.state, manual_request(preview)).unwrap();
+    let outcome = preparation::prepare(fixture.state.clone(), plan.plan_id.clone(), |_| {}).await;
+    assert_eq!(outcome.error, None);
+    let prepared = outcome.plan.unwrap();
+    assert_ne!(plan.plan_id, prepared.plan_id);
+    assert_eq!(prepared.untracked_overwrites.len(), 1);
+    assert_eq!(fs::read(&physical).unwrap(), old);
+    let mut session = take(&fixture, &prepared);
+    super::super::execution::commit(&fixture.state, &mut session, |_| {}).unwrap();
+    assert_eq!(fs::read(&physical).unwrap(), replacement);
+}
+
+#[tokio::test]
+#[ignore = "requires OC2_LOCAL_DIYLEVEL_ZIP pointing to DIYLevel v0.11.1"]
+async fn real_online_diylevel_recovers_legacy_missing_map_claim() {
+    const CORE: &str = "BepInEx/plugins/OC2DIYLevel/OC2DIYLevel.dll";
+    const MAP: &str = "BepInEx/plugins/OC2DIYLevel/levels/oc1_story/info_oc1_story";
+    let path = std::path::PathBuf::from(std::env::var_os("OC2_LOCAL_DIYLEVEL_ZIP").unwrap());
+    let bytes = fs::read(&path).unwrap();
+    let asset = path.file_name().unwrap().to_str().unwrap();
+    let server = Server::new(vec![bytes.clone()], false);
+    let mut source = repository(
+        "Overcooked2-LevelEditor",
+        FRAMEWORK_GUID,
+        &["0.11.1"],
+        vec![],
+    );
+    source.asset_rules[0].value = asset.into();
+    source.install_target = "BepInEx/plugins".into();
+    source.cached_releases[0].prerelease = true;
+    source.cached_releases[0].api_prerelease = Some(true);
+    source.cached_releases[0].assets = vec![served(&server, 0, asset, &bytes)];
+    let binding = ModRepositoryBinding::from_release(&source, "v0.11.1").unwrap();
+    let id = source.id.clone();
+    let fixture = fixture(vec![source]);
+    write(
+        &fixture.game.join("BepInEx/core/BepInEx.dll"),
+        include_bytes!("duplicate_release_target/fastinit_version.pe"),
+    );
+    let manifests = fixture.state.config.manifests_dir();
+    let mut manifest = archive::new_manifest(
+        &id,
+        "v0.11.1",
+        BTreeMap::new(),
+        BTreeMap::new(),
+        vec![CORE.into(), MAP.into()],
+        vec![],
+    );
+    manifest.repository_binding = Some(binding);
+    manifest.prerelease = true;
+    archive::write_manifest(&manifests, &manifest).unwrap();
+    let mut selected = request(&id, Some("v0.11.1"), true);
+    selected.roots[0].asset_name = Some(asset.into());
+    let plan = planning::create(&fixture.state, selected).unwrap();
+    let outcome = preparation::prepare(fixture.state.clone(), plan.plan_id.clone(), |_| {}).await;
+    assert_eq!(outcome.error, None);
+    let prepared = outcome.plan.unwrap();
+    assert!(prepared.untracked_overwrites.is_empty());
+    assert!(!fixture.game.join(CORE).exists());
+    assert!(!fixture.game.join(MAP).exists());
+    let mut session = take(&fixture, &prepared);
+    super::super::execution::commit(&fixture.state, &mut session, |_| {}).unwrap();
+    assert!(fixture.game.join(CORE).is_file());
+    assert!(fixture.game.join(MAP).is_file());
+    let manifest = archive::read_manifests(&manifests)
+        .into_iter()
+        .find(|manifest| manifest.repository_id == id)
+        .unwrap();
+    assert!(
+        manifest
+            .files
+            .iter()
+            .any(|file| inventory::key(file) == inventory::key(CORE))
+    );
+    assert!(
+        manifest
+            .files
+            .iter()
+            .all(|file| !inventory::key(file).contains("/levels/"))
+    );
+}
+
+#[tokio::test]
 #[ignore = "requires OC2_LOCAL_DIYLEVEL_ZIP pointing to DIYLevel v0.11.1"]
 async fn real_local_diylevel_zip_installs_mod_and_preserves_the_existing_map_tree() {
     let zip = std::env::var_os("OC2_LOCAL_DIYLEVEL_ZIP")

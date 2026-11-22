@@ -119,6 +119,9 @@ pub(super) fn commit(
         &session.unbound_toggle_roots(),
     )?;
     let roots = mutations::transaction_roots(state, session)?;
+    if let Some(batch) = &session.map_payload {
+        batch.verify_claims(&roots, session)?;
+    }
     let touches_mods = live_game::touches_mods(
         session,
         &roots,
@@ -184,7 +187,19 @@ pub(super) fn commit(
         // after verifying that journal, just before its first live write.
         let check_targets = || {
             check_game()?;
-            if session.release_target_claims.has_reinstalls() {
+            if (session
+                .map_payload
+                .as_ref()
+                .is_some_and(|batch| batch.has_claims())
+                || !session.release_target_claims.is_empty())
+                && inventory::revision(state, &root, &config)? != session.trusted.revision
+            {
+                return Err("modChanges.targetChanged".into());
+            }
+            if let Some(batch) = &session.map_payload {
+                batch.verify_claims(&roots, session)?;
+            }
+            if !session.release_target_claims.is_empty() {
                 session
                     .release_target_claims
                     .verify(state, session, solved)?;
@@ -195,6 +210,9 @@ pub(super) fn commit(
             crate::archive::is_download_cancelled,
             check_targets,
             || {
+                if let Some(batch) = &session.map_payload {
+                    super::map_payload::verify_external_counterparts(batch, &roots, solved)?;
+                }
                 session
                     .release_target_claims
                     .verify_reinstalled_paths(&roots, &written)

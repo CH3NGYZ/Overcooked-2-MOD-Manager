@@ -32,6 +32,7 @@ pub(crate) struct RootRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct MapImport {
     pub zip_path: String,
+    pub download_id: Option<uuid::Uuid>,
     pub selected: Vec<String>,
     pub origin: Option<crate::models::MapInstallOrigin>,
 }
@@ -87,6 +88,7 @@ pub(crate) struct Payload {
     pub stage_fingerprint: Fingerprint,
     /// Exact files in a Release ZIP verified against its cached SHA-256.
     pub release_files: Option<Arc<HashMap<String, Fingerprint>>>,
+    pub downloaded: bool,
     pub files: Vec<String>,
     pub manifest: Option<crate::archive::InstallManifest>,
     pub notices: Vec<String>,

@@ -171,7 +171,7 @@ pub(crate) fn dependent_after_member_removal(
         }))
 }
 
-fn evaluate_relation(
+pub(super) fn evaluate_relation(
     inventory: &Inventory,
     owner: &ChangeNode,
     owned: &OwnedRelation,

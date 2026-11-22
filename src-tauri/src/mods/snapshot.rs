@@ -93,15 +93,5 @@ pub(crate) fn level_roots(
     ))
 }
 
-/// ZIP staging can work before a game is installed, but an installed game's
-/// conflict report must never silently substitute an unknown/pending map root.
-pub(crate) fn optional_level_roots(
-    state: &crate::app_state::AppState,
-) -> Result<Option<crate::level_sets::LevelSetRoots>, String> {
-    crate::game::detect_game(&state.config.load_or_default())
-        .path
-        .map(|root| level_roots(state, Path::new(&root)).map(|(_, roots)| roots))
-        .transpose()
-}
 #[cfg(test)]
 mod tests;

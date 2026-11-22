@@ -58,6 +58,7 @@ struct Search<'a, 'session> {
     preference_remaining: usize,
     preference_pruned: bool,
     installed_runtimes: BTreeSet<usize>,
+    detached_map_members: BTreeSet<usize>,
     runtime_replacement_limit: usize,
     runtime_replacement_pruned: bool,
 }
@@ -278,7 +279,9 @@ impl Search<'_, '_> {
             .iter()
             .copied()
             .filter(|index| {
-                state.inventory.nodes[*index].enabled || self.repair_owner == Some(*index)
+                self.repair_owner == Some(*index)
+                    || (state.inventory.nodes[*index].enabled
+                        && !self.detached_map_members.contains(index))
             })
             .collect::<BTreeSet<_>>();
         loop {
@@ -775,8 +778,16 @@ pub(crate) fn solve_with_inventory(
     request: &ChangeRequest,
 ) -> (SolveResult, Option<Inventory>) {
     let policy = DependencyPolicy::for_plan(inventory, request, false);
-    solve_with_policy(inventory, request, None, None, policy, None)
-        .expect("an inventory-only solve cannot check disk ownership")
+    solve_with_policy(
+        inventory,
+        request,
+        None,
+        None,
+        policy,
+        Default::default(),
+        None,
+    )
+    .expect("an inventory-only solve cannot check disk ownership")
 }
 
 pub(super) fn solve_with_policy(
@@ -785,6 +796,7 @@ pub(super) fn solve_with_policy(
     trusted: Option<&TrustedInventory>,
     loose_releases: Option<&mut LooseReleaseSearch<'_>>,
     policy: DependencyPolicy,
+    detached_map_members: BTreeSet<&str>,
     operation_id: Option<&str>,
 ) -> Result<(SolveResult, Option<Inventory>), String> {
     let failure = |blocker: Diagnostic| SolveResult {
@@ -805,6 +817,7 @@ pub(super) fn solve_with_policy(
         trusted,
         loose_releases,
         policy,
+        detached_map_members,
         operation_id,
     ) {
         Ok((result, solved)) => Ok((result, Some(solved))),
@@ -830,6 +843,7 @@ fn solve_inner<'a>(
     trusted: Option<&'a TrustedInventory>,
     loose_releases: Option<&'a mut LooseReleaseSearch<'_>>,
     policy: DependencyPolicy,
+    detached_map_members: BTreeSet<&str>,
     operation_id: Option<&'a str>,
 ) -> Result<(SolveResult, Inventory), SolveError> {
     let replacement_only = |id: &str| {
@@ -946,9 +960,16 @@ fn solve_inner<'a>(
                 }
             }
         }
-        if !root.enabled {
-            for plugin in &candidate.provides {
-                if root.member_key.is_none() || root.member_key == plugin.member_key {
+        if !root.enabled && (root.candidate_id.is_none() || before.enabled) {
+            let disabled = if root.candidate_id.is_some() {
+                before.current.as_ref()
+            } else {
+                Some(&*candidate)
+            };
+            for plugin in disabled.into_iter().flat_map(|current| &current.provides) {
+                if (root.candidate_id.is_none() || plugin.enabled)
+                    && (root.member_key.is_none() || root.member_key == plugin.member_key)
+                {
                     state
                         .disabled_guids
                         .insert(plugin.guid.trim().to_lowercase());
@@ -1013,6 +1034,11 @@ fn solve_inner<'a>(
         })
         .collect();
     let installed_runtimes = policy::installed_runtime_nodes(inventory, &roots);
+    let detached_map_members = roots
+        .iter()
+        .copied()
+        .filter(|index| detached_map_members.contains(inventory.nodes[*index].id.as_str()))
+        .collect();
     let mut search = Search {
         original: inventory,
         trusted,
@@ -1038,6 +1064,7 @@ fn solve_inner<'a>(
         preference_remaining: MAX_SEARCH_STATES,
         preference_pruned: false,
         installed_runtimes,
+        detached_map_members,
         runtime_replacement_limit: 0,
         runtime_replacement_pruned: false,
     };

@@ -82,6 +82,7 @@ fn same_root_framework_bundle_and_map_update_keep_disjoint_tree_endpoints() {
             stage_fingerprint: Fingerprint::capture(&stage).unwrap(),
             stage_root: stage,
             release_files: None,
+            downloaded: false,
             files: vec![dll.clone(), sample, replaced_sample],
             manifest: Some(archive::new_manifest(
                 "framework",

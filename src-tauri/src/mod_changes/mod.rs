@@ -2,6 +2,7 @@
 mod actions;
 pub(crate) mod application_progress;
 pub(crate) mod candidates;
+pub(crate) mod downloaded_source;
 pub(crate) mod evaluate;
 pub(crate) mod execution;
 pub(crate) mod guard;

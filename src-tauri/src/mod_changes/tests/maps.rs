@@ -215,14 +215,107 @@ fn exact_map_update_keeps_compatible_installed_versions() {
         vec![candidate("companion", "1.0", vec![])],
     ));
     let policy = crate::mod_changes::solve::DependencyPolicy::for_plan(&inventory, &mixed, true);
-    let mixed_result =
-        crate::mod_changes::solve::solve_with_policy(&inventory, &mixed, None, None, policy, None)
-            .unwrap()
-            .0;
+    let mixed_result = crate::mod_changes::solve::solve_with_policy(
+        &inventory,
+        &mixed,
+        None,
+        None,
+        policy,
+        Default::default(),
+        None,
+    )
+    .unwrap()
+    .0;
     assert_eq!(mixed_result.status, SolveStatus::Ready, "{mixed_result:?}");
     assert_eq!(mixed_result.actions.len(), 3);
     action_for(&mixed_result, "web", ActionKind::Enable);
     action_for(&mixed_result, "companion", ActionKind::Install);
+}
+
+#[test]
+fn mixed_map_update_wont_repair_edges_of_inactive_map_external_member() {
+    use crate::mod_changes::solve::{DependencyPolicy, solve_with_policy};
+
+    let requires_web = relation(RelationKind::Requires, "web", ">=1.0");
+    let mut active = node("map:active", None, vec![candidate("active", "1.0", vec![])]);
+    active.kind = NodeKind::Map;
+    let external = node(
+        "map-dll:external",
+        Some(candidate("external", "1.0", vec![requires_web.clone()])),
+        vec![candidate("external", "2.0", vec![requires_web])],
+    );
+    let web = node("web", None, vec![candidate("web", "2.0", vec![])]);
+    let mut inventory = Inventory {
+        nodes: vec![active, external, web],
+    };
+    let mut request = intent("map:active", Some("active@1.0".into()), true);
+    request
+        .roots
+        .extend(intent("map-dll:external", Some("external@2.0".into()), true).roots);
+    let solve_detached = |inventory: &Inventory| {
+        solve_with_policy(
+            inventory,
+            &request,
+            None,
+            None,
+            DependencyPolicy::MapInstall,
+            ["map-dll:external"].into_iter().collect(),
+            None,
+        )
+        .unwrap()
+        .0
+    };
+
+    let unchanged = solve_detached(&inventory);
+    assert_eq!(unchanged.status, SolveStatus::Ready, "{unchanged:?}");
+    assert_eq!(unchanged.actions.len(), 2, "{unchanged:?}");
+    assert!(
+        unchanged.evaluations[1]
+            .runtime
+            .iter()
+            .any(|edge| { edge.relation.guid == "web" && edge.state == EvaluationState::Missing })
+    );
+
+    inventory.nodes[1].candidates[0].relations[0]
+        .relation
+        .version = ">=2.0".into();
+    let tightened = solve_detached(&inventory);
+    assert_eq!(
+        tightened.status,
+        SolveStatus::Unsatisfiable,
+        "{tightened:?}"
+    );
+    assert!(tightened.actions.is_empty(), "{tightened:?}");
+
+    inventory.nodes[1].candidates[0].relations[0]
+        .relation
+        .version = ">=1.0".into();
+    inventory.nodes.push(node(
+        "consumer",
+        Some(candidate(
+            "consumer",
+            "1.0",
+            vec![relation(RelationKind::Requires, "external", "<2.0")],
+        )),
+        vec![candidate(
+            "consumer",
+            "2.0",
+            vec![relation(RelationKind::Requires, "external", ">=2.0")],
+        )],
+    ));
+    let reverse = solve_detached(&inventory);
+    assert_eq!(reverse.status, SolveStatus::Unsatisfiable, "{reverse:?}");
+    assert!(reverse.actions.is_empty(), "{reverse:?}");
+
+    inventory.nodes.pop();
+    inventory.nodes[0].candidates[0].relations.push(relation(
+        RelationKind::Requires,
+        "external",
+        ">=2.0",
+    ));
+    let relied_on = solve_detached(&inventory);
+    assert_eq!(relied_on.status, SolveStatus::Ready, "{relied_on:?}");
+    action_for(&relied_on, "web", ActionKind::Install);
 }
 
 #[test]

@@ -8,6 +8,7 @@ pub(in crate::mod_changes::mutations) struct MissingInstallRecord {
     pub expected: Fingerprint,
     previous_paths: BTreeSet<String>,
     vacant_paths: BTreeSet<String>,
+    pub(super) retired_map_paths: Vec<String>,
 }
 
 impl MissingInstallRecord {
@@ -24,7 +25,16 @@ impl MissingInstallRecord {
         roots: &TransactionRoots,
         written: &BTreeMap<String, String>,
     ) -> Result<Option<String>, String> {
-        for relative in &self.vacant_paths {
+        for relative in self
+            .vacant_paths
+            .iter()
+            .chain(self.retired_map_paths.iter())
+        {
+            if self.retired_map_paths.contains(relative)
+                && written.values().any(|target| within(relative, target))
+            {
+                continue;
+            }
             let expected = written.get(&path_key(Path::new(relative)));
             if expected == Some(relative) {
                 continue;
@@ -145,6 +155,7 @@ impl Builder<'_> {
             .map(|claim| mods::manifest_dll_key(&claim.dll))
             .collect::<BTreeSet<_>>();
         let mut vacant_paths = BTreeSet::new();
+        let mut retired_map_paths = Vec::new();
         for source in record.manifest.files.iter().chain(incoming) {
             let canonical = mods::canonical_dll_name(source);
             if !within(&canonical, mods::file_state::PLUGINS_DIR) {
@@ -166,6 +177,38 @@ impl Builder<'_> {
                 .is_some_and(|owners| owners.len() != 1 || !owners.contains(&record.owner))
             {
                 return Ok(None);
+            }
+            if let Some(levels) = bundled_levels.filter(|levels| {
+                payload.downloaded
+                    && within(source, levels)
+                    && !mods::file_state::is_mod_file(Path::new(source))
+                    && payload
+                        .files
+                        .iter()
+                        .any(|file| inventory::key(file) == inventory::key(source))
+            }) {
+                let name = inventory::key(source)
+                    .strip_prefix(&inventory::key(levels))
+                    .and_then(|relative| relative.strip_prefix('/'))
+                    .and_then(|relative| relative.split_once('/').map(|(name, _)| name))
+                    .map(str::to_owned);
+                if let Some(name) = name {
+                    if crate::mod_changes::level_trees::has_verified_bundled_map(
+                        payload, levels, &name,
+                    ) {
+                        let path = game(source).resolve(&self.roots)?;
+                        if Fingerprint::capture(&path)? == Fingerprint::Missing
+                            && !map_claims.contains(&mods::manifest_dll_key(source))
+                        {
+                            retired_map_paths.push(source.clone());
+                            log::debug!(
+                                "旧安装记录所登记的随包地图文件已缺失，计划交回地图目录处理：节点={owner}，记录={}，路径={source}",
+                                record.relative
+                            );
+                            continue;
+                        }
+                    }
+                }
             }
             for relative in endpoints(&canonical) {
                 let path = game(&relative).resolve(&self.roots)?;
@@ -205,6 +248,7 @@ impl Builder<'_> {
             expected: record.verified_stamp(&self.roots, owner)?,
             previous_paths,
             vacant_paths,
+            retired_map_paths,
         }))
     }
 }

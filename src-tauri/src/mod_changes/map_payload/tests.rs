@@ -44,6 +44,7 @@ fn loose_loader_input_never_escapes_the_graph() {
         manifests_root: stage.clone(),
         source_path: stage.clone(),
         source_fingerprint: Fingerprint::Missing,
+        downloaded: false,
         node_ids: BTreeSet::new(),
         maps: vec![],
         external: vec![],
@@ -300,6 +301,7 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
         manifests_root: stage_manifests,
         source_path: zip_path,
         source_fingerprint,
+        downloaded: false,
         node_ids: BTreeSet::new(),
         maps: vec![],
         external: vec![],
@@ -308,6 +310,10 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
     };
     projection::merge(
         &mut session,
+        &TransactionRoots {
+            game_root: game.clone(),
+            data_root: data.clone(),
+        },
         &mut batch,
         projected,
         projected_files,
@@ -620,6 +626,73 @@ fn map_tree_endpoint_collisions_and_external_active_disabled_duplicates_block() 
 }
 
 #[test]
+fn external_map_dll_counterpart_during_apply_rolls_back_without_touching_outside_copy() {
+    use super::super::transaction::RecordProgress;
+    let fixture = fixture();
+    let batch = fixture.session.map_payload.as_ref().unwrap();
+    let solved = fixture.session.solved.as_ref().unwrap();
+    let external = &batch.external[0].target;
+    let active = fixture.roots.game_root.join(external);
+    let disabled = fixture
+        .roots
+        .game_root
+        .join(crate::mods::disabled_dll_file(external));
+    let original = fs::read(&disabled).unwrap();
+    let updated = crate::mods::plugin_blob("fixture-fix", "Fix", "2.0");
+    let old_map = fixture.roots.game_root.join(format!(
+        "{}/levels/KeepDirectory",
+        crate::framework::DIYLEVEL_DIR
+    ));
+    let registry = fixture
+        .roots
+        .data_root
+        .join("manifests")
+        .join(level_sets::LEVEL_SET_PLUGIN_REGISTRY);
+    let original_registry = fs::read(&registry).unwrap();
+    let changes = super::super::mutations::assemble(&fixture.session, fixture.roots.clone())
+        .unwrap()
+        .into_iter()
+        .map(|owned| owned.mutation)
+        .collect();
+    let transaction = super::super::transaction::prepare(
+        &fixture.roots.data_root.join("transactions"),
+        &fixture.roots,
+        changes,
+    )
+    .unwrap();
+    let mut injected = false;
+    let error = transaction
+        .apply_checked(
+            || false,
+            || Ok(()),
+            || {
+                assert_eq!(fs::read(old_map.join("new-level")).unwrap(), b"new-level");
+                verify_external_counterparts(batch, &fixture.roots, solved)
+            },
+            |event| {
+                if matches!(event, RecordProgress::Processed(_))
+                    && !injected
+                    && fs::read(&disabled).is_ok_and(|bytes| bytes == updated)
+                {
+                    fs::write(&active, b"outside active copy").unwrap();
+                    injected = true;
+                }
+            },
+        )
+        .unwrap_err();
+    assert!(injected);
+    assert_eq!(
+        error,
+        format!("modChanges.installTargetHasBothStates?path={external}")
+    );
+    assert_eq!(fs::read(active).unwrap(), b"outside active copy");
+    assert_eq!(fs::read(disabled).unwrap(), original);
+    assert_eq!(fs::read(registry).unwrap(), original_registry);
+    assert_eq!(fs::read(old_map.join("old-level")).unwrap(), b"old");
+    assert!(!old_map.join("new-level").exists());
+}
+
+#[test]
 fn external_map_dll_collision_during_preparation_reports_path_without_writing_live_files() {
     let mut f = fixture();
     let external = &f.session.map_payload.as_ref().unwrap().external[0];
@@ -833,6 +906,7 @@ fn framework_directory_change_and_map_update_commit_with_all_map_and_member_swit
             stage_fingerprint: Fingerprint::capture(&payload_root).unwrap(),
             stage_root: payload_root,
             release_files: None,
+            downloaded: false,
             files: vec![new_dll.into()],
             manifest: Some(archive::new_manifest(
                 "framework",

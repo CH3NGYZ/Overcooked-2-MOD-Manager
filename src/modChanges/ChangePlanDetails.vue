@@ -163,6 +163,7 @@ function describeCondition(reason: Reason) {
               <span v-if="row.reason">{{ changeReasonText(row.reason) }}</span>
               <span v-if="row.causes?.length" class="details-secondary">{{ t('modChanges.causedBy', { names: listFormat.format(row.causes) }) }}</span>
             </template>
+            <span v-if="row.remainsDisabled" class="details-secondary">{{ t('modChanges.remainsDisabled') }}</span>
           </td>
         </tr>
       </tbody>

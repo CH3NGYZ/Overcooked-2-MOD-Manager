@@ -15,6 +15,7 @@ use std::{
 };
 
 mod bundled;
+pub(super) use bundled::has_verified_bundled_map;
 pub(crate) use bundled::{bundled_level_root, selected_bundled_level_root};
 pub(super) use bundled::{framework_level_root, unique_framework_member};
 
@@ -371,6 +372,26 @@ fn remove_private(root: &Path, path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+pub(super) fn map_destination(
+    game_root: &Path,
+    name: &str,
+    enabled: bool,
+    package: Option<&str>,
+) -> Result<String, String> {
+    if name.is_empty() || name.contains(['/', '\\']) {
+        return Err("archive.pathEscape".into());
+    }
+    if enabled {
+        let package = package.ok_or("framework.diyLevelMissing")?;
+        Ok(format!("{package}/levels/{name}"))
+    } else {
+        inventory::relative(
+            game_root,
+            &crate::level_sets::disabled_root(game_root).join(name),
+        )
+    }
+}
+
 /// Map ownership paths are rewritten by the same final physical projection for
 /// imports and ordinary toggles. A disabled owner can retain internal DLL rows.
 pub(crate) fn final_map_paths(
@@ -397,20 +418,7 @@ pub(crate) fn final_map_paths(
                 &[("name", &files.summary.label)],
             )
         })?;
-        if name.is_empty() || name.contains(['/', '\\']) {
-            return Err("archive.pathEscape".into());
-        }
-        let target = if node.enabled {
-            format!(
-                "{}/levels/{name}",
-                package.as_deref().ok_or("framework.diyLevelMissing")?
-            )
-        } else {
-            inventory::relative(
-                &roots.game_root,
-                &crate::level_sets::disabled_root(&roots.game_root).join(name),
-            )?
-        };
+        let target = map_destination(&roots.game_root, name, node.enabled, package.as_deref())?;
         if let Some(old) = files.map_path.as_ref() {
             result.push((old.clone(), target.clone()));
         }

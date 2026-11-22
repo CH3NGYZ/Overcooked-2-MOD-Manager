@@ -174,10 +174,6 @@ fn equal_highest_versions_remain_ambiguous_even_when_one_dll_is_disabled() {
         level_roots(&ws.state, &ws.game).unwrap_err(),
         "framework.diyLevelAmbiguous"
     );
-    assert_eq!(
-        optional_level_roots(&ws.state).unwrap_err(),
-        "framework.diyLevelAmbiguous"
-    );
 }
 
 #[test]
@@ -200,13 +196,6 @@ fn no_plugin_keeps_package_absent_even_with_a_historical_levels_directory() {
         crate::level_sets::levels_root(&roots).unwrap_err(),
         "framework.diyLevelMissing"
     );
-    assert!(
-        optional_level_roots(&ws.state)
-            .unwrap()
-            .unwrap()
-            .package_root()
-            .is_none()
-    );
     assert!(historical.join("info").is_file());
 }
 
@@ -228,10 +217,6 @@ fn unpublished_files_cannot_replace_the_completed_backend_scan() {
     );
     assert_eq!(
         level_roots(&ws.state, &ws.game).unwrap_err(),
-        "diychef.staleScan"
-    );
-    assert_eq!(
-        optional_level_roots(&ws.state).unwrap_err(),
         "diychef.staleScan"
     );
     ws.state
@@ -380,7 +365,7 @@ fn switching_game_root_requires_a_new_completed_scan_and_keeps_old_lease_revoked
     settings.game.path = other.to_string_lossy().into_owned();
     ws.state.config.save(&settings).unwrap();
     assert_eq!(
-        optional_level_roots(&ws.state).unwrap_err(),
+        level_roots(&ws.state, &other).unwrap_err(),
         "diychef.staleScan"
     );
     ws.publish(&other, vec![]);
@@ -389,7 +374,7 @@ fn switching_game_root_requires_a_new_completed_scan_and_keeps_old_lease_revoked
         level_roots(&ws.state, &ws.game).unwrap_err(),
         "diychef.staleScan"
     );
-    let roots = optional_level_roots(&ws.state).unwrap().unwrap();
+    let (_, roots) = level_roots(&ws.state, &other).unwrap();
     assert_eq!(roots.game_root(), other.canonicalize().unwrap());
     assert!(roots.package_root().is_none());
     assert!(

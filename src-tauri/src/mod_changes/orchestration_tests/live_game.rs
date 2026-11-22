@@ -62,6 +62,7 @@ fn import(f: &Fixture, extra_entries: &[(&str, &[u8])]) -> PlanRequest {
     PlanRequest {
         map_import: Some(MapImport {
             zip_path: zip_path.to_string_lossy().into_owned(),
+            download_id: None,
             selected: vec![MAP_NAME.into()],
             origin: None,
         }),
@@ -310,6 +311,7 @@ async fn real_local_zip_updates_older_map_without_binding_a_mirror() {
     let request = PlanRequest {
         map_import: Some(MapImport {
             zip_path: path.to_string_lossy().into_owned(),
+            download_id: None,
             selected: vec![set.dir_name.clone()],
             origin: None,
         }),

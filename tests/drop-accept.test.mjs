@@ -28,8 +28,8 @@ const levels = read('src/views/LevelsView.vue')
 const dropRouting = read('src/composables/useDropRouting.ts')
 const modInstallFlow = read('src/composables/useModInstallFlow.ts')
 const planDialog = read('src/modChanges/ChangePlanDialog.vue')
-const detailDialog = read('src/components/InstallDetailDialog.vue')
-const installDetailSource = read('src/installDetail.ts')
+const planDetails = read('src/modChanges/ChangePlanDetails.vue')
+const planPresentation = read('src/modChanges/presentation.ts')
 const importFlowSource = read('src/composables/useLevelSetImport.ts')
 const tauriService = read('src/services/tauri.ts')
 const rustLevelPaths = read('src-tauri/src/level_sets/paths.rs')
@@ -107,9 +107,12 @@ test('地图 ZIP 的导入只有一份实现，两个地图页共用', () => {
   // 提交成功由 App 统一更新，导入只负责确认、清理和提示。
   assert.doesNotMatch(importFlow, /afterImport|onImported|scanLevelSets|syncDependencySnapshots/)
   assert.match(importFlow, /message\.success\(successText\?\.\(\) \?\? t\('levelSet\.imported'/)
-  // 确认界面也不再是一页一套：地图与 MOD 共用同一张详情卡片
+  assert.match(importFlow, /if \(!staged\.sets\.length\)[\s\S]+message\.warning\(t\('levelSet\.zipWithoutInfo'\)\)[\s\S]+return false/)
+  assert.match(importFlow, /await changes\.run\(\{ roots: \[\], map_import: \{[\s\S]+selected: sets\.map\(set => set\.dir_name\)/)
+  assert.match(importFlow, /\.\.\.\(staged\.download_id \? \{ download_id: staged\.download_id \} : \{\}\)/)
+  assert.doesNotMatch(importFlow, /askApproval|resolveApproval|reviewSelection/)
   for (const [name, source] of [['MapsOnlineView', mapsOnline], ['LevelsView', levels]]) {
-    assert.match(source, /<InstallDetailDialog/, `${name} 要用共用的安装详情弹窗`)
+    assert.doesNotMatch(source, /InstallDetailDialog/, `${name} 不再要求单独确认地图详情`)
   }
   assert.match(modInstallFlow, /changes\.run\(\{ roots:/, 'MOD 拖放预览进入统一整链方案')
   assert.match(planDialog, /import ChangePlanDetails from '\.\/ChangePlanDetails\.vue'/, '统一弹窗必须接入变更表格')
@@ -181,28 +184,6 @@ test('停用根在 plugins 之外，且旧位置会一次性迁移', () => {
 test('地图包里的修复插件跟着关卡集目录走', () => {
   assert.match(rustLevelModels, /pub plugins: Vec<ZipLevelSetPlugin>/, '导入结果要带出插件清单')
   assert.match(rustLevelPlugins, /fn assign_plugins/, '插件归集只此一处')
-  // 插件落在集目录根，不复制到多个集（重复 DLL 会被 BepInEx 加载两遍）
-  // 确认界面里插件挂在所属地图集的 children 上：和 MOD 预览同一套九项元数据，
-  // 打「随包插件」标签，展开那张地图才在下面缩进显示
-  assert.match(
-    installDetailSource,
-    /children: \(set\.plugins \?\? \[\]\)\.map\(\(plugin\) => dllEntry\(plugin, t\('levelSet\.bundledPlugin'\)\)\)/,
-  )
-  assert.match(installDetailSource, /tag\?: string/, '从属关系靠标签说明，不占版本号那一栏')
-  assert.match(detailDialog, /detail-plugins/, '随包插件缩进在所属地图集卡片的展开区里')
-  assert.doesNotMatch(detailDialog, /\.\.\.children/, '不许再把插件拍平到条目列表最底')
-  assert.match(installDetailSource, /function dllFields/, 'DLL 的九项字段只定义一次')
-})
-
-/**
- * 兜底：没有 DLL 就没有可安装内容。拖入已被 acceptDrop 拦下，但选文件、直链、
- * 仓库资产仍可能送来这样的包 —— 这时只能取消，不能「装成功」。
- *
- * 判据下沉到 `installDetail.ts`（两种安装共用一份模型），禁用落在共用弹窗上：
- * 两处都得成立，否则地图侧又会长出自己的判断。
- */
-test('零 DLL 的预览只能取消', () => {
-  assert.match(installDetailSource, /confirmable: preview\.total_dlls > 0/)
-  assert.match(detailDialog, /:disabled="!model\?\.confirmable"/, '没有内容时安装按钮必须禁用')
-  assert.match(installDetailSource, /nothingInstallableHere/, '空态要说清为什么装不了、该去哪')
+  assert.match(planPresentation, /if \(node\?\.kind === 'map' \|\| node\?\.presentation_kind === 'mod_package'\)[\s\S]+bundled: true/)
+  assert.match(planDetails, /:data-change-parent="row\.bundled \|\| row\.retired \? row\.nodeId : undefined"/)
 })

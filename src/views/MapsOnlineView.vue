@@ -45,7 +45,6 @@ import {
 import ReleaseDetailPanel from '../components/ReleaseDetailPanel.vue'
 import type { DependencyRow } from '../components/DependencyTable.vue'
 import InstallSourceCard from '../components/InstallSourceCard.vue'
-import InstallDetailDialog from '../components/InstallDetailDialog.vue'
 import BusyOverlay from '../components/BusyOverlay.vue'
 import { useFileDrop } from '../composables/useFileDrop'
 import { takePendingDrop } from '../composables/useDropRouting'
@@ -141,13 +140,11 @@ const { levelSets: realSets } = useLevelSetScan()
 const sets = computed(() => withDemoLevelSets(realSets.value))
 /**
  * 「安装地图」的暂存 → 确认 → 导入交给共享实现（地图管理页的拖放用的是同一份）。
- * 确认界面与 MOD 安装共用 `InstallDetailDialog`（一个地图集当一个 MOD 展示）。
+ * 地图 ZIP 识别后进入全局整链确认。
  */
 const {
   sourceOpen: installSourceOpen,
   importing, importSource, installRelease,
-  previewOpen: importPreviewOpen, detail: importDetail,
-  confirmImport, discardImport,
   zipProgress, zipProgressText,
 } = useLevelSetImport()
 
@@ -700,20 +697,6 @@ const pageLoading = computed(() => loading.value && tree.value.length === 0)
     那行文案同一份数据，避免两处各写一套「到第几个了」。
   -->
   <BusyOverlay :show="showZipOverlay" :status="zipProgressText" />
-
-  <!--
-    同身份冲突的检查：在「安装详情」之前挡一道（已有同一张地图时先卸载）。
-    与 MOD 安装、地图管理页共用同一个弹窗与同一套执行顺序。
-  -->
-
-
-  <!--
-    导入前的「安装详情」：和 MOD 安装同一张卡片，一个地图集当一个 MOD。
-    不接 `busy`：它在「等待确认」期间也为真（整个导入流程都算 busy），
-    而那时取消与立即安装恰恰必须能点；写盘期间弹窗已经收起，进度由页面按钮显示。
-  -->
-  <InstallDetailDialog v-model:show="importPreviewOpen" :model="importDetail"
-    @confirm="confirmImport" @discard="discardImport" />
 
   <!--
     整源刷新入口，与 MOD 安装页同一个位置与观感。

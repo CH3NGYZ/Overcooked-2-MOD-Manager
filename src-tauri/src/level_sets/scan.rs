@@ -456,7 +456,7 @@ pub(super) fn assemble_level_set(
 ///
 /// 优先固定名 `info`；否则取唯一一个 `info_*`。有多个 `info_*` 时不猜，
 /// 返回 `None` 让上层报「缺少 info」—— 与其加载错的那一个，不如明确失败。
-pub(super) fn locate_info_file(directory: &Path) -> Option<PathBuf> {
+pub(crate) fn locate_info_file(directory: &Path) -> Option<PathBuf> {
     let fixed = directory.join("info");
     if fixed.is_file() {
         return Some(fixed);

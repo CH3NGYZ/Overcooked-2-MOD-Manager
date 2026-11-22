@@ -2,7 +2,6 @@
 //! 停用地图移出 plugins 树，避免作者随包 DLL 仍被 BepInEx 加载。
 
 mod bepinex_layer;
-mod conflicts;
 mod flatten;
 mod identity;
 mod info_cache;
@@ -23,7 +22,6 @@ mod zip_plugins;
 pub(crate) mod staging;
 pub(crate) mod view;
 
-pub use conflicts::find_install_conflicts_with_workers;
 pub use flatten::flatten_level_sets;
 pub use identity::level_set_identity_matches;
 pub(crate) use identity::{allocate_dir_name, map_repository_by_id};
@@ -51,6 +49,7 @@ pub(crate) use plugin_registry::read_registered_plugins;
 pub use plugin_registry::registered_plugin_paths;
 pub use requirements::runtime_relation;
 pub use scan::LevelSetOnDisk;
+pub(crate) use scan::locate_info_file;
 #[cfg(test)]
 pub use scan::scan_level_sets;
 pub use scan::scan_level_sets_with_progress;

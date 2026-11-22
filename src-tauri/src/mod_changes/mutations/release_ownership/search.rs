@@ -110,6 +110,7 @@ impl<'a> LooseReleaseSearch<'a> {
                         scope.directory,
                         registered,
                         Some(&nodes[index].id),
+                        false,
                     )
                     .is_err()
                 {

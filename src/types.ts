@@ -423,6 +423,7 @@ export interface MapInstallOrigin {
  * 在线来源的 `origin` 由后端确定，确认导入时原样回传。
  */
 export interface StagedMapSource {
+  download_id?: string | null
   /** ZIP 绝对路径（`staged` 为真时位于后端 cache 目录）。 */
   path: string
   /**
@@ -507,8 +508,6 @@ export interface ZipLevelSet {
   version: string
   level_count: number
   file_count: number
-  /** 目标位置已安装的同身份关卡集；非空时必须先卸载再导入。 */
-  conflicts: InstallConflict[]
   /** 随这个关卡集一起装进集目录的插件（作者随包的修复 DLL）。 */
   plugins: ZipLevelSetPlugin[]
 }

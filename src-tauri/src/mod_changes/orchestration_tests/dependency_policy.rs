@@ -64,6 +64,7 @@ fn map_request(fixture: &Fixture, online: bool) -> PlanRequest {
     PlanRequest {
         map_import: Some(MapImport {
             zip_path: path.to_string_lossy().into_owned(),
+            download_id: None,
             selected: vec![MAP.into()],
             origin: online.then(|| MapInstallOrigin {
                 repository_id: Some("fixture-map-source".into()),
@@ -326,4 +327,157 @@ async fn local_and_online_map_and_mod_installs_keep_the_old_web_chain() {
         assert_eq!(fs::read(web).unwrap(), web_before);
         assert_eq!(fs::read(old_map.join("scene")).unwrap(), b"new map");
     }
+}
+
+#[tokio::test]
+async fn disabled_map_update_does_not_require_diy_level_or_move_the_map() {
+    for online in [false, true] {
+        let fixture = fixture(vec![]);
+        let mut config = fixture.state.config.load_or_default();
+        config.map_repositories = vec![
+            serde_json::from_value(serde_json::json!({
+                "id": "fixture-map-source", "level_set_name": MAP, "author": AUTHOR,
+                "relations": [requires(DIY_GUID, ">=0.10.0"), requires(WEB_GUID, ">=3.8.8")]
+            }))
+            .unwrap(),
+        ];
+        fixture.state.config.save(&config).unwrap();
+        let map = crate::level_sets::disabled_root(&fixture.game).join(MAP);
+        write(
+            &map.join("info"),
+            &live_game_info::bundle(MAP, AUTHOR, "2.21"),
+        );
+        write(&map.join("old-scene"), b"old map");
+
+        apply(&fixture, map_request(&fixture, online), |plan| {
+            assert_eq!(plan.result.status, SolveStatus::Ready, "{:?}", plan.result);
+            let [action] = plan.result.actions.as_slice() else {
+                panic!("{:?}", plan.result.actions);
+            };
+            assert_eq!(action.kind, ActionKind::Upgrade);
+            assert_eq!(action.node_id, format!("map:{MAP}"));
+            assert_eq!(action.from_tag.as_deref(), Some("2.21"));
+            assert_eq!(action.to_tag.as_deref(), Some("2.24"));
+            assert!(
+                plan.nodes
+                    .iter()
+                    .any(|node| node.node_id == action.node_id && !node.enabled)
+            );
+        })
+        .await;
+
+        assert_eq!(fs::read(map.join("scene")).unwrap(), b"new map");
+        assert!(!map.join("old-scene").exists());
+        assert!(!fixture.game.join(crate::framework::DIYLEVEL_DIR).exists());
+
+        let enable = planning::create(
+            &fixture.state,
+            PlanRequest {
+                roots: vec![RootRequest {
+                    intent: RootIntent {
+                        node_id: format!("map:{MAP}"),
+                        candidate_id: None,
+                        enabled: true,
+                        member_key: None,
+                    },
+                    asset_name: None,
+                }],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_ne!(enable.result.status, SolveStatus::Ready);
+        assert!(map.join("scene").is_file());
+    }
+}
+
+#[tokio::test]
+async fn disabled_map_updates_active_external_without_fixing_existing_missing_preconditions() {
+    let fixture = fixture(vec![repository(
+        MOD,
+        MOD_GUID,
+        &["1.0.0", "2.0.0"],
+        vec![requires(WEB_GUID, ">=3.8.8")],
+    )]);
+    write(&fixture.game.join("BepInEx/core/BepInEx.dll"), PE);
+    let map = crate::level_sets::disabled_root(&fixture.game).join(MAP);
+    let external = format!("BepInEx/plugins/{MOD}/{MOD}.dll");
+    let previous = release_dll(MOD_GUID, MOD, "1.0.0");
+    let updated = release_dll(MOD_GUID, MOD, "2.0.0");
+    write(&fixture.game.join(&external), &previous);
+    write(
+        &map.join("info"),
+        &live_game_info::bundle(MAP, AUTHOR, "2.21"),
+    );
+    write(&map.join("old-scene"), b"old map");
+    write(
+        &fixture
+            .state
+            .config
+            .manifests_dir()
+            .join(crate::level_sets::LEVEL_SET_PLUGIN_REGISTRY),
+        &serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "entries": [{"dll": external, "owner": {"name": MAP, "author": AUTHOR}}]
+        }))
+        .unwrap(),
+    );
+
+    let zip_path = fixture.game.parent().unwrap().join("layer-with-plugin.zip");
+    let mut zip = zip::ZipWriter::new(fs::File::create(&zip_path).unwrap());
+    for (path, bytes) in [
+        (
+            format!("BepInEx/plugins/OC2DIYLevel/levels/{MAP}/info"),
+            live_game_info::bundle(MAP, AUTHOR, "2.24"),
+        ),
+        (
+            format!("BepInEx/plugins/OC2DIYLevel/levels/{MAP}/scene"),
+            b"new map".to_vec(),
+        ),
+        (external.clone(), updated.clone()),
+    ] {
+        zip.start_file(path, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(&bytes).unwrap();
+    }
+    zip.finish().unwrap();
+
+    apply(
+        &fixture,
+        PlanRequest {
+            map_import: Some(MapImport {
+                zip_path: zip_path.to_string_lossy().into_owned(),
+                download_id: None,
+                selected: vec![MAP.into()],
+                origin: None,
+            }),
+            ..Default::default()
+        },
+        |plan| {
+            assert_eq!(plan.result.status, SolveStatus::Ready, "{:?}", plan.result);
+            assert_eq!(plan.result.actions.len(), 2, "{:?}", plan.result.actions);
+            assert!(
+                plan.result
+                    .actions
+                    .iter()
+                    .all(|action| matches!(action.kind, ActionKind::Upgrade | ActionKind::Replace))
+            );
+            assert!(
+                plan.nodes
+                    .iter()
+                    .any(|node| { node.node_id.starts_with("map-dll:") && node.enabled })
+            );
+        },
+    )
+    .await;
+    assert_eq!(fs::read(map.join("scene")).unwrap(), b"new map");
+    assert!(!map.join("old-scene").exists());
+    assert_eq!(fs::read(fixture.game.join(&external)).unwrap(), updated);
+    assert!(
+        !fixture
+            .game
+            .join(mods::disabled_dll_file(&external))
+            .exists()
+    );
+    assert!(!fixture.game.join(crate::framework::DIYLEVEL_DIR).exists());
 }

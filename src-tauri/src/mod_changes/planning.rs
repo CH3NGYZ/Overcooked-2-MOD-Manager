@@ -8,7 +8,12 @@ use super::{
 };
 use crate::{app_state::AppState, archive, releases};
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, collections::HashMap, fs, path::Path};
+use std::{
+    borrow::Cow,
+    collections::{BTreeSet, HashMap},
+    fs,
+    path::Path,
+};
 
 mod duplicate_release;
 
@@ -277,11 +282,20 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
         if session.wire_request.map_import.is_some() {
             super::map_payload::attach(state, &mut session)?;
         }
-        session.dependency_policy = DependencyPolicy::for_plan(
-            &session.trusted.inventory,
-            &session.request,
-            session.map_payload.is_some(),
-        );
+        session.dependency_policy = if session.wire_request.roots.is_empty()
+            && session
+                .map_payload
+                .as_ref()
+                .is_some_and(|batch| batch.keeps_all_maps_disabled())
+        {
+            DependencyPolicy::MapFilesOnly
+        } else {
+            DependencyPolicy::for_plan(
+                &session.trusted.inventory,
+                &session.request,
+                session.map_payload.is_some(),
+            )
+        };
         resolve(state, &mut session)?;
         super::live_game::check_plan(state, &session)?;
         remember_payloads(&mut session)?;
@@ -662,6 +676,10 @@ pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(),
             Some(&session.trusted),
             Some(&mut releases),
             session.dependency_policy,
+            session
+                .map_payload
+                .as_ref()
+                .map_or_else(BTreeSet::new, |batch| batch.detached_active_members()),
             (map_trace || session.dependency_policy == DependencyPolicy::PreferNewest)
                 .then_some(op),
         )?,

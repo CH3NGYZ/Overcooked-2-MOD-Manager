@@ -340,7 +340,7 @@ export const api = {
    * 暂存一次地图 Release 安装（下载资产并识别其中的关卡集）。
    *
    * 与本地文件/直链共用同一条「先暂存、再确认导入」的路：返回的 `sets`
-   * 带冲突报告，确认界面复用 `InstallDetailDialog`；`staged` 为真时导入结束
+   * 识别包内地图，冲突和确认交给整链计划；`staged` 为真时导入结束
    * 必须 `discardMapSource` 清理。
    * `assetName` 是详情页下拉里选中的资产；不传时后端按地图源的 `asset_rules`
    * 自动选，与 MOD 安装完全同一条规则。

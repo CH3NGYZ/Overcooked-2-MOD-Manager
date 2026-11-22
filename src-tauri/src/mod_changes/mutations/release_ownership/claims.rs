@@ -35,10 +35,6 @@ impl ReleaseTargetClaims {
         self.loose.is_empty() && self.missing_records.is_empty()
     }
 
-    pub fn has_reinstalls(&self) -> bool {
-        !self.missing_records.is_empty()
-    }
-
     pub fn overwrites(&self) -> Vec<UntrackedOverwrite> {
         self.loose
             .iter()
@@ -105,6 +101,12 @@ impl ReleaseTargetClaims {
         let mut written = BTreeMap::new();
         if !self.missing_records.is_empty() {
             for change in changes {
+                if let Mutation::Tree(tree) = &change.mutation {
+                    if tree.target.root == RootKind::Game && tree.source.is_some() {
+                        let relative = &tree.target.relative;
+                        written.insert(path_key(Path::new(relative)), relative.clone());
+                    }
+                }
                 let Mutation::File(file) = &change.mutation else {
                     continue;
                 };
@@ -203,16 +205,17 @@ fn selected_release<'a>(
                 .get(&node.id)
                 .filter(|payload| payload.candidate.id == chosen.id)
         })?;
-    exact_replacement(
-        node,
-        chosen,
-        payload,
-        session
-            .trusted
-            .inventory
-            .nodes
-            .iter()
-            .find(|old| old.id == node.id)?,
-    )
+    let previous = session
+        .trusted
+        .inventory
+        .nodes
+        .iter()
+        .find(|old| old.id == node.id)?;
+    ((payload.downloaded
+        && previous
+            .current
+            .as_ref()
+            .is_none_or(|old| old.id != chosen.id))
+        || exact_replacement(node, chosen, payload, previous))
     .then_some((node, payload))
 }

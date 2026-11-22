@@ -27,6 +27,8 @@ pub(crate) fn store_check(region: &str) -> AppUpdateCheckResult {
         all_failed: false,
         region: region.into(),
         distribution: AppDistribution::MicrosoftStore,
+        recovery_required: false,
+        installation_status: None,
     }
 }
 

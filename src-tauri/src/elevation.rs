@@ -15,40 +15,33 @@ use winapi::{
         winerror::{ERROR_ALREADY_EXISTS, WAIT_TIMEOUT},
     },
     um::{
-        combaseapi::CoUninitialize,
         errhandlingapi::SetLastError,
-        objbase::CoInitialize,
         processthreadsapi::{GetCurrentProcess, GetProcessTimes, OpenProcess},
-        shellapi::{
-            SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
-            ShellExecuteExW,
-        },
         synchapi::{
             CreateEventW, OpenEventW, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
         },
         winbase::{QueryFullProcessImageNameW, WAIT_OBJECT_0},
         winnt::{EVENT_MODIFY_STATE, HANDLE, PROCESS_QUERY_LIMITED_INFORMATION, SYNCHRONIZE},
-        winuser::SW_SHOWNORMAL,
     },
 };
 
 const FLAG: &str = "--oc2-elevated-relaunch";
 const HANDOFF_TIMEOUT_MS: u32 = 15_000;
 
-struct ManagerProcess {
-    pid: u32,
-    created: u64,
+pub(crate) struct ManagerProcess {
+    pub(crate) pid: u32,
+    pub(crate) created: u64,
 }
 
 impl ManagerProcess {
-    fn current() -> io::Result<Self> {
+    pub(crate) fn current() -> io::Result<Self> {
         Ok(Self {
             pid: std::process::id(),
             created: creation_time(unsafe { GetCurrentProcess() })?,
         })
     }
 
-    fn parse(pid: Option<OsString>, created: Option<OsString>) -> io::Result<Self> {
+    pub(crate) fn parse(pid: Option<OsString>, created: Option<OsString>) -> io::Result<Self> {
         let invalid = || {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -66,7 +59,7 @@ impl ManagerProcess {
         Ok(Self { pid, created })
     }
 
-    fn open(self, executable: &Path) -> io::Result<OwnedHandle> {
+    pub(crate) fn open(&self, executable: &Path) -> io::Result<OwnedHandle> {
         // Keep the same handle through the identity checks and wait so a reused
         // PID cannot make this child wait for a different process.
         let owner = owned_handle(unsafe {
@@ -87,13 +80,13 @@ impl ManagerProcess {
 
 /// Session-local events, with the OS default DACL. The requester creates both
 /// before launch and the child only opens those exact, per-attempt names.
-struct HandoffEvents {
+pub(crate) struct HandoffEvents {
     ready: OwnedHandle,
     proceed: OwnedHandle,
 }
 
 impl HandoffEvents {
-    fn named(token: uuid::Uuid, create: bool) -> io::Result<Self> {
+    pub(crate) fn named(token: uuid::Uuid, create: bool) -> io::Result<Self> {
         fn event(name: String, create: bool, access: u32) -> io::Result<OwnedHandle> {
             let name = wide(OsStr::new(&name));
             if !create {
@@ -124,7 +117,7 @@ impl HandoffEvents {
         })
     }
 
-    fn commit_when_ready(&self, child: HANDLE, timeout_ms: u32) -> io::Result<()> {
+    pub(crate) fn commit_when_ready(&self, child: HANDLE, timeout_ms: u32) -> io::Result<()> {
         // If both are signaled when we wake, a dead child wins and we stay open.
         let handles = [child, raw(&self.ready)];
         match unsafe { WaitForMultipleObjects(2, handles.as_ptr(), 0, timeout_ms) } {
@@ -140,7 +133,11 @@ impl HandoffEvents {
         }
     }
 
-    fn yield_until_owner_exits(&self, owner: &OwnedHandle, timeout_ms: u32) -> io::Result<()> {
+    pub(crate) fn yield_until_owner_exits(
+        &self,
+        owner: &OwnedHandle,
+        timeout_ms: u32,
+    ) -> io::Result<()> {
         signal(&self.ready)?;
         // Never continue after an abandoned/expired attempt, even if the old
         // instance is later closed by the user for an unrelated reason.
@@ -241,36 +238,7 @@ pub(crate) fn launch() -> io::Result<()> {
     let token = uuid::Uuid::new_v4();
     let events = HandoffEvents::named(token, true)?;
     let arguments = format!("{FLAG} {} {} {token}", owner.pid, owner.created);
-    let verb = wide(OsStr::new("runas"));
-    let executable = wide(executable.as_os_str());
-    let arguments = wide(OsStr::new(&arguments));
-    // An accepted UAC prompt alone is not proof that a new process was created.
-    let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
-    info.cbSize = std::mem::size_of_val(&info) as u32;
-    info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
-    info.lpVerb = verb.as_ptr();
-    info.lpFile = executable.as_ptr();
-    info.lpParameters = arguments.as_ptr();
-    info.nShow = SW_SHOWNORMAL;
-    // ShellExecuteEx may use COM on the blocking launch thread.
-    struct ShellApartment;
-    impl Drop for ShellApartment {
-        fn drop(&mut self) {
-            unsafe { CoUninitialize() };
-        }
-    }
-    let status = unsafe { CoInitialize(null_mut()) };
-    if status < 0 {
-        return Err(io::Error::from_raw_os_error(status));
-    }
-    let _apartment = ShellApartment;
-    if unsafe { ShellExecuteExW(&mut info) } == 0 {
-        return Err(io::Error::last_os_error());
-    }
-    if info.hProcess.is_null() {
-        return Err(io::Error::other("The administrator process did not start"));
-    }
-    let process = owned_handle(info.hProcess)?;
+    let process = crate::shell_open::launch_elevated(&executable, OsStr::new(&arguments), None)?;
     events.commit_when_ready(raw(&process), HANDOFF_TIMEOUT_MS)
 }
 

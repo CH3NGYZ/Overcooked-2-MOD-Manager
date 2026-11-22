@@ -34,14 +34,15 @@ test('v2 调用面覆盖核心命令', () => {
     'install_bepinex', 'uninstall_bepinex', 'backup_bepinex', 'restore_bepinex', 'switch_winhttp',
     'uninstall_local_mod', 'refresh_mod_repository',
     'evaluate_mod_changes', 'plan_mod_changes', 'prepare_mod_changes', 'execute_mod_changes', 'cancel_mod_changes',
-    'get_app_distribution', 'check_app_update', 'install_app_update', 'save_settings', 'clear_diychef_cache', 'open_external_page']) {
+    'get_app_distribution', 'check_app_update', 'stage_app_update', 'get_pending_app_update_recovery', 'finish_app_update_recovery',
+    'save_settings', 'clear_diychef_cache', 'open_external_page']) {
     assert.ok(invoked.has(required), `services/tauri.ts 缺少 ${required}`)
   }
 })
 
 test('v2 前端不再引用教程/代理命令（精简调用面）', () => {
   // 社区搜索已重新接入（启动刷新与「刷新全部」都会触发），不再属于「不引用」名单
-  for (const trimmed of ['get_builtin_tutorial', 'save_github_proxies', 'parse_tutorial_config']) {
+  for (const trimmed of ['get_builtin_tutorial', 'save_github_proxies', 'parse_tutorial_config', 'install_app_update']) {
     assert.ok(!invoked.has(trimmed), `${trimmed} 不应出现在 v2 调用面`)
   }
 })

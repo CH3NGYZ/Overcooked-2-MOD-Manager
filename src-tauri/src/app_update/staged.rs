@@ -1,192 +1,228 @@
 use super::download::VerifiedInstallerDownload;
-use crate::update_migration::{MANAGER_EXECUTABLE, update_executable};
-use crate::{app_state::AppState, archive, file_metadata};
-use std::fs::{File, OpenOptions};
-use std::io::{self, Write};
-use std::os::windows::{fs::OpenOptionsExt, process::CommandExt};
-use std::path::{Path, PathBuf};
-use tempfile::TempDir;
-use winapi::um::winbase::{FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT};
-use winapi::um::winnt::{FILE_ATTRIBUTE_REPARSE_POINT, FILE_SHARE_READ, FILE_SHARE_WRITE};
+use super::receipt::{Attempt, Outcome};
+use crate::models::AppUpdateInfo;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
+use tauri::AppHandle;
+
+#[cfg(target_os = "macos")]
+pub(crate) mod mac_quit;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(windows)]
+pub(crate) mod windows;
+
+#[cfg(target_os = "macos")]
+use macos::Prepared;
+#[cfg(windows)]
+use windows::Prepared;
 
 const UNAVAILABLE: &str = "update.stagedUnavailable";
-const INSTALLER_FILE: &str = "update.exe";
-const INSTALLER_RESULT: &str = "update-result.txt";
+const IN_PROGRESS: &str = "update.inProgress";
+const APPLY_FAILED: &str = "update.installFailedManual";
+
+#[derive(Default)]
+pub(crate) struct AppUpdates {
+    slot: Mutex<Slot>,
+    stage_finished: Condvar,
+}
+
+#[derive(Default)]
+struct Slot {
+    download: Option<Arc<AtomicBool>>,
+    ready: Option<StagedInstaller>,
+    recovery: Option<Recovery>,
+    closing: bool,
+}
+
+pub(crate) enum DownloadStart<'a> {
+    Ready(Box<AppUpdateInfo>),
+    Started(StageGuard<'a>),
+}
+
+#[derive(Clone)]
+pub(crate) struct Recovery {
+    pub(crate) update: AppUpdateInfo,
+    pub(crate) alternate_link: String,
+}
+
+impl AppUpdates {
+    pub(crate) fn start_download(&self) -> Result<DownloadStart<'_>, String> {
+        let mut slot = self.slot.lock().map_err(|_| "lock.poisoned")?;
+        if slot.recovery.is_some() {
+            return Err(APPLY_FAILED.into());
+        }
+        if slot.closing || slot.download.is_some() {
+            return Err(IN_PROGRESS.into());
+        }
+        if let Some(ready) = &slot.ready {
+            return Ok(DownloadStart::Ready(Box::new(ready.info.clone())));
+        }
+        let cancelled = Arc::new(AtomicBool::new(false));
+        slot.download = Some(cancelled.clone());
+        Ok(DownloadStart::Started(StageGuard {
+            updates: self,
+            cancelled,
+        }))
+    }
+
+    pub(crate) fn closing(&self) -> Result<Closing<'_>, String> {
+        let mut slot = self.slot.lock().map_err(|_| "lock.poisoned")?;
+        if slot.closing {
+            return Err(IN_PROGRESS.into());
+        }
+        slot.closing = true;
+        if let Some(cancelled) = &slot.download {
+            cancelled.store(true, Ordering::Release);
+        }
+        Ok(Closing(self))
+    }
+
+    pub(crate) fn require_recovery(&self, recovery: Recovery) -> Result<(), String> {
+        let mut slot = self.slot.lock().map_err(|_| "lock.poisoned")?;
+        if let Some(cancelled) = &slot.download {
+            cancelled.store(true, Ordering::Release);
+        }
+        slot.ready = None;
+        slot.recovery = Some(recovery);
+        Ok(())
+    }
+
+    pub(crate) fn recovery(&self) -> Result<Option<Recovery>, String> {
+        Ok(self
+            .slot
+            .lock()
+            .map_err(|_| "lock.poisoned")?
+            .recovery
+            .clone())
+    }
+}
+
+pub(crate) struct StageGuard<'a> {
+    updates: &'a AppUpdates,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl StageGuard<'_> {
+    pub(crate) fn cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn publish(&self, staged: StagedInstaller) -> Result<AppUpdateInfo, String> {
+        let mut slot = self.updates.slot.lock().map_err(|_| "lock.poisoned")?;
+        if self.cancelled() || slot.closing || slot.recovery.is_some() {
+            return Err("download.cancelled".into());
+        }
+        let info = staged.info.clone();
+        slot.ready = Some(staged);
+        Ok(info)
+    }
+}
+
+impl Drop for StageGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut slot) = self.updates.slot.lock() {
+            slot.download = None;
+            self.updates.stage_finished.notify_all();
+        }
+    }
+}
+
+pub(crate) struct Closing<'a>(&'a AppUpdates);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UpdateOnExit {
+    Skip,
+    Install,
+    Restart,
+}
+
+impl Closing<'_> {
+    pub(crate) fn wait_for_download(&self, timeout: Duration) -> Result<bool, String> {
+        let slot = self.0.slot.lock().map_err(|_| "lock.poisoned")?;
+        let (slot, _) = self
+            .0
+            .stage_finished
+            .wait_timeout_while(slot, timeout, |slot| slot.download.is_some())
+            .map_err(|_| "lock.poisoned")?;
+        Ok(slot.download.is_none())
+    }
+
+    pub(crate) fn take_ready(
+        &self,
+        update: UpdateOnExit,
+    ) -> Result<Option<StagedInstaller>, String> {
+        let mut slot = self.0.slot.lock().map_err(|_| "lock.poisoned")?;
+        if slot.recovery.is_some() {
+            return Err(APPLY_FAILED.into());
+        }
+        let ready = slot.ready.take();
+        match update {
+            UpdateOnExit::Skip => Ok(None),
+            UpdateOnExit::Restart if ready.is_none() => Err(UNAVAILABLE.into()),
+            _ => Ok(ready),
+        }
+    }
+
+    pub(crate) fn has_ready(&self) -> Result<bool, String> {
+        Ok(self
+            .0
+            .slot
+            .lock()
+            .map_err(|_| "lock.poisoned")?
+            .ready
+            .is_some())
+    }
+}
+
+impl Drop for Closing<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut slot) = self.0.slot.lock() {
+            slot.closing = false;
+        }
+    }
+}
 
 pub(crate) struct StagedInstaller {
-    work: TempDir,
-    digest: String,
-    version: String,
-    source: PathBuf,
-    destination: PathBuf,
+    info: AppUpdateInfo,
+    prepared: Prepared,
 }
 
 impl StagedInstaller {
     pub(crate) fn prepare(
         download: VerifiedInstallerDownload,
-        version: String,
+        info: AppUpdateInfo,
     ) -> Result<Self, String> {
-        let source = std::env::current_exe().map_err(stage_error)?;
-        let destination = validated_destination(&source)?;
-        let work = tempfile::Builder::new()
-            .prefix("OC2ModManager-update-")
-            .tempdir()
-            .map_err(stage_error)?;
-        let digest = archive::sha256_reader(download.bytes.as_slice()).map_err(stage_error)?;
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(work.path().join(INSTALLER_FILE))
-            .map_err(stage_error)?;
-        file.write_all(&download.bytes).map_err(stage_error)?;
-        file.sync_all().map_err(stage_error)?;
-        drop(file);
-        let staged = Self {
-            work,
-            digest,
-            version,
-            source,
-            destination,
-        };
-        let _guard = staged.lock_verified_file()?;
-        if file_metadata::read_version_string(&staged.path(), "OC2DeferredUpdate").as_deref()
-            != Some("1")
+        let prepared = Prepared::prepare(download, &info)?;
+        Ok(Self { info, prepared })
+    }
+
+    pub(crate) fn handoff(self, app: &AppHandle, restart: bool) -> Result<(), String> {
+        let attempt = Attempt::begin(
+            self.prepared.source(),
+            self.prepared.destination(),
+            &self.info.version,
+            &self.info.installer_type,
+            restart,
+        )?;
+        #[cfg(windows)]
         {
-            log::warn!("已验签的更新包不支持退出后安装：版本={}", staged.version);
-            return Err("update.deferredUnsupported".into());
-        }
-        log::info!(
-            "更新已暂存：版本={}，字节数={}，当前程序={}，安装目标={}",
-            staged.version,
-            download.bytes.len(),
-            staged.source.display(),
-            staged.destination.display()
-        );
-        Ok(staged)
-    }
-
-    fn path(&self) -> PathBuf {
-        self.work.path().join(INSTALLER_FILE)
-    }
-
-    fn lock_verified_file(&self) -> Result<(File, File), String> {
-        let check = || -> io::Result<(File, File)> {
-            let directory = OpenOptions::new()
-                .access_mode(0)
-                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
-                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
-                .open(self.work.path())?;
-            check_type(&directory, true)?;
-            let file = OpenOptions::new()
-                .read(true)
-                .share_mode(FILE_SHARE_READ)
-                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-                .open(self.path())?;
-            check_type(&file, false)?;
-            if archive::sha256_reader(&file)? != self.digest {
-                return Err(io::Error::other("staged installer digest changed"));
+            let _ = app;
+            if let Err(error) = self.prepared.start(&attempt) {
+                let outcome = if error == UNAVAILABLE {
+                    Outcome::Abandoned
+                } else {
+                    Outcome::Failed
+                };
+                attempt.record_outcome(outcome)?;
+                return Err(error);
             }
-            Ok((directory, file))
-        };
-        check().map_err(|error| {
-            log::warn!("暂存更新复核失败：版本={}，原因={error}", self.version);
-            UNAVAILABLE.into()
-        })
-    }
-
-    fn launch(&self, restart: bool) -> Result<(), String> {
-        let current = std::env::current_exe().map_err(launch_error)?;
-        let destination = validated_destination(&current)?;
-        if current != self.source || destination != self.destination {
-            log::warn!("更新暂存后安装位置发生变化：版本={}", self.version);
-            return Err(UNAVAILABLE.into());
-        }
-        let _guard = self.lock_verified_file()?;
-        let directory = super::installer_directory(&current)?;
-        let args = super::deferred_nsis_args(directory, std::process::id(), restart);
-        let child = std::process::Command::new(self.path())
-            .raw_arg(args)
-            .current_dir(self.work.path())
-            .spawn()
-            .map_err(launch_error)?;
-        log::info!(
-            "已交接退出后更新：版本={}，安装器进程={}，退出进程={}，安装成功后重启={restart}，安装结果={}",
-            self.version,
-            child.id(),
-            std::process::id(),
-            self.work.path().join(INSTALLER_RESULT).display(),
-        );
-        Ok(())
-    }
-}
-
-fn check_type(file: &File, directory: bool) -> io::Result<()> {
-    use std::os::windows::fs::MetadataExt;
-    let metadata = file.metadata()?;
-    let expected_type = if directory {
-        metadata.is_dir()
-    } else {
-        metadata.is_file()
-    };
-    if !expected_type || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-        return Err(io::Error::other("unexpected staged path type"));
-    }
-    Ok(())
-}
-
-fn validated_destination(source: &Path) -> Result<PathBuf, String> {
-    if !source
-        .file_name()
-        .is_some_and(|name| name.eq_ignore_ascii_case(MANAGER_EXECUTABLE))
-    {
-        log::warn!("当前程序名与安装包不符，不能自动更新：{}", source.display());
-        return Err("update.formatUnsupported".into());
-    }
-    let directory = super::installer_directory(source)?;
-    let destination = update_executable(source)?;
-    if !directory.is_absolute() || !super::installer_directory(&destination)?.is_absolute() {
-        return Err("migrate.invalidInstallDirectory".into());
-    }
-    Ok(destination)
-}
-
-fn stage_error(error: io::Error) -> String {
-    log::error!("保存更新安装器失败：{error}");
-    "update.stageFailed".into()
-}
-
-fn launch_error(error: io::Error) -> String {
-    log::error!("启动退出后更新安装器失败：{error}");
-    "update.installFailedManual".into()
-}
-
-pub(crate) fn handoff(state: &AppState, restart: bool) -> Result<(), String> {
-    let mut slot = state
-        .staged_app_update
-        .lock()
-        .map_err(|_| "lock.poisoned")?;
-    let Some(staged) = slot.as_ref() else {
-        return if restart {
-            Err(UNAVAILABLE.into())
-        } else {
-            Ok(())
-        };
-    };
-    crate::mod_changes::guard::ensure_recovered(state)?;
-    match staged.launch(restart) {
-        Ok(()) => {
-            let _ = slot
-                .take()
-                .expect("successful handoff has an installer")
-                .work
-                .keep();
             Ok(())
         }
-        Err(error) => {
-            if error == UNAVAILABLE {
-                *slot = None;
-            }
-            Err(error)
+        #[cfg(target_os = "macos")]
+        {
+            self.prepared.apply(app, &attempt)
         }
     }
 }

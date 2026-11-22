@@ -413,5 +413,7 @@ pub(crate) async fn discover_installer_update(
         channels: statuses,
         all_failed,
         region: region.as_str().into(),
+        recovery_required: false,
+        installation_status: None,
     })
 }

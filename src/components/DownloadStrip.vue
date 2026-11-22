@@ -7,17 +7,14 @@ import { api, watchDownloadProgress } from '../services/tauri'
 import { translateBackendMessage } from '../locale/backend'
 import { activeDownloadProgress, downloadTaskState, dismissDownloadFailure, retryDownloadTask, updateDownloadProgress, cancelDownloadTask } from '../downloadTask'
 import { downloadAmount, downloadPercent, downloadRace, downloadRate, downloadRoute } from '../downloadPresentation'
-import { appUpdateState } from '../appUpdateState'
+import { appUpdateBlocksOperations } from '../appUpdateState'
 import AppModal from './AppModal.vue'
 import DownloadVolumes from './DownloadVolumes.vue'
 
 const progress = activeDownloadProgress
 const running = computed(() => downloadTaskState.running)
 const failure = computed(() => downloadTaskState.failure)
-const canCancel = computed(() => appUpdateState.stage === 'idle')
-const visible = computed(() => canCancel.value
-  ? !!(failure.value || progress.value)
-  : appUpdateState.stage === 'installing' && !failure.value && !!progress.value)
+const visible = computed(() => !appUpdateBlocksOperations() && !!(failure.value || progress.value))
 
 const label = computed(() => translateBackendMessage(failure.value?.label ?? progress.value?.label ?? ''))
 const fileName = computed(() => progress.value?.file_name || label.value)
@@ -70,7 +67,7 @@ onUnmounted(() => { disposed = true; unlisten?.() })
 const cancelling = shallowRef<number | null>(null)
 const cancelPending = computed(() => running.value !== null && cancelling.value === running.value.id)
 async function cancel() {
-  if (!canCancel.value) return
+  if (appUpdateBlocksOperations()) return
   const task = running.value
   if (!task || task.id === cancelling.value) return
   if (!task.cancel) cancelDownloadTask(task.id)
@@ -84,8 +81,8 @@ async function cancel() {
 </script>
 
 <template>
-  <AppModal :show="visible" :closable="false" :block-scroll="false" :z-index="canCancel ? 2600 : 6200"
-    :card-class="`dl-card${failure ? ' dl-card-error' : ''}${canCancel ? '' : ' dl-card-update'}`"
+  <AppModal :show="visible" :closable="false" :block-scroll="false" :z-index="2600"
+    :card-class="`dl-card${failure ? ' dl-card-error' : ''}`"
     style="width: 480px" max-width="94%" aria-labelledby="download-modal-title" @after-enter="focusActions(true)">
     <template #header>
       <div class="dl-heading">
@@ -94,13 +91,13 @@ async function cancel() {
           <DownloadOutline v-else width="22" height="22" />
         </span>
         <div class="dl-heading-text">
-          <h2 id="download-modal-title" ref="titleElement" class="dl-title" :tabindex="canCancel ? -1 : 0" :title="title">
+          <h2 id="download-modal-title" ref="titleElement" class="dl-title" tabindex="-1" :title="title">
             <span role="status">{{ title }}</span>
           </h2>
           <span v-if="!failure && progress && fileName" id="download-modal-file" class="dl-file" :title="fileName">{{ fileName }}</span>
         </div>
         <strong v-if="!failure && percentText !== undefined" class="dl-percent" aria-hidden="true">{{ percentText }}<span>%</span></strong>
-        <NButton v-if="canCancel && !failure && progress" class="dl-cancel" data-download-action="cancel"
+        <NButton v-if="!failure && progress" class="dl-cancel" data-download-action="cancel"
           quaternary circle size="small" :aria-label="cancelLabel" :title="cancelLabel"
           :loading="cancelPending" :aria-busy="cancelPending" @click="cancel">
           <template #icon><CloseOutline width="18" height="18" aria-hidden="true" /></template>
@@ -136,7 +133,7 @@ async function cancel() {
 
     <DownloadVolumes v-if="volumes?.length" :key="volumeKey" :volumes="volumes" />
 
-    <template v-if="canCancel && failure" #footer>
+    <template v-if="failure" #footer>
       <div class="dl-actions">
         <NButton data-download-action="retry" tabindex="0" type="primary" size="small" @click="retryDownloadTask">{{ t('common.action.retry') }}</NButton>
         <NButton data-download-action="close" tabindex="0" secondary size="small" @click="dismissDownloadFailure">{{ t('nav.close') }}</NButton>

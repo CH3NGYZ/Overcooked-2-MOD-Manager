@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 mod location;
-pub(crate) use location::{location_file, read_location_at, write_location_at};
+pub(crate) use location::{bootstrap_dir, location_file, read_location_at, write_location_at};
 
 /// 数据目录名。
 const DATA_DIRECTORY: &str = "OC2ModManager";

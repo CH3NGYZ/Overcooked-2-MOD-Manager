@@ -104,83 +104,21 @@ fn manifest_keys_never_mix_windows_packages_or_mac_architectures() {
 }
 
 #[test]
-fn tauri_windows_arguments_preserve_paths_and_only_use_success_hook_relaunch() {
+fn deferred_nsis_passes_the_wait_pid_and_unquoted_target_last_without_relaunch() {
     use std::path::Path;
     let executable = Path::new("C:/Users/Test User/管理器/OC2ModManager.exe");
-    let log = Path::new("C:/Users/Test User/OC2ModManager/logs/update-msi.log");
-    let nsis = windows_installer_args("exe", executable, executable, log).unwrap();
-    assert_eq!(nsis, ["/OC2AutoLaunch", "/D=C:/Users/Test User/管理器"]);
-    let raw = nsis.join(std::ffi::OsStr::new(" "));
-    assert_eq!(raw, "/OC2AutoLaunch /D=C:/Users/Test User/管理器");
-    assert!(!raw.to_string_lossy().contains('"'));
+    let directory = installer_directory(executable).unwrap();
     assert_eq!(
-        windows_installer_args("msi", executable, executable, log).unwrap(),
-        [
-            "AUTOLAUNCHAPP=1",
-            "INSTALLDIR=\"C:/Users/Test User/管理器\"",
-            "/norestart",
-            "/L*v",
-            "\"C:/Users/Test User/OC2ModManager/logs/update-msi.log\"",
-        ]
-    );
-    for (kind, exe, log) in [
-        ("app", executable, log),
-        ("exe", Path::new("OC2ModManager.exe"), log),
-        ("exe", Path::new("C:/bad\"path/OC2ModManager.exe"), log),
-        ("msi", executable, Path::new("C:/bad\npath/update.log")),
-    ] {
-        assert!(windows_installer_args(kind, exe, exe, log).is_err());
-    }
-}
-
-#[test]
-fn only_silent_explicit_apply_supplies_the_success_relaunch_flag() {
-    let path = std::path::Path::new("C:/Users/Test User/管理器");
-    assert_eq!(
-        deferred_nsis_args(path, 1234, false),
+        deferred_nsis_args(directory, 1234),
         "/S /UPDATE /OC2WaitForPid=1234 /D=C:/Users/Test User/管理器"
     );
-    assert_eq!(
-        deferred_nsis_args(path, 1234, true),
-        "/S /UPDATE /OC2WaitForPid=1234 /OC2AutoLaunch /D=C:/Users/Test User/管理器"
-    );
-}
-
-#[test]
-fn relocation_arguments_keep_the_old_directory_for_installer_safety_hooks() {
-    use std::path::Path;
-    let executable = Path::new("C:/game/BepInEx/plugins/Manager/OC2ModManager.exe");
-    let target = Path::new("C:/Users/Test/AppData/Local/OC2ModManager/OC2ModManager.exe");
-    let log = Path::new("C:/Users/Test/OC2ModManager/logs/update-msi.log");
-    for kind in ["exe", "msi"] {
-        let args = windows_installer_args(kind, executable, target, log).unwrap();
-        assert!(
-            args.iter()
-                .any(|arg| arg.to_string_lossy().contains("BepInEx/plugins/Manager"))
-        );
-        assert!(
-            args.iter()
-                .any(|arg| arg == "/OC2AutoLaunch" || arg == "AUTOLAUNCHAPP=1")
-        );
-        assert!(!args.iter().any(|arg| arg == "/R" || arg == "/ARGS"));
-        if kind == "msi" {
-            assert!(
-                args.iter()
-                    .any(|arg| arg == "INSTALLDIR=\"C:/Users/Test/AppData/Local/OC2ModManager\"")
-            );
-            assert!(
-                args.iter()
-                    .any(|arg| arg == "OC2MIGRATEFROM=\"C:/game/BepInEx/plugins/Manager\"")
-            );
-        }
+    for path in [
+        "OC2ModManager.exe",
+        "C:/bad\"path/OC2ModManager.exe",
+        "C:/bad\npath/OC2ModManager.exe",
+    ] {
+        assert!(installer_directory(Path::new(path)).is_err());
     }
-    let alias = Path::new("C:/game/alias/Manager/OC2ModManager.exe");
-    assert!(
-        windows_installer_args("msi", alias, target, log)
-            .unwrap()
-            .iter()
-            .any(|arg| arg == "OC2MIGRATEFROM=\"C:/game/alias/Manager\"")
-    );
 }
 
 #[test]

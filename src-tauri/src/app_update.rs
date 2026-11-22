@@ -3,7 +3,8 @@ pub(crate) mod channels;
 pub(crate) mod distribution;
 pub(crate) mod download;
 pub(crate) mod manifest;
-#[cfg(windows)]
+pub(crate) mod receipt;
+pub(crate) mod recovery_links;
 pub(crate) mod staged;
 
 use crate::models::AppUpdateInfo;
@@ -59,10 +60,20 @@ impl UpdateTarget {
     }
 
     pub(crate) fn supports_background_install(self) -> bool {
-        self.os == "windows"
-            && self.kind == "exe"
-            && !tauri::is_dev()
-            && matches!(bundle_type(), Some(BundleType::Nsis))
+        !tauri::is_dev()
+            && match self.os {
+                "windows" => {
+                    !crate::is_elevated()
+                        && matches!(bundle_type(), Some(BundleType::Nsis | BundleType::Msi))
+                }
+                "darwin" => {
+                    matches!(bundle_type(), Some(BundleType::App))
+                        && std::env::current_exe()
+                            .ok()
+                            .is_some_and(|exe| receipt::bundle_root(&exe).is_some())
+                }
+                _ => false,
+            }
     }
 
     pub(crate) fn matches_name(self, name: &str, version: &Version) -> bool {
@@ -221,48 +232,6 @@ pub(crate) fn validate_update_metadata(
 }
 
 #[cfg(any(windows, test))]
-pub(crate) fn windows_installer_args(
-    kind: &str,
-    executable: &std::path::Path,
-    target_executable: &std::path::Path,
-    log: &std::path::Path,
-) -> Result<Vec<std::ffi::OsString>, String> {
-    use std::ffi::OsString;
-    let directory = installer_directory(executable)?;
-    let target_directory = installer_directory(target_executable)?;
-    if invalid_argument_path(log) {
-        return Err("migrate.invalidInstallDirectory".into());
-    }
-    match kind {
-        "exe" => Ok(nsis_target_args(directory, true)),
-        "msi" => {
-            let mut target = OsString::from("INSTALLDIR=\"");
-            target.push(target_directory);
-            target.push("\"");
-            let mut log_path = OsString::from("\"");
-            log_path.push(log);
-            log_path.push("\"");
-            let mut args = vec![
-                OsString::from("AUTOLAUNCHAPP=1"),
-                target,
-                OsString::from("/norestart"),
-                OsString::from("/L*v"),
-                log_path,
-            ];
-            if directory != target_directory {
-                // MSI's textual path test cannot detect junction aliases.
-                let mut source = OsString::from("OC2MIGRATEFROM=\"");
-                source.push(directory);
-                source.push("\"");
-                args.push(source);
-            }
-            Ok(args)
-        }
-        _ => Err("update.formatUnsupported".into()),
-    }
-}
-
-#[cfg(any(windows, test))]
 fn invalid_argument_path(path: &std::path::Path) -> bool {
     path.as_os_str()
         .to_string_lossy()
@@ -278,28 +247,10 @@ fn installer_directory(executable: &std::path::Path) -> Result<&std::path::Path,
 }
 
 #[cfg(any(windows, test))]
-fn nsis_target_args(directory: &std::path::Path, restart: bool) -> Vec<std::ffi::OsString> {
-    use std::ffi::OsString;
-    let mut arguments = Vec::new();
-    if restart {
-        arguments.push(OsString::from("/OC2AutoLaunch"));
-    }
-    let mut target = OsString::from("/D=");
-    target.push(directory);
-    arguments.push(target);
+fn deferred_nsis_args(directory: &std::path::Path, pid: u32) -> std::ffi::OsString {
+    let mut arguments = std::ffi::OsString::from(format!("/S /UPDATE /OC2WaitForPid={pid} /D="));
+    arguments.push(directory);
     arguments
-}
-
-#[cfg(any(windows, test))]
-fn deferred_nsis_args(directory: &std::path::Path, pid: u32, restart: bool) -> std::ffi::OsString {
-    use std::ffi::{OsStr, OsString};
-    let mut arguments = vec![
-        OsString::from("/S"),
-        OsString::from("/UPDATE"),
-        OsString::from(format!("/OC2WaitForPid={pid}")),
-    ];
-    arguments.extend(nsis_target_args(directory, restart));
-    arguments.join(OsStr::new(" "))
 }
 
 #[cfg(test)]

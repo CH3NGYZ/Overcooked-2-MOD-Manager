@@ -8,6 +8,30 @@ import type { DomainMessages } from './types'
  * `update.installFailed` 之后接 `migrate.versionMismatch`。
  */
 export const update: DomainMessages = {
+  managerUpdate: { 'zh-CN': '管理器更新', 'zh-TW': '管理器更新', en: 'Manager update', ko: '관리자 업데이트', ja: '管理ツールの更新' },
+  status: { 'zh-CN': '状态', 'zh-TW': '狀態', en: 'Status', ko: '상태', ja: '状態' },
+  targetVersion: { 'zh-CN': '目标版本', 'zh-TW': '目標版本', en: 'Target version', ko: '대상 버전', ja: '更新先のバージョン' },
+  progress: { 'zh-CN': '进度', 'zh-TW': '進度', en: 'Progress', ko: '진행률', ja: '進捗' },
+  speed: { 'zh-CN': '速度', 'zh-TW': '速度', en: 'Speed', ko: '속도', ja: '速度' },
+  notChecked: { 'zh-CN': '尚未检测更新', 'zh-TW': '尚未檢查更新', en: 'Not checked yet', ko: '아직 확인하지 않음', ja: '更新未確認' },
+  checking: { 'zh-CN': '正在检测更新', 'zh-TW': '正在檢查更新', en: 'Checking for updates', ko: '업데이트 확인 중', ja: '更新を確認しています' },
+  checkAgain: { 'zh-CN': '再次检查', 'zh-TW': '再次檢查', en: 'Check again', ko: '다시 확인', ja: '再確認' },
+  downloadFailed: { 'zh-CN': '更新下载失败', 'zh-TW': '更新下載失敗', en: 'Update download failed', ko: '업데이트 다운로드 실패', ja: '更新のダウンロードに失敗しました' },
+  pendingInstall: { 'zh-CN': '更新待安装', 'zh-TW': '更新待安裝', en: 'Ready to install', ko: '설치 대기 중', ja: 'インストール待ち' },
+  rebootRequired: { 'zh-CN': '请重启电脑以完成更新', 'zh-TW': '請重新啟動電腦以完成更新', en: 'Restart your computer to finish updating', ko: '업데이트를 완료하려면 컴퓨터를 다시 시작하세요', ja: '更新を完了するにはパソコンを再起動してください' },
+  restartFailed: { 'zh-CN': '更新已安装，请手动打开管理器', 'zh-TW': '更新已安裝，請手動開啟管理器', en: 'Update installed. Open the manager manually', ko: '업데이트가 설치되었습니다. 관리자를 직접 실행하세요', ja: '更新をインストールしました。管理ツールを手動で開いてください' },
+  releaseNotes: { 'zh-CN': '更新日志', 'zh-TW': '更新日誌', en: 'Release notes', ko: '업데이트 내역', ja: 'リリースノート' },
+  installLater: { 'zh-CN': '稍后安装', 'zh-TW': '稍後安裝', en: 'Install later', ko: '나중에 설치', ja: '後でインストール' },
+  applicationFailedTitle: { 'zh-CN': '更新安装失败', 'zh-TW': '更新安裝失敗', en: 'Update installation failed', ko: '업데이트 설치 실패', ja: '更新のインストールに失敗しました' },
+  applicationFailed: {
+    'zh-CN': '更新应用失败，请在官网或备用下载地址重新下载最新版覆盖安装。',
+    'zh-TW': '更新套用失敗，請在官網或備用下載網址重新下載最新版並覆蓋安裝。',
+    en: 'The update could not be applied. Download the latest version from the official website or the alternate download page and install it over your current version.',
+    ko: '업데이트를 적용하지 못했습니다. 공식 웹사이트 또는 대체 다운로드 페이지에서 최신 버전을 내려받아 덮어 설치하세요.',
+    ja: '更新を適用できませんでした。公式サイトまたは代替ダウンロード先から最新版を入手し、上書きインストールしてください。',
+  },
+  goToWebsite: { 'zh-CN': '去官网', 'zh-TW': '前往官網', en: 'Official website', ko: '공식 웹사이트', ja: '公式サイトへ' },
+  goToAlternateDownload: { 'zh-CN': '去备用下载地址', 'zh-TW': '前往備用下載網址', en: 'Alternate download', ko: '대체 다운로드', ja: '代替ダウンロード先へ' },
   standaloneChannel: {
     'zh-CN': '普通渠道',
     'zh-TW': '一般管道',
@@ -86,23 +110,19 @@ export const update: DomainMessages = {
     ja: '1 つのインストーラーのダウンロードが 30 秒を超えたため、このチャネルをスキップしました',
   },
   downloadingInstaller: {
-    'zh-CN': '正在下载程序更新',
-    'zh-TW': '正在下載程式更新',
+    'zh-CN': '正在下载更新',
+    'zh-TW': '正在下載更新',
     en: 'Downloading the app update',
     ko: '프로그램 업데이트를 다운로드하는 중',
     ja: 'アプリの更新をダウンロードしています',
-  },
-  downloadPercent: {
-    'zh-CN': '下载更新 {percent}%', 'zh-TW': '下載更新 {percent}%', en: 'Downloading update {percent}%',
-    ko: '업데이트 다운로드 {percent}%', ja: '更新をダウンロード {percent}%',
   },
   verifyingUpdate: {
     'zh-CN': '正在验证更新', 'zh-TW': '正在驗證更新', en: 'Verifying update',
     ko: '업데이트 확인 중', ja: '更新を検証しています',
   },
   applyNow: {
-    'zh-CN': '立即应用更新', 'zh-TW': '立即套用更新', en: 'Apply update now',
-    ko: '지금 업데이트 적용', ja: '今すぐ更新を適用',
+    'zh-CN': '立即安装', 'zh-TW': '立即安裝', en: 'Install now',
+    ko: '지금 설치', ja: '今すぐインストール',
   },
   applyingUpdate: {
     'zh-CN': '正在应用更新', 'zh-TW': '正在套用更新', en: 'Applying update',

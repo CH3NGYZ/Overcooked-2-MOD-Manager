@@ -11,7 +11,7 @@ import ChangePlanDetails from './ChangePlanDetails.vue'
 import ModInstallNoteDialog from './ModInstallNoteDialog.vue'
 import { changePlanLabels, preparationCompletion } from './presentation'
 import { activeDownloadProgress } from '../downloadTask'
-import { appUpdateState } from '../appUpdateState'
+import { appUpdateBlocksOperations } from '../appUpdateState'
 import { isPackageAction } from './types'
 import { isChangePlanLocked } from './workflow'
 const changes = useModChanges()
@@ -51,9 +51,9 @@ const phase = computed(() => {
   if (state.value?.phase === 'reconfirming' && applyReview.value === 'prepared') return t('modChanges.phase.applyReview')
   return t(`modChanges.phase.${state.value?.phase ?? 'planning'}`)
 })
-const downloadAbove = computed(() => state.value?.phase === 'preparing' && appUpdateState.stage === 'idle'
+const downloadAbove = computed(() => state.value?.phase === 'preparing' && !appUpdateBlocksOperations()
   && !!activeDownloadProgress.value)
-const showDownloadFallback = computed(() => appUpdateState.stage === 'idle' && !downloadAbove.value
+const showDownloadFallback = computed(() => !appUpdateBlocksOperations() && !downloadAbove.value
   && (changes.canCancelDownload.value || changes.cancellingDownload.value))
 const statusElement = useTemplateRef<HTMLElement>('statusElement')
 const buttons = useTemplateRef<HTMLElement>('buttons')
@@ -62,14 +62,14 @@ watch(statusElement, async element => {
   // action, so a held Enter from the preparation button cannot approve writes.
   if (!element) return
   await nextTick()
-  if (statusElement.value === element && state.value?.phase === 'reconfirming' && !installNotes.value.length && appUpdateState.stage === 'idle') {
+  if (statusElement.value === element && state.value?.phase === 'reconfirming' && !installNotes.value.length && !appUpdateBlocksOperations()) {
     element.focus({ preventScroll: true })
   }
 }, { flush: 'post' })
 let restoreAfterDownload = false
 watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length], async ([above, workflowPhase, notes], _, onCleanup) => {
   if (above) { restoreAfterDownload = true; return }
-  if (!workflowPhase || notes || appUpdateState.stage !== 'idle') { restoreAfterDownload = false; return }
+  if (!workflowPhase || notes || appUpdateBlocksOperations()) { restoreAfterDownload = false; return }
   if (!restoreAfterDownload) return
   let stale = false
   onCleanup(() => { stale = true })

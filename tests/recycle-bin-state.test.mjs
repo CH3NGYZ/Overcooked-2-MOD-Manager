@@ -262,12 +262,10 @@ test('a running game prevents restore IPC but does not block deleting recycled f
 
 test('titlebar recycle menu delegates hover visibility to Naive and closes before opening dialogs', () => {
   const status = readFileSync(new URL('../src/components/RecycleBinStatus.vue', import.meta.url), 'utf8')
-  const popover = status.match(/<n-popover\b[^>]*>/)?.[0]
-  assert.ok(popover)
-  assert.match(popover, /trigger="hover"/)
-  assert.match(popover, /:show="menuOpen"/)
-  assert.match(popover, /@update:show="showMenu"/)
-  assert.match(status, /function showMenu\(show: boolean\)\s*\{\s*menuOpen\.value = show\s+if \(show\) void reload\(\)/)
+  const popover = readFileSync(new URL('../src/components/TitleBarStatusPopover.vue', import.meta.url), 'utf8')
+  assert.match(popover, /<NPopover[^>]*trigger="hover" placement="bottom"/)
+  assert.match(status, /<TitleBarStatusPopover v-model:open="menuOpen"/)
+  assert.match(status, /watch\(menuOpen, show => \{ if \(show\) void reload\(\)/)
   assert.match(status, /@click="openBin"/)
   assert.match(status, /function openBin\(\)\s*\{\s*menuOpen\.value = false\s+dialogOpen\.value = true/)
   assert.match(status, /@click="clearBin"/)

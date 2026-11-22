@@ -34,9 +34,11 @@
  */
 import { computed, toRefs } from 'vue'
 import { NModal } from 'naive-ui'
+import { trackAppModal } from '../dialogBusy'
 
 const props = withDefaults(defineProps<{
   show: boolean
+  excludeFromDialogQueue?: boolean
   /** 卡片标题；不传则不渲染头部。 */
   title?: string
   /** 最大宽度（上限，不是定值）。 */
@@ -139,6 +141,12 @@ const {
   to: mountTarget,
 } = toRefs(props)
 
+const finishDialogLeave = props.excludeFromDialogQueue ? undefined : trackAppModal(visible)
+function afterLeave() {
+  finishDialogLeave?.()
+  emit('after-leave')
+}
+
 /*
  * 尺寸全部以 Naive 的容器为基准计算，不用 vw/vh，也不用百分比。
  *
@@ -206,7 +214,7 @@ const contentStyle = {
     :display-directive="directive" :to="mountTarget" class="app-modal"
     :class="extraClass" :style="modalStyle" :content-style="contentStyle"
     @update:show="(value: boolean) => emit('update:show', value)"
-    @after-leave="emit('after-leave')">
+    @after-leave="afterLeave">
     <!-- 头部右侧附加内容（筛选器、计数等），透传 Naive 原生槽位 -->
     <template v-if="$slots.header" #header><slot name="header" /></template>
     <template v-if="$slots['header-extra']" #header-extra>

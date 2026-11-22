@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { NButton, NSpin } from 'naive-ui'
 import AppModal from './AppModal.vue'
 import type { PreflightStage, createStartupPreflight } from '../startupPreflight'
-import { appUpdateState } from '../appUpdateState'
+import { appUpdateBlocksOperations } from '../appUpdateState'
 import { t } from '../i18n'
 
 const { state, gate } = defineProps<{
@@ -11,7 +11,7 @@ const { state, gate } = defineProps<{
   gate: ReturnType<typeof createStartupPreflight>
 }>()
 const checking = computed(() => state.stage === 'checking' || state.stage === 'closing')
-const visible = computed(() => appUpdateState.stage === 'idle' &&
+const visible = computed(() => !appUpdateBlocksOperations() &&
   ['checking', 'failed', 'closing'].includes(state.stage))
 const title = computed(() => t(checking.value ? 'startup.checking' : 'startup.failed'))
 const failureKey = computed(() => `startup.failure.${state.failure || 'network'}`)

@@ -736,6 +736,7 @@ async fn actual_package_stream_retains_length_checks_and_unknown_size_progress()
         &reporter,
         "update",
         &crate::models::NetworkConfig::default(),
+        || false,
     )
     .await
     .unwrap();
@@ -750,11 +751,58 @@ async fn actual_package_stream_retains_length_checks_and_unknown_size_progress()
                 &reporter,
                 "update",
                 &crate::models::NetworkConfig::default(),
+                || false,
             )
             .await
             .is_err()
         );
     }
+}
+
+#[tokio::test]
+async fn cancelling_a_stalled_installer_does_not_cancel_another_request() {
+    let package = b"second package".to_vec();
+    let server = Server::new(HashMap::from([
+        ("/stalled".into(), delayed(200, package.clone(), 1000)),
+        ("/other".into(), delayed(200, package.clone(), 100)),
+    ]));
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let network = NetworkConfig::default();
+    let cancelled = AtomicBool::new(false);
+    let cancelled_reporter = archive::DownloadReporter::new("stalled");
+    let other_reporter = archive::DownloadReporter::new("other");
+    let stalled_url = format!("{}/stalled", server.base);
+    let other_url = format!("{}/other", server.base);
+    let stalled = download_installer(
+        &client,
+        &stalled_url,
+        &cancelled_reporter,
+        "stalled",
+        &network,
+        || cancelled.load(Ordering::Acquire),
+    );
+    let other = download_installer(
+        &client,
+        &other_url,
+        &other_reporter,
+        "other",
+        &network,
+        || false,
+    );
+    let cancel = async {
+        while server.requests.lock().unwrap().len() < 2 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        cancelled.store(true, Ordering::Release);
+    };
+    let (result, other_result, ()) = tokio::time::timeout(Duration::from_millis(800), async {
+        tokio::join!(stalled, other, cancel)
+    })
+    .await
+    .expect("the cancelled request should finish before the stalled response");
+    assert_eq!(result.unwrap_err(), "download.cancelled");
+    assert_eq!(cancelled_reporter.snapshot().downloaded, 0);
+    assert_eq!(other_result.unwrap(), package);
 }
 
 #[tokio::test]
@@ -804,6 +852,7 @@ async fn package_race_rejects_bad_signatures_and_can_choose_a_different_route() 
         InstallerRegion::MainlandChina,
         |bytes| crate::app_update::verify_with_key(bytes, signature, key, &info.version),
         &crate::models::NetworkConfig::default(),
+        || false,
     )
     .await
     .unwrap();
@@ -852,13 +901,18 @@ async fn gitee_package_uses_one_get_without_range_requests() {
                 )
             },
             &crate::models::NetworkConfig::default(),
+            || false,
         ),
     )
     .await
     .unwrap();
     assert_eq!(bytes, valid);
     let seen = progress.lock().unwrap();
-    assert!(seen.last().unwrap().finished);
+    let finished = seen.last().unwrap();
+    assert!(finished.finished);
+    assert_eq!(finished.route, Some(AssetDownloadRoute::Direct));
+    assert_eq!(finished.downloaded, valid.len() as u64);
+    assert_eq!(finished.parallel_sources, Some(1));
     assert!(seen.iter().all(|p| {
         p.label == "update.downloadingInstaller"
             && p.file_name.as_deref() == Some(info.installer_name.as_str())

@@ -695,10 +695,12 @@ export interface RepositorySourceImportResult {
 }
 export interface AppUpdateInfo { version: string; current_version: string; body?: string; date?: string; download_size?: number; manifest_url: string; installer_url?: string; installer_signature: string; installer_name: string; installer_type?: 'exe' | 'msi' | 'app'; provider?: Provider; source_channel?: string; background_install?: boolean }
 export interface AppUpdateChannelStatus { id: string; provider: Provider; mode: string; status: string; error?: string }
-export interface AppUpdateChannelEvent { region: string; channel: AppUpdateChannelStatus }
-export interface AppUpdatePhaseEvent { region: string; phase: 'manifest' | 'download' | 'install' | 'skipped'; message?: string; update?: AppUpdateInfo }
 export type AppDistribution = 'standalone' | 'microsoft_store'
-export interface AppUpdateCheckResult { distribution?: AppDistribution; update?: AppUpdateInfo; channels: AppUpdateChannelStatus[]; all_failed: boolean; region: string }
+export type AppUpdateInstallationStatus = 'reboot_required' | 'applying' | 'restart_failed'
+export interface AppUpdateCheckResult {
+  distribution?: AppDistribution; update?: AppUpdateInfo; channels: AppUpdateChannelStatus[]; all_failed: boolean; region: string
+  recovery_required?: boolean; installation_status?: AppUpdateInstallationStatus | null
+}
 export type DataProvider = 'github' | 'gitee' | 'gitcode' | 'cloudflare' | 'builtin'
 export type UserRegion = 'cn' | 'global'
 export interface SettingsPatch { region?: UserRegion; ui_zoom?: number; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; game_path?: string; game_runtime?: GameRuntime; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; race_min_speed_kbps?: number; race_window_seconds?: number; api_timeout_seconds?: number; first_byte_timeout_seconds?: number; data_provider?: DataProvider; mod_metadata_concurrency?: number; map_info_concurrency?: number; map_compression_concurrency?: number; diychef_preview_concurrency?: number; tutorial_watched_steps?: string[] }

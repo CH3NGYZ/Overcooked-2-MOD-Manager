@@ -21,7 +21,7 @@ import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { isTauri } from '../runtime'
 import { t } from '../i18n'
 import { useNotify, type Notify } from '../useNotify'
-import { appUpdateState } from '../appUpdateState'
+import { appUpdateBlocksOperations, appUpdateState } from '../appUpdateState'
 import { acceptLabel, matchesFileAccept } from '../dropAccept'
 import { recordFileDrop } from '../services/invoke'
 
@@ -71,7 +71,7 @@ async function registerListener() {
     try {
       await getCurrentWebview().onDragDropEvent((event) => {
         const payload = event.payload
-        if (appUpdateState.stage !== 'idle') {
+        if (appUpdateBlocksOperations()) {
           if (payload.type === 'drop') recordFileDrop('update_gate', appUpdateState.stage, payload.paths)
           dragActive.value = false
           return

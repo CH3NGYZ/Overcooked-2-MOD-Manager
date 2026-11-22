@@ -1,9 +1,13 @@
 use crate::app_state::AppState;
+use crate::app_update::staged::UpdateOnExit;
 use crate::archive;
 use crate::game;
 use crate::models::OperationResult;
 use std::path::Path;
-use tauri::State;
+use std::time::Duration;
+use tauri::{AppHandle, State};
+
+const UPDATE_DOWNLOAD_EXIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[tauri::command]
 pub fn open_external_page(url: String) -> Result<(), String> {
@@ -21,40 +25,82 @@ pub fn open_devtools(window: tauri::WebviewWindow) -> Result<OperationResult, St
 }
 
 #[tauri::command]
-pub async fn exit_app(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn exit_app(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    install_update: bool,
+) -> Result<(), String> {
     log::info!("收到退出应用请求");
-    request_user_exit(state.inner().clone(), false)?
-        .await
-        .map_err(|error| error.to_string())?
+    let update = if install_update {
+        UpdateOnExit::Install
+    } else {
+        UpdateOnExit::Skip
+    };
+    request_user_exit(app, state.inner().clone(), ExitAction::Update(update)).await
 }
 
 #[tauri::command]
-pub async fn apply_staged_app_update(state: State<'_, AppState>) -> Result<(), String> {
-    request_user_exit(state.inner().clone(), true)?
-        .await
-        .map_err(|error| error.to_string())?
+pub async fn apply_staged_app_update(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    request_user_exit(
+        app,
+        state.inner().clone(),
+        ExitAction::Update(UpdateOnExit::Restart),
+    )
+    .await
 }
 
-pub(crate) fn request_user_exit(
+pub(super) enum ExitAction {
+    Update(UpdateOnExit),
+    OpenRecoveryPage(String),
+}
+
+pub(super) async fn request_user_exit(
+    app: AppHandle,
     state: AppState,
-    restart: bool,
-) -> Result<tauri::async_runtime::JoinHandle<Result<(), String>>, String> {
-    let exit = archive::begin_app_update()?;
-    log::info!("接受管理器退出请求：应用更新后重启={restart}");
-    Ok(tauri::async_runtime::spawn_blocking(move || {
-        let _exit = exit;
+    action: ExitAction,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _exit = archive::begin_app_update()?;
+        let closing = state.app_updates.closing()?;
         let _compression = pause_map_compression_for_exit()?;
         let _operation = state.operation.lock().map_err(|_| "lock.poisoned")?;
-        #[cfg(windows)]
-        crate::app_update::staged::handoff(&state, restart)?;
-        #[cfg(not(windows))]
-        if restart {
-            return Err("update.formatUnsupported".into());
+        if !closing.wait_for_download(UPDATE_DOWNLOAD_EXIT_TIMEOUT)? {
+            log::warn!("更新暂存取消未在退出期限内完成，继续退出");
         }
-        log::info!("管理器退出条件已满足：应用更新后重启={restart}");
-        log::logger().flush();
-        std::process::exit(0)
-    }))
+        match action {
+            ExitAction::Update(update) => {
+                if update != UpdateOnExit::Skip && closing.has_ready()? {
+                    crate::mod_changes::guard::ensure_recovered(&state)?;
+                }
+                let restart = update == UpdateOnExit::Restart;
+                if let Some(staged) = closing.take_ready(update)?
+                    && let Err(error) = staged.handoff(&app, restart)
+                {
+                    if restart {
+                        return Err(error);
+                    }
+                    log::error!("退出时未能交接或应用更新：{error}");
+                }
+                log::info!("管理器退出条件已满足：应用更新后重启={restart}");
+            }
+            ExitAction::OpenRecoveryPage(url) => {
+                crate::shell_open::open_web_page(&url, crate::shell_open::WebPageKind::Release)?;
+                log::info!("已交接更新恢复网页，关闭当前管理器");
+            }
+        }
+        exit_process(&app)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+fn exit_process(app: &AppHandle) -> ! {
+    tauri_plugin_single_instance::destroy(app);
+    log::logger().flush();
+    std::process::exit(0)
 }
 
 fn pause_map_compression_for_exit() -> Result<crate::level_sets::recompress::ExitPause, String> {

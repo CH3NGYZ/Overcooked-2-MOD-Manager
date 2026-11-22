@@ -1,21 +1,24 @@
 use crate::app_state::AppState;
+use crate::app_update::UpdateTarget;
 use crate::app_update::cache::app_update_cache_get;
 use crate::app_update::cache::app_update_cache_store;
 use crate::app_update::channels::InstallerRegion;
 use crate::app_update::channels::emit_installer_channel_status;
-use crate::app_update::channels::emit_installer_phase;
 use crate::app_update::channels::installer_channel_status;
 use crate::app_update::channels::installer_manifest_sources;
 use crate::app_update::channels::installer_region;
-use crate::app_update::channels::{
-    INSTALLER_GITEE_OWNER, INSTALLER_GITEE_REPO, INSTALLER_GITHUB_OWNER, INSTALLER_GITHUB_REPO,
-};
 use crate::app_update::distribution;
 use crate::app_update::download::InstallerDownloadAttempt;
 use crate::app_update::download::discover_and_download_installer_update;
 use crate::app_update::manifest::discover_installer_update;
+use crate::app_update::receipt::{self, Installation};
+use crate::app_update::recovery_links::{self, Destination};
+use crate::app_update::staged::{DownloadStart, Recovery, StagedInstaller};
 use crate::archive;
-use crate::models::{AppDistribution, AppUpdateCheckResult, GitHubProxyConfig, OperationResult};
+use crate::models::{
+    AppConfig, AppDistribution, AppUpdateCheckResult, AppUpdateInfo, AppUpdateInstallationStatus,
+    GitHubProxyConfig, OperationResult,
+};
 use crate::shell_open;
 use tauri::AppHandle;
 use tauri::State;
@@ -36,15 +39,24 @@ pub fn open_update_repository(state: State<'_, AppState>) -> Result<OperationRes
     }
     log::info!("打开安装器更新仓库页面");
     let config = state.config.load_or_default();
-    let url = match installer_region(&config.region) {
-        InstallerRegion::MainlandChina => {
-            format!("https://gitee.com/{INSTALLER_GITEE_OWNER}/{INSTALLER_GITEE_REPO}/releases")
-        }
-        InstallerRegion::International => {
-            format!("https://github.com/{INSTALLER_GITHUB_OWNER}/{INSTALLER_GITHUB_REPO}/releases")
-        }
-    };
-    open_release_page(url)
+    open_release_page(recovery_links::release_list_url(installer_region(
+        &config.region,
+    )))
+}
+
+#[tauri::command]
+pub async fn get_pending_app_update_recovery(state: State<'_, AppState>) -> Result<bool, String> {
+    if distribution::current()? != AppDistribution::Standalone {
+        return Ok(false);
+    }
+    Ok(state.app_updates.recovery()?.is_some()
+        || installation_status(UpdateTarget::current()?).await? == Some(Installation::Failed))
+}
+
+async fn installation_status(target: UpdateTarget) -> Result<Option<Installation>, String> {
+    tauri::async_runtime::spawn_blocking(move || receipt::status(target))
+        .await
+        .map_err(|_| "update.checkInitFailed")?
 }
 
 #[tauri::command]
@@ -63,23 +75,68 @@ pub async fn check_app_update(
         return Ok(distribution::store_check(region.as_str()));
     }
     log::info!("开始检查安装器更新：跳过缓存={force}");
+    if let Some(recovery) = state.app_updates.recovery()? {
+        return Ok(AppUpdateCheckResult {
+            distribution: AppDistribution::Standalone,
+            update: Some(recovery.update),
+            channels: Vec::new(),
+            all_failed: false,
+            region: region.as_str().into(),
+            recovery_required: true,
+            installation_status: None,
+        });
+    }
+    let target = UpdateTarget::current()?;
+    let installation = installation_status(target).await?;
     /*
      * 启动时恒检测，所以这个命令每次启动都会跑；5 分钟内重复调用直接返回
      * 上一次的成功结果。只缓存成功结果 —— 全部通道失败/超时的结论不能占住
      * 缓存，否则用户在这 5 分钟里连手动重试都会拿到同一份失败结论。
      * 手动检测传 force=true（与仓库刷新同一条规则）。
      */
-    if !force {
-        if let Some(cached) = app_update_cache_get(&state, region) {
-            log::info!("安装器更新检查命中 5 分钟缓存，跳过网络请求");
-            return Ok(cached);
+    let cached = (!force && installation != Some(Installation::Failed))
+        .then(|| app_update_cache_get(&state, region))
+        .flatten();
+    let mut result = if let Some(cached) = cached {
+        log::info!("安装器更新检查命中 5 分钟缓存，跳过网络请求");
+        cached
+    } else {
+        let result = run_update_check(&app, &config, region).await;
+        if !result.all_failed {
+            app_update_cache_store(&state, &result);
         }
+        result
+    };
+    if !result.all_failed
+        && let Some(update) = result.update.as_ref()
+        && installation == Some(Installation::Failed)
+    {
+        let alternate_link = recovery_links::alternate_recovery_url(region, target, update).await;
+        state.app_updates.require_recovery(Recovery {
+            update: update.clone(),
+            alternate_link,
+        })?;
+        result.recovery_required = true;
     }
-    let result = match tokio::time::timeout(
+    result.installation_status = match installation {
+        Some(Installation::Applying) => Some(AppUpdateInstallationStatus::Applying),
+        Some(Installation::RebootRequired) => Some(AppUpdateInstallationStatus::RebootRequired),
+        Some(Installation::RestartFailed) => Some(AppUpdateInstallationStatus::RestartFailed),
+        _ => None,
+    };
+    Ok(result)
+}
+
+async fn run_update_check(
+    app: &AppHandle,
+    config: &AppConfig,
+    region: InstallerRegion,
+) -> AppUpdateCheckResult {
+    match tokio::time::timeout(
         std::time::Duration::from_secs(
             5 * installer_manifest_sources(&config.github_proxies, region).len() as u64 + 10,
         ),
-        discover_installer_update(&config, &app),
+        discover_installer_update(config, app),
     )
     .await
     {
@@ -94,7 +151,7 @@ pub async fn check_app_update(
         Ok(Err(error)) => {
             log::error!("安装器更新检查初始化失败: {error}");
             failed_app_update_check(
-                &app,
+                app,
                 &config.github_proxies,
                 region,
                 "update.checkInitFailed",
@@ -102,13 +159,9 @@ pub async fn check_app_update(
         }
         Err(_) => {
             log::warn!("安装器更新检查超过总超时，已跳过自动更新");
-            failed_app_update_check(&app, &config.github_proxies, region, "update.checkTimeout")
+            failed_app_update_check(app, &config.github_proxies, region, "update.checkTimeout")
         }
-    };
-    if !result.all_failed {
-        app_update_cache_store(&state, &result);
     }
-    Ok(result)
 }
 
 /// 整次检查失败时的结果：每个通道都标成失败，前端照旧逐条显示原因。
@@ -132,6 +185,8 @@ fn failed_app_update_check(
         all_failed: true,
         region: region.as_str().into(),
         distribution: AppDistribution::Standalone,
+        recovery_required: false,
+        installation_status: None,
     }
 }
 
@@ -141,115 +196,71 @@ pub async fn stage_app_update(
     state: State<'_, AppState>,
     channel: String,
     on_update: tauri::ipc::Channel<archive::DownloadProgress>,
-) -> Result<(), String> {
-    let target = crate::app_update::UpdateTarget::current()?;
+) -> Result<Option<AppUpdateInfo>, String> {
+    let target = UpdateTarget::current()?;
     if !target.supports_background_install() {
         return Err("update.formatUnsupported".into());
     }
-    #[cfg(not(windows))]
-    {
-        let _ = (app, state, channel, on_update);
-        Err("update.formatUnsupported".into())
-    }
-    #[cfg(windows)]
-    {
-        let _update_guard = archive::begin_app_update()?;
-        let attempt = archive::observe_download_progress(
-            move |progress| {
-                let _ = on_update.send(progress);
-            },
-            discover_and_download_installer_update(&state, &app, Some(&channel)),
-        )
-        .await?;
-        let (info, download) = match attempt {
-            InstallerDownloadAttempt::Updated { info, download, .. } => (info, download),
-            InstallerDownloadAttempt::Latest => return Err("update.alreadyLatest".into()),
-            InstallerDownloadAttempt::Failed(message) => return Err(message),
-        };
-        if info.installer_type != target.kind {
-            return Err("update.manifestPlatformMismatch".into());
+    if let Some(status) = installation_status(target).await? {
+        return Err(match status {
+            Installation::Failed => "update.installFailedManual",
+            Installation::Applying => "update.inProgress",
+            Installation::RebootRequired => "update.rebootRequired",
+            Installation::RestartFailed => "update.restartFailed",
         }
-        let staged = tauri::async_runtime::spawn_blocking(move || {
-            crate::app_update::staged::StagedInstaller::prepare(download, info.version)
-        })
-        .await
-        .map_err(|_| "update.stageFailed")??;
-        *state
-            .staged_app_update
-            .lock()
-            .map_err(|_| "lock.poisoned")? = Some(staged);
-        Ok(())
+        .into());
     }
+    let guard = match state.app_updates.start_download()? {
+        DownloadStart::Ready(info) => return Ok(Some(*info)),
+        DownloadStart::Started(guard) => guard,
+    };
+    let attempt = archive::observe_download_progress(
+        move |progress| {
+            let _ = on_update.send(progress);
+        },
+        discover_and_download_installer_update(&state, &app, Some(&channel), || guard.cancelled()),
+    )
+    .await?;
+    let (info, download) = match attempt {
+        InstallerDownloadAttempt::Updated { info, download } => (info, download),
+        InstallerDownloadAttempt::Latest => return Ok(None),
+        InstallerDownloadAttempt::Failed(message) => return Err(message),
+    };
+    if guard.cancelled() {
+        return Err("download.cancelled".into());
+    }
+    if info.installer_type != target.kind {
+        return Err("update.manifestPlatformMismatch".into());
+    }
+    let staged =
+        tauri::async_runtime::spawn_blocking(move || StagedInstaller::prepare(download, info))
+            .await
+            .map_err(|_| "update.stageFailed")??;
+    guard.publish(staged).map(Some)
 }
 
 #[tauri::command]
-pub async fn install_app_update(
+pub async fn finish_app_update_recovery(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<OperationResult, String> {
+    destination: Destination,
+    locale: String,
+) -> Result<(), String> {
     distribution::require_standalone()?;
-    if crate::app_update::UpdateTarget::current()?.supports_background_install() {
-        return Err("update.formatUnsupported".into());
-    }
-    let _update_guard = archive::begin_app_update()?;
-    log::info!("开始安装器自更新");
-    let attempt = discover_and_download_installer_update(&state, &app, None).await?;
-    let (region, info, download) = match attempt {
-        InstallerDownloadAttempt::Updated {
-            region,
-            info,
-            download,
-        } => (region, info, download),
-        InstallerDownloadAttempt::Latest => {
-            log::info!("安装器已是最新版本");
-            return Ok(OperationResult {
-                ok: false,
-                message: "update.alreadyLatest".into(),
-            });
-        }
-        InstallerDownloadAttempt::Failed(message) => {
-            log::warn!(
-                "安装器自更新未完成：{}",
-                crate::locale_tag::diagnostic_tag(&message)
-            );
-            return Ok(OperationResult { ok: false, message });
-        }
+    let recovery = state
+        .app_updates
+        .recovery()?
+        .ok_or("update.stagedUnavailable")?;
+    let url = match destination {
+        Destination::Website => recovery_links::website_recovery_url(&locale),
+        Destination::Alternate => recovery.alternate_link,
     };
-    if archive::is_download_cancelled() {
-        return Err("download.cancelled".into());
-    }
-    emit_installer_phase(&app, region, "install", None, Some(info.clone()));
-    let version = info.version;
-    log::info!(
-        "开始通过 Tauri Updater 安装程序更新：版本={}，格式={}，已验签字节数={}",
-        version,
-        info.installer_type,
-        download.bytes.len()
-    );
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::level_sets::recompress::shutdown().map_err(std::io::Error::other)?;
-        download.update.install(&download.bytes)
-    })
+    super::system::request_user_exit(
+        app,
+        state.inner().clone(),
+        super::system::ExitAction::OpenRecoveryPage(url),
+    )
     .await
-    .map_err(|_| "update.installFailed")?
-    .map_err(|error| {
-        log::error!(
-            "Tauri Updater 安装失败：{}",
-            crate::app_update::updater_error_details(&error)
-        );
-        "update.installFailedManual".to_string()
-    })?;
-    #[cfg(not(windows))]
-    {
-        log::info!("Tauri Updater 安装完成，正在重启：版本={version}");
-        app.restart();
-    }
-    #[cfg(windows)]
-    Ok(OperationResult {
-        ok: true,
-        // Windows normally exits inside Update::install after spawning.
-        message: "update.installerStarted".into(),
-    })
 }
 
 #[tauri::command]

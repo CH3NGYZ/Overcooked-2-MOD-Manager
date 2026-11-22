@@ -24,6 +24,8 @@
   --oc2-layer-drop: 2700;
   --oc2-layer-busy: 4000;
   --oc2-layer-titlebar-menu: 5000;
+  --oc2-status-error: #b42331;
+  --oc2-status-warning: #8c6100;
   /*
    * 内置教程：高于标题栏弹层。
    *
@@ -32,6 +34,11 @@
    * 教程结束即整层卸载，不会长期挡住标题栏弹层。
    */
   --oc2-layer-tutorial: 6000;
+}
+
+:root.dark {
+  --oc2-status-error: #ff818c;
+  --oc2-status-warning: #ffd15b;
 }
 
 /*

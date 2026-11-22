@@ -24,7 +24,28 @@ impl crate::download::DownloadOutput for tauri_plugin_updater::Update {
     fn discard(&self) {}
 }
 
+async fn wait_for_cancellation(is_cancelled: impl Fn() -> bool) {
+    while !is_cancelled() {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
 pub(super) async fn download_installer(
+    client: &reqwest::Client,
+    url: &str,
+    reporter: &archive::DownloadReporter,
+    label: &str,
+    network: &crate::models::NetworkConfig,
+    is_cancelled: impl Fn() -> bool,
+) -> Result<Vec<u8>, String> {
+    tokio::select! {
+        biased;
+        _ = wait_for_cancellation(is_cancelled) => Err("download.cancelled".into()),
+        result = read_installer(client, url, reporter, label, network) => result,
+    }
+}
+
+async fn read_installer(
     client: &reqwest::Client,
     url: &str,
     reporter: &archive::DownloadReporter,
@@ -68,30 +89,6 @@ pub(super) async fn download_installer(
     Ok(bytes)
 }
 
-async fn download_installer_for_info(
-    client: &reqwest::Client,
-    info: &AppUpdateInfo,
-    app: &AppHandle,
-    signature: &str,
-    proxies: &GitHubProxyConfig,
-    region: InstallerRegion,
-    network: &crate::models::NetworkConfig,
-) -> Result<Vec<u8>, Vec<String>> {
-    let candidates = installer_download_candidates(proxies, info);
-    download_verified_installer(
-        client,
-        info,
-        proxies,
-        candidates,
-        Some(app),
-        region,
-        |bytes| crate::app_update::verify_download(bytes, signature, &info.version),
-        network,
-    )
-    .await
-    .map_err(|error| vec![error])
-}
-
 pub(crate) async fn download_verified_installer(
     client: &reqwest::Client,
     info: &AppUpdateInfo,
@@ -101,6 +98,7 @@ pub(crate) async fn download_verified_installer(
     region: InstallerRegion,
     verify: impl Fn(&[u8]) -> Result<(), String>,
     network: &crate::models::NetworkConfig,
+    is_cancelled: impl Copy + Fn() -> bool,
 ) -> Result<Vec<u8>, String> {
     let proxy_count = candidates
         .iter()
@@ -113,9 +111,9 @@ pub(crate) async fn download_verified_installer(
         proxy_count,
         candidates.len()
     );
-    let result = try_asset_download_candidates(
+    try_asset_download_candidates(
         candidates,
-        archive::is_download_cancelled,
+        is_cancelled,
         |candidate, reporter| {
             let verify = &verify;
             async move {
@@ -149,9 +147,13 @@ pub(crate) async fn download_verified_installer(
                     &reporter,
                     "update.downloadingInstaller",
                     network,
+                    is_cancelled,
                 )
                 .await
                 .and_then(|bytes| {
+                    if is_cancelled() {
+                        return Err("download.cancelled".into());
+                    }
                     archive::validate_download_bytes(
                         &bytes,
                         info.download_size.filter(|size| *size > 0),
@@ -168,10 +170,10 @@ pub(crate) async fn download_verified_installer(
                             mode: mode.into(),
                             ..installer_channel_status(
                                 channel,
-                                if result.is_ok() {
-                                    "downloaded"
-                                } else {
-                                    "failed"
+                                match &result {
+                                    Ok(_) => "downloaded",
+                                    Err(error) if error == "download.cancelled" => "cancelled",
+                                    Err(_) => "failed",
                                 },
                                 result.as_ref().err().cloned(),
                             )
@@ -184,14 +186,13 @@ pub(crate) async fn download_verified_installer(
         network,
         Some(DownloadContext {
             execution: None,
-            app,
+            app: None,
             label: "update.downloadingInstaller",
             file_name: Some(&info.installer_name),
             expected_size: info.download_size,
         }),
     )
-    .await;
-    result
+    .await
 }
 
 async fn resolve_app_update(
@@ -199,6 +200,7 @@ async fn resolve_app_update(
     info: &AppUpdateInfo,
     proxies: &GitHubProxyConfig,
     network: &crate::models::NetworkConfig,
+    is_cancelled: impl Copy + Fn() -> bool,
 ) -> Result<tauri_plugin_updater::Update, String> {
     // Package hosting can differ from the manifest mirror. Re-read the selected
     // manifest's provider, then require identical version, URL and signature.
@@ -217,12 +219,12 @@ async fn resolve_app_update(
     channels.retain(|channel| channel.provider == provider);
     race_installer_channels(
         &channels,
-        archive::is_download_cancelled,
-        |channel, _| async move { resolve_app_update_at(app, info, &channel.endpoint,
-network,
-).await },
-network,
-)
+        is_cancelled,
+        |channel, _| async move {
+            resolve_app_update_at(app, info, &channel.endpoint, network, is_cancelled).await
+        },
+        network,
+    )
     .await
 }
 
@@ -231,27 +233,14 @@ async fn resolve_app_update_at(
     info: &AppUpdateInfo,
     url: &str,
     network: &crate::models::NetworkConfig,
+    is_cancelled: impl Fn() -> bool,
 ) -> Result<tauri_plugin_updater::Update, String> {
     use tauri_plugin_updater::UpdaterExt;
     let target = crate::app_update::UpdateTarget::current()?;
     if target.kind != info.installer_type {
         return Err("update.manifestPlatformMismatch".into());
     }
-    #[cfg(windows)]
-    let installer_args = {
-        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
-        let target_executable = crate::update_migration::update_executable(&executable)?;
-        let logs = crate::user_paths::logs_dir()?;
-        std::fs::create_dir_all(&logs).map_err(|error| error.to_string())?;
-        // Keep the original path so installer-side relocation can snapshot it.
-        crate::app_update::windows_installer_args(
-            target.kind,
-            &executable,
-            &target_executable,
-            &logs.join("update-msi.log"),
-        )?
-    };
-    if archive::is_download_cancelled() {
+    if is_cancelled() {
         return Err("download.cancelled".into());
     }
     let endpoint = Url::parse(url).map_err(|_| "update.manifestUrlInvalid")?;
@@ -267,15 +256,6 @@ async fn resolve_app_update_at(
         .map_err(|e| e.to_string())?
         .header("Pragma", "no-cache")
         .map_err(|e| e.to_string())?;
-    #[cfg(windows)]
-    let builder = builder
-        .clear_installer_args()
-        .installer_args(installer_args.clone())
-        // Our success hooks launch once; do not append /R or /ARGS.
-        .restart_after_install(false)
-        .on_before_exit(|| {
-            log::info!("Tauri Updater 准备启动 Windows 安装器并退出当前程序；安装结果尚未确认");
-        });
     let updater = match builder
         .endpoints(vec![endpoint])
         .and_then(|builder| builder.build())
@@ -289,14 +269,9 @@ async fn resolve_app_update_at(
             return Err(error.to_string());
         }
     };
-    let cancellation = async {
-        while !archive::is_download_cancelled() {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-    };
     let result = tokio::select! {
         biased;
-        _ = cancellation => return Err("download.cancelled".into()),
+        _ = wait_for_cancellation(is_cancelled) => return Err("download.cancelled".into()),
         result = updater.check() => result,
     };
     match result {
@@ -323,6 +298,7 @@ async fn resolve_app_update_at(
 
 pub(crate) struct VerifiedInstallerDownload {
     pub(crate) bytes: Vec<u8>,
+    #[cfg(target_os = "macos")]
     pub(crate) update: tauri_plugin_updater::Update,
 }
 
@@ -333,26 +309,30 @@ async fn prepare_and_download_installer(
     proxies: &GitHubProxyConfig,
     region: InstallerRegion,
     network: &crate::models::NetworkConfig,
-) -> Result<VerifiedInstallerDownload, Vec<String>> {
-    let update = resolve_app_update(app, info, proxies, network)
-        .await
-        .map_err(|error| vec![error])?;
-    let bytes = download_installer_for_info(
+    is_cancelled: impl Copy + Fn() -> bool,
+) -> Result<VerifiedInstallerDownload, String> {
+    let update = resolve_app_update(app, info, proxies, network, is_cancelled).await?;
+    let bytes = download_verified_installer(
         client,
         info,
-        app,
-        &update.signature,
         proxies,
+        installer_download_candidates(proxies, info),
+        Some(app),
         region,
+        |bytes| crate::app_update::verify_download(bytes, &update.signature, &info.version),
         network,
+        is_cancelled,
     )
     .await?;
-    Ok(VerifiedInstallerDownload { bytes, update })
+    Ok(VerifiedInstallerDownload {
+        bytes,
+        #[cfg(target_os = "macos")]
+        update,
+    })
 }
 
 pub(crate) enum InstallerDownloadAttempt {
     Updated {
-        region: InstallerRegion,
         info: AppUpdateInfo,
         download: VerifiedInstallerDownload,
     },
@@ -366,7 +346,11 @@ pub(crate) async fn discover_and_download_installer_update(
     state: &AppState,
     app: &AppHandle,
     checked_channel: Option<&str>,
+    is_cancelled: impl Copy + Fn() -> bool,
 ) -> Result<InstallerDownloadAttempt, String> {
+    if is_cancelled() {
+        return Err("download.cancelled".into());
+    }
     let config = state.config.load_or_default();
     let region = installer_region(&config.region);
     log::info!("开始执行安装器更新流程：地区={}", region.as_str());
@@ -386,7 +370,6 @@ pub(crate) async fn discover_and_download_installer_update(
         && let Some(info) =
             super::cache::app_update_cache_get(state, region).and_then(|result| result.update)
         && info.source_channel.as_deref() == Some(channel)
-        && info.background_install
     {
         emit_installer_phase(app, region, "download", None, Some(info.clone()));
         match prepare_and_download_installer(
@@ -396,22 +379,17 @@ pub(crate) async fn discover_and_download_installer_update(
             &config.github_proxies,
             region,
             &config.network,
+            is_cancelled,
         )
         .await
         {
             Ok(download) => {
-                return Ok(InstallerDownloadAttempt::Updated {
-                    region,
-                    info,
-                    download,
-                });
+                return Ok(InstallerDownloadAttempt::Updated { info, download });
             }
-            Err(errors) => log::warn!(
-                "按已检查的渠道下载更新失败，将重新检查：渠道={channel:?}，原因={:?}",
-                errors
-                    .iter()
-                    .map(|error| crate::locale_tag::diagnostic_tag(error))
-                    .collect::<Vec<_>>()
+            Err(error) if error == "download.cancelled" => return Err(error),
+            Err(error) => log::warn!(
+                "按已检查的渠道下载更新失败，将重新检查：渠道={channel:?}，原因={}",
+                crate::locale_tag::diagnostic_tag(&error)
             ),
         }
     }
@@ -420,7 +398,7 @@ pub(crate) async fn discover_and_download_installer_update(
         &installer_manifest_sources(&config.github_proxies, region),
         target,
         &current_version,
-        archive::is_download_cancelled,
+        is_cancelled,
         |status| {
             if status.status == "checking" {
                 emit_installer_phase(app, region, "manifest", None, None);
@@ -440,9 +418,9 @@ pub(crate) async fn discover_and_download_installer_update(
                     proxies,
                     region,
                     network,
+                    is_cancelled,
                 )
-                .await
-                .map_err(|errors| errors.join("；"))?;
+                .await?;
                 Ok((info, download))
             }
         },
@@ -451,11 +429,7 @@ pub(crate) async fn discover_and_download_installer_update(
     .await?;
     match result {
         InstallerRouteResult::Updated((info, download)) => {
-            return Ok(InstallerDownloadAttempt::Updated {
-                region,
-                info,
-                download,
-            });
+            return Ok(InstallerDownloadAttempt::Updated { info, download });
         }
         InstallerRouteResult::Latest => return Ok(InstallerDownloadAttempt::Latest),
         InstallerRouteResult::Failed => {}

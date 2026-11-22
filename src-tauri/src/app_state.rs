@@ -43,8 +43,7 @@ pub struct AppState {
     pub release_cache: Arc<crate::release_cache::RepoReleaseCache>,
     /// 程序更新检查的 5 分钟缓存（启动时恒检测，见 `check_app_update`）。
     pub app_update_check: Arc<Mutex<Option<CachedAppUpdateCheck>>>,
-    #[cfg(windows)]
-    pub(crate) staged_app_update: Arc<Mutex<Option<crate::app_update::staged::StagedInstaller>>>,
+    pub(crate) app_updates: Arc<crate::app_update::staged::AppUpdates>,
 }
 
 /// 上一次成功的程序更新检查结果。
@@ -101,8 +100,7 @@ impl AppState {
             map_source_registry: Arc::default(),
             release_cache: Arc::new(crate::release_cache::RepoReleaseCache::default()),
             app_update_check: Arc::new(Mutex::new(None)),
-            #[cfg(windows)]
-            staged_app_update: Arc::default(),
+            app_updates: Arc::default(),
         }
     }
 }

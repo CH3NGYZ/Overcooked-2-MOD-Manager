@@ -6,7 +6,8 @@ import { NButton, NDrawer, NDrawerContent, NInput, NRadioButton, NRadioGroup, NS
 import { ArrowUndoOutline, DownloadOutline, FolderOpenOutline, InformationCircleOutline } from '@vicons/ionicons5'
 import { getVersion } from '@tauri-apps/api/app'
 import PathEditor from '../components/PathEditor.vue'
-import { appUpdateState, applyAppUpdateCheck } from '../appUpdateState'
+import { appUpdateBlocksOperations, appUpdateState } from '../appUpdateState'
+import { checkForAppUpdate } from '../composables/useAppUpdates'
 import AppModal from '../components/AppModal.vue'
 import BepInExPanel from '../components/BepInExPanel.vue'
 import SettingsGroup from '../components/settings/SettingsGroup.vue'
@@ -35,7 +36,10 @@ const mods = computed(() => withDemoMods(dashboard.mods.value))
 const diyLevelTarget = computed(() => withDemoDiyLevelTarget(dashboard.diyLevelTarget.value))
 
 const version = ref('')
-const checking = ref(false)
+const checkPending = ref(false)
+const checking = computed(() => checkPending.value || appUpdateState.stage === 'checking')
+const updateUnavailable = computed(() => ['downloading', 'ready'].includes(appUpdateState.stage)
+  || appUpdateBlocksOperations())
 const realConfig = ref<PublicConfig | null>(null)
 const config = computed({ get: () => withDemoConfig(realConfig.value), set: value => { realConfig.value = value } })
 const savingPath = ref(false)
@@ -154,7 +158,7 @@ async function refreshPermission() {
 }
 
 async function relaunchAdmin() {
-  if (relaunching.value || appUpdateState.stage !== 'idle') return
+  if (relaunching.value || appUpdateBlocksOperations()) return
   relaunching.value = true
   try {
     const result = await api.relaunchAsAdmin()
@@ -255,35 +259,14 @@ async function saveGamePath(path: string) {
 
 /* ===== 程序更新 ===== */
 
-/**
- * 商店版打开商店更新页；独立版手动检测一次更新。
- *
- * 全部渠道失败时不再只弹一句「稍后重试」—— 原来的「更新设置」抽屉里有
- * 「打开发布页」补救入口，抽屉去掉后这个入口必须跟着搬到这里，
- * 否则用户在网络完全不通时无路可走。
- */
 async function checkUpdate() {
-  if (checking.value) return
-  checking.value = true
+  if (checking.value || updateUnavailable.value) return
+  checkPending.value = true
   try {
-    if (!storeManaged.value) {
-      const result = await api.checkAppUpdate('zh-CN', true)
-      applyAppUpdateCheck(result)
-      if (!storeManaged.value) {
-        if (result.all_failed) openReleaseFallback()
-        else if (!result.update) message.success(t('dialogs.youAreUpToDate'))
-        return
-      }
-    }
-    await api.openUpdateRepository()
-  } catch (reason) { fail(reason) } finally { checking.value = false }
-}
-
-/** 全部渠道失败时的补救入口：允许直接去发布页手动下载。 */
-const updateFailedOpen = ref(false)
-
-function openReleaseFallback() {
-  updateFailedOpen.value = true
+    await checkForAppUpdate()
+    if (appUpdateState.stage === 'current') message.success(t('dialogs.youAreUpToDate'))
+    else if (appUpdateState.stage === 'checkFailed') message.error(t('dialogs.updateCheckFailed'))
+  } catch (reason) { fail(reason) } finally { checkPending.value = false }
 }
 
 /* ===== 通用偏好 ===== */
@@ -660,7 +643,8 @@ async function clearTokens() {
       <template #right>
         <n-tag v-if="distributionLabel" size="small" :bordered="false" data-testid="app-distribution">{{ distributionLabel }}</n-tag>
         <n-tag size="small" :bordered="false" data-testid="app-version">v{{ version || '…' }}</n-tag>
-        <n-button size="small" :secondary="!checking" :loading="checking" data-testid="app-check-update" @click.stop="checkUpdate">
+        <n-button size="small" :secondary="!checking" :loading="checking" :disabled="updateUnavailable"
+          data-testid="app-check-update" @click.stop="checkUpdate">
           <template #icon><DownloadOutline width="14" height="14" /></template>
           {{ t('overview.check') }}
         </n-button>
@@ -668,21 +652,6 @@ async function clearTokens() {
     </SettingsRow>
   </SettingsGroup>
 
-  <!--
-    全部渠道检查失败：给一条能走的路。
-    原来的「更新设置」抽屉里放着这个入口，抽屉删掉后放在这里，
-    由「检测更新」按钮在 all_failed 时打开。
-  -->
-  <AppModal :show="updateFailedOpen" :title="t('dialogs.updateCheckFailed')" max-width="min(480px, 92%)"
-    @update:show="(value: boolean) => (updateFailedOpen = value)">
-    <p class="muted update-failed-note">{{ t('dialogs.allChannelsFailedDownloadManuallyFromTheReleasePage') }}</p>
-    <template #footer>
-      <n-button size="small" type="primary" @click="void api.openUpdateRepository(); updateFailedOpen = false">
-        {{ t('dialogs.openReleasePage') }}
-      </n-button>
-      <n-button size="small" quaternary @click="updateFailedOpen = false">{{ t('recycle.cancel') }}</n-button>
-    </template>
-  </AppModal>
 
   <!-- 二级：选择路径 -->
   <n-drawer v-model:show="pathDrawer" :width="440" placement="right">
@@ -758,7 +727,6 @@ async function clearTokens() {
 .drawer-hint { margin-top: 14px; }
 .drawer-hint.danger { color: #ee8585; }
 /* 更新检查失败弹窗的说明段：只有一句话，不要撑出多余留白 */
-.update-failed-note { margin: 0; font-size: 13px; line-height: 1.65; }
 .drawer-pref {
   display: flex; align-items: center; justify-content: space-between; gap: 14px;
   padding: 10px 0 14px; border-bottom: 1px dashed var(--oc2-rail-line); margin-bottom: 6px;

@@ -10,8 +10,10 @@ test('About reads the same native package identity at startup without waiting fo
   assert.match(commands, /#\[tauri::command\]\s*pub fn get_app_distribution\(\) -> Result<AppDistribution, String> \{\s*distribution::current\(\)\s*\}/)
   const app = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
   const mount = app.slice(app.indexOf('onMounted(() => {'))
-  const identity = mount.indexOf('api.getAppDistribution().then(setAppDistribution)')
-  assert.ok(identity >= 0 && identity < mount.indexOf('await api.checkAppUpdate('))
+  assert.match(mount, /initializeAppUpdates\(\)/)
+  const service = readFileSync(new URL('../src/composables/useAppUpdates.ts', import.meta.url), 'utf8')
+  const startup = service.slice(service.indexOf('export function initializeAppUpdates()'))
+  assert.match(startup, /void api\.getAppDistribution\(\)\.then\(setAppDistribution\)[^]*?void checkForAppUpdate\(false\)/)
 })
 
 test('Store checks and installs stop before standalone cache, network or update locks', () => {
@@ -21,10 +23,10 @@ test('Store checks and installs stop before standalone cache, network or update 
   for (const action of ['app_update_cache_get(', 'tokio::time::timeout(', 'discover_installer_update(']) {
     assert.ok(check.indexOf(action) > earlyReturn, `${action} must follow the Store return`)
   }
-  const install = commands.slice(commands.indexOf('pub async fn install_app_update('))
-  const gate = install.indexOf('distribution::require_standalone()?;')
+  const install = commands.slice(commands.indexOf('pub async fn stage_app_update('))
+  const gate = install.indexOf('UpdateTarget::current()?')
   assert.ok(gate >= 0)
-  for (const action of ['archive::begin_app_update()', 'discover_and_download_installer_update(', 'download.update.install(']) {
+  for (const action of ['discover_and_download_installer_update(']) {
     assert.ok(install.indexOf(action) > gate, `${action} must follow the distribution gate`)
   }
 })

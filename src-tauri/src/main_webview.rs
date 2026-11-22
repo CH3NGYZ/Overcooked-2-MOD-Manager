@@ -1,8 +1,16 @@
 //! The manager shell serves local UI. Dedicated verification/download windows own their own rules.
-use tauri::{App, Runtime, WebviewWindowBuilder, utils::config::FrontendDist};
+use tauri::{
+    App, AppHandle, Emitter, Manager, Runtime, WebviewWindowBuilder, utils::config::FrontendDist,
+};
 use url::Url;
 
 const LABEL: &str = "main";
+
+pub(crate) fn request_quit<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+    app.get_webview_window(LABEL)
+        .ok_or(tauri::Error::WindowNotFound)?
+        .emit("app-quit-requested", ())
+}
 
 pub(crate) fn app_url(config: &tauri::Config, development: bool) -> Url {
     let configured = if development {

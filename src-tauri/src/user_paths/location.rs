@@ -21,10 +21,16 @@ fn unavailable(_: impl std::fmt::Display) -> String {
 }
 
 /// 位置与当前数据根完全独立，卸载、迁移与清除数据都不删除它。
-pub(crate) fn location_file() -> Result<PathBuf, String> {
-    let file = dirs::config_local_dir()
+pub(crate) fn bootstrap_dir() -> Result<PathBuf, String> {
+    let parent = dirs::config_local_dir()
         .ok_or(ROOT_UNAVAILABLE)?
-        .join("OC2ModManager-bootstrap/data-location.json");
+        .join("OC2ModManager-bootstrap");
+    validate_directory_chain(&parent)?;
+    Ok(parent)
+}
+
+pub(crate) fn location_file() -> Result<PathBuf, String> {
+    let file = bootstrap_dir()?.join("data-location.json");
     validate_pointer_path(&file)?;
     Ok(file)
 }

@@ -7,7 +7,7 @@ import { createRenderer, h, nextTick, ref, toRaw } from 'vue'
 
 // Real SettingsView setup and shared update state; replace native/unrelated services only.
 const boundary = globalThis.__storeUpdateSettings = {
-  calls: [], notices: [], result: null, opening: async () => ({ ok: true }), demoActive: ref(true),
+  calls: [], notices: [], result: null, opening: async () => ({ ok: true }), demoActive: ref(true), dialogs: ref([]),
 }
 registerHooks({
   resolve(specifier, context, next) {
@@ -21,7 +21,10 @@ registerHooks({
   },
   load(url, context, next) {
     const fake = source => ({ format: 'module', shortCircuit: true, source })
-    if (url === 'store-update-test:naive-ui') return fake('export const NButton={},NDrawer={},NDrawerContent={},NInput={},NRadioButton={},NRadioGroup={},NSelect={},NSwitch={},NTag={}')
+    if (url === 'store-update-test:naive-ui') return fake(`
+      export const NButton={},NDrawer={},NDrawerContent={},NInput={},NRadioButton={},NRadioGroup={},NSelect={},NSwitch={},NTag={}
+      export const useDialogReactiveList = () => globalThis.__storeUpdateSettings.dialogs
+    `)
     if (url === 'store-update-test:@vicons/ionicons5') return fake('export const ArrowUndoOutline={},DownloadOutline={},FolderOpenOutline={},InformationCircleOutline={}')
     if (url === 'store-update-test:vue-router') return fake('export const useRoute=()=>({query:{}}),useRouter=()=>({replace(){}})')
     if (url === 'store-update-test:@tauri-apps/api/app') return fake('export const getVersion=async()=>"2.3.2"')
@@ -38,6 +41,7 @@ registerHooks({
       '/src/composables/useDashboardStore.ts': `import {ref} from 'vue';export const useDashboard=()=>({
         config:ref(null),game:ref(null),mods:ref([]),diyLevelTarget:ref(null),load:async()=>{},ensureLoaded:async()=>{}})`,
       '/src/composables/useDataProviderSwitch.ts': `import {ref} from 'vue';export const useDataProviderSwitch=()=>({switching:ref(false),switchSelection:async()=>{}})`,
+      '/src/modChanges/store.ts': `import {ref} from 'vue';export const useModChanges=()=>({state:ref(null)})`,
       '/src/tutorial/demo.ts': `export const demoActive=globalThis.__storeUpdateSettings.demoActive;
         export const withDemoConfig=v=>v,withDemoDiyLevelTarget=v=>v,withDemoGame=v=>v,withDemoMods=v=>v`,
       '/src/useNotify.ts': `export const useNotify=()=>({success:v=>globalThis.__storeUpdateSettings.notices.push(['success',v]),error:v=>globalThis.__storeUpdateSettings.notices.push(['error',v])})`,
@@ -60,7 +64,7 @@ const renderer = createRenderer({
 const result = (patch = {}) => ({ channels: [], all_failed: false, region: 'cn', ...patch })
 const info = { version: '9.9.9', current_version: '2.3.2' }
 function mounted(t) {
-  Object.assign(toRaw(shared.appUpdateState), { distribution: null, update: null, stage: 'idle', error: '' })
+  Object.assign(toRaw(shared.appUpdateState), { distribution: null, update: null, stage: 'idle', error: '', checkingRecovery: false })
   boundary.calls.length = boundary.notices.length = 0
   boundary.result = result()
   boundary.opening = async () => ({ ok: true })
@@ -90,13 +94,12 @@ test('first manual check discovering Store never says latest or opens independen
   assert.deepEqual(boundary.calls, [['check', 'zh-CN', true], ['open']])
   assert.deepEqual(boundary.notices, [])
   assert.equal(view.storeManaged, true)
-  assert.equal(view.updateFailedOpen, false)
   assert.equal(shared.appUpdateState.stage, 'idle')
 })
 
 test('Store launch errors translate normally; duplicate clicks share checking gate', async t => {
   const view = mounted(t)
-  shared.applyAppUpdateCheck(result({ distribution: 'microsoft_store' }))
+  shared.setAppDistribution('microsoft_store')
   let reject
   boundary.opening = () => new Promise((_, no) => { reject = no })
   const opening = view.checkUpdate()
@@ -118,15 +121,16 @@ test('ordinary checks preserve current, update and all-channel failure behavior'
   assert.equal(view.storeManaged, false)
   boundary.result = result({ all_failed: true, update: info })
   await view.checkUpdate()
-  assert.equal(view.updateFailedOpen, true)
-  assert.equal(shared.appUpdateState.stage, 'idle')
+  assert.equal(shared.appUpdateState.stage, 'checkFailed')
+  assert.deepEqual(boundary.notices.at(-1), ['error', 'dialogs.updateCheckFailed'])
   boundary.result = result({ distribution: 'standalone', update: info })
   await view.checkUpdate()
-  assert.equal(shared.appUpdateState.stage, 'required')
+  assert.equal(shared.appUpdateState.stage, 'stageFailed')
+  assert.equal(shared.appUpdateState.error, 'update.deferredUnsupported')
   assert.equal(boundary.calls.filter(([kind]) => kind === 'open').length, 0)
 })
 
-test('About shows the channel, version and the only update control for both channels', () => {
+test('About shows the channel, version and a unified update control for both channels', () => {
   const source = readFileSync(new URL('../src/views/SettingsView.vue', import.meta.url), 'utf8')
   assert.deepEqual(parse(source).errors, [])
   assert.doesNotMatch(source, /settings-update|checkForUpdatesOnStartup|store-update-row/)

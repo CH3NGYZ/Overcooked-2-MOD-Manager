@@ -83,7 +83,7 @@ test('监听只注册一次，且不在来源卡片里', () => {
 })
 
 test('全局更新门中断的释放事件在安装 IPC 前留下原因', () => {
-  assert.match(fileDrop, /if \(appUpdateState\.stage !== 'idle'\) \{\s*if \(payload\.type === 'drop'\) recordFileDrop\('update_gate', appUpdateState\.stage, payload\.paths\)\s*dragActive\.value = false\s*return\s*\}/)
+  assert.match(fileDrop, /if \(appUpdateBlocksOperations\(\)\) \{\s*if \(payload\.type === 'drop'\) recordFileDrop\('update_gate', appUpdateState\.stage, payload\.paths\)\s*dragActive\.value = false\s*return\s*\}/)
 })
 
 test('四个 MOD / 地图页面各自声明拖放，扩展名与来源卡片一致', () => {

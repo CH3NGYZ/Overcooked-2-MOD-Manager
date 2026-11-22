@@ -1,51 +1,86 @@
 use super::*;
-use crate::config::ConfigService;
-use std::fs;
 
-fn fixture() -> StagedInstaller {
-    let bytes = b"non-executable staging test fixture";
-    let work = tempfile::tempdir().unwrap();
-    let source = work.path().join(MANAGER_EXECUTABLE);
-    fs::write(work.path().join(INSTALLER_FILE), bytes).unwrap();
-    StagedInstaller {
-        destination: source.clone(),
-        source,
-        work,
-        version: "9.0.0".into(),
-        digest: archive::sha256_reader(bytes.as_slice()).unwrap(),
+fn start(updates: &AppUpdates) -> StageGuard<'_> {
+    match updates.start_download().unwrap() {
+        DownloadStart::Started(guard) => guard,
+        DownloadStart::Ready(_) => panic!("fresh update slot should start a download"),
     }
 }
 
 #[test]
-fn staging_lock_excludes_file_changes_until_the_installer_is_started() {
-    let staged = fixture();
-    let path = staged.path();
-    let lock = staged.lock_verified_file().unwrap();
-    assert!(File::open(&path).is_ok());
-    assert!(OpenOptions::new().write(true).open(&path).is_err());
-    assert!(fs::rename(&path, path.with_extension("changed")).is_err());
-    drop(lock);
-    fs::write(&path, b"different payload").unwrap();
-    assert_eq!(staged.lock_verified_file().unwrap_err(), UNAVAILABLE);
-    fs::remove_file(&path).unwrap();
-    assert_eq!(staged.lock_verified_file().unwrap_err(), UNAVAILABLE);
+fn only_one_background_download_runs_and_retry_can_acquire_the_slot() {
+    let updates = AppUpdates::default();
+    let first = start(&updates);
+    assert!(matches!(updates.start_download(), Err(error) if error == IN_PROGRESS));
+    assert!(!first.cancelled());
+    drop(first);
+    assert!(!start(&updates).cancelled());
 }
 
 #[test]
-fn explicit_apply_requires_a_staged_installer_but_normal_exit_can_continue_without_one() {
-    let work = tempfile::tempdir().unwrap();
-    let state = AppState::with_config(ConfigService::for_test(work.path().to_path_buf()));
-    assert_eq!(handoff(&state, true).unwrap_err(), UNAVAILABLE);
-    assert!(handoff(&state, false).is_ok());
-}
-
-#[test]
-fn renaming_the_manager_cannot_silently_update_a_different_executable() {
-    let work = tempfile::tempdir().unwrap();
-    let source = work.path().join(MANAGER_EXECUTABLE);
-    assert_eq!(validated_destination(&source), Ok(source));
-    assert_eq!(
-        validated_destination(&work.path().join("copied-manager.exe")),
-        Err("update.formatUnsupported".into())
+fn ordinary_exit_cancels_the_update_and_waits_for_the_download_to_release_its_slot() {
+    let updates = AppUpdates::default();
+    let download = start(&updates);
+    let closing = updates.closing().unwrap();
+    assert!(download.cancelled());
+    assert!(matches!(updates.start_download(), Err(error) if error == IN_PROGRESS));
+    assert!(matches!(updates.closing(), Err(error) if error == IN_PROGRESS));
+    std::thread::scope(|scope| {
+        scope.spawn(move || drop(download));
+        assert!(closing.wait_for_download(Duration::from_secs(5)).unwrap());
+    });
+    assert!(closing.take_ready(UpdateOnExit::Skip).unwrap().is_none());
+    assert!(closing.take_ready(UpdateOnExit::Install).unwrap().is_none());
+    assert!(
+        matches!(closing.take_ready(UpdateOnExit::Restart), Err(error) if error == UNAVAILABLE)
     );
+    drop(closing);
+    assert!(!start(&updates).cancelled());
+}
+
+#[test]
+fn stalled_staging_does_not_prevent_exit_after_the_cancel_deadline() {
+    let updates = AppUpdates::default();
+    let download = start(&updates);
+    let closing = updates.closing().unwrap();
+    assert!(download.cancelled());
+    assert!(!closing.wait_for_download(Duration::ZERO).unwrap());
+    assert!(closing.take_ready(UpdateOnExit::Install).unwrap().is_none());
+    drop(closing);
+    assert!(matches!(updates.start_download(), Err(error) if error == IN_PROGRESS));
+    drop(download);
+    assert!(!start(&updates).cancelled());
+}
+
+#[test]
+fn mandatory_recovery_disallows_download_and_install_handoff() {
+    let updates = AppUpdates::default();
+    let download = start(&updates);
+    let info = serde_json::from_value(serde_json::json!({
+        "version": "99.1.0", "current_version": "99.0.0",
+        "installer_name": "update.exe", "installer_type": "exe", "installer_signature": "fixture",
+    }))
+    .unwrap();
+    let alternate_link = "https://example.com/releases".to_owned();
+    updates
+        .require_recovery(Recovery {
+            update: info,
+            alternate_link: alternate_link.clone(),
+        })
+        .unwrap();
+    assert!(download.cancelled());
+    drop(download);
+    assert_eq!(
+        updates.recovery().unwrap().unwrap().alternate_link,
+        alternate_link
+    );
+    assert!(matches!(updates.start_download(), Err(error) if error == APPLY_FAILED));
+    let closing = updates.closing().unwrap();
+    for update in [
+        UpdateOnExit::Skip,
+        UpdateOnExit::Install,
+        UpdateOnExit::Restart,
+    ] {
+        assert!(matches!(closing.take_ready(update), Err(error) if error == APPLY_FAILED));
+    }
 }

@@ -117,11 +117,15 @@ test('one ordinary progress subscription handles cancellation and does not retai
     assert.equal(state.percent, 40, 'differently labelled old finished event does not erase current bytes')
     assert.equal(downloadTaskState.running.id, ordinary)
     // The public transition owns this readonly state; raw reset is fixture cleanup only.
-    const { requireAppUpdate, beginAppUpdate } = await import('../src/appUpdateState.ts')
-    requireAppUpdate({ version: 'fixture', current_version: 'fixture' })
-    assert.equal(beginAppUpdate(), true)
+    const { beginAppUpdateCheck, finishAppUpdateCheck, finishBackgroundAppUpdate, beginStagedAppUpdate } = await import('../src/appUpdateState.ts')
+    const update = { version: 'fixture', current_version: 'fixture', background_install: true, source_channel: 'fixture' }
+    beginAppUpdateCheck()
+    finishAppUpdateCheck({ update, all_failed: false })
+    assert.equal(state.visible, true, 'background updates do not hide ordinary downloads')
+    finishBackgroundAppUpdate({ update })
+    assert.equal(beginStagedAppUpdate(), true)
     await state.cancel()
-    assert.equal(state.canCancel, false)
+    assert.equal(state.visible, false)
     assert.deepEqual(boundary.calls, ['cancelDownload'], 'update installation remains non-cancellable')
     toRaw(appUpdateState).stage = 'idle'
     endDownloadTask(ordinary)

@@ -13,13 +13,16 @@ test('commands root only declares domains; registered IPC points at the real imp
   const handler = read('lib.rs').match(/audited_handler!\s*\[([\s\S]*?)\]/)?.[1]
   assert.ok(handler)
   const paths = [...handler.matchAll(/\bcommands::([a-z_]+)::([a-z_]+)\b/g)]
-  assert.equal(paths.length, 138, '添加诊断命令后必须保留既有 IPC')
+  assert.equal(paths.length, 139, '更新 IPC 只以暂存和恢复命令交接')
   assert.ok(paths.some(([, domain, name]) => domain === 'logs' && name === 'record_ipc_failure'))
   assert.ok(paths.some(([, domain, name]) => domain === 'logs' && name === 'record_file_drop'))
   assert.ok(paths.some(([, domain, name]) => domain === 'system' && name === 'open_external_page'))
   assert.ok(paths.some(([, domain, name]) => domain === 'system' && name === 'apply_staged_app_update'))
   assert.ok(paths.some(([, domain, name]) => domain === 'update' && name === 'get_app_distribution'))
-  assert.ok(paths.some(([, domain, name]) => domain === 'update' && name === 'stage_app_update'))
+  for (const name of ['get_pending_app_update_recovery', 'stage_app_update', 'finish_app_update_recovery']) {
+    assert.ok(paths.some(([, domain, actual]) => domain === 'update' && actual === name))
+  }
+  assert.ok(!paths.some(([, domain, name]) => domain === 'update' && name === 'install_app_update'))
   for (const name of ['evaluate_mod_changes', 'plan_mod_changes', 'prepare_mod_changes', 'execute_mod_changes', 'cancel_mod_changes']) assert.ok(paths.some(([, domain, actual]) => domain === 'mod_changes' && actual === name))
   for (const name of ['get_manager_data_directory', 'clear_all_config', 'migrate_manager_data']) assert.ok(paths.some(([, domain, actual]) => domain === 'manager_data' && actual === name))
   for (const name of ['open_diychef_editor', 'migrate_diychef_resources', 'initialize_diychef_config', 'validate_diychef_draft', 'save_diychef_config', 'delete_diychef_resource']) assert.ok(paths.some(([, domain, actual]) => domain === 'diychef_editor' && actual === name))

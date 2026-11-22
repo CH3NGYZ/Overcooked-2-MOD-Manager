@@ -14,13 +14,15 @@ import test from 'node:test'
 const app = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
 const settings = readFileSync(new URL('../src/views/SettingsView.vue', import.meta.url), 'utf8')
 const services = readFileSync(new URL('../src/services/tauri.ts', import.meta.url), 'utf8')
+const updates = readFileSync(new URL('../src/composables/useAppUpdates.ts', import.meta.url), 'utf8')
 const commands = readFileSync(new URL('../src-tauri/src/app_update/cache.rs', import.meta.url), 'utf8')
 
 test('启动更新检查恒开，不再有开关门控', () => {
   const mountBlock = app.slice(app.indexOf('onMounted('), app.indexOf('</script>'))
   assert.equal(app.includes('check_updates_on_start'), false, 'App.vue 仍在读已删除的开关')
   assert.match(mountBlock, /api\.config\(\)/, '启动路径要先读配置（教程进度也用它）')
-  assert.match(mountBlock, /api\.checkAppUpdate\('zh-CN'\)/, '启动路径必须无条件发起一次检查')
+  assert.match(mountBlock, /initializeAppUpdates\(\)/, '启动路径必须无条件发起一次检查')
+  assert.match(updates, /void checkForAppUpdate\(false\)/)
 })
 
 test('手动检测绕过 5 分钟缓存', () => {
@@ -31,9 +33,11 @@ test('手动检测绕过 5 分钟缓存', () => {
   )
   assert.match(
     settings,
-    /api\.checkAppUpdate\('zh-CN', true\)/,
+    /await checkForAppUpdate\(\)/,
     '设置页「检查更新」必须传 force: true，否则会拿缓存当结论',
   )
+  assert.match(updates, /function checkForAppUpdate\(force = true\)/)
+  assert.match(updates, /api\.checkAppUpdate\('zh-CN', force\)/)
 })
 
 test('后端按地区缓存更新检查结果 5 分钟', () => {

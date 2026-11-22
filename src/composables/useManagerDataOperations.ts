@@ -4,7 +4,7 @@ import { t } from '../i18n'
 import { backendMessageOf } from '../locale/backend'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
-import { appUpdateState } from '../appUpdateState'
+import { appUpdateBlocksOperations } from '../appUpdateState'
 
 type DataAction = 'clear' | 'migrate'
 
@@ -27,7 +27,7 @@ export function useManagerDataOperations() {
   let disposed = false
 
   onBeforeUnmount(() => { disposed = true; dismissConfirmation?.() })
-  const updateRequired = () => appUpdateState.stage !== 'idle'
+  const updateRequired = appUpdateBlocksOperations
   watch(updateRequired, required => {
     if (required && !clearingConfig.value && !migratingData.value) dismissConfirmation?.()
   })

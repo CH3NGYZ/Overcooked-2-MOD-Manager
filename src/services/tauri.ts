@@ -12,9 +12,8 @@ import { locale } from '../i18n'
 import type {
   StartupProbe,
   AppDistribution,
-  AppUpdateChannelEvent,
   AppUpdateCheckResult,
-  AppUpdatePhaseEvent,
+  AppUpdateInfo,
   BepInExInstallResult,
   DashboardSummary,
   InstalledMod,
@@ -369,7 +368,7 @@ export const api = {
   openModLogsDirectory: (dllFile: string) => invoke<OperationResult>('open_mod_logs_directory', { dllFile }),
   openBackupDirectory: (backupPath?: string) => invoke<OperationResult>('open_backup_directory', { backupPath: backupPath ?? null }),
   openUpdateRepository: () => invoke<OperationResult>('open_update_repository'),
-  exitApp: () => invoke<void>('exit_app'),
+  exitApp: (installUpdate: boolean) => invoke<void>('exit_app', { installUpdate }),
   /** 实际管理器数据根，只读展示；清理命令不接受前端路径。 */
   getManagerDataDirectory: () => invoke<string>('get_manager_data_directory'),
   /** 确认后安排清除所有管理器数据并退出；成功不继续使用本次会话。 */
@@ -408,11 +407,13 @@ export const api = {
    */
   checkAppUpdate: (locale: 'zh-CN' | 'zh-TW' | 'en' | 'ko' | 'ja', force = false) =>
     invoke<AppUpdateCheckResult>('check_app_update', { locale, force }),
-  installAppUpdate: () => invoke<OperationResult>('install_app_update'),
+  getPendingAppUpdateRecovery: () => invoke<boolean>('get_pending_app_update_recovery'),
+  finishAppUpdateRecovery: (destination: 'website' | 'alternate') =>
+    invoke<void>('finish_app_update_recovery', { destination, locale: locale.value }),
   stageAppUpdate: async (channel: string, onProgress: (progress: DownloadProgress) => void) => {
     const onUpdate = new Channel<DownloadProgress>()
     onUpdate.onmessage = onProgress
-    try { await invoke<void>('stage_app_update', { channel, onUpdate }) }
+    try { return await invoke<AppUpdateInfo | null>('stage_app_update', { channel, onUpdate }) }
     finally { onUpdate.onmessage = () => undefined }
   },
   applyStagedAppUpdate: () => invoke<void>('apply_staged_app_update'),
@@ -547,13 +548,6 @@ export function watchDiyChefFiles(callback: (changed: ChefFilesChanged) => void)
   return listen<ChefFilesChanged>('diychef-files-changed', event => callback(event.payload))
 }
 
-export function watchAppUpdatePhase(callback: (progress: AppUpdatePhaseEvent) => void): Promise<UnlistenFn> {
-  return listen<AppUpdatePhaseEvent>('app-update-phase', (event) => callback(event.payload))
-}
-
-export function watchAppUpdateChannel(callback: (progress: AppUpdateChannelEvent) => void): Promise<UnlistenFn> {
-  return listen<AppUpdateChannelEvent>('app-update-channel', (event) => callback(event.payload))
-}
 
 export function watchLevelSetCompression(callback: (progress: LevelSetCompressionProgress) => void): Promise<UnlistenFn> {
   return listen<LevelSetCompressionProgress>('level-set-compression-progress', event => callback(event.payload))

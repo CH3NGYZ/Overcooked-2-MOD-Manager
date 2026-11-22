@@ -71,6 +71,18 @@ pub struct AppUpdateCheckResult {
     pub region: String,
     #[serde(default)]
     pub distribution: AppDistribution,
+    #[serde(default)]
+    pub recovery_required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installation_status: Option<AppUpdateInstallationStatus>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppUpdateInstallationStatus {
+    Applying,
+    RebootRequired,
+    RestartFailed,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

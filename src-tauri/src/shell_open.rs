@@ -2,7 +2,7 @@
 //!
 //! 全部走 Windows Shell API，**不硬编码 `explorer.exe`**：
 //!
-//!   * `ShellExecuteW` 是 shell 关联的正规入口 —— 目录走
+//!   * `ShellExecuteExW` 是 shell 关联的正规入口 —— 目录走
 //!     `Directory\shell\open`，URL 与 `steam://` 这类自定义协议走协议关联。
 //!     用户把这些默认处理器改到别处时能被遵循；`explorer.exe <target>` 则是
 //!     绕过关联直接把参数丢给资源管理器，既无视用户选择，URL 还要靠 explorer
@@ -139,36 +139,9 @@ mod web_page_tests {
 fn open_target(target: &str) -> Result<(), String> {
     #[cfg(windows)]
     {
-        use std::os::windows::ffi::OsStrExt;
-        use std::ptr::null_mut;
-        use winapi::um::shellapi::ShellExecuteW;
-        use winapi::um::winuser::SW_SHOWNORMAL;
-
-        let wide = |value: &str| -> Vec<u16> {
-            std::ffi::OsStr::new(value)
-                .encode_wide()
-                .chain(std::iter::once(0))
-                .collect()
-        };
-        let verb = wide("open");
-        let file = wide(target);
-        let result = unsafe {
-            ShellExecuteW(
-                null_mut(),
-                verb.as_ptr(),
-                file.as_ptr(),
-                std::ptr::null(),
-                std::ptr::null(),
-                SW_SHOWNORMAL,
-            )
-        };
-        // 返回值不是 HRESULT：> 32 才是成功，32 及以下是 ShellExecute 的错误码
-        // （0 内存不足、2/3 找不到、5 拒绝访问、31 没有关联程序）。
-        let code = result as usize;
-        if code <= 32 {
-            return Err(open_failed(code));
-        }
-        Ok(())
+        execute_association("open", std::ffi::OsStr::new(target), None, None, false)
+            .map(|_| ())
+            .map_err(|error| open_failed(error.raw_os_error().unwrap_or(-1)))
     }
     #[cfg(target_os = "macos")]
     {
@@ -193,6 +166,87 @@ fn open_target(target: &str) -> Result<(), String> {
         let _ = target;
         Err("game.unsupportedPlatform".into())
     }
+}
+
+#[cfg(windows)]
+pub(crate) fn launch_elevated(
+    executable: &Path,
+    arguments: &std::ffi::OsStr,
+    working_dir: Option<&Path>,
+) -> std::io::Result<std::os::windows::io::OwnedHandle> {
+    execute_association(
+        "runas",
+        executable.as_os_str(),
+        Some(arguments),
+        working_dir,
+        true,
+    )?
+    .ok_or_else(|| std::io::Error::other("The administrator process did not start"))
+}
+
+#[cfg(windows)]
+fn execute_association(
+    verb: &str,
+    target: &std::ffi::OsStr,
+    arguments: Option<&std::ffi::OsStr>,
+    working_dir: Option<&Path>,
+    want_process: bool,
+) -> std::io::Result<Option<std::os::windows::io::OwnedHandle>> {
+    use std::ffi::OsStr;
+    use std::io;
+    use std::os::windows::{ffi::OsStrExt, io::FromRawHandle};
+    use std::ptr::{null, null_mut};
+    use winapi::shared::winerror::RPC_E_CHANGED_MODE;
+    use winapi::um::combaseapi::{CoInitializeEx, CoUninitialize};
+    use winapi::um::objbase::{COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE};
+    use winapi::um::shellapi::{
+        SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
+        ShellExecuteExW,
+    };
+    use winapi::um::winuser::SW_SHOWNORMAL;
+
+    struct Apartment(bool);
+    impl Drop for Apartment {
+        fn drop(&mut self) {
+            if self.0 {
+                unsafe { CoUninitialize() };
+            }
+        }
+    }
+
+    let wide = |value: &OsStr| -> Vec<u16> { value.encode_wide().chain([0]).collect() };
+    let optional_ptr = |value: &Option<Vec<u16>>| value.as_ref().map_or(null(), |v| v.as_ptr());
+    let verb = wide(OsStr::new(verb));
+    let target = wide(target);
+    let arguments = arguments.map(wide);
+    let working_dir = working_dir.map(|path| wide(path.as_os_str()));
+    let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
+    info.cbSize = std::mem::size_of_val(&info) as u32;
+    info.fMask = SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
+    if want_process {
+        info.fMask |= SEE_MASK_NOCLOSEPROCESS;
+    }
+    info.lpVerb = verb.as_ptr();
+    info.lpFile = target.as_ptr();
+    info.lpParameters = optional_ptr(&arguments);
+    info.lpDirectory = optional_ptr(&working_dir);
+    info.nShow = SW_SHOWNORMAL;
+
+    let status = unsafe {
+        CoInitializeEx(
+            null_mut(),
+            COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE,
+        )
+    };
+    if status < 0 && status != RPC_E_CHANGED_MODE {
+        return Err(io::Error::from_raw_os_error(status));
+    }
+    let _apartment = Apartment(status >= 0);
+    if unsafe { ShellExecuteExW(&mut info) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok((!info.hProcess.is_null())
+        .then(|| unsafe { FromRawHandle::from_raw_handle(info.hProcess.cast()) }))
 }
 
 /// 在系统文件管理器中定位一个文件或目录（打开父目录并选中它）。

@@ -77,6 +77,13 @@ xz2 = { version = "0.1.7", features = ["static"] }
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+flate2 = "1.1.10"
+objc2 = "0.6.4"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSApplication", "NSResponder", "std"] }
+plist = "1.10.1"
+tar = "0.4.46"
+
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
 winapi = { version = "0.3", features = [

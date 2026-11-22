@@ -113,7 +113,7 @@ const STEAM_RUN_URL: &str = "steam://rungameid/728880";
 /// 单测里都断言不了。
 #[derive(Debug, PartialEq, Eq)]
 enum SteamStrategy {
-    /// 交给系统默认协议处理器（Windows：`ShellExecuteW`）。
+    /// 交给系统默认协议处理器（Windows：`ShellExecuteExW`）。
     ///
     /// 不要退回 `explorer.exe steam://...`：那是借资源管理器当中转，绕过了
     /// 协议关联，用户把 Steam 关联改到别处时就会失效。

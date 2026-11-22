@@ -1,4 +1,15 @@
 import type { DialogReactive } from 'naive-ui'
+import { computed, onScopeDispose, shallowReactive, watch, type Ref } from 'vue'
+
+const activeAppModals = shallowReactive(new Set<symbol>())
+export const appModalOpen = computed(() => activeAppModals.size > 0)
+
+export function trackAppModal(show: Ref<boolean>): () => void {
+  const key = Symbol()
+  watch(show, visible => { if (visible) activeAppModals.add(key) }, { immediate: true })
+  onScopeDispose(() => { activeAppModals.delete(key) })
+  return () => { if (!show.value) activeAppModals.delete(key) }
+}
 
 /**
  * 让一个已经弹出的确认框进入「正在执行」状态。

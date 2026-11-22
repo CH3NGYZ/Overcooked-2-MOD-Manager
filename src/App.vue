@@ -26,7 +26,8 @@ import { pageTitleOverride, resetPageHeader } from './pageHeader'
 import { api, watchDataProvider } from './services/tauri'
 import { isTauri } from './runtime'
 import type { PublicConfig } from './types'
-import { appUpdateState, applyAppUpdateCheck, setAppDistribution } from './appUpdateState'
+import { appUpdateBlocksOperations } from './appUpdateState'
+import { initializeAppUpdates } from './composables/useAppUpdates'
 import { naiveTheme, themeOverrides } from './theme'
 import { naiveDateLocale, naiveLocale, t } from './i18n'
 import { setTutorialProgressSink, onTutorialSettled, startTutorialIfFirstRun } from './tutorial/engine'
@@ -152,17 +153,13 @@ onMounted(() => {
     return
   }
   getVersion().then((value) => { version.value = value }).catch(() => undefined)
-  // 渠道标签不必等待配置或独立版的网络检查。
-  void api.getAppDistribution().then(setAppDistribution).catch(() => undefined)
+  initializeAppUpdates()
   void (async () => {
     /*
      * 配置读取只服务教程进度（只播没看过的步骤）。
      *
-     * 启动更新检查恒开：接口本身有 5 分钟缓存（后端按地区记一份成功结果），
-     * F5 重载重跑 onMounted 也只会在缓存过期时真的再请求一次。
-     *
      * 读不到配置也要让教程按「都没看过」跑：不能因为一次 IPC 失败，
-     * 让首启用户永远看不到教程。失败静默，手动检查在设置页。
+     * 让首启用户永远看不到教程。
      */
     let config: PublicConfig | null = null
     try {
@@ -172,12 +169,6 @@ onMounted(() => {
     }
     startTutorialIfFirstRun(config?.tutorial_watched_steps ?? [])
     settleRefresh()
-    try {
-      const result = await api.checkAppUpdate('zh-CN')
-      applyAppUpdateCheck(result)
-    } catch {
-      // 启动更新检查失败静默：手动检查在设置页
-    }
   })()
 })
 </script>
@@ -196,10 +187,11 @@ onMounted(() => {
       <n-dialog-provider>
         <AppWebLinks />
         <div class="app-shell">
-          <AppCloseGuard v-slot="{ applyUpdate }">
+          <AppCloseGuard v-slot="{ applyUpdate, recoverUpdate, confirmingClose }">
             <AppTitleBar :version="version" @apply-update="applyUpdate" />
+            <UpdatePrompt :confirming-close="confirmingClose" @apply-update="applyUpdate" @recover-update="recoverUpdate" />
           </AppCloseGuard>
-          <div class="app-body" :inert="appUpdateState.stage !== 'idle'">
+          <div class="app-body" :inert="appUpdateBlocksOperations()">
             <AppSidebar />
             <main class="app-main">              <header class="page-header">
                 <div class="page-header-title">
@@ -239,13 +231,11 @@ onMounted(() => {
             </div>
           </Transition>
         </div>
-        <UpdatePrompt />
         <GameOperationDialog />
         <DependencyNavigationDialog />
         <ChangePlanDialog />
         <StartupPreflightDialog :state="startupPreflightState" :gate="startupPreflight" />
-        <!-- 强制更新优先，卸载教程浮层也会解除它的键盘/滚轮监听。 -->
-        <TutorialOverlay v-if="appUpdateState.stage === 'idle'" />
+        <TutorialOverlay v-if="!appUpdateBlocksOperations()" />
       </n-dialog-provider>
     </n-message-provider>
   </n-config-provider>

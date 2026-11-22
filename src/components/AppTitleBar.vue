@@ -13,7 +13,8 @@ import { useUiZoom } from '../composables/useUiZoom'
 import { useDashboard } from '../composables/useDashboardStore'
 import { api } from '../services/tauri'
 import { isTauri, safeTauri, safeTauriSync } from '../runtime'
-import { appUpdateBusy, appUpdateState } from '../appUpdateState'
+import { appUpdateBlocksOperations } from '../appUpdateState'
+import { useAppUpdatePromptMode } from '../composables/useAppUpdates'
 import { isMacWindow } from '../platform'
 import appIcon from '../assets/app-icon.png'
 import LevelCompressionStatus from './LevelCompressionStatus.vue'
@@ -24,6 +25,7 @@ import { demoActive, withDemoGame } from '../tutorial/demo'
 
 const props = defineProps<{ version: string }>()
 const emit = defineEmits<{ 'apply-update': [] }>()
+const appUpdatePromptMode = useAppUpdatePromptMode()
 
 /**
  * 标题栏三个弹层（缩放 / 语言 / 主题色）的层级。
@@ -90,7 +92,7 @@ async function toggleMaximize() {
     maximized.value = await appWindow.isMaximized().catch(() => false)
   })
 }
-const updateBusy = computed(appUpdateBusy)
+const updateBusy = computed(appUpdateBlocksOperations)
 async function close() {
   if (updateBusy.value) return
   await safeTauri(async () => appWindow?.close())
@@ -141,7 +143,7 @@ const gameHover = ref(false)
 /** 游戏是否在运行：来自后端游戏状态观察器，前端不自己探测。 */
 const kitchenRunning = computed(() => !!game.value?.kitchen_running)
 /** 有游戏目录才允许启动。 */
-const canLaunch = computed(() => !!game.value?.path && appUpdateState.stage === 'idle')
+const canLaunch = computed(() => !!game.value?.path && !appUpdateBlocksOperations())
 
 /**
  * 切换厨房运行状态。
@@ -157,7 +159,7 @@ const canLaunch = computed(() => !!game.value?.path && appUpdateState.stage === 
  * 一起重做，几次下去比状态本身贵得多。
  */
 async function toggleGame() {
-  if (demoActive.value || launchPending.value || appUpdateState.stage !== 'idle') return
+  if (demoActive.value || launchPending.value || appUpdateBlocksOperations()) return
   launchPending.value = true
   const wasRunning = kitchenRunning.value
   try {
@@ -223,7 +225,6 @@ defineExpose({ onUnmountedCleanup })
         <div class="brand-title-row">
           <strong>{{ t('nav.oc2ModManager') }}</strong>
           <span v-if="props.version" class="brand-version">v{{ props.version }}</span>
-          <AppUpdateStatus @apply-update="emit('apply-update')" />
         </div>
         <small>{{ t('nav.quicklyManageModsForOvercooked2') }}</small>
       </div>
@@ -235,7 +236,8 @@ defineExpose({ onUnmountedCleanup })
       显示与外观：缩放 / 语言 / 明暗 / 主题色。
       整组包一层，macOS 上靠 `order` 提到左侧、跟在窗控后面（右侧留给身份与主操作）。
     -->
-    <div class="toolbar-group">
+    <div class="toolbar-group" :inert="appUpdatePromptMode !== null || updateBusy">
+      <AppUpdateStatus :prompt-open="appUpdatePromptMode !== null" @apply-update="emit('apply-update')" />
       <LevelCompressionStatus />
       <RecycleBinStatus />
       <!-- 界面缩放：下拉选择（与语言下拉一致） -->

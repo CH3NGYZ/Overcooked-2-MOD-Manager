@@ -71,6 +71,8 @@ const NON_TAG = new Set([
   'resources.assets.resS', 'current.bin', 'old.bin',
   // 源码 ZIP 完整性测试里的非 TOML 成员，仍须检查加密位和校验和。
   'ignored.bin',
+  // 安装交接暂存目录中的 MSI 包与签名文件名。
+  'update.msi', 'update.signature',
   // 原生下载 DNS 标签校验的恶意域名反例，不是后端错误 tag。
   'gitee.com.evil.test',
   // 拍平测试里的随包资源文件名（作者真的这么命名，不是 tag）

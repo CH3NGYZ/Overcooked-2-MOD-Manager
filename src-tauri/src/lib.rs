@@ -88,6 +88,8 @@ macro_rules! audited_handler {
 }
 
 pub fn run() {
+    #[cfg(windows)]
+    app_update::staged::windows::run_if_requested();
     install_guard::run_if_requested();
     update_migration::run_if_requested();
     manager_data::run_if_requested();
@@ -208,6 +210,10 @@ pub fn run() {
             });
             app.manage(state.clone());
             main_webview::create(app)?;
+            #[cfg(target_os = "macos")]
+            if let Err(error) = app_update::staged::mac_quit::install(app.handle()) {
+                log::warn!("无法为 macOS 应用菜单接入安全退出：{error}");
+            }
             tauri::async_runtime::spawn(async move {
                 if let Err(error) = proxy_config.refresh_proxies().await {
                     log::warn!(
@@ -411,34 +417,21 @@ pub fn run() {
             commands::system::probe_startup_source,
             commands::system::cancel_startup_probe,
             commands::system::relaunch_as_admin,
+            commands::update::get_pending_app_update_recovery,
             commands::update::check_app_update,
             commands::update::stage_app_update,
-            commands::update::install_app_update,
+            commands::update::finish_app_update_recovery,
             commands::system::apply_staged_app_update,
         ])
         .build(context)
         .expect("error while building tauri application")
         .run(|app, event| {
-            // Explicit exit codes belong to the updater's own handoff. User
-            // exits must acquire the same gate before doing blocking work.
             if let tauri::RunEvent::ExitRequested {
                 code: None, api, ..
             } = event
             {
                 api.prevent_exit();
-                let state = app.state::<app_state::AppState>().inner().clone();
-                match commands::system::request_user_exit(state, false) {
-                    Ok(worker) => {
-                        tauri::async_runtime::spawn(async move {
-                            match worker.await {
-                                Ok(Err(error)) => log::warn!("系统退出未交接：{error}"),
-                                Err(error) => log::error!("系统退出工作进程失败：{error}"),
-                                Ok(Ok(())) => {}
-                            }
-                        });
-                    }
-                    Err(error) => log::warn!("系统退出请求已拒绝：{error}"),
-                }
+                let _ = main_webview::request_quit(app);
             }
         });
 }

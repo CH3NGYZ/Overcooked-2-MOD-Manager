@@ -66,7 +66,7 @@ registerHooks({
 })
 const { default: ToolsView } = await import('../src/views/ToolsView.vue')
 const { toolsUiDataReset } = await import('../src/locale/tools/dataReset.ts')
-const { requireAppUpdate } = await import('../src/appUpdateState.ts')
+const { setCheckingUpdateRecovery } = await import('../src/appUpdateState.ts')
 const renderer = createRenderer({
   patchProp() {}, insert() {}, remove() {}, createElement: () => ({}), createText: () => ({}),
   createComment: () => ({}), setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null,
@@ -371,7 +371,8 @@ test('a mandatory update closes unconfirmed data actions and ignores a late dire
   const lateClear = mounted(t, { directory: () => directory.promise })
   const openingClear = lateClear.confirmClearAllConfig()
 
-  requireAppUpdate({ version: '9.9.9', background_install: true, source_channel: 'github-direct' })
+  setCheckingUpdateRecovery(true)
+  t.after(() => setCheckingUpdateRecovery(false))
   assert.equal(await clear.onPositiveClick(), false)
   assert.equal(confirming.destroyed, undefined)
   inProgress.reject('update.inProgress')

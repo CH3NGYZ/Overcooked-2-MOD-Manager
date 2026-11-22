@@ -257,6 +257,8 @@ pub struct MapInfo {
     #[serde(default)]
     pub release_derived: bool,
     pub id: String,
+    #[serde(default)]
+    pub map_identity: String,
     pub name: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub name_i18n: BTreeMap<String, String>,

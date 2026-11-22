@@ -243,19 +243,20 @@ export const overview: DomainMessages = {
   },
   // 共 {count} 张地图 · {failed} 张刷新失败
   mapsFailedToRefresh: {
-    'zh-CN': '共 {count} 张地图 · {failed} 张刷新失败',
-    'zh-TW': '共 {count} 張地圖 · {failed} 張重新整理失敗',
-    en: '{count} maps · {failed} failed to refresh',
-    ko: '지도 {count}개 · {failed}개 새로 고침 실패',
-    ja: '地図 {count} 件 · {failed} 件が更新失敗',
+    'zh-CN': '共 {count} 张地图 · {failed} 张有来源刷新失败',
+    'zh-TW': '共 {count} 張地圖 · {failed} 張有來源重新整理失敗',
+    en: '{count} maps · {failed} with source refresh errors',
+    ko: '지도 {count}개 · {failed}개의 소스 새로 고침 실패',
+    ja: '地図 {count} 件 · うち {failed} 件でソース更新失敗',
   },
+  mapsCatalogUnconfirmed: { 'zh-CN': '已知 {count} 张地图 · 目录待确认', 'zh-TW': '已知 {count} 張地圖 · 目錄待確認', en: '{count} known maps · catalog unverified', ko: '확인된 지도 {count}개 · 카탈로그 미확인', ja: '確認済みの地図 {count} 件 · カタログ未確認' },
   // 尚未加载任何地图
   noMapsLoadedYet: {
-    'zh-CN': '尚未加载任何地图',
-    'zh-TW': '尚未載入任何地圖',
-    en: 'No maps loaded yet',
-    ko: '아직 지도가 없습니다',
-    ja: '地図がまだありません',
+    'zh-CN': '尚未读取地图目录',
+    'zh-TW': '尚未讀取地圖目錄',
+    en: 'Map catalog not loaded yet',
+    ko: '지도 카탈로그를 아직 읽지 않았습니다',
+    ja: '地図カタログは未読み込みです',
   },
   // 共 {count} 张地图，其中 {updates} 张可更新
   installedMapsCanUpdate: {

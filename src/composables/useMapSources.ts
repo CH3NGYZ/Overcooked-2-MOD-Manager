@@ -25,6 +25,7 @@ import { backendMessageOf } from '../locale/backend'
 import { useNotify, type Notify } from '../useNotify'
 import { useLevelSetScan } from './useLevelSetScan'
 import { mapsForLevelSet, type LevelSetRefreshingHint } from '../levelSetStatus'
+import { mapCatalogCount } from '../mapCatalogCount'
 import { demoActive, isDemoId } from '../tutorial/demo'
 import type { MapCatalogIdentity, MapInfo, SourceNode } from '../types'
 
@@ -49,6 +50,7 @@ function newPassId(): string {
 
 /** 地图源声明的全部地图（含 Release 缓存）。 */
 const maps = ref<MapInfo[]>([])
+const mapsGeneration = shallowRef<number>()
 // Read-only snapshots may overlap source refresh or per-card writes. A late
 // snapshot must never roll those newer results back.
 let mapsRevision = 0
@@ -81,6 +83,10 @@ const catalog = computed<NonNullable<LevelSetRefreshingHint['catalog']>>(() => {
     excluded: current ? proof.excluded : [],
   }
 })
+const catalogCount = computed(() => mapCatalogCount(
+  mapsGeneration.value === state.generation.value ? maps.value : [],
+  catalog.value.ready,
+))
 /** Persisted map snapshots can display their source notes before a tree refresh. */
 const sourceNodes = computed<SourceNode[]>(() => {
   if (sourceTree.nodes.value.length) return sourceTree.nodes.value
@@ -163,7 +169,10 @@ async function loadMaps(options: { force?: boolean } = {}) {
   loading.value = maps.value.length === 0
   try {
     const result = await api.maps()
-    if (revision === mapsRevision && ticket === state.generation.value) maps.value = result
+    if (revision === mapsRevision && ticket === state.generation.value) {
+      maps.value = result
+      mapsGeneration.value = ticket
+    }
   } catch (reason) {
     if (revision === mapsRevision && ticket === state.generation.value) catalogEvidence.value = undefined
     message?.error(backendMessageOf(reason))
@@ -373,7 +382,10 @@ async function prepareMapSources(passId: string, options: {
   const apply = (incoming: MapInfo[]) => {
     mapsRevision += 1
     if (scope) maps.value = replaceScopedItems(maps.value, incoming, map => !!map.source_id && scope.has(map.source_id))
-    else maps.value = incoming
+    else {
+      maps.value = incoming
+      mapsGeneration.value = ticket
+    }
     if (preparedIds) {
       preparedIds.clear()
       for (const map of incoming) if (!scope || !!map.source_id && scope.has(map.source_id)) preparedIds.add(map.id)
@@ -474,6 +486,7 @@ export function useMapSources() {
   if (!message) message = useNotify()
   return {
     maps,
+    catalogCount,
     loading: computed(() => !demoActive.value && loading.value),
     sourceNodes,
     refreshing,

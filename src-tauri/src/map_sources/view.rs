@@ -34,6 +34,7 @@ pub(crate) fn map_to_info(map: &crate::models::MapRepositoryConfig) -> MapInfo {
     MapInfo {
         release_derived: map.release_derived,
         id: map.id.clone(),
+        map_identity: super::identity::map_identity(map),
         name: map.name.clone(),
         name_i18n: map.name_i18n.clone(),
         group: map.group.clone(),

@@ -57,7 +57,7 @@ const error = computed(() => demoActive.value ? '' : realError.value)
 const frameworkOk = computed(() => game.value?.bepinex.installed === true)
 
 const { runtimeState } = useModRepositoryRefresh()
-const { maps: realMaps, loadMaps: loadOnlineMaps, refreshingHint } = useMapSources()
+const { maps: realMaps, catalogCount, loadMaps: loadOnlineMaps, refreshingHint } = useMapSources()
 const maps = computed(() => withDemoMaps(realMaps.value))
 const { scanning: levelSetScanning, levelSets: realLevelSets, hasResult: hasLocalMaps, contextRevision } = useLevelSetScan()
 const levelSets = computed(() => withDemoLevelSets(realLevelSets.value))
@@ -319,16 +319,17 @@ const failedMaps = computed(() => maps.value.filter((map) => !!map.last_error))
 const updatableMaps = computed(() =>
   levelSets.value.filter((set) => mapStateOf(set) === 'update_available'))
 
+const onlineMapsCount = computed(() => demoActive.value
+  ? { count: maps.value.length, failed: failedMaps.value.length, complete: true }
+  : catalogCount.value)
 const onlineMapsSub = computed(() => {
-  const total = maps.value.length
-  if (!total) return t('overview.noMapsLoadedYet')
-  if (!failedMaps.value.length) {
-    return t('overview.mapsAllHealthy', { count: total })
+  const { count, failed, complete } = onlineMapsCount.value
+  if (count === null) return t('overview.noMapsLoadedYet')
+  if (!complete) return t('overview.mapsCatalogUnconfirmed', { count })
+  if (!failed) {
+    return t('overview.mapsAllHealthy', { count })
   }
-  return t('overview.mapsFailedToRefresh', {
-    count: total,
-    failed: failedMaps.value.length,
-  })
+  return t('overview.mapsFailedToRefresh', { count, failed })
 })
 
 /**
@@ -530,10 +531,10 @@ watch(demoActive, active => {
             有失败时「去刷新」并高亮第一张失败地图；全部正常时「去安装」。
           -->
           <StatCard data-tutorial="overview-card-online-maps"
-            :label="t('overview.onlineMaps')" :value="String(maps.length)"
-            :extra="{ count: failedMaps.length, label: t('tools.refreshFailed') }"
+            :label="t('overview.onlineMaps')" :value="onlineMapsCount.count === null ? '—' : String(onlineMapsCount.count)"
+            :extra="{ count: onlineMapsCount.failed, label: t('tools.refreshFailed') }"
             :sub="onlineMapsSub"
-            :tone="failedMaps.length ? 'warning' : 'success'"
+            :tone="onlineMapsCount.failed ? 'warning' : onlineMapsCount.complete ? 'success' : 'default'"
             clickable @click="openOnlineMaps">
             <template #action>
               <n-button size="small" :secondary="!failedMaps.length"

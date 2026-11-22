@@ -57,6 +57,9 @@ struct Search<'a, 'session> {
     pass: SearchPass,
     preference_remaining: usize,
     preference_pruned: bool,
+    installed_runtimes: BTreeSet<usize>,
+    runtime_replacement_limit: usize,
+    runtime_replacement_pruned: bool,
 }
 
 mod diagnostics;
@@ -399,9 +402,16 @@ impl Search<'_, '_> {
         }
         let mut next = state.clone();
         next.replaced_installed = replaced_installed;
+        let keeps_runtime = self.installed_runtimes.contains(&index)
+            && self.original.nodes[index]
+                .current
+                .as_ref()
+                .is_some_and(|original| original.id == candidate.id);
         next.inventory.nodes[index].current = Some(candidate);
         next.inventory.nodes[index].enabled = true;
-        next.decided.insert(index);
+        if !keeps_runtime {
+            next.decided.insert(index);
+        }
         if let Some(reason) = reason {
             next.reasons.record(
                 index,
@@ -559,13 +569,16 @@ impl Search<'_, '_> {
             issue,
             &incompatible_nodes,
         );
+        let owner_change_known =
+            !self.installed_runtimes.contains(&owner) || issue.state != EvaluationState::Unknown;
         // A fixed target can force its conflicting owner off; an explicit
         // disable of a provider can also cascade to its nonrequired owners.
-        if (is_conflict_edge
-            || relation.kind == RelationKind::Requires
-                && state
-                    .disabled_guids
-                    .contains(&relation.guid.trim().to_lowercase()))
+        if owner_change_known
+            && (is_conflict_edge
+                || relation.kind == RelationKind::Requires
+                    && state
+                        .disabled_guids
+                        .contains(&relation.guid.trim().to_lowercase()))
             && let Some(next) = self.disable(
                 state,
                 owner,
@@ -585,13 +598,14 @@ impl Search<'_, '_> {
                 .as_ref()
                 .is_some_and(|candidate| provides(candidate, &relation.guid))
         });
-        if fixed_target {
+        if fixed_target && owner_change_known {
             branches.extend(self.replacements(state, owner, &owner_reason))
         }
         let mut indices = (0..state.inventory.nodes.len()).collect::<Vec<_>>();
         let distances = self.order(state);
         indices.sort_by_key(|index| {
-            let installed_match = !self.policy.prefers_newest()
+            let installed_match = (!self.policy.prefers_newest()
+                || self.installed_runtimes.contains(index))
                 && relation.kind == RelationKind::Requires
                 && self.original.nodes[*index]
                     .current
@@ -639,7 +653,12 @@ impl Search<'_, '_> {
             // provider before downloading a replacement. Mismatches still try
             // compatible releases from newest to oldest.
             let mut reason = None;
-            for candidate in ordered_candidates(self.trusted, node, !self.policy.prefers_newest()) {
+            let keep_runtime = self.installed_runtimes.contains(&index);
+            for candidate in ordered_candidates(
+                self.trusted,
+                node,
+                keep_runtime || !self.policy.prefers_newest(),
+            ) {
                 // Consolidation supplies one candidate, already authorized by
                 // physical Release evidence. Its verified core can have a wholly
                 // different GUID; the solver still checks actual providers.
@@ -657,6 +676,17 @@ impl Search<'_, '_> {
                     && relation.kind == RelationKind::Conflicts
                     && incompatible_nodes.contains(&node.id)
                     && !provides(&candidate, &relation.guid);
+                if keep_runtime
+                    && node.current.as_ref().is_some_and(|current| {
+                        current.id != candidate.id
+                            && current.provides.iter().any(|member| {
+                                same_guid(&member.guid, &relation.guid)
+                                    && matches(relation, member).is_none()
+                            })
+                    })
+                {
+                    continue;
+                }
                 if !retires_conflicting_provider
                     && !candidate.provides.iter().any(|plugin| {
                         same_guid(&plugin.guid, &relation.guid)
@@ -690,7 +720,7 @@ impl Search<'_, '_> {
                 ));
             }
         }
-        if !fixed_target {
+        if !fixed_target && owner_change_known {
             branches.extend(self.replacements(state, owner, &owner_reason))
         }
         let mut fallback = None;
@@ -982,6 +1012,7 @@ fn solve_inner<'a>(
             ))
         })
         .collect();
+    let installed_runtimes = policy::installed_runtime_nodes(inventory, &roots);
     let mut search = Search {
         original: inventory,
         trusted,
@@ -1006,6 +1037,9 @@ fn solve_inner<'a>(
         pass: SearchPass::CompatibleVersions,
         preference_remaining: MAX_SEARCH_STATES,
         preference_pruned: false,
+        installed_runtimes,
+        runtime_replacement_limit: 0,
+        runtime_replacement_pruned: false,
     };
     let solution = match search.find_solution(&state) {
         Ok(solution) => solution,

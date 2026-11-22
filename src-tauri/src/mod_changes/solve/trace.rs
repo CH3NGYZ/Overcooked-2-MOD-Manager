@@ -73,6 +73,7 @@ impl<'a> SolveTrace<'a> {
     pub(super) fn pass(
         &self,
         pass: SearchPass,
+        runtime_replacement_limit: usize,
         visited: usize,
         result: &Result<SearchState, SearchFailure>,
     ) {
@@ -88,7 +89,7 @@ impl<'a> SolveTrace<'a> {
             Err(SearchFailure::Ownership(_)) => "blocked_ownership",
         };
         self.write(format_args!(
-            "搜索轮次 pass={name} replacement_limit={limit:?} visited={visited} outcome={outcome}"
+            "搜索轮次 pass={name} runtime_replacement_limit={runtime_replacement_limit} replacement_limit={limit:?} visited={visited} outcome={outcome}"
         ));
     }
 

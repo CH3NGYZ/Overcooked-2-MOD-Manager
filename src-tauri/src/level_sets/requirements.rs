@@ -1,5 +1,6 @@
 //! 本地 requires.txt 到统一关系模型的适配。
 
+use crate::mods::plugin_target::RUNTIME_WLOADER_GUID;
 use std::fs;
 use std::path::Path;
 
@@ -7,13 +8,6 @@ use std::path::Path;
 ///
 /// 由关卡集导出器写出，内容是**纯版本号**（实测 `3.10.2`、`3.8.8`）。
 pub(super) const REQUIRES_FILE: &str = "requires.txt";
-
-/// 外部 runtime（Web Runtime Loader）的插件 GUID。
-///
-/// 与官方地图源里 `relations.guid` 写的值**必须一致**：`requires.txt` 与线上
-/// relation 是同一个要求的两处表述，guid 不同会让依赖表把它们当成两个插件，
-/// 各算一遍。
-const RUNTIME_WLOADER_GUID: &str = "oc2.oc2diylevelruntimewloader";
 
 /// 读 `requires.txt`：第一行有效内容就是要求的外部 runtime 最低版本。
 ///

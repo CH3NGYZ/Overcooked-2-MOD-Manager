@@ -21,26 +21,26 @@ function withLocations(copy: Localized): Localized {
 }
 
 export const modChangeInstallErrors: DomainMessages = {
-  mapDependencyVersionUnconfirmed: {
-    'zh-CN': '「{map}」需要「{dependency}」满足版本要求 {requirement}。管理器无法确认已启用的版本是否符合要求，会保留它。',
-    'zh-TW': '「{map}」需要「{dependency}」符合版本要求 {requirement}。管理器無法確認已啟用的版本是否符合要求，會保留它。',
-    en: '“{map}” requires “{dependency}” to meet the version requirement {requirement}. The manager will keep the enabled version but could not verify that it meets this requirement.',
-    ko: '“{map}”에 필요한 “{dependency}”의 버전 조건은 {requirement}입니다. 활성화된 버전이 이 조건을 충족하는지 확인하지 못했으며 해당 버전을 유지합니다.',
-    ja: '「{map}」には「{dependency}」のバージョン条件 {requirement} があります。有効なバージョンが条件を満たすかは確認できませんでした。そのバージョンは維持されます。',
+  dependencyVersionUnconfirmed: {
+    'zh-CN': '「{subject}」需要「{dependency}」满足版本要求 {requirement}。管理器无法确认已启用的版本是否符合要求，会保留它。',
+    'zh-TW': '「{subject}」需要「{dependency}」符合版本要求 {requirement}。管理器無法確認已啟用的版本是否符合要求，會保留它。',
+    en: '“{subject}” requires “{dependency}” to meet the version requirement {requirement}. The manager will keep the enabled version but could not verify that it meets this requirement.',
+    ko: '“{subject}”에 필요한 “{dependency}”의 버전 조건은 {requirement}입니다. 활성화된 버전이 이 조건을 충족하는지 확인하지 못했으며 해당 버전을 유지합니다.',
+    ja: '「{subject}」には「{dependency}」のバージョン条件 {requirement} があります。有効なバージョンが条件を満たすかは確認できませんでした。そのバージョンは維持されます。',
   },
-  mapDependencyDisabledUnconfirmed: {
-    'zh-CN': '「{map}」需要「{dependency}」满足版本要求 {requirement}。该 MOD 当前已停用，管理器无法确认它的版本和依赖是否满足要求，将保持停用。核对前，地图可能无法正常运行。',
-    'zh-TW': '「{map}」需要「{dependency}」符合版本要求 {requirement}。該 MOD 目前已停用，管理器無法確認其版本與相依項目是否符合要求，將維持停用。確認前，地圖可能無法正常執行。',
-    en: '“{map}” requires “{dependency}” to meet the version requirement {requirement}. This MOD will stay disabled because the manager could not verify its version or dependencies. The map may not work until these are checked.',
-    ko: '“{map}”에 필요한 “{dependency}”의 버전 조건은 {requirement}입니다. 이 MOD의 버전이나 종속성이 조건을 충족하는지 확인하지 못해 비활성화 상태를 유지합니다. 확인하기 전에는 맵이 정상적으로 작동하지 않을 수 있습니다.',
-    ja: '「{map}」には「{dependency}」のバージョン条件 {requirement} があります。この MOD のバージョンや依存関係が条件を満たすか確認できなかったため、無効のままにします。確認するまでマップが正常に動かない場合があります。',
+  dependencyDisabledUnconfirmed: {
+    'zh-CN': '「{subject}」需要「{dependency}」满足版本要求 {requirement}。管理器无法确认该前置的版本或依赖，将保持停用。核对前，依赖它的功能可能无法正常运行。',
+    'zh-TW': '「{subject}」需要「{dependency}」符合版本要求 {requirement}。管理器無法確認該前置的版本或相依項目，將維持停用。確認前，依賴它的功能可能無法正常運作。',
+    en: '“{subject}” requires “{dependency}” to meet the version requirement {requirement}. The manager will leave this dependency disabled because its version or requirements could not be verified. Features that depend on it may not work until these are checked.',
+    ko: '“{subject}”에 필요한 “{dependency}”의 버전 조건은 {requirement}입니다. 버전 또는 종속성을 확인할 수 없어 비활성화 상태를 유지합니다. 확인하기 전에는 관련 기능이 정상적으로 작동하지 않을 수 있습니다.',
+    ja: '「{subject}」には「{dependency}」のバージョン条件 {requirement} があります。この依存先のバージョンや要件を確認できなかったため、無効のままにします。確認するまで関連機能が正常に動かない場合があります。',
   },
-  mapDependencyDeclarationsUnconfirmed: {
-    'zh-CN': '管理器缺少「{dependency}」当前版本的部分依赖或冲突信息，无法确认它和「{map}」是否兼容。当前安装保持不变。',
-    'zh-TW': '管理器缺少「{dependency}」目前版本的部分相依或衝突資訊，無法確認它與「{map}」是否相容。目前安裝維持不變。',
-    en: 'Some dependency or conflict information for the installed version of “{dependency}” is missing. The manager could not confirm compatibility with “{map}” and will keep the current installation.',
-    ko: '설치된 “{dependency}” 버전의 종속성 또는 충돌 정보가 일부 없어 “{map}”과 호환되는지 확인하지 못했습니다. 현재 설치 상태는 유지됩니다.',
-    ja: 'インストール済みの「{dependency}」に関する依存・競合情報が一部不足しており、「{map}」との互換性を確認できませんでした。現在のインストールは維持されます。',
+  dependencyDeclarationsUnconfirmed: {
+    'zh-CN': '管理器缺少「{dependency}」当前版本的部分依赖或冲突信息，无法确认它和「{subject}」是否兼容。该前置保持原样。',
+    'zh-TW': '管理器缺少「{dependency}」目前版本的部分相依或衝突資訊，無法確認它與「{subject}」是否相容。該前置維持原狀。',
+    en: 'Some dependency or conflict information for the installed version of “{dependency}” is missing. The manager could not confirm compatibility with “{subject}” and will leave this dependency unchanged.',
+    ko: '설치된 “{dependency}” 버전의 종속성 또는 충돌 정보가 일부 없어 “{subject}”과 호환되는지 확인하지 못했습니다. 해당 종속성은 그대로 유지합니다.',
+    ja: 'インストール済みの「{dependency}」に関する依存・競合情報が一部不足しており、「{subject}」との互換性を確認できませんでした。この依存先は変更しません。',
   },
   ambiguousOwnership: {
     'zh-CN': '管理器无法确认本次变更应修改哪些文件，已停止。请刷新列表再试。如果仍失败，请保留现有文件并提供日志。',

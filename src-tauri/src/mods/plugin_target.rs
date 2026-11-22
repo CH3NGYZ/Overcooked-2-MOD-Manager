@@ -6,6 +6,7 @@ use std::{
 };
 
 pub(crate) const DIYLEVEL_GUID: &str = "dev.gua.overcooked.diylevel";
+pub(crate) const RUNTIME_WLOADER_GUID: &str = "oc2.oc2diylevelruntimewloader";
 pub(crate) const DIYCHEF_GUID: &str = "dev.gua.overcooked.diychef";
 
 pub(crate) fn candidates<'a>(mods: &'a [InstalledMod], guid: &str) -> Vec<&'a InstalledMod> {

@@ -1,6 +1,29 @@
-use super::{Search, SearchState, changed, matches, targets};
+use super::{Search, SearchState, changed, matches, provides, targets};
 use crate::mod_changes::model::*;
 use crate::models::{RelationKind, RepositoryRelation};
+use crate::mods::plugin_target::{DIYLEVEL_GUID, RUNTIME_WLOADER_GUID};
+use std::collections::BTreeSet;
+
+pub(super) fn installed_runtime_nodes(
+    inventory: &Inventory,
+    roots: &BTreeSet<usize>,
+) -> BTreeSet<usize> {
+    inventory
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, node)| {
+            (node.kind == NodeKind::Mod
+                && !roots.contains(&index)
+                && node.current.as_ref().is_some_and(|installed| {
+                    [DIYLEVEL_GUID, RUNTIME_WLOADER_GUID]
+                        .into_iter()
+                        .any(|guid| provides(installed, guid))
+                }))
+            .then_some(index)
+        })
+        .collect()
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum DependencyPolicy {
@@ -73,7 +96,7 @@ impl Search<'_, '_> {
 
     pub(super) fn can_keep_unconfirmed(&self, state: &SearchState, index: usize) -> bool {
         let node = &state.inventory.nodes[index];
-        self.policy == DependencyPolicy::MapInstall
+        (self.policy == DependencyPolicy::MapInstall || self.installed_runtimes.contains(&index))
             && node.kind == NodeKind::Mod
             && node.mutable
             && !self.replacement_only.contains(&index)
@@ -89,8 +112,7 @@ impl Search<'_, '_> {
         state: &SearchState,
         relation: &RepositoryRelation,
     ) -> Option<usize> {
-        if self.policy != DependencyPolicy::MapInstall
-            || relation.kind != RelationKind::Requires
+        if relation.kind != RelationKind::Requires
             || relation.optional
             || relation.guid.trim().is_empty()
         {
@@ -135,9 +157,6 @@ impl Search<'_, '_> {
                 notices.extend(self.manual_declaration_notices(node).iter().cloned());
             }
         }
-        if self.policy != DependencyPolicy::MapInstall {
-            return notices.into_iter().collect();
-        }
         let label = |index: usize| {
             let id = state.inventory.nodes[index].id.as_str();
             self.trusted
@@ -146,19 +165,18 @@ impl Search<'_, '_> {
                 .filter(|name| !name.trim().is_empty())
                 .unwrap_or(id)
         };
-        let maps = self
+        let subjects = self
             .roots
             .iter()
             .copied()
-            .filter(|&index| state.inventory.nodes[index].kind == NodeKind::Map)
             .map(label)
             .collect::<Vec<_>>()
             .join(" · ");
         for index in self.protected(state) {
             if self.can_keep_unconfirmed(state, index) && !evaluations[index].metadata_known {
                 notices.insert(crate::locale_tag::with_params(
-                    "modChanges.mapDependencyDeclarationsUnconfirmed",
-                    &[("map", &maps), ("dependency", label(index))],
+                    "modChanges.dependencyDeclarationsUnconfirmed",
+                    &[("subject", &subjects), ("dependency", label(index))],
                 ));
             }
             for issue in &evaluations[index].runtime {
@@ -174,14 +192,14 @@ impl Search<'_, '_> {
                     };
                     let disabled = targets(&state.inventory, &issue.relation.guid, true).is_empty();
                     let tag = if disabled {
-                        "modChanges.mapDependencyDisabledUnconfirmed"
+                        "modChanges.dependencyDisabledUnconfirmed"
                     } else {
-                        "modChanges.mapDependencyVersionUnconfirmed"
+                        "modChanges.dependencyVersionUnconfirmed"
                     };
                     notices.insert(crate::locale_tag::with_params(
                         tag,
                         &[
-                            ("map", label(index)),
+                            ("subject", label(index)),
                             ("dependency", label(provider)),
                             ("requirement", requirement),
                         ],

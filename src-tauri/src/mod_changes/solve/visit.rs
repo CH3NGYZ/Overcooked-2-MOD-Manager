@@ -11,6 +11,28 @@ type Branch = Result<SearchState, SearchFailure>;
 
 impl Search<'_, '_> {
     pub(super) fn find_solution(&mut self, state: &SearchState) -> Branch {
+        let mut result = Err(SearchFailure::Blocked(false));
+        for allow_dependency_disable in [false, true] {
+            for limit in 0..=self.installed_runtimes.len() {
+                self.runtime_replacement_limit = limit;
+                self.runtime_replacement_pruned = false;
+                result = if allow_dependency_disable {
+                    self.run_pass(SearchPass::AllowDependencyDisable, state.clone())
+                } else {
+                    self.find_compatible_versions(state)
+                };
+                if !matches!(&result, Err(SearchFailure::Blocked(false))) {
+                    return result;
+                }
+                if !self.runtime_replacement_pruned {
+                    break;
+                }
+            }
+        }
+        result
+    }
+
+    fn find_compatible_versions(&mut self, state: &SearchState) -> Branch {
         let mut limit = 0;
         while !self.policy.prefers_newest() && self.preference_remaining > 0 {
             let result = self.run_pass(SearchPass::LimitReplacements(limit), state.clone());
@@ -22,23 +44,13 @@ impl Search<'_, '_> {
             }
             if !self.preference_pruned {
                 // This pass visited every branch of the unbounded search.
-                return self.try_dependency_disable(result, state);
+                return result;
             }
             limit += 1;
         }
         // A preference limit cannot prove a graph unsatisfiable. Fall back to
         // the complete compatibility search with its original admission budget.
-        let result = self.run_pass(SearchPass::CompatibleVersions, state.clone());
-        self.try_dependency_disable(result, state)
-    }
-
-    fn try_dependency_disable(&mut self, result: Branch, state: &SearchState) -> Branch {
-        // Unknown declarations, incomplete history and search limits block this.
-        if matches!(&result, Err(SearchFailure::Blocked(false))) {
-            self.run_pass(SearchPass::AllowDependencyDisable, state.clone())
-        } else {
-            result
-        }
+        self.run_pass(SearchPass::CompatibleVersions, state.clone())
     }
 
     fn run_pass(&mut self, pass: SearchPass, state: SearchState) -> Branch {
@@ -48,7 +60,12 @@ impl Search<'_, '_> {
         self.failure = None;
         self.failure_traces = Default::default();
         let result = self.visit(state);
-        self.trace.pass(pass, self.visited.len(), &result);
+        self.trace.pass(
+            pass,
+            self.runtime_replacement_limit,
+            self.visited.len(),
+            &result,
+        );
         result
     }
 
@@ -63,6 +80,24 @@ impl Search<'_, '_> {
                 self.original,
                 &mut state.projected_loose_providers,
             );
+        }
+        let runtime_replacements = self
+            .installed_runtimes
+            .iter()
+            .filter(|&&index| {
+                self.original.nodes[index]
+                    .current
+                    .as_ref()
+                    .map(|old| &old.id)
+                    != state.inventory.nodes[index]
+                        .current
+                        .as_ref()
+                        .map(|new| &new.id)
+            })
+            .count();
+        if runtime_replacements > self.runtime_replacement_limit {
+            self.runtime_replacement_pruned = true;
+            return Err(SearchFailure::Blocked(false));
         }
         let key = serde_json::to_string(&(
             &state.inventory,
@@ -253,7 +288,9 @@ impl Search<'_, '_> {
         let mut pending = protected
             .iter()
             .copied()
-            .filter(|index| !state.decided.contains(index))
+            .filter(|index| {
+                !state.decided.contains(index) && !self.installed_runtimes.contains(index)
+            })
             .collect::<Vec<_>>();
         pending.sort_by_key(|index| self.node_order(&state, &distances, *index));
         if let Some(index) = pending.first().copied() {

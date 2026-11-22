@@ -236,9 +236,9 @@ fn exact_map_update_keeps_unreadable_installed_version_and_explains_the_requirem
     assert_eq!(
         result.notices,
         [crate::locale_tag::with_params(
-            "modChanges.mapDependencyVersionUnconfirmed",
+            "modChanges.dependencyVersionUnconfirmed",
             &[
-                ("map", "dmm-kitchen"),
+                ("subject", "dmm-kitchen"),
                 ("dependency", "web"),
                 ("requirement", ">=3.10.2")
             ],
@@ -279,16 +279,16 @@ fn exact_map_update_keeps_installed_dependency_with_incomplete_declarations() {
         assert_eq!(result.status, SolveStatus::Ready, "{result:?}");
         assert_eq!(result.actions.len(), 1);
         let declarations = crate::locale_tag::with_params(
-            "modChanges.mapDependencyDeclarationsUnconfirmed",
-            &[("map", "dmm-kitchen"), ("dependency", "web")],
+            "modChanges.dependencyDeclarationsUnconfirmed",
+            &[("subject", "dmm-kitchen"), ("dependency", "web")],
         );
         assert!(result.notices.contains(&declarations));
         assert_eq!(result.notices.len(), if enabled { 1 } else { 2 });
         if !enabled {
             assert!(result.notices.contains(&crate::locale_tag::with_params(
-                "modChanges.mapDependencyDisabledUnconfirmed",
+                "modChanges.dependencyDisabledUnconfirmed",
                 &[
-                    ("map", "dmm-kitchen"),
+                    ("subject", "dmm-kitchen"),
                     ("dependency", "web"),
                     ("requirement", ">=3.10.2")
                 ],

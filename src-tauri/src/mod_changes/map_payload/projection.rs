@@ -7,30 +7,93 @@ pub(super) fn seed_snapshots(
     metadata: &[&crate::asset_bundle::LevelSetMetadata],
     primary: Option<MapSource<'_, '_>>,
     manifests: &Path,
-) -> Result<(), String> {
+    operation: &str,
+) -> Result<Vec<String>, String> {
     let mut snapshots = archive::read_map_relation_snapshots(manifests);
+    let mut notices = Vec::new();
     for metadata in metadata {
-        let map =
-            if let Some((_, source)) = primary.filter(|(main, _)| std::ptr::eq(*main, *metadata)) {
-                Some(source)
-            } else {
-                let mut sources = config.map_repositories.iter().filter(|map| {
-                    level_sets::level_set_identity_matches(
-                        &metadata.name,
-                        metadata.name_zh.as_deref(),
-                        &metadata.author,
+        let explicit = primary.filter(|(main, _)| std::ptr::eq(*main, *metadata));
+        if let Some((_, map)) = explicit {
+            log::info!(
+                "规划地图来源：操作={operation}，地图身份={}，选中来源={}",
+                diagnostic(&(
+                    metadata.name.as_str(),
+                    metadata.name_zh.as_deref(),
+                    metadata.author.as_str(),
+                    metadata.version.as_str()
+                )),
+                diagnostic(&map.id)
+            );
+        }
+        let matched = || {
+            level_sets::source_relations::matching_maps(
+                config,
+                &metadata.name,
+                metadata.name_zh.as_deref(),
+                &metadata.author,
+            )
+        };
+        if explicit.is_none() {
+            let resolution =
+                level_sets::source_relations::resolve(matched(), &metadata.version, &[]);
+            log::info!(
+                "规划地图来源：操作={operation}，地图身份={}，未指定来源，候选来源={}，适用声明={}，未覆盖此版本的来源={}，声明冲突={}，共同依赖={}",
+                diagnostic(&(
+                    metadata.name.as_str(),
+                    metadata.name_zh.as_deref(),
+                    metadata.author.as_str(),
+                    metadata.version.as_str()
+                )),
+                diagnostic(&resolution.source_labels),
+                resolution.applicable_sources,
+                diagnostic(&resolution.uncovered_sources),
+                resolution.conflict,
+                diagnostic(&resolution.relations)
+            );
+            let display = metadata
+                .name_zh
+                .as_deref()
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or(&metadata.name);
+            if resolution.conflict {
+                notices.push(crate::locale_tag::with_params(
+                    "levelSet.localMapSourceConflict",
+                    &[
+                        ("map", display),
+                        ("sources", &resolution.source_labels.join(", ")),
+                    ],
+                ));
+            }
+            if resolution.applicable_sources == 0 && !resolution.uncovered_sources.is_empty() {
+                notices.push(crate::locale_tag::with_params(
+                    "levelSet.localMapSourceVersionUnconfirmed",
+                    &[
+                        ("map", display),
+                        ("version", &metadata.version),
+                        ("sources", &resolution.uncovered_sources.join("\n")),
+                    ],
+                ));
+            }
+        }
+        let sources = explicit
+            .map(|(_, map)| vec![map])
+            .unwrap_or_else(|| matched().collect());
+        for map in sources {
+            let installed_mapset_version = snapshots
+                .entries
+                .get(&map.id)
+                .filter(|entry| {
+                    level_sets::installed_map_identity_matches(
+                        &entry.level_set_name,
+                        Some(&entry.level_set_name_zh),
+                        &entry.author,
                         &map.level_set_name,
                         Some(&map.level_set_name_zh),
                         &map.author,
                     )
-                });
-                let map = sources.next();
-                if sources.next().is_some() {
-                    return Err("modChanges.ambiguousOwnership".into());
-                }
-                map
-            };
-        if let Some(map) = map {
+                })
+                .map(|entry| entry.installed_mapset_version.clone())
+                .unwrap_or_default();
             snapshots.entries.insert(
                 map.id.clone(),
                 crate::models::MapRelationSnapshot {
@@ -42,12 +105,17 @@ pub(super) fn seed_snapshots(
                     group: map.group.clone(),
                     relations: map.relations.clone(),
                     release_relations: map.release_relations.clone(),
-                    installed_mapset_version: String::new(),
+                    installed_mapset_version,
                 },
             );
         }
     }
-    archive::write_map_relation_snapshots(manifests, &snapshots)
+    archive::write_map_relation_snapshots(manifests, &snapshots)?;
+    Ok(notices)
+}
+
+fn diagnostic(value: &impl std::fmt::Debug) -> String {
+    crate::http_diagnostics::redact_text(&format!("{value:?}"))
 }
 
 pub(super) fn merge(
@@ -66,7 +134,7 @@ pub(super) fn merge(
         .filter_map(|files| files.summary.map_dir_name.as_ref())
         .map(|name| name.to_lowercase())
         .collect::<HashSet<_>>();
-    let mut imported = Vec::new();
+    let mut imported: Vec<crate::asset_bundle::LevelSetMetadata> = Vec::new();
     let mut previous_matches = BTreeSet::new();
     for mut node in projected
         .nodes
@@ -74,9 +142,6 @@ pub(super) fn merge(
         .filter(|node| node.kind == NodeKind::Map)
         .cloned()
     {
-        if !node.mutable {
-            return Err("modChanges.ambiguousOwnership".into());
-        }
         let mut files = projected_files
             .get(&node.id)
             .cloned()
@@ -85,11 +150,15 @@ pub(super) fn merge(
             .map_metadata
             .clone()
             .ok_or("metadataRead.taskFailed")?;
+        let stage_path = files.map_path.clone().ok_or("modChanges.targetChanged")?;
+        if !node.mutable {
+            return Err(InstallBlock::Unrecognized.report(&node.id, &stage_path));
+        }
         if imported
             .iter()
-            .any(|existing| same_identity(existing, &metadata))
+            .any(|existing| level_sets::same_level_set(existing, &metadata))
         {
-            return Err("modChanges.ambiguousOwnership".into());
+            return Err(InstallBlock::PathCollision.report(&node.id, &stage_path));
         }
         let matches = session
             .trusted
@@ -99,14 +168,27 @@ pub(super) fn merge(
                 files
                     .map_metadata
                     .as_ref()
-                    .is_some_and(|old| same_identity(old, &metadata))
+                    .is_some_and(|old| level_sets::same_level_set(old, &metadata))
             })
             .map(|(id, files)| (id.clone(), files.clone()))
             .collect::<Vec<_>>();
         if matches.len() > 1 {
-            return Err("modChanges.ambiguousOwnership".into());
+            let paths = matches
+                .iter()
+                .filter_map(|(_, old)| old.map_path.as_deref())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let display = metadata
+                .name_zh
+                .as_deref()
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or(&metadata.name);
+            return Err(super::super::mutations::report_install_block(
+                "levelSet.mapDuplicateInstallTargets",
+                &node.id,
+                &[("map", display), ("paths", &paths)],
+            ));
         }
-        let stage_path = files.map_path.clone().ok_or("modChanges.targetChanged")?;
         let original_name = files
             .summary
             .map_dir_name
@@ -114,7 +196,8 @@ pub(super) fn merge(
             .ok_or("modChanges.targetChanged")?;
         let (id, name, old_path) = if let Some((id, old)) = matches.first() {
             if !previous_matches.insert(id.clone()) {
-                return Err("modChanges.ambiguousOwnership".into());
+                return Err(InstallBlock::PathCollision
+                    .report(id, old.map_path.as_deref().unwrap_or(&stage_path)));
             }
             (
                 id.clone(),
@@ -156,6 +239,16 @@ pub(super) fn merge(
         for owned in &mut candidate.relations {
             remap_key(&mut owned.owner_member_key, &stage_path, &target_prefix)?;
         }
+        log::info!(
+            "规划地图安装：操作={}，地图={}，版本={}，节点={}，旧位置={}，目标位置={}，依赖={}",
+            session.operation_id(),
+            diagnostic(&metadata.name),
+            diagnostic(&metadata.version),
+            diagnostic(&id),
+            diagnostic(&old_path),
+            diagnostic(&target_prefix),
+            diagnostic(&candidate.relations)
+        );
         if let Some(old) = session
             .trusted
             .inventory
@@ -168,7 +261,9 @@ pub(super) fn merge(
         }
         files.summary.node_id = id.clone();
         files.summary.map_dir_name = Some(name.clone());
-        if let Some((_, map)) = primary.filter(|(main, _)| same_identity(main, &metadata)) {
+        if let Some((_, map)) =
+            primary.filter(|(main, _)| level_sets::same_level_set(main, &metadata))
+        {
             // Only the ZIP's verified main map may use the online card title.
             files.summary.label = if map.name.trim().is_empty() {
                 format!("{}/{}", map.username, map.repository)
@@ -222,9 +317,6 @@ pub(super) fn merge(
         .into_iter()
         .filter(|node| node.kind != NodeKind::Map)
     {
-        if !node.mutable {
-            return Err("modChanges.ambiguousOwnership".into());
-        }
         let mut files = projected_files
             .get(&node.id)
             .cloned()
@@ -233,29 +325,42 @@ pub(super) fn merge(
             .summary
             .members
             .first()
-            .ok_or("modChanges.ambiguousOwnership")?
+            .ok_or_else(|| {
+                InstallBlock::MapRecordsUnreadable.report(
+                    &node.id,
+                    &format!("manifests/{}", level_sets::LEVEL_SET_PLUGIN_REGISTRY),
+                )
+            })?
             .dll_file
             .clone();
         let canonical = crate::mods::canonical_dll_name(&source);
+        if !node.mutable {
+            return Err(InstallBlock::Unrecognized.report(&node.id, &canonical));
+        }
         let entry = registry
             .iter()
             .find(|entry| key(&entry.dll) == key(&canonical))
-            .ok_or("modChanges.ambiguousOwnership")?;
+            .ok_or_else(|| {
+                InstallBlock::MapRecordsUnreadable.report(
+                    &node.id,
+                    &format!("manifests/{}", level_sets::LEVEL_SET_PLUGIN_REGISTRY),
+                )
+            })?;
         if imported
             .iter()
-            .filter(|metadata| entry.owner.matches(metadata))
+            .filter(|metadata| entry.owner.matches_install(metadata))
             .count()
             != 1
         {
-            return Err("modChanges.ambiguousOwnership".into());
+            return Err(InstallBlock::Unrecognized.report(&node.id, &canonical));
         }
         if previous_registry.iter().any(|old| {
             key(&old.dll) == key(&canonical)
-                && !imported
-                    .iter()
-                    .any(|metadata| old.owner.matches(metadata) && entry.owner.matches(metadata))
+                && !imported.iter().any(|metadata| {
+                    old.owner.matches_install(metadata) && entry.owner.matches_install(metadata)
+                })
         }) {
-            return Err("modChanges.ambiguousOwnership".into());
+            return Err(InstallBlock::MapProtected.report(&node.id, &canonical));
         }
         let owners = session
             .trusted
@@ -337,7 +442,15 @@ fn insert_candidate(
         .find(|node| node.id == id)
     {
         if !existing.mutable {
-            return Err("modChanges.ambiguousOwnership".into());
+            let path = session
+                .trusted
+                .files
+                .get(id)
+                .and_then(|old| old.map_path.as_deref())
+                .or_else(|| files.summary.dll_files.first().map(String::as_str))
+                .or(files.map_path.as_deref())
+                .unwrap_or(id);
+            return Err(InstallBlock::Unrecognized.report(id, path));
         }
         if kind == NodeKind::Map {
             let summary = &mut session
@@ -379,7 +492,7 @@ fn insert_candidate(
 fn remap_key(member: &mut Option<String>, from: &str, to: &str) -> Result<(), String> {
     if let Some(path) = member {
         if !within(path, from) {
-            return Err("modChanges.ambiguousOwnership".into());
+            return Err(InstallBlock::OutsidePackage.report("map-import", path));
         }
         *path = key(&format!("{to}{}", &path[from.len()..]));
     }
@@ -398,7 +511,11 @@ fn inherit_switches(previous: &Candidate, current: &mut Candidate) -> Result<(),
             .filter(|old| !member.guid.is_empty() && old.guid.eq_ignore_ascii_case(&member.guid))
             .collect::<Vec<_>>();
         if exact.is_none() && by_guid.len() > 1 {
-            return Err("modChanges.ambiguousOwnership".into());
+            return Err(super::super::mutations::package_identity_conflict(
+                "map-import",
+                &member.guid,
+                by_guid,
+            ));
         }
         if let Some(old) = exact.or_else(|| by_guid.first().copied()) {
             member.enabled = old.enabled;

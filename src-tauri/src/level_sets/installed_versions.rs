@@ -1,11 +1,36 @@
 //! 主地图资产版本记录与旧快照兼容读取。
 
-use super::identity::level_set_identity_matches;
+use super::identity::installed_map_identity_matches;
 use super::zip_inspect::ImportedLevelSet;
-use crate::models::MapRelationSnapshots;
+use crate::models::{MapRelationSnapshot, MapRelationSnapshots};
 use std::path::Path;
 
 pub(crate) const INSTALLED_PREFIX: &str = "installed:";
+pub(crate) const LOCAL_IMPORT_PREFIX: &str = "local:";
+
+fn identity_suffix(name: &str, name_zh: Option<&str>, author: &str) -> String {
+    format!(
+        "{:?}",
+        (
+            author.trim().to_ascii_lowercase(),
+            name.trim().to_ascii_lowercase(),
+            name_zh.unwrap_or_default().trim().to_ascii_lowercase(),
+        )
+    )
+}
+
+pub(crate) fn is_local_import(
+    snapshots: &MapRelationSnapshots,
+    name: &str,
+    name_zh: Option<&str>,
+    author: &str,
+) -> bool {
+    !name.trim().is_empty()
+        && snapshots.entries.contains_key(&format!(
+            "{LOCAL_IMPORT_PREFIX}{}",
+            identity_suffix(name, name_zh, author)
+        ))
+}
 
 pub(crate) fn installed_repository_id<'a>(
     snapshots: &'a MapRelationSnapshots,
@@ -16,58 +41,79 @@ pub(crate) fn installed_repository_id<'a>(
     let mut ids = snapshots.entries.iter().filter_map(|(key, entry)| {
         (key.starts_with(INSTALLED_PREFIX)
             && !entry.repository_id.is_empty()
-            && level_set_identity_matches(
-                name,
-                name_zh,
-                author,
-                &entry.level_set_name,
-                Some(&entry.level_set_name_zh),
-                &entry.author,
-            )
-            && entry
-                .level_set_name_zh
-                .trim()
-                .eq_ignore_ascii_case(name_zh.unwrap_or_default().trim()))
+            && exact_identity(entry, name, name_zh, author))
         .then_some(entry.repository_id.as_str())
     });
     let first = ids.next()?;
     ids.all(|id| id == first).then_some(first)
 }
 
+fn exact_identity(
+    entry: &MapRelationSnapshot,
+    name: &str,
+    name_zh: Option<&str>,
+    author: &str,
+) -> bool {
+    installed_map_identity_matches(
+        name,
+        name_zh,
+        author,
+        &entry.level_set_name,
+        Some(&entry.level_set_name_zh),
+        &entry.author,
+    )
+}
+
+fn recorded_identity(key: &str) -> bool {
+    key.starts_with(INSTALLED_PREFIX) || key.starts_with(LOCAL_IMPORT_PREFIX)
+}
+
+fn has_nameless_install(snapshots: &MapRelationSnapshots, name: &str, author: &str) -> bool {
+    snapshots
+        .entries
+        .iter()
+        .any(|(key, entry)| recorded_identity(key) && exact_identity(entry, name, None, author))
+}
+
 /// 新快照有中文身份时优先精确匹配，避免旧版无中文名的记录抢走另一张同名图的版本。
 /// 老快照仍按仓库 ID / 身份兜底，不因升级凭空抹掉修复版的安装记录。
 pub fn installed_mapset_version<'a>(
-    snapshots: &'a crate::models::MapRelationSnapshots,
+    snapshots: &'a MapRelationSnapshots,
     repository_id: Option<&str>,
     name: &str,
     name_zh: Option<&str>,
     author: &str,
 ) -> &'a str {
-    let matches = |entry: &&crate::models::MapRelationSnapshot| {
-        level_set_identity_matches(
-            name,
-            name_zh,
-            author,
-            &entry.level_set_name,
-            Some(&entry.level_set_name_zh),
-            &entry.author,
-        )
-    };
-    let by_id = repository_id
-        .and_then(|id| snapshots.entries.get(id))
-        .filter(matches);
-    let exact = |entry: &&crate::models::MapRelationSnapshot| {
-        matches(entry)
-            && entry
-                .level_set_name_zh
-                .trim()
-                .eq_ignore_ascii_case(name_zh.unwrap_or_default().trim())
-    };
+    if is_local_import(snapshots, name, name_zh, author) {
+        return "";
+    }
+    let exact = |entry: &&MapRelationSnapshot| exact_identity(entry, name, name_zh, author);
+    let by_id = repository_id.and_then(|id| snapshots.entries.get(id));
     by_id
-        .filter(exact)
+        .filter(|entry| exact(entry) && !entry.installed_mapset_version.trim().is_empty())
+        .or_else(|| {
+            snapshots
+                .entries
+                .values()
+                .find(|entry| exact(entry) && !entry.installed_mapset_version.trim().is_empty())
+        })
         .or_else(|| snapshots.entries.values().find(exact))
-        .or(by_id)
-        .or_else(|| snapshots.entries.values().find(matches))
+        .or_else(|| {
+            if has_nameless_install(snapshots, name, author) {
+                return None;
+            }
+            let legacy = |key: &str, entry: &MapRelationSnapshot| {
+                !recorded_identity(key) && exact_identity(entry, name, None, author)
+            };
+            repository_id
+                .and_then(|id| by_id.filter(|entry| legacy(id, entry)))
+                .or_else(|| {
+                    snapshots
+                        .entries
+                        .iter()
+                        .find_map(|(key, entry)| legacy(key, entry).then_some(entry))
+                })
+        })
         .map(|entry| entry.installed_mapset_version.trim())
         .unwrap_or("")
 }
@@ -87,61 +133,59 @@ pub(super) fn record_installed_mapset_versions(
     for set in sets {
         let metadata = &set.metadata;
         let installed = origin.filter(|source| {
-            level_set_identity_matches(
+            installed_map_identity_matches(
                 &metadata.name,
                 metadata.name_zh.as_deref(),
                 &metadata.author,
                 &source.level_set_name,
                 Some(&source.level_set_name_zh),
                 &source.author,
-            ) && source
-                .level_set_name_zh
-                .trim()
-                .eq_ignore_ascii_case(metadata.name_zh.as_deref().unwrap_or_default().trim())
+            )
         });
         let version = installed
             .map(|source| source.mapset_version.trim())
             .unwrap_or("");
         let repository_id = installed.and_then(|source| source.repository_id.as_deref());
+        let preserve_nameless_version =
+            has_nameless_install(&snapshots, &metadata.name, &metadata.author);
         let mut matched = false;
         for (key, entry) in &mut snapshots.entries {
-            if !level_set_identity_matches(
+            if key.starts_with(LOCAL_IMPORT_PREFIX) {
+                continue;
+            }
+            if exact_identity(
+                entry,
                 &metadata.name,
                 metadata.name_zh.as_deref(),
                 &metadata.author,
-                &entry.level_set_name,
-                Some(&entry.level_set_name_zh),
-                &entry.author,
             ) {
-                continue;
-            }
-            // 不再保留已替换地图的来源偏好；仓库声明条目的 ID 与关系仍保持原样。
-            if key.starts_with(INSTALLED_PREFIX) {
-                entry.repository_id.clear();
-            }
-            // 老条目缺中文名时不能猜它属于哪个同名集：清掉可能串用的版本，
-            // 另建含完整身份的新记录。
-            if !entry
-                .level_set_name_zh
-                .trim()
-                .eq_ignore_ascii_case(metadata.name_zh.as_deref().unwrap_or_default().trim())
+                if key.starts_with(INSTALLED_PREFIX) {
+                    entry.repository_id.clear();
+                }
+                matched = true;
+                entry.installed_mapset_version = version.to_string();
+            } else if !preserve_nameless_version
+                && !key.starts_with(INSTALLED_PREFIX)
+                && exact_identity(entry, &metadata.name, None, &metadata.author)
             {
                 entry.installed_mapset_version.clear();
-                continue;
             }
-            matched = true;
-            entry.installed_mapset_version = version.to_string();
         }
-        if repository_id.is_some() || (!matched && !version.is_empty()) {
-            // 带上中文身份并转义分隔符，两个 GAODA/GAODA 不能共用安装记录。
-            let key = format!(
-                "{INSTALLED_PREFIX}{:?}",
-                (
-                    metadata.author.trim(),
-                    metadata.name.trim(),
-                    metadata.name_zh.as_deref().unwrap_or_default().trim(),
-                )
-            );
+        let identity = identity_suffix(
+            &metadata.name,
+            metadata.name_zh.as_deref(),
+            &metadata.author,
+        );
+        let local_key = format!("{LOCAL_IMPORT_PREFIX}{identity}");
+        if installed.is_some() {
+            snapshots.entries.remove(&local_key);
+        }
+        if origin.is_none() || repository_id.is_some() || (!matched && !version.is_empty()) {
+            let key = if origin.is_none() {
+                local_key
+            } else {
+                format!("{INSTALLED_PREFIX}{identity}")
+            };
             snapshots.entries.insert(
                 key,
                 crate::models::MapRelationSnapshot {

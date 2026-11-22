@@ -12,7 +12,7 @@ type Branch = Result<SearchState, SearchFailure>;
 impl Search<'_, '_> {
     pub(super) fn find_solution(&mut self, state: &SearchState) -> Branch {
         let mut limit = 0;
-        while !self.prefer_newest && self.preference_remaining > 0 {
+        while !self.policy.prefers_newest() && self.preference_remaining > 0 {
             let result = self.run_pass(SearchPass::LimitReplacements(limit), state.clone());
             if !matches!(&result, Err(SearchFailure::Blocked(_))) {
                 return result;
@@ -47,7 +47,9 @@ impl Search<'_, '_> {
         self.visited.clear();
         self.failure = None;
         self.failure_traces = Default::default();
-        self.visit(state)
+        let result = self.visit(state);
+        self.trace.pass(pass, self.visited.len(), &result);
+        result
     }
 
     fn visit(&mut self, mut state: SearchState) -> Branch {
@@ -100,6 +102,7 @@ impl Search<'_, '_> {
                     .current
                     .as_ref()
                     .is_some_and(|candidate| !candidate.relations_known)
+                && !(protected.contains(&index) && self.accepts_partial_declarations(&state, index))
             {
                 self.failure_traces.record(
                     &state.inventory,
@@ -121,14 +124,18 @@ impl Search<'_, '_> {
             {
                 if issue.state.is_issue()
                     && self.relevant(&state, index, &issue.relation, &protected, &changed_guids)
+                    && !(protected.contains(&index)
+                        && matches!(
+                            issue.state,
+                            EvaluationState::Unknown | EvaluationState::Disabled
+                        )
+                        && self.unconfirmed_provider(&state, &issue.relation).is_some())
                 {
                     issues.push((index, owned, issue));
                 }
             }
         }
-        // A switch or installed repair is finished once the affected graph is
-        // compatible. Only an exact-version request optimizes a satisfied chain.
-        if issues.is_empty() && !self.prefer_newest {
+        if issues.is_empty() && !self.policy.prefers_newest() {
             return self.complete(state);
         }
         let distances = self.order(&state);
@@ -155,6 +162,7 @@ impl Search<'_, '_> {
             }
         });
         if let Some((owner, owned, issue)) = next_issue {
+            self.trace.issue(&state.inventory.nodes[*owner], issue);
             let missing_history = state.inventory.nodes.iter().any(|node| {
                 !node.candidates_complete
                     && (node
@@ -175,9 +183,13 @@ impl Search<'_, '_> {
                 .current
                 .as_ref()
                 .is_some_and(|candidate| !candidate.relations_known);
-            let mut incomplete =
-                issue.state == EvaluationState::Unknown || missing_history || target_unknown;
-            if metadata_unknown {
+            let mut incomplete = issue.state == EvaluationState::Unknown
+                || missing_history
+                || target_unknown
+                || metadata_unknown;
+            if metadata_unknown
+                && !(protected.contains(owner) && self.accepts_partial_declarations(&state, *owner))
+            {
                 self.failure_traces.record(
                     &state.inventory,
                     &evaluations,
@@ -262,6 +274,8 @@ impl Search<'_, '_> {
                 {
                     continue;
                 }
+                self.trace
+                    .candidate(node, &candidate, None, "try_compatible_upgrade");
                 if let Some(next) =
                     self.with_candidate(&state, index, candidate, None, reason.as_ref())
                 {

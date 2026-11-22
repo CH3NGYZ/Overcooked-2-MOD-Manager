@@ -23,6 +23,8 @@ pub struct InstallManifest {
     pub release_tag: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository_binding: Option<crate::models::ModRepositoryBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manual_install: Option<bool>,
     /*
      * 以下三个字段只有多语言形态，没有单语版本。
      *
@@ -75,6 +77,14 @@ pub struct InstallManifest {
     pub installed_dll_versions: BTreeMap<String, String>,
 }
 
+impl InstallManifest {
+    pub(crate) fn is_manual(&self) -> bool {
+        self.manual_install.unwrap_or_else(|| {
+            self.repository_binding.is_none() && self.repository_id.starts_with("manual-")
+        })
+    }
+}
+
 /// 清单的反序列化中间层：同时接受「只有 i18n」和「旧单语字段」两种格式。
 ///
 /// 为什么不给 `InstallManifest` 直接挂 `#[serde(default)]` 单语字段：
@@ -87,6 +97,8 @@ struct ManifestWire {
     release_tag: String,
     #[serde(default)]
     repository_binding: Option<crate::models::ModRepositoryBinding>,
+    #[serde(default)]
+    manual_install: Option<bool>,
     #[serde(default)]
     package_name: Option<String>,
     #[serde(default)]
@@ -133,6 +145,7 @@ impl From<ManifestWire> for InstallManifest {
             repository_id: wire.repository_id,
             release_tag: wire.release_tag,
             repository_binding: wire.repository_binding,
+            manual_install: wire.manual_install,
             package_name_i18n,
             group_i18n,
             note_i18n,
@@ -271,6 +284,7 @@ pub fn new_manifest(
         repository_id: repository_id.into(),
         release_tag: release_tag.into(),
         repository_binding: None,
+        manual_install: None,
         package_name_i18n,
         group_i18n: BTreeMap::new(),
         note_i18n,

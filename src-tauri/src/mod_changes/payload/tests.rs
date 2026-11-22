@@ -63,6 +63,7 @@ fn trusted(game: &Path, provides: Vec<ProvidedPlugin>) -> TrustedInventory {
         config,
         managed_mods: Default::default(),
         toggle_unbound_nodes: Default::default(),
+        manual_declaration_notices: Default::default(),
         installed_mods: Default::default(),
         duplicate_releases: Default::default(),
         duplicate_release_safe_nodes: Default::default(),
@@ -101,7 +102,7 @@ fn real_metadata_and_unique_guid_preserve_disabled_member_after_directory_change
     );
     let mut files = vec!["BepInEx/plugins/new/Primary.dll".into()];
     let (members, roles) =
-        read_members(&trusted, "fixture", &root, &mut files, false, None).unwrap();
+        read_members(&trusted, "fixture", &root, &mut files, None, None).unwrap();
     assert_eq!(
         roles.get(members[0].member_key.as_ref().unwrap()),
         Some(&DllRole::Mod)
@@ -128,7 +129,8 @@ fn new_member_keeps_asset_state_and_duplicate_variants_are_rejected() {
     let bytes = mods::plugin_blob("test-primary", "Primary", "2.0.0");
     write(&root, "Primary.dll.disabled", &bytes);
     let mut files = vec!["Primary.dll.disabled".into()];
-    let (members, _) = read_members(&trusted, "fixture", &root, &mut files, true, None).unwrap();
+    let (members, _) =
+        read_members(&trusted, "fixture", &root, &mut files, Some(true), None).unwrap();
     assert!(!members[0].enabled);
     assert_eq!(members[0].prerelease, Some(true));
     write(&root, "Primary.dll", &bytes);
@@ -138,7 +140,7 @@ fn new_member_keeps_asset_state_and_duplicate_variants_are_rejected() {
             "fixture",
             &root,
             &mut ["Primary.dll".into(), "Primary.dll.disabled".into()],
-            true,
+            Some(true),
             None,
         )
         .is_err()
@@ -164,7 +166,7 @@ fn ambiguous_old_guid_does_not_guess_enabled_state() {
             "fixture",
             &root,
             &mut ["new.dll".into()],
-            false,
+            None,
             None
         )
         .is_err()
@@ -425,28 +427,28 @@ async fn split_repository_payload_binds_verified_volumes_to_the_exact_staged_zip
 
 #[test]
 fn repository_primary_guid_cannot_be_replaced_by_matching_filename_or_old_binding() {
-    assert_eq!(
-        repository_payload("test-primary", &[("Primary.dll", "test-unrelated")])
-            .err()
-            .unwrap(),
-        "modChanges.targetChanged"
-    );
+    let error = repository_payload("test-primary", &[("Primary.dll", "test-unrelated")])
+        .err()
+        .unwrap();
+    assert!(error.starts_with("modChanges.installPackageIdentityMissing?"));
+    assert!(error.contains("guid=test-primary"));
 }
 
 #[test]
 fn repository_primary_guid_must_be_unique_even_when_another_copy_is_disabled() {
-    assert_eq!(
-        repository_payload(
-            "test-primary",
-            &[
-                ("Primary.dll", "test-primary"),
-                ("Other.dll.disabled", "TEST-PRIMARY"),
-            ],
-        )
-        .err()
-        .unwrap(),
-        "modChanges.ambiguousOwnership"
-    );
+    let error = repository_payload(
+        "test-primary",
+        &[
+            ("Primary.dll", "test-primary"),
+            ("Other.dll.disabled", "TEST-PRIMARY"),
+        ],
+    )
+    .err()
+    .unwrap();
+    assert!(error.starts_with("modChanges.installPackageIdentityConflict?"));
+    assert!(error.contains("guid=test-primary"));
+    assert!(error.to_ascii_lowercase().contains("primary.dll"));
+    assert!(error.to_ascii_lowercase().contains("other.dll"));
 }
 
 #[test]

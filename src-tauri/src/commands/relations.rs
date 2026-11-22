@@ -29,8 +29,7 @@ fn sync_dependency_snapshots_in(state: &AppState) -> Result<DependencySyncResult
 
     let mut mods_updated = 0usize;
     for mut manifest in archive::read_manifests(&manifest_dir) {
-        // `manual-` 开头是本地文件/在线直链安装：没有仓库，也就没有线上声明
-        if manifest.repository_id.starts_with("manual-") {
+        if manifest.is_manual() {
             continue;
         }
         /*
@@ -101,11 +100,13 @@ fn sync_dependency_snapshots_in(state: &AppState) -> Result<DependencySyncResult
     for (id, entry) in &previous.entries {
         let installed_from_source = id.starts_with(crate::level_sets::INSTALLED_PREFIX)
             && !entry.repository_id.trim().is_empty();
+        let local_import = id.starts_with(crate::level_sets::LOCAL_IMPORT_PREFIX);
         if entries.contains_key(id)
             || (entry.group_i18n.is_empty()
                 && entry.group.trim().is_empty()
                 && entry.installed_mapset_version.is_empty()
-                && !installed_from_source)
+                && !installed_from_source
+                && !local_import)
         {
             continue;
         }

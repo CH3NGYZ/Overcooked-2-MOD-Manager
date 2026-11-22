@@ -129,7 +129,7 @@ impl Builder<'_> {
             .trusted
             .files
             .get(owner)
-            .ok_or("modChanges.ambiguousOwnership")?;
+            .ok_or_else(|| InstallBlock::VerificationChanged.report(owner, member_key))?;
         let key = inventory::key(&mods::canonical_dll_name(member_key));
         let originals = files
             .summary
@@ -152,7 +152,7 @@ impl Builder<'_> {
                 (true, false) => canonical,
                 (false, true) => disabled,
                 (true, true) => return Err(InstallBlock::BothStates.report(owner, &canonical)),
-                (false, false) => return Err("modChanges.ambiguousOwnership".into()),
+                (false, false) => return Err(InstallBlock::Missing.report(owner, &canonical)),
             };
             let actual = crate::game::safe_game_path(&self.roots.game_root, &relative)?;
             physical.insert(inventory::relative(&root, &actual)?);
@@ -162,6 +162,6 @@ impl Builder<'_> {
         }
         physical
             .pop_first()
-            .ok_or("modChanges.ambiguousOwnership".into())
+            .ok_or_else(|| InstallBlock::VerificationChanged.report(owner, member_key))
     }
 }

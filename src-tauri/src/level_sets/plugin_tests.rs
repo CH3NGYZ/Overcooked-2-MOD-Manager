@@ -28,6 +28,7 @@ use crate::level_sets::zip_info::is_info_file;
 use crate::level_sets::zip_inspect::ZipContents;
 use crate::level_sets::zip_inspect::classify_zip;
 use crate::level_sets::zip_inspect::inspect_zip;
+use crate::level_sets::zip_inspect::require_map_only_zip;
 use crate::models::DllRole;
 use crate::models::LevelSetLayout;
 use std::path::Path;

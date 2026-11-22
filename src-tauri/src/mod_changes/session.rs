@@ -89,6 +89,7 @@ pub(crate) struct Payload {
     pub release_files: Option<Arc<HashMap<String, Fingerprint>>>,
     pub files: Vec<String>,
     pub manifest: Option<crate::archive::InstallManifest>,
+    pub notices: Vec<String>,
     /// DLL roles read alongside the verified candidate, keyed by its physical member keys.
     pub member_roles: BTreeMap<String, crate::models::DllRole>,
 }
@@ -97,6 +98,7 @@ pub(crate) struct PlanSession {
     pub trusted: TrustedInventory,
     pub request: ChangeRequest,
     pub wire_request: PlanRequest,
+    pub dependency_policy: super::solve::DependencyPolicy,
     pub plan: ChangePlan,
     pub solved: Option<Inventory>,
     pub payloads: HashMap<String, Payload>,
@@ -114,6 +116,13 @@ pub(crate) struct PlanSession {
 }
 
 impl PlanSession {
+    pub(super) fn operation_id(&self) -> &str {
+        self.staging
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&self.plan.plan_id)
+    }
+
     /// Only the requested installed switches can omit their own declarations.
     /// Roots from a repair or an explicit release request keep full validation.
     pub(super) fn unbound_toggle_roots(&self) -> BTreeSet<&str> {

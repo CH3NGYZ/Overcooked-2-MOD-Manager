@@ -424,6 +424,9 @@ fn sync_manifest_groups(state: &AppState, config: &AppConfig) {
     let manifests = archive::read_manifests(&manifest_dir);
     let mut updated = 0usize;
     for mut manifest in manifests {
+        if manifest.is_manual() {
+            continue;
+        }
         let Some(repository) = config
             .repositories
             .iter()

@@ -66,6 +66,7 @@ fn manifest_sync_uses_exact_platform_verdict_and_preserves_unknown_history() {
             repository_id: repo.id.clone(),
             release_tag: tag.into(),
             repository_binding: (case != "missing-binding").then_some(binding),
+            manual_install: None,
             package_name_i18n: Default::default(),
             group_i18n: Default::default(),
             note_i18n: Default::default(),
@@ -80,6 +81,63 @@ fn manifest_sync_uses_exact_platform_verdict_and_preserves_unknown_history() {
         assert_eq!(restored.prerelease, expected, "{case}");
         if case == "missing-binding" {
             assert!(restored.repository_binding.is_some());
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn manifest_sync_preserves_local_provenance_when_a_repository_id_is_reused() {
+    use crate::models::ModDownloadMode;
+    use crate::mods::test_support::{config, repository};
+
+    for (id, manual_install, expect_manual) in [
+        ("known-package", Some(true), true),
+        ("manual-legacy", None, true),
+        ("manual-explicit-release", Some(false), false),
+    ] {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/test-source-refresh")
+            .join(Uuid::new_v4().to_string());
+        let state = AppState::with_config(crate::config::ConfigService::for_test(root.clone()));
+        let mut repo = repository(id, ModDownloadMode::Release);
+        repo.name_i18n = archive::single_language("Online package");
+        repo.group_i18n = archive::single_language("Online group");
+        let tag = "v2.0.0";
+        repo.release_prerelease_metadata.insert(tag.into(), true);
+        let local_name = archive::single_language("Local package");
+        let local_group = archive::single_language("Local group");
+        let mut manifest = archive::new_manifest(
+            id,
+            tag,
+            local_name.clone(),
+            Default::default(),
+            vec!["BepInEx/plugins/Local.dll".into()],
+            Vec::new(),
+        );
+        manifest.manual_install = manual_install;
+        manifest.group_i18n = local_group.clone();
+        let manifests = state.config.manifests_dir();
+        archive::write_manifest(&manifests, &manifest).unwrap();
+        sync_manifest_groups(&state, &config(vec![repo.clone()]));
+
+        let restored = archive::read_manifest(&manifests, id).unwrap();
+        assert_eq!(restored.manual_install, manual_install, "{id}");
+        assert_eq!(restored.is_manual(), expect_manual, "{id}");
+        if expect_manual {
+            assert!(restored.repository_binding.is_none(), "{id}");
+            assert!(!restored.prerelease, "{id}");
+            assert_eq!(restored.package_name_i18n, local_name, "{id}");
+            assert_eq!(restored.group_i18n, local_group, "{id}");
+        } else {
+            assert_eq!(
+                restored.repository_binding,
+                ModRepositoryBinding::from_release(&repo, tag),
+                "{id}"
+            );
+            assert!(restored.prerelease, "{id}");
+            assert_eq!(restored.package_name_i18n, repo.name_i18n, "{id}");
+            assert_eq!(restored.group_i18n, repo.group_i18n, "{id}");
         }
         std::fs::remove_dir_all(root).unwrap();
     }

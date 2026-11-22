@@ -4,6 +4,7 @@ use super::{
     inventory::{self, *},
     model::*,
     session::*,
+    solve::DependencyPolicy,
 };
 use crate::{app_state::AppState, archive, releases};
 use serde::{Deserialize, Serialize};
@@ -210,6 +211,7 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
         actions: vec![],
         evaluations: vec![],
         blockers: vec![],
+        notices: vec![],
         impacts: vec![],
     };
     let plan = presentation(
@@ -223,6 +225,7 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
         trusted: trusted.clone(),
         request,
         wire_request,
+        dependency_policy: DependencyPolicy::default(),
         plan,
         solved: None,
         payloads: HashMap::new(),
@@ -234,7 +237,7 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
         release_target_claims: Default::default(),
         created: std::time::Instant::now(),
     };
-    let result = (|| {
+    let result = (|| -> Result<ChangePlan, String> {
         for root in session.wire_request.roots.clone() {
             if let Some(preview) = root.intent.node_id.strip_prefix("preview:") {
                 attach_preview(state, &mut session, preview)?;
@@ -274,6 +277,11 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
         if session.wire_request.map_import.is_some() {
             super::map_payload::attach(state, &mut session)?;
         }
+        session.dependency_policy = DependencyPolicy::for_plan(
+            &session.trusted.inventory,
+            &session.request,
+            session.map_payload.is_some(),
+        );
         resolve(state, &mut session)?;
         super::live_game::check_plan(state, &session)?;
         remember_payloads(&mut session)?;
@@ -285,6 +293,11 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
             Ok(plan)
         }
         Err(error) => {
+            log::warn!(
+                "整链规划失败 op={} reason={}",
+                session.operation_id(),
+                crate::http_diagnostics::redact_text(&error)
+            );
             let _ = super::execution::cleanup(state, &session.staging);
             Err(error)
         }
@@ -466,6 +479,7 @@ fn attach_preview(
         &session.staging.join(format!("manual-{preview}")),
     )?;
     // A manual file replaces a unique matching installed unit, preserving package atomicity.
+    let mut conflicting_paths = std::collections::BTreeSet::new();
     let matches: Vec<_> = session
         .trusted
         .inventory
@@ -474,18 +488,32 @@ fn attach_preview(
         .filter(|node| {
             node.kind == NodeKind::Mod
                 && node.current.as_ref().is_some_and(|current| {
-                    current.provides.iter().any(|old| {
+                    let mut matching_members = current.provides.iter().filter(|old| {
                         payload.candidate.provides.iter().any(|new| {
                             (!old.guid.is_empty() && new.guid.eq_ignore_ascii_case(&old.guid))
                                 || (old.member_key.is_some() && old.member_key == new.member_key)
                         })
-                    })
+                    });
+                    let Some(first) = matching_members.next() else {
+                        return false;
+                    };
+                    conflicting_paths.extend(
+                        std::iter::once(first)
+                            .chain(matching_members)
+                            .map(|member| member.member_key.as_deref().unwrap_or(&node.id)),
+                    );
+                    true
                 })
         })
         .map(|node| node.id.clone())
         .collect();
     if matches.len() > 1 {
-        return Err("modChanges.ambiguousOwnership".into());
+        let paths = conflicting_paths.into_iter().collect::<Vec<_>>().join("\n");
+        return Err(super::mutations::report_install_block(
+            "modChanges.localModMultipleTargets",
+            &id,
+            &[("paths", &paths)],
+        ));
     }
     if let Some(existing) = matches.first() {
         let node = session
@@ -582,6 +610,30 @@ fn attach_preview(
 
 pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(), String> {
     let original = &session.trusted.inventory;
+    let op = session.operation_id();
+    let map_trace = session.map_payload.is_some()
+        || original.nodes.iter().any(|node| {
+            node.kind == NodeKind::Map
+                && (session
+                    .request
+                    .roots
+                    .iter()
+                    .any(|root| root.node_id == node.id)
+                    || session.request.repair_dependencies_of.as_deref() == Some(&node.id))
+        });
+    log::info!(
+        "整链开始求解 op={op} policy={:?} verified={} roots={} repair={}",
+        session.dependency_policy,
+        session.verified_payloads.len(),
+        crate::http_diagnostics::redact_text(&format!("{:?}", session.request.roots)),
+        crate::http_diagnostics::redact_text(
+            session
+                .request
+                .repair_dependencies_of
+                .as_deref()
+                .unwrap_or("")
+        ),
+    );
     let unbound = session.unbound_toggle_roots();
     let mut input = Cow::Borrowed(original);
     // Project only the toggled nodes' outgoing declarations. Their actual
@@ -609,6 +661,9 @@ pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(),
             &session.request,
             Some(&session.trusted),
             Some(&mut releases),
+            session.dependency_policy,
+            (map_trace || session.dependency_policy == DependencyPolicy::PreferNewest)
+                .then_some(op),
         )?,
     };
     let claims = releases.finish(state, solved.as_ref())?;
@@ -636,6 +691,24 @@ pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(),
         duplicate_release::explain_blockers(&session.trusted, &mut result);
         Default::default()
     };
+    if let Some(batch) = &session.map_payload {
+        result.notices.extend(batch.notices.iter().cloned());
+    }
+    result.notices.extend(
+        session
+            .request
+            .roots
+            .iter()
+            .filter_map(|root| session.payloads.get(&root.node_id))
+            .flat_map(|payload| payload.notices.iter().cloned()),
+    );
+    log::info!(
+        "整链求解完成 op={op} status={:?} actions={} blockers={} notices={}",
+        result.status,
+        crate::http_diagnostics::redact_text(&format!("{:?}", result.actions)),
+        crate::http_diagnostics::redact_text(&format!("{:?}", result.blockers)),
+        crate::http_diagnostics::redact_text(&format!("{:?}", result.notices)),
+    );
     session.release_target_claims = claims;
     session.plan = presentation(
         &session.trusted,

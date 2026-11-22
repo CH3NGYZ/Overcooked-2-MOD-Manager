@@ -1,6 +1,42 @@
 use super::*;
 
 #[test]
+fn recognizes_framework_maps_by_guid_and_layout() {
+    let root = tempfile::tempdir().unwrap();
+    let zip = root.path().join("with-levels.zip");
+    let framework = crate::mods::plugin_blob(
+        crate::mods::plugin_target::DIYLEVEL_GUID,
+        "Overcooked2 DIYLevel Plugin",
+        "0.11.1",
+    );
+    let map_plugin = crate::mods::plugin_blob("com.example.map.fix", "A map fix", "1.0.0");
+    for (dll, info, expected) in [
+        (
+            framework.as_slice(),
+            "OC2DIYLevel/levels/oc1_story/info_oc1_story",
+            true,
+        ),
+        (
+            framework.as_slice(),
+            "separate/levels/oc1_story/info_oc1_story",
+            false,
+        ),
+        (
+            map_plugin.as_slice(),
+            "OC2DIYLevel/levels/oc1_story/info_oc1_story",
+            false,
+        ),
+    ] {
+        write_test_zip(&zip, &[("OC2DIYLevel/OC2DIYLevel.dll", dll), (info, b"i")]);
+        let contents = classify_zip(&zip).unwrap();
+        assert_eq!(contents.map_sets, 1);
+        assert_eq!(contents.plugins, 1);
+        assert_eq!(contents.mod_bundled_maps, expected);
+        assert_eq!(require_map_only_zip(&zip).is_err(), expected);
+    }
+}
+
+#[test]
 fn classifies_map_packages_mod_packages_and_junk() {
     let root = std::env::temp_dir().join(format!("oc2-lv-kind-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
@@ -19,7 +55,8 @@ fn classifies_map_packages_mod_packages_and_junk() {
         classify_zip(&map_zip).unwrap(),
         ZipContents {
             map_sets: 1,
-            plugins: 1
+            plugins: 1,
+            mod_bundled_maps: false,
         }
     );
 
@@ -33,7 +70,8 @@ fn classifies_map_packages_mod_packages_and_junk() {
         classify_zip(&mod_zip).unwrap(),
         ZipContents {
             map_sets: 0,
-            plugins: 1
+            plugins: 1,
+            mod_bundled_maps: false,
         }
     );
 
@@ -44,7 +82,8 @@ fn classifies_map_packages_mod_packages_and_junk() {
         classify_zip(&junk_zip).unwrap(),
         ZipContents {
             map_sets: 0,
-            plugins: 0
+            plugins: 0,
+            mod_bundled_maps: false,
         }
     );
 
@@ -61,7 +100,8 @@ fn classifies_map_packages_mod_packages_and_junk() {
         classify_zip(&mac_zip).unwrap(),
         ZipContents {
             map_sets: 0,
-            plugins: 0
+            plugins: 0,
+            mod_bundled_maps: false,
         }
     );
 
@@ -176,6 +216,7 @@ fn real_packages_carry_their_own_plugin_dlls() {
             "真实包应带修复 DLL：{}",
             path.display()
         );
+        assert!(!contents.mod_bundled_maps, "随图修复插件不应走 MOD 安装");
         let sets = inspect_zip(&path).expect("应能识别");
         let total: usize = sets.iter().map(|set| set.plugins.len()).sum();
         eprintln!("包={} 关卡集={} 插件={}", path.display(), sets.len(), total);

@@ -105,6 +105,8 @@ pub(in crate::mod_changes) fn solve_toggle(
             &session.request,
             Some(trusted),
             Some(&mut *loose_releases),
+            session.dependency_policy,
+            Some(session.operation_id()),
         )
     };
     let (mut result, solved) = if conflicts.is_empty() {

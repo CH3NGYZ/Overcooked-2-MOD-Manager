@@ -2,7 +2,7 @@
 
 use super::bepinex_layer::install_bepinex_layer_sets;
 use super::identity::allocate_dir_name;
-use super::identity::level_set_identity_matches;
+use super::identity::same_level_set;
 use super::info_cache::read_info_metadata;
 use super::installed_versions::record_installed_mapset_versions;
 use super::paths::LevelSetRoots;
@@ -114,15 +114,7 @@ pub(crate) fn install_parsed_sets(
                     &[("name", &dir_name)],
                 ));
             };
-            let same_identity = level_set_identity_matches(
-                &existing_meta.name,
-                existing_meta.name_zh.as_deref(),
-                &existing_meta.author,
-                &set.metadata.name,
-                set.metadata.name_zh.as_deref(),
-                &set.metadata.author,
-            );
-            if same_identity {
+            if same_level_set(existing_meta, &set.metadata) {
                 return Err(crate::locale_tag::with_params(
                     "levelSet.targetExists",
                     &[("name", &dir_name)],

@@ -13,7 +13,10 @@ fn map_directory(path: &str, levels: &str) -> Option<(String, String)> {
     Some((parts[depth].into(), parts[..=depth].join("/")))
 }
 
-pub(crate) fn payload_level_root(provides: &[ProvidedPlugin]) -> Result<Option<String>, String> {
+pub(crate) fn payload_level_root(
+    owner: &str,
+    provides: &[ProvidedPlugin],
+) -> Result<Option<String>, String> {
     let mut frameworks = provides.iter().filter(|member| {
         member
             .guid
@@ -22,13 +25,20 @@ pub(crate) fn payload_level_root(provides: &[ProvidedPlugin]) -> Result<Option<S
     let Some(framework) = frameworks.next() else {
         return Ok(None);
     };
-    if frameworks.next().is_some() {
-        return Err("modChanges.ambiguousOwnership".into());
+    if let Some(other) = frameworks.next() {
+        return Err(mutations::package_identity_conflict(
+            owner,
+            crate::mods::plugin_target::DIYLEVEL_GUID,
+            [framework, other].into_iter().chain(frameworks),
+        ));
     }
-    let path = framework
-        .member_key
-        .as_deref()
-        .ok_or("modChanges.ambiguousOwnership")?;
+    let path = framework.member_key.as_deref().ok_or_else(|| {
+        mutations::report_install_block(
+            "modChanges.installTargetOwnershipUnverified",
+            owner,
+            &[("name", "DIYLevel")],
+        )
+    })?;
     let package = Path::new(path)
         .parent()
         .ok_or("archive.pathEscape")?
@@ -56,15 +66,16 @@ pub(crate) fn bundled_level_root(
     if payload.candidate.id != current.id {
         return Ok(None);
     }
-    selected_bundled_level_root(solved, current, payload)
+    selected_bundled_level_root(node, solved, current, payload)
 }
 
 pub(crate) fn selected_bundled_level_root(
+    node: &str,
     solved: &Inventory,
     current: &Candidate,
     payload: &crate::mod_changes::session::Payload,
 ) -> Result<Option<String>, String> {
-    let Some(levels) = payload_level_root(&current.provides)? else {
+    let Some(levels) = payload_level_root(node, &current.provides)? else {
         return Ok(None);
     };
     let Some(package) = mutations::final_package(solved)? else {
@@ -103,10 +114,11 @@ fn missing_maps(
                 continue;
             }
             let Some((name, physical)) = map_directory(path, &prefix) else {
-                log::warn!(
-                    "整链地图树冲突：节点={owner}，路径={path}，原因=默认地图必须位于独立子目录"
-                );
-                return Err("modChanges.pathCollision".into());
+                return Err(mutations::report_install_block(
+                    "levelSet.bundledMapDirectoryRequired",
+                    owner,
+                    &[("path", path)],
+                ));
             };
             names.entry(name).or_insert(physical);
         }
@@ -145,10 +157,11 @@ fn missing_maps(
                 mutations::within(path, &physical)
                     && (lower.ends_with(".dll") || lower.ends_with(".dll.disabled"))
             }) {
-                log::warn!(
-                    "整链地图归属不明：节点={owner}，路径={path}，原因=新默认地图含未纳入地图求解的DLL"
-                );
-                return Err("modChanges.ambiguousOwnership".into());
+                return Err(mutations::report_install_block(
+                    "modChanges.installBundledMapPluginUnverified",
+                    owner,
+                    &[("path", path)],
+                ));
             }
             let source = mutations::game(&physical).resolve(&source_roots)?;
             result.push((name, source, ItemKey::new(owner, None)));

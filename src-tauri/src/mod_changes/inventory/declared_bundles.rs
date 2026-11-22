@@ -1,6 +1,6 @@
 //! Consume the same physical bundle anchors as the local MOD cards.
 use super::*;
-use crate::mod_changes::mutations::InstallBlock;
+use crate::mod_changes::mutations::{InstallBlock, node_label, report_install_block};
 
 fn standalone_key(item: &InstalledMod) -> String {
     item.package_id
@@ -45,7 +45,11 @@ impl TrustedInventory {
         use crate::mod_changes::evaluate::same_guid;
         for old in self.declared_bundle_members(id) {
             let Some(path) = old.member_key.as_deref() else {
-                return Err("modChanges.ambiguousOwnership".into());
+                return Err(report_install_block(
+                    "modChanges.installTargetOwnershipUnverified",
+                    id,
+                    &[("name", node_label(self, id))],
+                ));
             };
             let mut overlaps = incoming.iter().filter(|new| {
                 // GUID-less libraries only identify themselves by path.

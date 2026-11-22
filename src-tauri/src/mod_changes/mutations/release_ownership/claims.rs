@@ -156,7 +156,7 @@ impl ReleaseTargetClaims {
                 .as_ref()
                 .ok_or_else(|| "modChanges.targetChanged".to_owned())?;
             let levels = crate::mod_changes::level_trees::selected_bundled_level_root(
-                solved, current, payload,
+                &node.id, solved, current, payload,
             )?;
             if let Some(record) =
                 builder.missing_install_record(&node.id, payload, levels.as_deref())?

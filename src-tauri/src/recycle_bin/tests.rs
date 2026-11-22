@@ -40,6 +40,7 @@ impl Workspace {
             repository_id: id.into(),
             release_tag: "v1.2.3".into(),
             repository_binding: None,
+            manual_install: None,
             package_name_i18n: crate::archive::single_language("Fixture package"),
             note_i18n: crate::archive::single_language("original note"),
             group_i18n: Default::default(),

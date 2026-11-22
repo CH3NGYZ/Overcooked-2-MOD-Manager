@@ -93,6 +93,9 @@ fn conflicts_ignore_same_named_sets_with_another_identity() {
     )];
     assert!(conflicts_with_installed(&installed, &other_map).is_empty());
 
+    let no_chinese_name = vec![imported("GAODA", metadata("GAODA", None, "GAODA", "1.0"))];
+    assert!(conflicts_with_installed(&installed, &no_chinese_name).is_empty());
+
     // 反过来：目录名不同但身份相同，照样是同一张图（目录名不是身份）
     let renamed_copy = vec![imported(
         "GAODA_0405",

@@ -186,6 +186,7 @@ fn scanning_real_raw_manifest_prevents_same_guid_release_update() {
             repository_id: "raw".into(),
             release_tag: String::new(),
             repository_binding: None,
+            manual_install: None,
             package_name_i18n: crate::archive::single_language("Raw MOD"),
             note_i18n: Default::default(),
             group_i18n: Default::default(),

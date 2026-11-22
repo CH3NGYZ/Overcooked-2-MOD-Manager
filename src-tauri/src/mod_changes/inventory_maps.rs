@@ -51,33 +51,15 @@ pub(crate) fn append_at(
         };
         let mut info = level_sets::view::level_set_to_info(set.clone());
         level_sets::view::bind_map_relation_snapshot(&mut info, config, &snapshots);
-        let historical = if info.map_id.is_none() {
-            snapshots.entries.values().find(|entry| {
-                level_sets::level_set_identity_matches(
-                    &info.name,
-                    info.name_zh.as_deref(),
-                    &info.author,
-                    &entry.level_set_name,
-                    Some(&entry.level_set_name_zh),
-                    &entry.author,
-                )
-            })
-        } else {
-            None
-        };
-        // The view returns early when a source disappears. Its installed
-        // snapshot still owns the installed map's declarations.
-        if let Some(snapshot) = historical {
-            let relations = crate::mods::select_release_relations(
-                &snapshot.release_relations,
-                Some(&info.version),
+        let declarations_known = info.has_map_source_snapshot
+            || level_sets::source_relations::matching_maps(
+                config,
+                &info.name,
+                info.name_zh.as_deref(),
+                &info.author,
             )
-            .map(|relations| relations.to_vec())
-            .unwrap_or_else(|| snapshot.relations.clone());
-            if !relations.is_empty() {
-                info.relations = relations;
-            }
-        }
+            .next()
+            .is_some();
         require_framework(&mut info.relations);
         let (internal, member_roles) =
             internal_members(root, &set.path, config.mod_metadata_concurrency)?;
@@ -102,7 +84,7 @@ pub(crate) fn append_at(
             && set.error.is_none()
             && !info.name.trim().is_empty()
             && info.map_id.is_none()
-            && historical.is_none()
+            && !declarations_known
         {
             toggle_unbound_nodes.insert(id.clone());
         }

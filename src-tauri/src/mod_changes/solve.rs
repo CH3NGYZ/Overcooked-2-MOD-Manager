@@ -52,7 +52,8 @@ struct Search<'a, 'session> {
     failure_traces: diagnostics::FailureTraces,
     catalog_unknown: bool,
     fixed_members: BTreeSet<(usize, String)>,
-    prefer_newest: bool,
+    policy: DependencyPolicy,
+    trace: trace::SolveTrace<'a>,
     pass: SearchPass,
     preference_remaining: usize,
     preference_pruned: bool,
@@ -60,8 +61,12 @@ struct Search<'a, 'session> {
 
 mod diagnostics;
 mod package_switches;
+mod policy;
 mod reasons;
+mod trace;
 mod visit;
+
+pub(crate) use policy::DependencyPolicy;
 
 fn relation_key(owner: &str, relation: &RepositoryRelation) -> String {
     format!(
@@ -280,7 +285,9 @@ impl Search<'_, '_> {
                 for owned in scoped_relations(node, self.readiness(index, node)) {
                     // As in evaluation, a required edge is only satisfied by
                     // a unique enabled provider, regardless of version matches.
-                    if let Some(target) = required_provider(&state.inventory, &owned.relation) {
+                    if let Some(target) = required_provider(&state.inventory, &owned.relation)
+                        .or_else(|| self.unconfirmed_provider(state, &owned.relation))
+                    {
                         protected.insert(target);
                     }
                 }
@@ -584,7 +591,7 @@ impl Search<'_, '_> {
         let mut indices = (0..state.inventory.nodes.len()).collect::<Vec<_>>();
         let distances = self.order(state);
         indices.sort_by_key(|index| {
-            let installed_match = !self.prefer_newest
+            let installed_match = !self.policy.prefers_newest()
                 && relation.kind == RelationKind::Requires
                 && self.original.nodes[*index]
                     .current
@@ -632,7 +639,7 @@ impl Search<'_, '_> {
             // provider before downloading a replacement. Mismatches still try
             // compatible releases from newest to oldest.
             let mut reason = None;
-            for candidate in ordered_candidates(self.trusted, node, !self.prefer_newest) {
+            for candidate in ordered_candidates(self.trusted, node, !self.policy.prefers_newest()) {
                 // Consolidation supplies one candidate, already authorized by
                 // physical Release evidence. Its verified core can have a wholly
                 // different GUID; the solver still checks actual providers.
@@ -659,8 +666,19 @@ impl Search<'_, '_> {
                             }
                     })
                 {
+                    if provides(&candidate, &relation.guid)
+                        || node
+                            .current
+                            .as_ref()
+                            .is_some_and(|old| provides(old, &relation.guid))
+                    {
+                        self.trace
+                            .candidate(node, &candidate, Some(relation), "provider_mismatch");
+                    }
                     continue;
                 }
+                self.trace
+                    .candidate(node, &candidate, Some(relation), "try_provider");
                 branches.extend(self.with_candidate(
                     state,
                     index,
@@ -726,7 +744,8 @@ pub(crate) fn solve_with_inventory(
     inventory: &Inventory,
     request: &ChangeRequest,
 ) -> (SolveResult, Option<Inventory>) {
-    solve_with_policy(inventory, request, None, None)
+    let policy = DependencyPolicy::for_plan(inventory, request, false);
+    solve_with_policy(inventory, request, None, None, policy, None)
         .expect("an inventory-only solve cannot check disk ownership")
 }
 
@@ -735,6 +754,8 @@ pub(super) fn solve_with_policy(
     request: &ChangeRequest,
     trusted: Option<&TrustedInventory>,
     loose_releases: Option<&mut LooseReleaseSearch<'_>>,
+    policy: DependencyPolicy,
+    operation_id: Option<&str>,
 ) -> Result<(SolveResult, Option<Inventory>), String> {
     let failure = |blocker: Diagnostic| SolveResult {
         status: if blocker.incomplete {
@@ -745,9 +766,17 @@ pub(super) fn solve_with_policy(
         actions: Vec::new(),
         evaluations: evaluate(inventory),
         blockers: vec![blocker],
+        notices: Vec::new(),
         impacts: Vec::new(),
     };
-    match solve_inner(inventory, request, trusted, loose_releases) {
+    match solve_inner(
+        inventory,
+        request,
+        trusted,
+        loose_releases,
+        policy,
+        operation_id,
+    ) {
         Ok((result, solved)) => Ok((result, Some(solved))),
         Err(SolveError::Graph(blocker)) => Ok((failure(*blocker), None)),
         Err(SolveError::Ownership(message)) => Err(message),
@@ -770,6 +799,8 @@ fn solve_inner<'a>(
     request: &ChangeRequest,
     trusted: Option<&'a TrustedInventory>,
     loose_releases: Option<&'a mut LooseReleaseSearch<'_>>,
+    policy: DependencyPolicy,
+    operation_id: Option<&'a str>,
 ) -> Result<(SolveResult, Inventory), SolveError> {
     let replacement_only = |id: &str| {
         trusted.is_some_and(|trusted| trusted.duplicate_releases.upgrades.contains_key(id))
@@ -951,7 +982,6 @@ fn solve_inner<'a>(
             ))
         })
         .collect();
-    let prefer_newest = request.roots.iter().any(|root| root.candidate_id.is_some());
     let mut search = Search {
         original: inventory,
         trusted,
@@ -971,7 +1001,8 @@ fn solve_inner<'a>(
         failure: None,
         failure_traces: diagnostics::FailureTraces::default(),
         catalog_unknown: inventory.nodes.iter().any(|node| !node.candidates_complete),
-        prefer_newest,
+        policy,
+        trace: trace::SolveTrace::new(operation_id),
         pass: SearchPass::CompatibleVersions,
         preference_remaining: MAX_SEARCH_STATES,
         preference_pruned: false,
@@ -1018,12 +1049,16 @@ fn solve_inner<'a>(
     );
     impacts.sort();
     impacts.dedup();
+    let evaluations = evaluate(&solution.inventory);
+    let notices = search.unconfirmed_notices(&solution, &evaluations);
+    search.trace.solution(&search, &solution, &evaluations);
     Ok((
         SolveResult {
             status: SolveStatus::Ready,
             actions,
-            evaluations: evaluate(&solution.inventory),
+            evaluations,
             blockers: Vec::new(),
+            notices,
             impacts,
         },
         solution.inventory,

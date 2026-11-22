@@ -50,9 +50,7 @@ pub(super) fn conflicts_with_installed(
             let Some(metadata) = candidate.metadata.as_ref() else {
                 continue;
             };
-            // 身份匹配要双向试：中文名只有一侧有时，另一侧的比较会判不中
-            if !same_level_set(metadata, &set.metadata) && !same_level_set(&set.metadata, metadata)
-            {
+            if !same_level_set(metadata, &set.metadata) {
                 continue;
             }
             // 同一份已装副本只报一条：一个 ZIP 里有两张同身份的图时不该显示两遍

@@ -8,6 +8,8 @@ use std::{collections::BTreeMap, fs, path::Path};
 mod apply_order;
 #[path = "orchestration_tests/declared_mod_bundle.rs"]
 mod declared_mod_bundle;
+#[path = "orchestration_tests/dependency_policy.rs"]
+mod dependency_policy;
 #[path = "orchestration_tests/disable_fallback.rs"]
 mod disable_fallback;
 #[path = "orchestration_tests/duplicate_release_target.rs"]
@@ -18,6 +20,10 @@ mod install_notes;
 mod installed_relations;
 #[path = "orchestration_tests/live_game.rs"]
 mod live_game;
+#[path = "orchestration_tests/live_game_info.rs"]
+mod live_game_info;
+#[path = "orchestration_tests/local_framework_zip.rs"]
+mod local_framework_zip;
 #[path = "orchestration_tests/map_runtime_duplicate.rs"]
 mod map_runtime_duplicate;
 #[path = "orchestration_tests/repair_cycle.rs"]

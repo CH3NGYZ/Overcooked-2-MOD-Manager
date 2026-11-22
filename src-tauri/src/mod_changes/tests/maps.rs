@@ -157,17 +157,144 @@ fn enabling_map_can_choose_older_missing_dependency_to_keep_compatible_installed
     // Installing the new provider already enables it; the map still has its own switch.
     action_for(&result, "dmm-kitchen", ActionKind::Enable);
 
-    // User-selected versions still choose the newest compatible dependency chain.
     let exact = solve(&inventory, &intent("dmm-kitchen", Some(map_id), true));
     assert_eq!(exact.status, SolveStatus::Ready, "{exact:?}");
+    assert_eq!(exact.actions, result.actions);
+
+    inventory.nodes[2].kind = NodeKind::Mod;
+    let mod_id = inventory.nodes[2].current.as_ref().unwrap().id.clone();
+    let exact_mod = solve(&inventory, &intent("dmm-kitchen", Some(mod_id), true));
+    assert_eq!(exact_mod.status, SolveStatus::Ready, "{exact_mod:?}");
     assert_eq!(
-        action_for(&exact, "helper", ActionKind::Install)
+        action_for(&exact_mod, "helper", ActionKind::Install)
             .to_tag
             .as_deref(),
         Some("v2.0")
     );
-    action_for(&exact, "web", ActionKind::Upgrade);
-    action_for(&exact, "diy", ActionKind::Upgrade);
+    action_for(&exact_mod, "web", ActionKind::Upgrade);
+    action_for(&exact_mod, "diy", ActionKind::Upgrade);
+}
+
+fn map_update(inventory: &mut Inventory) -> ChangeRequest {
+    let kitchen = &mut inventory.nodes[2];
+    kitchen.enabled = true;
+    let mut next = kitchen.current.as_ref().unwrap().clone();
+    next.id = "dmm-kitchen@10.2".into();
+    next.tag = Some("v10.2".into());
+    next.version = Some("10.2".into());
+    let id = next.id.clone();
+    kitchen.candidates.push(next);
+    intent("dmm-kitchen", Some(id), true)
+}
+
+#[test]
+fn exact_map_update_keeps_compatible_installed_versions() {
+    let mut inventory = kitchen_inventory(">=3.10.2");
+    let request = map_update(&mut inventory);
+    let result = solve(&inventory, &request);
+    assert_eq!(result.status, SolveStatus::Ready, "{result:?}");
+    assert_eq!(result.actions.len(), 1);
+    action_for(&result, "dmm-kitchen", ActionKind::Upgrade);
+
+    inventory.nodes[1].enabled = false;
+    let disabled = solve(&inventory, &request);
+    assert_eq!(disabled.status, SolveStatus::Ready, "{disabled:?}");
+    assert_eq!(disabled.actions.len(), 2);
+    action_for(&disabled, "web", ActionKind::Enable);
+
+    let mut mixed = request;
+    mixed.roots.push(RootIntent {
+        node_id: "companion".into(),
+        candidate_id: Some("companion@1.0".into()),
+        enabled: true,
+        member_key: None,
+    });
+    inventory.nodes.push(node(
+        "companion",
+        None,
+        vec![candidate("companion", "1.0", vec![])],
+    ));
+    let policy = crate::mod_changes::solve::DependencyPolicy::for_plan(&inventory, &mixed, true);
+    let mixed_result =
+        crate::mod_changes::solve::solve_with_policy(&inventory, &mixed, None, None, policy, None)
+            .unwrap()
+            .0;
+    assert_eq!(mixed_result.status, SolveStatus::Ready, "{mixed_result:?}");
+    assert_eq!(mixed_result.actions.len(), 3);
+    action_for(&mixed_result, "web", ActionKind::Enable);
+    action_for(&mixed_result, "companion", ActionKind::Install);
+}
+
+#[test]
+fn exact_map_update_keeps_unreadable_installed_version_and_explains_the_requirement() {
+    let mut inventory = kitchen_inventory(">=3.10.2");
+    let request = map_update(&mut inventory);
+    inventory.nodes[1].current.as_mut().unwrap().provides[0].version = None;
+    let result = solve(&inventory, &request);
+    assert_eq!(result.status, SolveStatus::Ready, "{result:?}");
+    assert_eq!(result.actions.len(), 1);
+    assert_eq!(
+        result.notices,
+        [crate::locale_tag::with_params(
+            "modChanges.mapDependencyVersionUnconfirmed",
+            &[
+                ("map", "dmm-kitchen"),
+                ("dependency", "web"),
+                ("requirement", ">=3.10.2")
+            ],
+        )]
+    );
+    assert!(
+        result.evaluations[2]
+            .runtime
+            .iter()
+            .any(|edge| edge.state == EvaluationState::Unknown)
+    );
+
+    let mut second = inventory.nodes[1].clone();
+    second.id = "other-web".into();
+    inventory.nodes.push(second);
+    let duplicate = solve(&inventory, &request);
+    assert_eq!(duplicate.status, SolveStatus::Incomplete, "{duplicate:?}");
+    assert!(duplicate.notices.is_empty());
+}
+
+#[test]
+fn exact_map_update_does_not_treat_a_bad_requirement_as_an_unreadable_plugin_version() {
+    let mut inventory = kitchen_inventory(">=unknown");
+    let request = map_update(&mut inventory);
+    let result = solve(&inventory, &request);
+    assert_eq!(result.status, SolveStatus::Incomplete, "{result:?}");
+    assert!(result.notices.is_empty());
+}
+
+#[test]
+fn exact_map_update_keeps_installed_dependency_with_incomplete_declarations() {
+    let mut inventory = kitchen_inventory(">=3.10.2");
+    let request = map_update(&mut inventory);
+    inventory.nodes[1].current.as_mut().unwrap().relations_known = false;
+    for enabled in [true, false] {
+        inventory.nodes[1].enabled = enabled;
+        let result = solve(&inventory, &request);
+        assert_eq!(result.status, SolveStatus::Ready, "{result:?}");
+        assert_eq!(result.actions.len(), 1);
+        let declarations = crate::locale_tag::with_params(
+            "modChanges.mapDependencyDeclarationsUnconfirmed",
+            &[("map", "dmm-kitchen"), ("dependency", "web")],
+        );
+        assert!(result.notices.contains(&declarations));
+        assert_eq!(result.notices.len(), if enabled { 1 } else { 2 });
+        if !enabled {
+            assert!(result.notices.contains(&crate::locale_tag::with_params(
+                "modChanges.mapDependencyDisabledUnconfirmed",
+                &[
+                    ("map", "dmm-kitchen"),
+                    ("dependency", "web"),
+                    ("requirement", ">=3.10.2")
+                ],
+            )));
+        }
+    }
 }
 
 #[test]

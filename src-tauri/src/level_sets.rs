@@ -15,6 +15,7 @@ mod plugin_registry;
 pub(crate) mod recompress;
 mod requirements;
 mod scan;
+pub(crate) mod source_relations;
 mod zip_info;
 mod zip_inspect;
 mod zip_plugins;
@@ -26,14 +27,15 @@ pub use conflicts::find_install_conflicts_with_workers;
 pub use flatten::flatten_level_sets;
 pub use identity::level_set_identity_matches;
 pub(crate) use identity::{allocate_dir_name, map_repository_by_id};
+pub(crate) use identity::{installed_map_identity_matches, same_level_set};
 pub use info_cache::clear_info_cache;
 pub(crate) use info_cache::read_info_metadata;
 #[cfg(test)]
 pub(crate) use info_cache::seed_info_metadata;
 pub(crate) use install::install_parsed_sets;
-pub(crate) use installed_versions::INSTALLED_PREFIX;
 pub use installed_versions::installed_mapset_version;
 pub(crate) use installed_versions::installed_repository_id;
+pub(crate) use installed_versions::{INSTALLED_PREFIX, LOCAL_IMPORT_PREFIX, is_local_import};
 pub use operations::locate_level_set_directory;
 pub use operations::remove_level_set;
 #[cfg(test)]
@@ -58,6 +60,7 @@ pub use zip_inspect::classify_zip;
 #[cfg(test)]
 pub use zip_inspect::inspect_zip;
 pub use zip_inspect::inspect_zip_with_progress;
+pub(crate) use zip_inspect::require_map_only_zip;
 
 #[cfg(test)]
 mod cache_and_scan_tests;

@@ -94,6 +94,7 @@ fn session(candidate_id: &str) -> PlanSession {
             config: crate::config::default_config(),
             managed_mods: Default::default(),
             toggle_unbound_nodes: Default::default(),
+            manual_declaration_notices: Default::default(),
             installed_mods: Default::default(),
             duplicate_releases: Default::default(),
             duplicate_release_safe_nodes: Default::default(),
@@ -101,6 +102,7 @@ fn session(candidate_id: &str) -> PlanSession {
         },
         request: ChangeRequest::default(),
         wire_request: PlanRequest::default(),
+        dependency_policy: Default::default(),
         plan: ChangePlan {
             plan_id: "revised-plan".into(),
             roots: vec![],
@@ -115,6 +117,7 @@ fn session(candidate_id: &str) -> PlanSession {
                 status: SolveStatus::Ready,
                 evaluations: vec![],
                 blockers: vec![],
+                notices: vec![],
                 impacts: vec![],
                 actions: vec![ChangeAction {
                     node_id: "framework".into(),

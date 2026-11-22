@@ -242,7 +242,7 @@ fn legacy_diylevel_core_directory(core: &str) -> Option<String> {
     dir.starts_with("bepinex/plugins/").then(|| dir.to_string())
 }
 
-pub(super) fn repository_matches_mod(
+pub(crate) fn repository_matches_mod(
     repo: &crate::models::ModRepositoryConfig,
     guid: Option<&str>,
     product_name: Option<&str>,

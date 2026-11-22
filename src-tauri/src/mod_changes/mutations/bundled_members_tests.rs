@@ -160,10 +160,9 @@ fn bundled_zip_missing_map_with_dll_is_rejected_before_live_writes() {
         );
         assert_eq!(f.session.payloads["framework"].candidate.provides.len(), 1);
         let before = Fingerprint::capture(&f.roots.game_root).unwrap();
-        assert_eq!(
-            assemble(&f.session, f.roots.clone()).unwrap_err(),
-            "modChanges.ambiguousOwnership"
-        );
+        let error = assemble(&f.session, f.roots.clone()).unwrap_err();
+        assert!(error.starts_with("modChanges.installBundledMapPluginUnverified?"));
+        assert!(error.contains(name));
         assert_eq!(Fingerprint::capture(&f.roots.game_root).unwrap(), before);
     }
 }

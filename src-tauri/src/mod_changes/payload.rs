@@ -3,6 +3,7 @@
 use super::{
     inventory::{self, TrustedInventory},
     model::*,
+    mutations::{package_identity_conflict, report_install_block},
     session::Payload,
     transaction::{Fingerprint, path_key},
 };
@@ -22,6 +23,7 @@ use std::{
     sync::Arc,
 };
 
+pub(super) mod manual_relations;
 mod retired_copies;
 
 enum SourceOrigin<'a> {
@@ -291,7 +293,7 @@ fn stage_asset(
             node_id,
             stage_root,
             &mut files,
-            prerelease,
+            repo.map(|_| prerelease),
             retiring.zip(primary),
         )?;
         if provides.is_empty() {
@@ -307,17 +309,22 @@ fn stage_asset(
             )?;
         }
         if let Some(primary) = primary.map(str::trim).filter(|guid| !guid.is_empty()) {
-            match provides
+            let matches = provides
                 .iter()
-                .filter(|member| member.guid.eq_ignore_ascii_case(primary))
-                .count()
-            {
-                0 => return Err("modChanges.targetChanged".into()),
+                .filter(|member| member.guid.eq_ignore_ascii_case(primary));
+            match matches.clone().count() {
+                0 => {
+                    return Err(report_install_block(
+                        "modChanges.installPackageIdentityMissing",
+                        node_id,
+                        &[("guid", primary), ("path", file_name)],
+                    ));
+                }
                 1 => (),
-                _ => return Err("modChanges.ambiguousOwnership".into()),
+                _ => return Err(package_identity_conflict(node_id, primary, matches)),
             }
         }
-        if let Some(levels) = super::level_trees::payload_level_root(&provides)? {
+        if let Some(levels) = super::level_trees::payload_level_root(node_id, &provides)? {
             // The map inventory owns existing map DLLs. Bundled defaults are
             // composed separately and must not advertise versions we skip writing.
             provides.retain(|member| {
@@ -358,20 +365,34 @@ fn stage_asset(
                 relation,
             })
             .collect();
-        for member in &actual.provides {
-            if member.guid.is_empty()
-                || repo.is_some_and(|repo| repo.plugin_guid.eq_ignore_ascii_case(&member.guid))
-            {
-                continue;
+        let mut notices = Vec::new();
+        if matches!(origin, SourceOrigin::Manual(_)) {
+            let declarations = manual_relations::for_members(&trusted.config, &actual.provides);
+            actual.relations = declarations.relations;
+            notices = declarations.notices;
+        } else {
+            for member in &actual.provides {
+                if member.guid.is_empty()
+                    || repo.is_some_and(|repo| repo.plugin_guid.eq_ignore_ascii_case(&member.guid))
+                {
+                    continue;
+                }
+                let (relations, known) =
+                    super::inventory_maps::member_relations(&trusted.config, member);
+                if known == Some(false) {
+                    return Err(report_install_block(
+                        "modChanges.installMemberRelationConflict",
+                        node_id,
+                        &[
+                            ("guid", &member.guid),
+                            ("path", member.member_key.as_deref().unwrap_or(file_name)),
+                        ],
+                    ));
+                }
+                actual.relations.extend(relations);
             }
-            let (relations, known) =
-                super::inventory_maps::member_relations(&trusted.config, member);
-            if known == Some(false) {
-                return Err("modChanges.ambiguousOwnership".into());
-            }
-            actual.relations.extend(relations);
         }
-        actual.relations_known = true;
+        actual.relations_known = notices.is_empty();
         actual.version = repo
             .and_then(|repo| {
                 actual
@@ -421,7 +442,11 @@ fn stage_asset(
                     .strip_prefix(stage_root)
                     .map_err(|_| "archive.pathEscape")?;
                 if files.insert(path_key(relative), stamp.clone()).is_some() {
-                    return Err("modChanges.pathCollision".into());
+                    return Err(report_install_block(
+                        "archive.targetExists",
+                        node_id,
+                        &[("path", &relative.to_string_lossy())],
+                    ));
                 }
                 Ok(())
             })?;
@@ -437,6 +462,7 @@ fn stage_asset(
             files,
             manifest: Some(manifest),
             member_roles,
+            notices,
         })
     })();
     if result.is_err() {
@@ -480,7 +506,7 @@ fn read_members(
     node_id: &str,
     stage_root: &Path,
     files: &mut [String],
-    prerelease: bool,
+    prerelease: Option<bool>,
     retirement: Option<(&[inventory::RetiredModCopy], &str)>,
 ) -> Result<VerifiedMembers, String> {
     let indices = files
@@ -555,7 +581,11 @@ fn read_members(
         if files[index] != destination {
             let target = crate::game::safe_game_path(stage_root, &destination)?;
             if target.exists() {
-                return Err("archive.targetExists".into());
+                return Err(report_install_block(
+                    "archive.targetExists",
+                    node_id,
+                    &[("path", &destination)],
+                ));
             }
             fs::rename(&request.path, target).map_err(|error| error.to_string())?;
             files[index] = destination;
@@ -569,7 +599,7 @@ fn read_members(
                 .as_ref()
                 .and_then(|value| value.version())
                 .map(str::to_string),
-            prerelease: Some(prerelease),
+            prerelease,
             enabled,
         });
     }
@@ -620,6 +650,7 @@ fn create_manifest(
         files,
         relations,
     );
+    manifest.manual_install = Some(matches!(origin, SourceOrigin::Manual(_)));
     if let Some(repo) = repo {
         manifest.repository_binding =
             ModRepositoryBinding::from_release(repo, candidate.tag.as_deref().unwrap_or_default());

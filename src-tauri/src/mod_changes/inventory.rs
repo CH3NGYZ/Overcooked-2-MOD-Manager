@@ -103,6 +103,7 @@ pub(crate) struct TrustedInventory {
     pub managed_mods: ManagedMods,
     /// Installed nodes with no current, filtered or historical binding evidence.
     pub toggle_unbound_nodes: BTreeSet<String>,
+    pub(super) manual_declaration_notices: BTreeMap<String, Vec<String>>,
     pub(super) installed_mods: Arc<[InstalledMod]>,
     /// Physical ownership checks separate from the missing repository alias.
     pub(super) duplicate_release_safe_nodes: BTreeSet<String>,
@@ -187,7 +188,7 @@ fn current_candidate(
     manifests: &[archive::InstallManifest],
     id: &str,
     config: &AppConfig,
-) -> Candidate {
+) -> (Candidate, Vec<String>) {
     let installed_tag = manifests
         .first()
         .map(|m| m.release_tag.clone())
@@ -242,43 +243,53 @@ fn current_candidate(
                 })
                 .collect()
         });
+    let manual = matches!(manifests, [manifest] if manifest.is_manual());
     let provides = items
         .iter()
         .map(|i| ProvidedPlugin {
             member_key: Some(key(&i.dll_file)),
             guid: i.guid.clone().unwrap_or_default(),
             version: i.version.clone(),
-            prerelease: Some(i.prerelease),
+            prerelease: (!manual).then_some(i.prerelease),
             enabled: i.enabled,
         })
         .collect::<Vec<_>>();
     let mut relations_known = repo.is_some()
         || (!changed_release
             && (!manifests.is_empty() || items.iter().any(|item| !item.relations.is_empty())));
-    for member in &provides {
-        if member.guid.is_empty()
-            || repo.is_some_and(|repo| repo.plugin_guid.eq_ignore_ascii_case(&member.guid))
-        {
-            continue;
+    let mut notices = Vec::new();
+    if manual {
+        let declarations = super::payload::manual_relations::for_members(config, &provides);
+        relations = declarations.relations;
+        notices = declarations.notices;
+        relations_known = notices.is_empty();
+    } else {
+        for member in &provides {
+            if member.guid.is_empty()
+                || repo.is_some_and(|repo| repo.plugin_guid.eq_ignore_ascii_case(&member.guid))
+            {
+                continue;
+            }
+            let (member_relations, known) = super::inventory_maps::member_relations(config, member);
+            relations.extend(member_relations);
+            relations_known &= known != Some(false);
         }
-        // The package tag governs its primary declaration; bundled plugins retain
-        // their own actual-version declarations exactly as verified payloads do.
-        let (member_relations, known) = super::inventory_maps::member_relations(config, member);
-        relations.extend(member_relations);
-        relations_known &= known != Some(false);
     }
-    Candidate {
-        id: format!("installed:{id}"),
-        source_id: repo.map(|r| r.id.clone()),
-        tag,
-        version,
-        provides,
-        relations,
-        relations_known,
-        installable: true,
-        raw: false,
-        verification_pending: false,
-    }
+    (
+        Candidate {
+            id: format!("installed:{id}"),
+            source_id: repo.map(|r| r.id.clone()),
+            tag,
+            version,
+            provides,
+            relations,
+            relations_known,
+            installable: true,
+            raw: false,
+            verification_pending: false,
+        },
+        notices,
+    )
 }
 
 pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
@@ -322,6 +333,7 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
     let mut inventory = Inventory::default();
     let mut files = BTreeMap::new();
     let mut toggle_unbound_nodes = BTreeSet::new();
+    let mut manual_declaration_notices = BTreeMap::new();
     let mut duplicate_release_safe_nodes = BTreeSet::new();
     let mut declared_bundle_switch_members = BTreeMap::new();
     for (fallback, items) in grouped {
@@ -352,7 +364,10 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
             })
             .cloned()
             .collect();
-        let current = current_candidate(&items, repo, &owned_manifests, &id, &config);
+        let (current, notices) = current_candidate(&items, repo, &owned_manifests, &id, &config);
+        if !notices.is_empty() {
+            manual_declaration_notices.insert(current.id.clone(), notices);
+        }
         if items.iter().all(|item| {
             item.repository_id.is_none()
                 && item.repository_ids.is_empty()
@@ -556,6 +571,7 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
         config,
         managed_mods,
         toggle_unbound_nodes,
+        manual_declaration_notices,
         installed_mods,
         duplicate_release_safe_nodes,
         declared_bundle_switch_members,
@@ -718,16 +734,25 @@ pub(crate) fn validate_solution(
     {
         return Err("framework.bepInExRequiredBeforeMods".into());
     }
+    use super::mutations::{InstallBlock, node_label, report_install_block};
     let mut ids = BTreeSet::new();
     for node in &solved.nodes {
         if !ids.insert(&node.id) && affected.contains(&node.id) {
-            return Err("modChanges.ambiguousOwnership".into());
+            return Err(report_install_block(
+                "modChanges.installTargetIdentityConflict",
+                &node.id,
+                &[("name", node_label(trusted, &node.id))],
+            ));
         }
         if !affected.contains(&node.id) {
             continue;
         }
         if !node.mutable {
-            return Err("modChanges.ambiguousOwnership".into());
+            return Err(report_install_block(
+                "modChanges.installTargetOwnershipUnverified",
+                &node.id,
+                &[("name", node_label(trusted, &node.id))],
+            ));
         }
         let Some(candidate) = &node.current else {
             continue;
@@ -735,21 +760,22 @@ pub(crate) fn validate_solution(
         let mut members = BTreeSet::new();
         for plugin in &candidate.provides {
             if let Some(member) = &plugin.member_key {
-                let member = key(member);
-                if !members.insert(member.clone())
-                    || solved.nodes.iter().any(|other| {
-                        other.id != node.id
-                            && other.current.as_ref().is_some_and(|candidate| {
-                                candidate.provides.iter().any(|plugin| {
-                                    plugin
-                                        .member_key
-                                        .as_ref()
-                                        .is_some_and(|key_| key(key_) == member)
-                                })
+                let normalized = key(member);
+                if !members.insert(normalized.clone()) {
+                    return Err(InstallBlock::PathCollision.report(&node.id, member));
+                }
+                if solved.nodes.iter().any(|other| {
+                    other.id != node.id
+                        && other.current.as_ref().is_some_and(|candidate| {
+                            candidate.provides.iter().any(|plugin| {
+                                plugin
+                                    .member_key
+                                    .as_ref()
+                                    .is_some_and(|path| key(path) == normalized)
                             })
-                    })
-                {
-                    return Err("modChanges.ambiguousOwnership".into());
+                        })
+                }) {
+                    return Err(InstallBlock::PathOwned.report(&node.id, member));
                 }
             }
             if node.enabled

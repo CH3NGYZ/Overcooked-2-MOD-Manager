@@ -246,5 +246,7 @@ pub struct SolveResult {
     pub actions: Vec<ChangeAction>,
     pub evaluations: Vec<NodeEvaluation>,
     pub blockers: Vec<Diagnostic>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<String>,
     pub impacts: Vec<String>,
 }

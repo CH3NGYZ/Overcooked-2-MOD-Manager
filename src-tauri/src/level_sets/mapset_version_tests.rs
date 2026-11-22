@@ -223,11 +223,12 @@ fn both_install_layouts_scope_asset_versions_even_with_single_selection() {
             )
             .unwrap();
             let snapshots = crate::archive::read_map_relation_snapshots(&manifests);
-            assert!(snapshots.entries.is_empty());
+            assert_eq!(snapshots.entries.len(), usize::from(origin.is_none()));
             let info = levels_root(&roots).unwrap().join("Music/info");
             crate::level_sets::seed_info_metadata(&info, sets[0].metadata.clone());
             let mut info = level_set_to_info(crate::level_sets::scan_level_sets(&roots).remove(0));
             bind_map_relation_snapshot(&mut info, &crate::config::default_config(), &snapshots);
+            assert_eq!(info.local_import, origin.is_none());
             assert_eq!(
                 info.relations.len(),
                 1,
@@ -252,12 +253,12 @@ fn both_install_layouts_scope_asset_versions_even_with_single_selection() {
         )
         .unwrap();
         let after = crate::archive::read_map_relation_snapshots(&manifests);
-        assert_eq!(after.entries.len(), 1);
+        assert_eq!(after.entries.len(), 2);
         assert_eq!(
             after
                 .entries
                 .values()
-                .next()
+                .find(|entry| entry.level_set_name == "pear")
                 .unwrap()
                 .installed_mapset_version,
             "11.0-fix"

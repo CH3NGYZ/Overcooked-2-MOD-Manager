@@ -20,7 +20,7 @@ mod records;
 mod release_ownership;
 mod retirements;
 mod roots;
-pub(super) use install_block::InstallBlock;
+pub(super) use install_block::{InstallBlock, package_identity_conflict, report_install_block};
 use records::{InstallRecords, install_record_path};
 pub(super) use release_ownership::LooseReleaseSearch;
 pub(super) use release_ownership::ReleaseTargetClaims;
@@ -75,6 +75,15 @@ fn installed_map_roots(session: &PlanSession) -> Result<Vec<String>, String> {
     Ok(roots)
 }
 
+pub(super) fn node_label<'a>(trusted: &'a inventory::TrustedInventory, id: &'a str) -> &'a str {
+    trusted
+        .files
+        .get(id)
+        .map(|files| files.summary.label.as_str())
+        .filter(|label| !label.is_empty())
+        .unwrap_or(id)
+}
+
 pub(super) fn assemble(
     session: &PlanSession,
     transaction_roots: TransactionRoots,
@@ -123,10 +132,13 @@ pub(super) fn assemble(
                 .and_then(|old| old.current.as_ref())
                 .ok_or("modChanges.targetChanged")?;
             for member in &current.provides {
-                let key = member
-                    .member_key
-                    .as_deref()
-                    .ok_or("modChanges.ambiguousOwnership")?;
+                let key = member.member_key.as_deref().ok_or_else(|| {
+                    report_install_block(
+                        "modChanges.installTargetOwnershipUnverified",
+                        &node.id,
+                        &[("name", node_label(&session.trusted, &node.id))],
+                    )
+                })?;
                 let before = old_current
                     .provides
                     .iter()

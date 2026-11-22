@@ -35,10 +35,13 @@ pub(in crate::mod_changes) fn final_framework_package(
         .first()
         .map(|&index| {
             let (node, member) = members[index];
-            let path = member
-                .member_key
-                .as_deref()
-                .ok_or("modChanges.ambiguousOwnership")?;
+            let path = member.member_key.as_deref().ok_or_else(|| {
+                report_install_block(
+                    "modChanges.installTargetOwnershipUnverified",
+                    &node.id,
+                    &[("name", "DIYLevel")],
+                )
+            })?;
             let canonical = mods::canonical_dll_name(path);
             Path::new(&canonical)
                 .parent()
@@ -139,17 +142,18 @@ pub(super) fn toggle_map(
         .files
         .get(&node.id)
         .ok_or("modChanges.targetChanged")?;
-    let directory = files
-        .map_path
-        .as_deref()
-        .ok_or("modChanges.ambiguousOwnership")?;
+    let missing_owner = || {
+        report_install_block(
+            "modChanges.installTargetOwnershipUnverified",
+            &node.id,
+            &[("name", &files.summary.label)],
+        )
+    };
+    let directory = files.map_path.as_deref().ok_or_else(missing_owner)?;
     let mut internal = Vec::new();
     if let (Some(before), Some(after)) = (&old.current, &node.current) {
         for member in &after.provides {
-            let key = member
-                .member_key
-                .as_deref()
-                .ok_or("modChanges.ambiguousOwnership")?;
+            let key = member.member_key.as_deref().ok_or_else(missing_owner)?;
             let previous = before
                 .provides
                 .iter()
@@ -165,7 +169,7 @@ pub(super) fn toggle_map(
             .summary
             .map_dir_name
             .as_deref()
-            .ok_or("modChanges.ambiguousOwnership")?;
+            .ok_or_else(missing_owner)?;
         if name.is_empty() || name.contains(['/', '\\']) {
             return Err("archive.pathEscape".into());
         }
@@ -198,10 +202,14 @@ pub(super) fn toggle_map(
                 node.current.as_ref().ok_or("modChanges.targetChanged")?,
             )?;
             let mut targets = BTreeSet::new();
-            if Fingerprint::capture(&game(&target).resolve(&builder.roots)?)?
+            if super::super::level_trees::map_tree_fingerprint(&builder.roots, &target, &node.id)?
                 != Fingerprint::Missing
             {
-                return Err("modChanges.pathCollision".into());
+                return Err(report_install_block(
+                    "archive.targetExists",
+                    &node.id,
+                    &[("path", &target)],
+                ));
             }
             super::super::level_trees::push_tree(
                 &mut builder.moves,

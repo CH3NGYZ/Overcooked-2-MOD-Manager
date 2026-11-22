@@ -74,7 +74,7 @@ impl Builder<'_> {
                 fingerprint,
             ),
             (None, None) => Ok(()),
-            _ => Err("modChanges.ambiguousOwnership".into()),
+            _ => Err(InstallBlock::VerificationChanged.report(node_id, relative)),
         }
     }
 

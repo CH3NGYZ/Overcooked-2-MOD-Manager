@@ -28,6 +28,27 @@ async fn prepare_inner(
     progress: &PreparationReporter,
 ) -> Result<ChangePlan, String> {
     let mut lease = SessionLease::take(&state, &id)?;
+    let op = lease
+        .session
+        .as_ref()
+        .ok_or("modChanges.planExpired")?
+        .operation_id()
+        .to_owned();
+    let outcome = prepare_session(&state, &mut lease, progress).await;
+    if let Err(error) = &outcome {
+        log::warn!(
+            "整链准备失败 op={op} reason={}",
+            crate::http_diagnostics::redact_text(error)
+        );
+    }
+    outcome
+}
+
+async fn prepare_session(
+    state: &AppState,
+    lease: &mut SessionLease,
+    progress: &PreparationReporter,
+) -> Result<ChangePlan, String> {
     let session = lease.session.as_mut().ok_or("modChanges.planExpired")?;
     if session.plan.prepared {
         return Ok(session.plan.clone());
@@ -76,7 +97,7 @@ async fn prepare_inner(
         if session.plan.result.status != SolveStatus::Ready {
             break;
         }
-        live_game::check_plan(&state, session)?;
+        live_game::check_plan(state, session)?;
         let pending = session
             .solved
             .as_ref()
@@ -109,6 +130,13 @@ async fn prepare_inner(
                 session.plan.plan_id = uuid::Uuid::new_v4().to_string();
             }
             session.plan.prepared = true;
+            log::info!(
+                "整链准备完成 op={} plan={} actions={} mutations={}",
+                session.operation_id(),
+                session.plan.plan_id,
+                session.plan.result.actions.len(),
+                session.mutations.as_ref().map_or(0, Vec::len)
+            );
             return Ok(session.plan.clone());
         };
         if let Some(payload) = session
@@ -130,6 +158,14 @@ async fn prepare_inner(
             .iter()
             .find(|root| root.intent.node_id == node_id)
             .and_then(|r| r.asset_name.clone());
+        log::info!(
+            "整链下载候选 op={} node={} source={} tag={} asset={}",
+            session.operation_id(),
+            crate::http_diagnostics::redact_text(&node_id),
+            crate::http_diagnostics::redact_text(repository_id),
+            crate::http_diagnostics::redact_text(candidate.tag.as_deref().unwrap_or("")),
+            crate::http_diagnostics::redact_text(asset_name.as_deref().unwrap_or("")),
+        );
         progress.stage(PreparationStage::Downloading, Some(&node_id));
         let reporter = progress.clone();
         let download_node = node_id.clone();
@@ -138,7 +174,7 @@ async fn prepare_inner(
             move |download| reporter.download(&download_node, &download_candidate, download),
             download_repository_asset(
                 None,
-                &state,
+                state,
                 RepositoryDownloadRequest {
                     repository_id,
                     tag: candidate.tag.as_deref(),
@@ -170,6 +206,17 @@ async fn prepare_inner(
         .map_err(|e| e.to_string())??;
         replace_candidate(session, &node_id, &payload.candidate)?;
         let verified_candidate = payload.candidate.id.clone();
+        let actual = &payload.candidate;
+        log::info!(
+            "整链候选实包已验证 op={} id={} files={} actual={}",
+            session.operation_id(),
+            crate::http_diagnostics::redact_text(&verified_candidate),
+            payload.files.len(),
+            crate::http_diagnostics::redact_text(&format!(
+                "provides={:?} relations={:?}",
+                actual.provides, actual.relations
+            )),
+        );
         session
             .verified_payloads
             .insert((node_id.clone(), payload.candidate.id.clone()), payload);
@@ -194,6 +241,12 @@ async fn prepare_inner(
     }
     session.plan.plan_id = uuid::Uuid::new_v4().to_string();
     planning::remember_payloads(session)?;
+    log::info!(
+        "整链准备未通过 op={} status={:?} plan={}",
+        session.operation_id(),
+        session.plan.result.status,
+        session.plan.plan_id
+    );
     Ok(session.plan.clone())
 }
 
@@ -364,6 +417,7 @@ pub(super) fn approval_signature(session: &PlanSession) -> Result<Vec<u8>, Strin
         actions,
         &result.evaluations,
         &result.blockers,
+        &result.notices,
         &result.impacts,
         members,
         &session.plan.retired_mod_copies,

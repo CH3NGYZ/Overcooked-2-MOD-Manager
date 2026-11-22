@@ -2,7 +2,7 @@
 
 use crate::asset_bundle::LevelSetMetadata;
 
-/// 两个关卡集是否是同一张地图。
+/// 地图源目录允许用缺省中文名匹配关卡集。
 ///
 /// 身份由三段构成：`levelSetName`（英文集名）+ `levelSetNameZH`（中文名）+
 /// `author`。只用前两段不够 —— 实测「胡闹糕中」与「胡闹达学」是同一个作者的
@@ -44,6 +44,27 @@ pub fn level_set_identity_matches(
     }
 }
 
+pub(crate) fn installed_map_identity_matches(
+    name: &str,
+    name_zh: Option<&str>,
+    author: &str,
+    other_name: &str,
+    other_name_zh: Option<&str>,
+    other_author: &str,
+) -> bool {
+    level_set_identity_matches(
+        name,
+        name_zh,
+        author,
+        other_name,
+        other_name_zh,
+        other_author,
+    ) && name_zh
+        .unwrap_or_default()
+        .trim()
+        .eq_ignore_ascii_case(other_name_zh.unwrap_or_default().trim())
+}
+
 /// Repository IDs identify distribution channels; duplicate IDs are not a reliable binding.
 pub(crate) fn map_repository_by_id<'a>(
     maps: &'a [crate::models::MapRepositoryConfig],
@@ -57,9 +78,9 @@ pub(crate) fn map_repository_by_id<'a>(
     matches.next().is_none().then_some(map)
 }
 
-/// 两张关卡集是否同一张图：`levelSetName + levelSetNameZH + author`。
-pub(super) fn same_level_set(left: &LevelSetMetadata, right: &LevelSetMetadata) -> bool {
-    level_set_identity_matches(
+/// 安装归属要求三段身份相等。空中文名只匹配空中文名。
+pub(crate) fn same_level_set(left: &LevelSetMetadata, right: &LevelSetMetadata) -> bool {
+    installed_map_identity_matches(
         &left.name,
         left.name_zh.as_deref(),
         &left.author,

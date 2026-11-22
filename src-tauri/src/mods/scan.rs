@@ -360,10 +360,7 @@ fn inspect_dll(
             product_name.as_deref(),
             original_filename.as_deref(),
         ),
-        // 安装清单 id 以 manual- 开头 → 手动安装（本地文件 / 在线直链）。
-        // 即使它成功绑定了在线仓库（repository_id 已变成仓库 id），
-        // 这个标记仍保留原始安装来源，供前端在未匹配到仓库时归类。
-        manual_install: manifest.is_some_and(|item| item.repository_id.starts_with("manual-")),
+        manual_install: manifest.is_some_and(InstallManifest::is_manual),
         // 没有 BepInPlugin 元数据（无 GUID、无版本）的 DLL 是纯依赖，
         // 例如 DIYLevel 包里的 LevelEditorStub.dll。
         is_dependency: guid.is_none()

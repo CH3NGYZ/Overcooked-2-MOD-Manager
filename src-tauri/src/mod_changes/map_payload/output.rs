@@ -73,14 +73,18 @@ pub(in crate::mod_changes) fn mutations(
                 push_tree(&mut result, &mut targets, roots, old, None, &map.node_id)?;
             }
         }
-        let destination = game(&target).resolve(roots)?;
-        if Fingerprint::capture(&destination)? != Fingerprint::Missing
+        if super::super::level_trees::map_tree_fingerprint(roots, &target, &map.node_id)?
+            != Fingerprint::Missing
             && map
                 .old_path
                 .as_deref()
                 .is_none_or(|old| key(old) != key(&target))
         {
-            return Err("modChanges.pathCollision".into());
+            return Err(crate::mod_changes::mutations::report_install_block(
+                "archive.targetExists",
+                &map.node_id,
+                &[("path", &target)],
+            ));
         }
         let source = game(&map.stage_path).resolve(&TransactionRoots {
             game_root: batch.stage_root.clone(),
@@ -102,7 +106,7 @@ pub(in crate::mod_changes) fn mutations(
         let node = selected(solved, &external.node_id, &external.candidate_id)?;
         let current = node.current.as_ref().ok_or("modChanges.targetChanged")?;
         if current.provides.len() != 1 {
-            return Err("modChanges.ambiguousOwnership".into());
+            return Err(InstallBlock::Unrecognized.report(&external.node_id, &external.target));
         }
         let member = &current.provides[0];
         let canonical = crate::mods::canonical_dll_name(&external.target);
@@ -254,15 +258,9 @@ pub(super) fn push_tree(
 ) -> Result<(), String> {
     let target = game(path);
     reserve(targets, &target, owner)?;
-    let expected = Fingerprint::capture(&target.resolve(roots)?)?;
-    if !matches!(
-        expected,
-        Fingerprint::Missing | Fingerprint::Directory { .. }
-    ) {
-        return Err("modChanges.pathCollision".into());
-    }
+    let expected = super::super::level_trees::map_tree_fingerprint(roots, path, owner)?;
     if expected == Fingerprint::Missing && source.is_none() {
-        return Err("modChanges.targetChanged".into());
+        return Err(InstallBlock::Missing.report(owner, path));
     }
     result.push(OwnedMutation::for_node(
         Mutation::Tree(TreeChange {

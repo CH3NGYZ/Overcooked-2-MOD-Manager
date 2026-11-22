@@ -77,6 +77,7 @@ fn same_root_framework_bundle_and_map_update_keep_disjoint_tree_endpoints() {
         "framework".into(),
         super::super::super::session::Payload {
             candidate: next,
+            notices: Vec::new(),
             member_roles: Default::default(),
             stage_fingerprint: Fingerprint::capture(&stage).unwrap(),
             stage_root: stage,

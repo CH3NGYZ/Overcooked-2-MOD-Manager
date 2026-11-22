@@ -64,6 +64,7 @@ fn fixture() -> Fixture {
         config: crate::config::default_config(),
         managed_mods: Default::default(),
         toggle_unbound_nodes: Default::default(),
+        manual_declaration_notices: Default::default(),
         installed_mods: Default::default(),
         duplicate_releases: Default::default(),
         duplicate_release_safe_nodes: Default::default(),
@@ -73,6 +74,7 @@ fn fixture() -> Fixture {
         trusted,
         request: ChangeRequest::default(),
         wire_request: PlanRequest::default(),
+        dependency_policy: Default::default(),
         plan: ChangePlan {
             plan_id: "fixture".into(),
             result: SolveResult {
@@ -80,6 +82,7 @@ fn fixture() -> Fixture {
                 actions: vec![],
                 evaluations: vec![],
                 blockers: vec![],
+                notices: vec![],
                 impacts: vec![],
             },
             roots: vec![],
@@ -202,6 +205,7 @@ fn payload(fixture: &mut Fixture, id: &str, path: &str, enabled: bool) {
         id.into(),
         Payload {
             candidate: actual,
+            notices: Vec::new(),
             member_roles: Default::default(),
             stage_fingerprint: Fingerprint::capture(&stage).unwrap(),
             stage_root: stage,

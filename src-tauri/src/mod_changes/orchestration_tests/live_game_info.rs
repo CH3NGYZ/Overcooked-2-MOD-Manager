@@ -2,11 +2,24 @@
 //! generated here keeps ZIP parsing in the test and avoids a downloaded map.
 
 pub(super) fn bundle(name: &str, author: &str, version: &str) -> Vec<u8> {
-    let data = serialized_file([
+    bundle_with_chinese_name(name, None, author, version)
+}
+
+pub(super) fn bundle_with_chinese_name(
+    name: &str,
+    name_zh: Option<&str>,
+    author: &str,
+    version: &str,
+) -> Vec<u8> {
+    let mut fields = vec![
         ("levelSetName", name),
         ("author", author),
         ("version", version),
-    ]);
+    ];
+    if let Some(name_zh) = name_zh {
+        fields.push(("levelSetNameZH", name_zh));
+    }
+    let data = serialized_file(&fields);
     let size = (data.len() as u32).to_be_bytes();
     let mut table = vec![0; 16]; // block information hash
     table.extend(1u32.to_be_bytes()); // block count
@@ -34,7 +47,7 @@ pub(super) fn bundle(name: &str, author: &str, version: &str) -> Vec<u8> {
     bundle
 }
 
-fn serialized_file(fields: [(&str, &str); 3]) -> Vec<u8> {
+fn serialized_file(fields: &[(&str, &str)]) -> Vec<u8> {
     let mut object = Vec::new();
     for (_, value) in fields {
         object.extend((value.len() as u32).to_le_bytes());
@@ -47,7 +60,7 @@ fn serialized_file(fields: [(&str, &str); 3]) -> Vec<u8> {
     let root = [(0, "MonoBehaviour", "Base")];
     for (index, (depth, kind, name)) in root
         .into_iter()
-        .chain(fields.map(|(name, _)| (1, "string", name)))
+        .chain(fields.iter().map(|&(name, _)| (1, "string", name)))
         .enumerate()
     {
         nodes.extend(1u16.to_le_bytes()); // node version
@@ -72,7 +85,7 @@ fn serialized_file(fields: [(&str, &str); 3]) -> Vec<u8> {
     file.push(0); // stripped flag
     file.extend((-1i16).to_le_bytes()); // script type index
     file.extend([0; 32]); // script ID and type hash
-    file.extend(4u32.to_le_bytes()); // type-tree node count (root + 3 fields)
+    file.extend((1 + fields.len() as u32).to_le_bytes()); // root and field nodes
     file.extend((strings.len() as u32).to_le_bytes());
     file.extend(nodes);
     file.extend(strings);

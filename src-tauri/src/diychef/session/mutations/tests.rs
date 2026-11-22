@@ -237,6 +237,7 @@ fn deleted_resource_directory_recycles_files_and_updates_owned_manifests() {
             repository_id: "chef-package".into(),
             release_tag: "v1".into(),
             repository_binding: None,
+            manual_install: None,
             package_name_i18n: Default::default(),
             note_i18n: Default::default(),
             group_i18n: Default::default(),

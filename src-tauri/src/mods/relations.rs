@@ -3,6 +3,9 @@ use crate::models::ModRepositoryConfig;
 use crate::models::ReleaseRelationOverride;
 use crate::models::RepositoryRelation;
 
+mod consensus;
+pub(crate) use consensus::common_source_relations;
+
 /// 从覆盖表里挑出对指定版本生效的那一张；没有命中返回 `None`。
 ///
 /// 与前端 `modRelations.ts::relationsForRelease` 同语义：所有命中的区间里取

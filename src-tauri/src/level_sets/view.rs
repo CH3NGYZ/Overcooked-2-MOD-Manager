@@ -46,6 +46,7 @@ pub(crate) fn level_set_to_info(set: crate::level_sets::LevelSetOnDisk) -> Level
         // 配置与快照，这里只负责把磁盘扫描结果转成模型
         map_id: None,
         has_map_source_snapshot: false,
+        local_import: false,
         installed_mapset_version: String::new(),
         // 分组与依赖一样由 `bind_map_relation_snapshot` 补：它需要配置与快照，
         // 这里只负责把磁盘扫描结果转成模型；都查不到时前端回退 info 的 author
@@ -70,15 +71,22 @@ pub(crate) fn bind_map_relation_snapshot(
     config: &AppConfig,
     snapshots: &MapRelationSnapshots,
 ) {
-    let matches = |map: &crate::models::MapRepositoryConfig| {
-        crate::level_sets::level_set_identity_matches(
-            &info.name,
-            info.name_zh.as_deref(),
-            &info.author,
-            &map.level_set_name,
-            Some(map.level_set_name_zh.as_str()).filter(|value| !value.is_empty()),
-            &map.author,
+    let name = info.name.as_str();
+    let name_zh = info.name_zh.as_deref();
+    let author = info.author.as_str();
+    info.local_import =
+        super::installed_versions::is_local_import(snapshots, name, name_zh, author);
+    if info.local_import {
+        info.relations = super::source_relations::resolve(
+            super::source_relations::matching_maps(config, name, name_zh, author),
+            &info.version,
+            &info.relations,
         )
+        .relations;
+        return;
+    }
+    let matches = |map: &crate::models::MapRepositoryConfig| {
+        super::source_relations::matches_map(name, name_zh, author, map)
     };
     let installed_repository_id = super::installed_versions::installed_repository_id(
         snapshots,
@@ -89,7 +97,13 @@ pub(crate) fn bind_map_relation_snapshot(
     let bound = installed_repository_id
         .and_then(|id| super::map_repository_by_id(&config.map_repositories, id))
         .filter(|map| matches(map))
-        .or_else(|| config.map_repositories.iter().find(|map| matches(map)));
+        .or_else(|| {
+            if installed_repository_id.is_some() {
+                return None;
+            }
+            let mut sources = super::source_relations::matching_maps(config, name, name_zh, author);
+            sources.next().filter(|_| sources.next().is_none())
+        });
     /*
      * 分组来源：绑定地图的当前声明 → 快照（先按地图 id，再按身份找）。
      *
@@ -157,24 +171,49 @@ pub(crate) fn bind_map_relation_snapshot(
     info.has_map_source_snapshot = snapshot_has_source
         || installed_repository_id.is_some_and(|id| !id.trim().is_empty())
         || !info.installed_mapset_version.is_empty();
-    let Some(map) = bound else {
-        return;
-    };
-    info.map_id = Some(map.id.clone());
+    info.map_id = bound.map(|map| map.id.clone());
+    if installed_repository_id.is_none() {
+        let resolution = super::source_relations::resolve(
+            super::source_relations::matching_maps(config, name, name_zh, author),
+            &info.version,
+            &info.relations,
+        );
+        if !resolution.source_labels.is_empty() {
+            info.relations = resolution.relations;
+            return;
+        }
+    }
     /*
      * 声明表与按版本覆盖表都优先取快照（安装/上次同步固化的那份），没有快照
      * 才用仓库当前声明。随后按**本地装着的这个版本**选覆盖表 —— 已装 1.x 的
      * 关卡集不该按线上 2.x 的依赖去判定。
      */
-    let (declared, overrides) = match snapshots.entries.get(&map.id) {
-        Some(entry) => (entry.relations.clone(), entry.release_relations.clone()),
-        None => (map.relations.clone(), map.release_relations.clone()),
+    let historical = || {
+        let mut matching = snapshots.entries.values().filter(|entry| {
+            snapshot_matches(entry)
+                && (!entry.relations.is_empty() || !entry.release_relations.is_empty())
+        });
+        if let Some(id) = installed_repository_id {
+            return matching.find(|entry| entry.repository_id == id);
+        }
+        matching.next().filter(|_| matching.next().is_none())
+    };
+    let snapshot = bound
+        .and_then(|map| snapshots.entries.get(&map.id))
+        .filter(|entry| snapshot_matches(entry))
+        .or_else(|| bound.is_none().then(historical).flatten());
+    let (declared, overrides) = if let Some(entry) = snapshot {
+        (&entry.relations, &entry.release_relations)
+    } else if let Some(map) = bound {
+        (&map.relations, &map.release_relations)
+    } else {
+        return;
     };
     let installed_version =
         Some(info.version.as_str()).filter(|version| !version.trim().is_empty());
-    let relations = match crate::mods::select_release_relations(&overrides, installed_version) {
+    let relations = match crate::mods::select_release_relations(overrides, installed_version) {
         Some(selected) => selected.to_vec(),
-        None => declared,
+        None => declared.clone(),
     };
     /*
      * 线上一条声明都没有时，保留 `level_set_to_info` 用 `requires.txt` 填的兜底：

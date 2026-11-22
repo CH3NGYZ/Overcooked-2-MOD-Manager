@@ -130,5 +130,5 @@ test('MOD and map download commands consume cached versions without Release API 
   }
   assert.match(read('../commands/maps.rs'), /fetch_map_release_data\(/)
   assert.match(read('../commands/mod_repository_releases.rs'), /releases::fetch_releases\(/)
-  assert.match(read('../commands/map_install.rs'), /select_map_stage_asset\(&map, release, asset_name\.as_deref\(\)\)/)
+  assert.match(read('../commands/map_install.rs'), /select_map_stage_asset\(map, release, asset_name\.as_deref\(\)\)/)
 })

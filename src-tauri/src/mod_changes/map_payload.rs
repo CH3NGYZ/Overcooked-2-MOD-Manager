@@ -33,6 +33,7 @@ pub(crate) struct MapBatch {
     pub source_path: PathBuf,
     pub source_fingerprint: Fingerprint,
     pub node_ids: BTreeSet<String>,
+    pub(crate) notices: Vec<String>,
     /// Candidate-specific roles for the staged maps and their registered DLLs.
     pub(super) member_roles: BTreeMap<String, BTreeMap<String, DllRole>>,
     maps: Vec<StagedMap>,
@@ -82,10 +83,23 @@ pub(crate) fn attach(state: &AppState, session: &mut PlanSession) -> Result<(), 
         .clone()
         .ok_or("modChanges.targetChanged")?;
     let source = PathBuf::from(&request.zip_path);
+    log::info!(
+        "开始规划地图安装 op={} zip={} selected={} origin={}",
+        session.operation_id(),
+        crate::http_diagnostics::redact_text(&format!("{:?}", source.file_name())),
+        crate::http_diagnostics::redact_text(&format!("{:?}", request.selected)),
+        crate::http_diagnostics::redact_text(&format!("{:?}", request.origin)),
+    );
     let source_fingerprint = Fingerprint::capture(&source)?;
-    if !matches!(source_fingerprint, Fingerprint::File { .. }) {
-        return Err("levelSet.zipWithoutInfo".into());
+    match &source_fingerprint {
+        Fingerprint::Missing => return Err("mods.fileMissing".into()),
+        Fingerprint::Directory { .. } => return Err("modPreview.unsupportedType".into()),
+        Fingerprint::File { size, sha256, .. } => log::info!(
+            "地图 ZIP 指纹 op={} size={size} sha256={sha256}",
+            session.operation_id()
+        ),
     }
+    level_sets::require_map_only_zip(&source)?;
     archive::validate_zip(&source)?;
     let config = &session.trusted.config;
     let sets = level_sets::inspect_zip_with_progress(
@@ -115,11 +129,24 @@ pub(crate) fn attach(state: &AppState, session: &mut PlanSession) -> Result<(), 
     if let (Some((_, map)), Some(origin)) = (primary, request.origin.as_mut()) {
         // An old caller did not send an ID; resolve it only if the source was unique.
         origin.repository_id = Some(map.id.clone());
+        log::info!(
+            "在线地图安装来源：操作={}，仓库={}，资产版本={}，暂存文件={}",
+            session.operation_id(),
+            crate::http_diagnostics::redact_text(&format!("{:?}", map.id)),
+            crate::http_diagnostics::redact_text(&format!("{:?}", origin.mapset_version)),
+            crate::http_diagnostics::redact_text(&format!("{:?}", source.file_name())),
+        );
     }
     let stage_root = create_sandbox(state, session, &session.staging.join("map-game"))?;
     let manifests_root = create_sandbox(state, session, &session.staging.join("map-manifests"))?;
     copy_metadata(&state.config.manifests_dir(), &manifests_root)?;
-    projection::seed_snapshots(config, &metadata, primary, &manifests_root)?;
+    let notices = projection::seed_snapshots(
+        config,
+        &metadata,
+        primary,
+        &manifests_root,
+        session.operation_id(),
+    )?;
     let roots = level_sets::LevelSetRoots::new(
         stage_root.clone(),
         Some(stage_root.join(crate::framework::DIYLEVEL_DIR)),
@@ -133,6 +160,22 @@ pub(crate) fn attach(state: &AppState, session: &mut PlanSession) -> Result<(), 
         request.origin.as_ref(),
     )?;
     verify_staged_source(&manifests_root, primary)?;
+    if request.origin.is_none() {
+        let snapshots = archive::read_map_relation_snapshots(&manifests_root);
+        for metadata in metadata {
+            if !metadata.name.trim().is_empty()
+                && !level_sets::is_local_import(
+                    &snapshots,
+                    &metadata.name,
+                    metadata.name_zh.as_deref(),
+                    &metadata.author,
+                )
+            {
+                return Err(InstallBlock::MapRecordsUnreadable
+                    .report("map-import", "manifests/map-relations.json"));
+            }
+        }
+    }
     if Fingerprint::capture(&source)? != source_fingerprint {
         return Err("modChanges.payloadChanged".into());
     }
@@ -152,6 +195,7 @@ pub(crate) fn attach(state: &AppState, session: &mut PlanSession) -> Result<(), 
         source_path: source,
         source_fingerprint,
         node_ids: BTreeSet::new(),
+        notices,
         member_roles: BTreeMap::new(),
         maps: vec![],
         external: vec![],
@@ -217,11 +261,16 @@ fn copy_metadata(from: &Path, to: &Path) -> Result<(), String> {
         match Fingerprint::capture(&source)? {
             Fingerprint::Missing => continue,
             Fingerprint::File { .. } => (),
-            _ => return Err("modChanges.ambiguousOwnership".into()),
+            _ => {
+                return Err(InstallBlock::MapRecordsUnreadable
+                    .report("map-import", &format!("manifests/{name}")));
+            }
         }
-        let bytes = fs::read(&source).map_err(|error| error.to_string())?;
-        let value: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|_| "modChanges.ambiguousOwnership")?;
+        let unreadable = || {
+            InstallBlock::MapRecordsUnreadable.report("map-import", &format!("manifests/{name}"))
+        };
+        let bytes = fs::read(&source).map_err(|_| unreadable())?;
+        let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| unreadable())?;
         let valid = if name == level_sets::LEVEL_SET_PLUGIN_REGISTRY {
             value
                 .get("version")
@@ -241,7 +290,7 @@ fn copy_metadata(from: &Path, to: &Path) -> Result<(), String> {
                 && serde_json::from_slice::<crate::models::MapRelationSnapshots>(&bytes).is_ok()
         };
         if !valid {
-            return Err("modChanges.ambiguousOwnership".into());
+            return Err(unreadable());
         }
         fs::write(to.join(name), bytes).map_err(|error| error.to_string())?;
     }
@@ -267,12 +316,14 @@ fn validate_origin<'metadata, 'source>(
         )
     };
     let mut chosen = metadata.iter().copied().filter(|m| {
-        matches(&m.name, m.name_zh.as_deref(), &m.author)
-            && m.name_zh
-                .as_deref()
-                .unwrap_or_default()
-                .trim()
-                .eq_ignore_ascii_case(origin.level_set_name_zh.trim())
+        level_sets::installed_map_identity_matches(
+            &m.name,
+            m.name_zh.as_deref(),
+            &m.author,
+            &origin.level_set_name,
+            Some(&origin.level_set_name_zh),
+            &origin.author,
+        )
     });
     let primary = chosen
         .next()
@@ -362,8 +413,7 @@ fn loose_files(batch: &MapBatch) -> Result<Vec<String>, String> {
         }
         // Every loader input must participate in the same evaluated graph.
         if crate::mods::file_state::is_mod_file(entry.path()) {
-            log::warn!("地图批次拒绝未归属 DLL：文件={path}");
-            return Err("modChanges.ambiguousOwnership".into());
+            return Err(InstallBlock::Unrecognized.report("map-import", &path));
         }
         result.push(path);
     }
@@ -378,20 +428,6 @@ fn within(path: &str, parent: &str) -> bool {
         || path
             .strip_prefix(&parent)
             .is_some_and(|rest| rest.starts_with('/'))
-}
-
-fn same_identity(
-    a: &crate::asset_bundle::LevelSetMetadata,
-    b: &crate::asset_bundle::LevelSetMetadata,
-) -> bool {
-    level_sets::level_set_identity_matches(
-        &a.name,
-        a.name_zh.as_deref(),
-        &a.author,
-        &b.name,
-        b.name_zh.as_deref(),
-        &b.author,
-    )
 }
 
 #[cfg(test)]

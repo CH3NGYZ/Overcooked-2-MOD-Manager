@@ -23,6 +23,7 @@ pub(crate) fn zip_level_sets(
     path: &Path,
     roots: Option<&super::LevelSetRoots>,
 ) -> Result<Vec<ZipLevelSet>, String> {
+    crate::level_sets::require_map_only_zip(path)?;
     // `info` 是地图线、随包插件是 DLL（MOD 线），两条线各有自己的并行度设置。
     let progress_app = app.clone();
     let sets = crate::level_sets::inspect_zip_with_progress(

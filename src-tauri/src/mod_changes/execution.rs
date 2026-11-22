@@ -38,7 +38,20 @@ fn execute_inner(
 ) -> Result<OperationResult, String> {
     let mut lease = SessionLease::take(state, id)?;
     let session = lease.session.as_mut().ok_or("modChanges.planExpired")?;
-    commit(state, session, report)?;
+    let outcome = commit(state, session, report);
+    if let Err(error) = &outcome {
+        log::warn!(
+            "整链应用失败 op={} reason={}",
+            session.operation_id(),
+            crate::http_diagnostics::redact_text(error)
+        );
+    }
+    outcome?;
+    log::info!(
+        "整链应用完成 op={} plan={}",
+        session.operation_id(),
+        session.plan.plan_id
+    );
     // Only a completed solution can scope the notification. A map request may
     // also enable or replace MODs, so the original intent alone is insufficient.
     let actions = &session.plan.result.actions;
@@ -162,7 +175,8 @@ pub(super) fn commit(
             changes,
         )?;
         log::info!(
-            "应用整链事务：事务={}，动作={}",
+            "应用整链事务 op={}：事务={}，动作={}",
+            session.operation_id(),
             transaction.id(),
             session.plan.result.actions.len()
         );

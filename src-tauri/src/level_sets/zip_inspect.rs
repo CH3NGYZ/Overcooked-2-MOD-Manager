@@ -22,6 +22,7 @@ use crate::models::ZipLevelSetPlugin;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fs;
+use std::io::Read;
 use std::path::Path;
 
 /// ZIP 里识别出的一个关卡集。
@@ -50,23 +51,21 @@ pub struct ImportedLevelSet {
 /// ZIP 里有什么：关卡集数量与 DLL 数量（拖放分类用，不解析 info）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ZipContents {
-    /// 含 `info` 的目录数（>0 即视为地图包）。
+    /// 含 `info` 的目录数。
     pub map_sets: usize,
     /// ZIP 里 `.dll` 条目数。
     pub plugins: usize,
+    pub mod_bundled_maps: bool,
 }
 
-/// 判断一个 ZIP 是地图包还是 MOD 包（**只读条目名**，不解析 info）。
-///
-/// 判据刻意只有一条：**含 `info` 就是地图包**。地图包常带修复插件，只按
-/// 「有没有 DLL」判断会把它误判成 MOD；反过来纯 DLL 的包一定是 MOD。
+/// 地图可带随图插件。只有实读出地图目录上层的 DIYLevel 才走 MOD 整包安装。
 pub fn classify_zip(zip_path: &Path) -> Result<ZipContents, String> {
     let file = fs::File::open(zip_path).map_err(|error| error.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|error| {
         crate::locale_tag::with_params("archive.zipReadFailed", &[("reason", &error.to_string())])
     })?;
     let mut info_dirs: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut plugins = 0usize;
+    let mut plugin_entries = Vec::new();
     for index in 0..archive.len() {
         let entry = archive.by_index(index).map_err(|error| {
             crate::locale_tag::with_params(
@@ -88,14 +87,65 @@ pub fn classify_zip(zip_path: &Path) -> Result<ZipContents, String> {
         if is_info_file(&file_name) {
             info_dirs.insert(directory);
         }
-        if file_name.to_lowercase().ends_with(".dll") {
-            plugins += 1;
+        if crate::mods::canonical_dll_name(&file_name)
+            .to_ascii_lowercase()
+            .ends_with(".dll")
+        {
+            plugin_entries.push((index, name));
+        }
+    }
+    let mut mod_bundled_maps = false;
+    for (index, name) in &plugin_entries {
+        let (parent, _) = split_entry(name);
+        let levels = if parent.is_empty() {
+            "levels/".to_owned()
+        } else {
+            format!("{parent}/levels/").to_ascii_lowercase()
+        };
+        if !info_dirs.iter().any(|dir| {
+            dir.to_ascii_lowercase()
+                .strip_prefix(&levels)
+                .is_some_and(|name| !name.is_empty() && !name.contains('/'))
+        }) {
+            continue;
+        }
+        let mut bytes = Vec::new();
+        archive
+            .by_index(*index)
+            .and_then(|entry| {
+                entry
+                    .take(crate::mods::MAX_DLL_BYTES)
+                    .read_to_end(&mut bytes)
+                    .map_err(Into::into)
+            })
+            .map_err(|error| {
+                crate::locale_tag::with_params(
+                    "archive.zipEntryReadFailed",
+                    &[("reason", &format!("{name}: {error}"))],
+                )
+            })?;
+        if crate::mods::parse_bepin_plugin_metadata(&bytes)
+            .and_then(|metadata| metadata.guid)
+            .is_some_and(|guid| {
+                guid.eq_ignore_ascii_case(crate::mods::plugin_target::DIYLEVEL_GUID)
+            })
+        {
+            mod_bundled_maps = true;
+            break;
         }
     }
     Ok(ZipContents {
         map_sets: info_dirs.len(),
-        plugins,
+        plugins: plugin_entries.len(),
+        mod_bundled_maps,
     })
+}
+
+pub(crate) fn require_map_only_zip(path: &Path) -> Result<(), String> {
+    if classify_zip(path)?.mod_bundled_maps {
+        return Err("levelSet.zipContainsModAndMaps".into());
+    }
+    Ok(())
 }
 
 #[cfg(test)]

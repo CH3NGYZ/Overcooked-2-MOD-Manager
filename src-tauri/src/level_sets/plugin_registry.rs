@@ -1,6 +1,6 @@
 //! 随包插件登记表的持久化与归属。
 
-use super::identity::level_set_identity_matches;
+use super::identity::{installed_map_identity_matches, level_set_identity_matches};
 use super::paths::is_safe_relative;
 use crate::asset_bundle::LevelSetMetadata;
 use serde::Deserialize;
@@ -47,6 +47,17 @@ impl LevelSetPluginOwner {
             &metadata.author,
             &self.name,
             Some(self.name_zh.as_str()).filter(|value| !value.is_empty()),
+            &self.author,
+        )
+    }
+
+    pub(crate) fn matches_install(&self, metadata: &LevelSetMetadata) -> bool {
+        installed_map_identity_matches(
+            &metadata.name,
+            metadata.name_zh.as_deref(),
+            &metadata.author,
+            &self.name,
+            Some(&self.name_zh),
             &self.author,
         )
     }

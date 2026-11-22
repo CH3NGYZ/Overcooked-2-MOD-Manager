@@ -55,17 +55,18 @@ pub(super) fn compose(
         return bundled::compose_missing_maps(session, roots, replacements, &to);
     }
     if mutations::paths_overlap(&from, &to) {
-        log::warn!("整链地图树冲突：原因=迁移路径互相嵌套，原路径={from}，目标路径={to}");
-        return Err("modChanges.pathCollision".into());
+        return Err(
+            mutations::InstallBlock::PathCollision.report(framework, &format!("{from}\n{to}"))
+        );
     }
     let old = mutations::game(&from).resolve(roots)?;
-    let before = Fingerprint::capture(&old)?;
-    if !matches!(before, Fingerprint::Missing | Fingerprint::Directory { .. }) {
-        return Err("modChanges.pathCollision".into());
-    }
+    let before = map_tree_fingerprint(roots, &from, framework)?;
     if Fingerprint::capture(&mutations::game(&to).resolve(roots)?)? != Fingerprint::Missing {
-        log::warn!("整链地图树冲突：原因=迁移目标已存在，原路径={from}，目标路径={to}");
-        return Err("modChanges.pathCollision".into());
+        return Err(mutations::report_install_block(
+            "archive.targetExists",
+            framework,
+            &[("path", &to)],
+        ));
     }
     let stage = session
         .staging
@@ -139,7 +140,13 @@ pub(super) fn compose(
         let name = replacement
             .map(|replacement| replacement.target_dir.as_str())
             .or(files.summary.map_dir_name.as_deref())
-            .ok_or("modChanges.ambiguousOwnership")?;
+            .ok_or_else(|| {
+                mutations::report_install_block(
+                    "modChanges.installTargetOwnershipUnverified",
+                    &node.id,
+                    &[("name", &files.summary.label)],
+                )
+            })?;
         if name.is_empty() || name.contains(['/', '\\']) {
             return Err("archive.pathEscape".into());
         }
@@ -185,7 +192,11 @@ pub(super) fn compose(
         if replacement.is_some() || !same_existing {
             if Fingerprint::capture(&destination)? != Fingerprint::Missing {
                 if !same_existing {
-                    return Err("modChanges.pathCollision".into());
+                    return Err(mutations::report_install_block(
+                        "archive.targetExists",
+                        &node.id,
+                        &[("path", &target)],
+                    ));
                 }
                 remove_private(&session.staging, &destination)?;
             }
@@ -225,7 +236,11 @@ pub(super) fn compose(
             if Fingerprint::capture(&physical)? != Fingerprint::Missing
                 && previous.is_none_or(|previous| key(previous) != key(&target))
             {
-                return Err("modChanges.pathCollision".into());
+                return Err(mutations::report_install_block(
+                    "archive.targetExists",
+                    &node.id,
+                    &[("path", &target)],
+                ));
             }
             push_tree(
                 &mut result.mutations,
@@ -284,17 +299,25 @@ pub(crate) fn set_members(root: &Path, prefix: &str, candidate: &Candidate) -> R
         .permissions();
     writable(root)?;
     for member in &candidate.provides {
-        let key = member
-            .member_key
-            .as_deref()
-            .ok_or("modChanges.ambiguousOwnership")?;
+        let key = member.member_key.as_deref().ok_or_else(|| {
+            mutations::report_install_block(
+                "modChanges.installTargetOwnershipUnverified",
+                &candidate.id,
+                &[("name", prefix)],
+            )
+        })?;
         let canonical = child(root, &crate::mods::canonical_dll_name(key), prefix)?;
         let disabled = PathBuf::from(crate::mods::disabled_dll_file(&canonical.to_string_lossy()));
         let (from, to) = match (canonical.is_file(), disabled.is_file()) {
             (true, false) if !member.enabled => (&canonical, &disabled),
             (false, true) if member.enabled => (&disabled, &canonical),
             (true, false) | (false, true) => continue,
-            _ => return Err("modChanges.ambiguousOwnership".into()),
+            (true, true) => {
+                return Err(mutations::InstallBlock::BothStates.report(&candidate.id, key));
+            }
+            (false, false) => {
+                return Err(mutations::InstallBlock::Missing.report(&candidate.id, key));
+            }
         };
         Fingerprint::capture(from)?;
         Fingerprint::capture(to)?;
@@ -366,11 +389,13 @@ pub(crate) fn final_map_paths(
             .files
             .get(&node.id)
             .ok_or("modChanges.targetChanged")?;
-        let name = files
-            .summary
-            .map_dir_name
-            .as_deref()
-            .ok_or("modChanges.ambiguousOwnership")?;
+        let name = files.summary.map_dir_name.as_deref().ok_or_else(|| {
+            mutations::report_install_block(
+                "modChanges.installTargetOwnershipUnverified",
+                &node.id,
+                &[("name", &files.summary.label)],
+            )
+        })?;
         if name.is_empty() || name.contains(['/', '\\']) {
             return Err("archive.pathEscape".into());
         }
@@ -397,6 +422,22 @@ pub(crate) fn final_map_paths(
     Ok(result)
 }
 
+pub(super) fn map_tree_fingerprint(
+    roots: &TransactionRoots,
+    relative: &str,
+    owner: &str,
+) -> Result<Fingerprint, String> {
+    let expected = Fingerprint::capture(&mutations::game(relative).resolve(roots)?)?;
+    if matches!(expected, Fingerprint::File { .. }) {
+        return Err(mutations::report_install_block(
+            "levelSet.mapDirectoryRequired",
+            owner,
+            &[("path", relative)],
+        ));
+    }
+    Ok(expected)
+}
+
 pub(super) fn push_tree(
     result: &mut Vec<OwnedMutation>,
     targets: &mut BTreeSet<String>,
@@ -409,17 +450,13 @@ pub(super) fn push_tree(
         .iter()
         .any(|old| mutations::paths_overlap(old, path))
     {
-        return Err("modChanges.pathCollision".into());
+        return Err(mutations::InstallBlock::PathCollision.report("map-tree", path));
     }
     targets.insert(key(path));
     let target = mutations::game(path);
-    let expected = Fingerprint::capture(&target.resolve(roots)?)?;
-    if !matches!(
-        expected,
-        Fingerprint::Missing | Fingerprint::Directory { .. }
-    ) || (expected == Fingerprint::Missing && source.is_none())
-    {
-        return Err("modChanges.targetChanged".into());
+    let expected = map_tree_fingerprint(roots, path, "map-tree")?;
+    if expected == Fingerprint::Missing && source.is_none() {
+        return Err(mutations::InstallBlock::Missing.report("map-tree", path));
     }
     result.push(OwnedMutation::new(
         Mutation::Tree(TreeChange {
@@ -438,30 +475,38 @@ pub(crate) fn rewrite_registry(
     to: &str,
     map_paths: &[(String, String)],
 ) -> Result<bool, String> {
-    if Fingerprint::capture(path)? == Fingerprint::Missing {
+    let registry_name = format!(
+        "manifests/{}",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("level-set-plugins.json")
+    );
+    let unreadable =
+        || mutations::InstallBlock::MapRecordsUnreadable.report("map-registry", &registry_name);
+    if Fingerprint::capture(path).map_err(|_| unreadable())? == Fingerprint::Missing {
         return Ok(false);
     }
     let mut value: serde_json::Value =
-        serde_json::from_slice(&fs::read(path).map_err(|error| error.to_string())?)
-            .map_err(|_| "modChanges.ambiguousOwnership")?;
+        serde_json::from_slice(&fs::read(path).map_err(|_| unreadable())?)
+            .map_err(|_| unreadable())?;
     if value
         .get("version")
         .and_then(|value| value.as_u64())
         .is_none_or(|version| version > 1)
     {
-        return Err("modChanges.ambiguousOwnership".into());
+        return Err(unreadable());
     }
     let entries = value
         .get_mut("entries")
         .and_then(|value| value.as_array_mut())
-        .ok_or("modChanges.ambiguousOwnership")?;
+        .ok_or_else(unreadable)?;
     let mut targets = BTreeSet::new();
     let mut changed = false;
     for entry in entries {
         let old = entry
             .get("dll")
             .and_then(|value| value.as_str())
-            .ok_or("modChanges.ambiguousOwnership")?
+            .ok_or_else(unreadable)?
             .replace('\\', "/");
         let mapping = map_paths
             .iter()
@@ -477,7 +522,7 @@ pub(crate) fn rewrite_registry(
             old
         };
         if !targets.insert(key(&crate::mods::canonical_dll_name(&next))) {
-            return Err("modChanges.ambiguousOwnership".into());
+            return Err(mutations::InstallBlock::PathCollision.report("map-registry", &next));
         }
         entry["dll"] = next.into();
     }

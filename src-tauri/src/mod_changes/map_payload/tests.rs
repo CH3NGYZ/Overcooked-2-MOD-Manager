@@ -26,7 +26,10 @@ fn metadata_copy_preserves_unrelated_snapshots_and_rejects_future_registry() {
     .unwrap();
     assert_eq!(
         copy_metadata(&from, &to).unwrap_err(),
-        "modChanges.ambiguousOwnership"
+        crate::locale_tag::with_params(
+            "modChanges.installTargetMapRecordsUnreadable",
+            &[("path", "manifests/level-set-plugins.json")]
+        ),
     );
 }
 
@@ -36,6 +39,7 @@ fn loose_loader_input_never_escapes_the_graph() {
     let stage = fs::canonicalize(temp.path()).unwrap();
     fs::write(stage.join("stray.dll"), b"bytes").unwrap();
     let batch = MapBatch {
+        notices: vec![],
         stage_root: stage.clone(),
         manifests_root: stage.clone(),
         source_path: stage.clone(),
@@ -48,7 +52,7 @@ fn loose_loader_input_never_escapes_the_graph() {
     };
     assert_eq!(
         loose_files(&batch).unwrap_err(),
-        "modChanges.ambiguousOwnership"
+        "modChanges.installTargetUnrecognized?path=stray.dll"
     );
 }
 
@@ -179,6 +183,7 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
         config,
         managed_mods: Default::default(),
         toggle_unbound_nodes: Default::default(),
+        manual_declaration_notices: Default::default(),
         installed_mods: Default::default(),
         duplicate_releases: Default::default(),
         duplicate_release_safe_nodes: Default::default(),
@@ -228,7 +233,14 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
     );
     let metadata_refs = [&imported.metadata];
     let primary = validate_origin(&metadata_refs, origin.as_ref(), &trusted.config).unwrap();
-    projection::seed_snapshots(&trusted.config, &metadata_refs, primary, &stage_manifests).unwrap();
+    projection::seed_snapshots(
+        &trusted.config,
+        &metadata_refs,
+        primary,
+        &stage_manifests,
+        "fixture",
+    )
+    .unwrap();
     if primary.is_some() {
         assert!(verify_staged_source(&stage_manifests, primary).is_err());
     }
@@ -270,6 +282,7 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
         trusted,
         request: ChangeRequest::default(),
         wire_request: PlanRequest::default(),
+        dependency_policy: Default::default(),
         plan,
         solved: None,
         payloads: HashMap::new(),
@@ -282,6 +295,7 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
         created: Instant::now(),
     };
     let mut batch = MapBatch {
+        notices: vec![],
         stage_root: stage,
         manifests_root: stage_manifests,
         source_path: zip_path,
@@ -435,9 +449,11 @@ fn map_update_does_not_guess_missing_or_inconsistent_source_provenance() {
             &config,
             &[&metadata],
             None,
-            fixture.roots.data_root.as_path()
+            fixture.roots.data_root.as_path(),
+            "fixture",
         )
-        .is_err()
+        .unwrap()
+        .is_empty()
     );
     origin.repository_id = Some("second".to_owned());
     assert!(validate_origin(&[&metadata, &metadata], Some(&origin), &config).is_err());
@@ -571,7 +587,7 @@ fn map_tree_endpoint_collisions_and_external_active_disabled_duplicates_block() 
         "map:parent",
     )
     .unwrap();
-    assert!(
+    assert_eq!(
         output::push_tree(
             &mut result,
             &mut targets,
@@ -580,7 +596,26 @@ fn map_tree_endpoint_collisions_and_external_active_disabled_duplicates_block() 
             None,
             "map:child",
         )
-        .is_err()
+        .unwrap_err(),
+        format!("modChanges.installTargetPathCollision?path={parent}/Child")
+    );
+    let occupied_by_file = format!("{parent}/NotADirectory");
+    write(&fixture.roots.game_root, &occupied_by_file, b"keep me");
+    assert_eq!(
+        output::push_tree(
+            &mut result,
+            &mut BTreeSet::new(),
+            &fixture.roots,
+            &occupied_by_file,
+            None,
+            "map:occupied",
+        )
+        .unwrap_err(),
+        format!("levelSet.mapDirectoryRequired?path={occupied_by_file}")
+    );
+    assert_eq!(
+        fs::read(fixture.roots.game_root.join(occupied_by_file)).unwrap(),
+        b"keep me"
     );
 }
 
@@ -793,6 +828,7 @@ fn framework_directory_change_and_map_update_commit_with_all_map_and_member_swit
         "framework".into(),
         super::super::session::Payload {
             candidate: next,
+            notices: Vec::new(),
             member_roles: Default::default(),
             stage_fingerprint: Fingerprint::capture(&payload_root).unwrap(),
             stage_root: payload_root,

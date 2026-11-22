@@ -109,6 +109,7 @@ pub(crate) fn inspect_installer_manifest(
         installer_type: target.kind.into(),
         provider: Some(reference.provider),
         source_channel: Some(channel.id.clone()),
+        background_install: target.supports_background_install(),
     }))
 }
 

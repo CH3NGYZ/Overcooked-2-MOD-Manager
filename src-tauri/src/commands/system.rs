@@ -21,24 +21,45 @@ pub fn open_devtools(window: tauri::WebviewWindow) -> Result<OperationResult, St
 }
 
 #[tauri::command]
-pub async fn exit_app() -> Result<(), String> {
+pub async fn exit_app(state: State<'_, AppState>) -> Result<(), String> {
     log::info!("收到退出应用请求");
-    request_user_exit()?.await.map_err(|e| e.to_string())?
+    request_user_exit(state.inner().clone(), false)?
+        .await
+        .map_err(|error| error.to_string())?
 }
 
-/// Both user exit paths retain the updater's exclusion through the final exit.
-pub(crate) fn request_user_exit()
--> Result<tauri::async_runtime::JoinHandle<Result<(), String>>, String> {
+#[tauri::command]
+pub async fn apply_staged_app_update(state: State<'_, AppState>) -> Result<(), String> {
+    request_user_exit(state.inner().clone(), true)?
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+pub(crate) fn request_user_exit(
+    state: AppState,
+    restart: bool,
+) -> Result<tauri::async_runtime::JoinHandle<Result<(), String>>, String> {
     let exit = archive::begin_app_update()?;
     Ok(tauri::async_runtime::spawn_blocking(move || {
         let _exit = exit;
-        crate::level_sets::recompress::shutdown().map_err(|error| {
-            log::error!("地图资源恢复未完成，拒绝退出：{error}");
-            "assetBundle.recoveryPending".to_string()
-        })?;
+        let _compression = pause_map_compression_for_exit()?;
+        let _operation = state.operation.lock().map_err(|_| "lock.poisoned")?;
+        #[cfg(windows)]
+        crate::app_update::staged::handoff(&state, restart)?;
+        #[cfg(not(windows))]
+        if restart {
+            return Err("update.formatUnsupported".into());
+        }
         log::logger().flush();
         std::process::exit(0)
     }))
+}
+
+fn pause_map_compression_for_exit() -> Result<crate::level_sets::recompress::ExitPause, String> {
+    crate::level_sets::recompress::quiesce_for_exit().map_err(|error| {
+        log::error!("地图资源恢复未完成，拒绝退出：{error}");
+        "assetBundle.recoveryPending".into()
+    })
 }
 
 /// 当前进程的权限与可写性自检。
@@ -134,10 +155,7 @@ pub(crate) fn relaunch_with(
 ) -> Result<OperationResult, String> {
     // Share the updater/data-migration gate while Windows is waiting for UAC.
     let _handoff = archive::begin_app_update()?;
-    let _compression = crate::level_sets::recompress::quiesce_for_exit().map_err(|error| {
-        log::error!("地图资源恢复未完成：{error}");
-        "assetBundle.recoveryPending".to_string()
-    })?;
+    let _compression = pause_map_compression_for_exit()?;
     match launch() {
         Ok(()) => {
             log::info!("管理员实例已确认接手，退出当前进程以交接单实例锁");

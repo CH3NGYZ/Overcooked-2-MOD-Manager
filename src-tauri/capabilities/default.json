@@ -23,7 +23,6 @@
     "core:window:allow-set-size-constraints",
     "core:webview:allow-set-webview-zoom",
     "dialog:default",
-    "dialog:allow-confirm",
-    "updater:default"
+    "dialog:allow-confirm"
   ]
 }

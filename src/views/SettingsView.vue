@@ -154,6 +154,7 @@ async function refreshPermission() {
 }
 
 async function relaunchAdmin() {
+  if (relaunching.value || appUpdateState.stage !== 'idle') return
   relaunching.value = true
   try {
     const result = await api.relaunchAsAdmin()

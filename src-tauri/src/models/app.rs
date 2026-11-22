@@ -36,6 +36,8 @@ pub struct AppUpdateInfo {
     pub provider: Option<Provider>,
     #[serde(default)]
     pub source_channel: Option<String>,
+    #[serde(default)]
+    pub background_install: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

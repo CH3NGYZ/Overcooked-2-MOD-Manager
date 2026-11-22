@@ -13,15 +13,17 @@ import { useUiZoom } from '../composables/useUiZoom'
 import { useDashboard } from '../composables/useDashboardStore'
 import { api } from '../services/tauri'
 import { isTauri, safeTauri, safeTauriSync } from '../runtime'
-import { appUpdateState } from '../appUpdateState'
+import { appUpdateBusy, appUpdateState } from '../appUpdateState'
 import { isMacWindow } from '../platform'
 import appIcon from '../assets/app-icon.png'
 import LevelCompressionStatus from './LevelCompressionStatus.vue'
 import RecycleBinStatus from './RecycleBinStatus.vue'
+import AppUpdateStatus from './AppUpdateStatus.vue'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { demoActive, withDemoGame } from '../tutorial/demo'
 
 const props = defineProps<{ version: string }>()
+const emit = defineEmits<{ 'apply-update': [] }>()
 
 /**
  * 标题栏三个弹层（缩放 / 语言 / 主题色）的层级。
@@ -88,7 +90,7 @@ async function toggleMaximize() {
     maximized.value = await appWindow.isMaximized().catch(() => false)
   })
 }
-const updateBusy = computed(() => ['installing', 'handoff'].includes(appUpdateState.stage))
+const updateBusy = computed(appUpdateBusy)
 async function close() {
   if (updateBusy.value) return
   await safeTauri(async () => appWindow?.close())
@@ -221,6 +223,7 @@ defineExpose({ onUnmountedCleanup })
         <div class="brand-title-row">
           <strong>{{ t('nav.oc2ModManager') }}</strong>
           <span v-if="props.version" class="brand-version">v{{ props.version }}</span>
+          <AppUpdateStatus @apply-update="emit('apply-update')" />
         </div>
         <small>{{ t('nav.quicklyManageModsForOvercooked2') }}</small>
       </div>

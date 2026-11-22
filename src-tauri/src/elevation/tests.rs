@@ -201,6 +201,9 @@ fn cancelled_elevation_and_failed_file_recovery_leave_the_previous_instance_runn
 
 fn cancel_relaunch(directory: &Path) {
     use crate::{archive, commands::system, level_sets::recompress};
+    let state = crate::app_state::AppState::with_config(crate::config::ConfigService::for_test(
+        directory.to_path_buf(),
+    ));
     recompress::set_game_running(false);
     // An active update rejects elevation without touching the native launch.
     let update = archive::begin_app_update().unwrap();
@@ -213,7 +216,7 @@ fn cancel_relaunch(directory: &Path) {
     drop(update);
     let result = system::relaunch_with(|| {
         assert_eq!(
-            system::request_user_exit().err().unwrap(),
+            system::request_user_exit(state, false).err().unwrap(),
             "update.inProgress"
         );
         assert!(archive::begin_app_update().is_err());

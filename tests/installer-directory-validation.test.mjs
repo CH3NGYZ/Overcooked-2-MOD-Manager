@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -18,17 +18,18 @@ test('only an explicit unsafe-directory verdict can trigger automatic migration'
   assert.match(guard, /\$\{Else\}\n\s*StrCpy \$2 "\$\(OC2MigrationFailed\)"/)
 })
 
-test('unavailable checks may continue while explicit rejections remain closed and retain diagnostics', () => {
+test('directory validation keeps diagnostics and blocks unavailable deferred checks', () => {
   assert.match(guard, /nsExec::ExecToStack \/TIMEOUT=10000[^\n]+\n\s*Pop \$0\n\s*Pop \$1/)
   assert.match(guard, /\$\{If\} \$0 != 0\n\s*DetailPrint "Install directory validation: directory=\$INSTDIR; status=\$0"\n\s*DetailPrint "\$1"/)
   assert.match(guard, /\$\{IfNot\} \$\{Silent\}\n\s*MessageBox MB_OK\|MB_ICONEXCLAMATION "\$\(OC2InstallDirectoryValidationFailed\)" \/SD IDOK/)
-  assert.match(guard, /MessageBox MB_OK\|MB_ICONSTOP "\$2" \/SD IDOK\n\s*\$\{EndIf\}\n\s*SetErrorLevel 1\n\s*Pop \$2\n\s*Pop \$1\n\s*Pop \$0\n\s*Abort/)
+  assert.match(guard, /!insertmacro OC2_UPDATE_RESULT "directory_check_failed"/)
+  assert.match(guard, /MessageBox MB_OK\|MB_ICONSTOP "\$2" \/SD IDOK\n\s*\$\{EndIf\}\n\s*!insertmacro OC2_UPDATE_RESULT "directory_check_failed"\n\s*SetErrorLevel 1\n\s*Pop \$2\n\s*Pop \$1\n\s*Pop \$0\n\s*Abort/)
   assert.match(guard, /oc2_guard_allowed:\n\s*SetErrorLevel 0\n\s*Pop \$2\n\s*Pop \$1\n\s*Pop \$0/)
   // Directory selection, old removal, silent checks and target writes all stay protected.
   assert.match(installer, /MUI_PAGE_CUSTOMFUNCTION_LEAVE OC2ValidateInstallDirectory/)
   assert.match(installer, /reinst_uninstall:[\s\S]*?Call OC2ValidateInstallDirectory[\s\S]*?HideWindow/)
   assert.match(installer, /Section EarlyChecks[\s\S]*?Call OC2ValidateInstallDirectory/)
-  assert.match(installer, /Section Install\n\s*Call OC2ValidateInstallDirectory\n\s*SetOutPath \$INSTDIR/)
+  assert.match(installer, /Section Install\n\s*Call OC2ValidateInstallDirectory[^]*?SetOutPath \$INSTDIR/)
 })
 
 test('installer errors separate helper failures from BepInEx restrictions in all five languages', () => {
@@ -114,7 +115,10 @@ class ProbeHelper {
 RequestExecutionLevel user
 OutFile "${quote(executable)}"
 !define MAINBINARYSRCPATH "${quote(embeddedHelper)}"
+!define MAINBINARYNAME "guard-probe"
 !define PRODUCTNAME "OC2GuardProbe"
+!define VERSION "2.4.1"
+!include FileFunc.nsh
 !include "${quote(hooks)}"
 LoadLanguageFile "\${NSISDIR}\\Contrib\\Language files\\English.nlf"
 LoadLanguageFile "\${NSISDIR}\\Contrib\\Language files\\SimpChinese.nlf"
@@ -127,6 +131,7 @@ Var OC2MigrationTarget
 Var ProbeTrace
 !macro SetContext
 !macroend
+!insertmacro OC2_DEFERRED_UPDATE_FUNCTIONS
 Function OC2ValidateInstallDirectory
 ${probedGuard}
 FunctionEnd
@@ -134,6 +139,8 @@ Function .onInit
   StrCpy $LANGUAGE 1033
   StrCpy $INSTDIR "$EXEDIR\\chosen"
   ReadEnvStr $UpdateMode OC2_PROBE_UPDATE
+  ReadEnvStr $OC2DeferredUpdate OC2_PROBE_DEFERRED
+  StrCpy $OC2RestartAfterUpdate 0
   ReadEnvStr $OC2MigrationPlan OC2_PROBE_EXISTING_PLAN
   FileOpen $ProbeTrace "$EXEDIR\\probe-result.txt" w
   StrCpy $0 "saved-zero"
@@ -155,22 +162,44 @@ SectionEnd
   const invalidHelper = join(directory, 'invalid-helper.exe')
   writeFileSync(invalidHelper, 'This is deliberately not a Windows executable.', 'utf8')
   const invalidExecutable = buildProbe('guard-unavailable-probe', invalidHelper)
+  const receiptPath = join(directory, 'update-result.txt')
   let sequence = 0
-  const probe = ({ status = '0', silent = true, update = false, migrationStatus = '0', invalid = false, existingPlan = '' } = {}) => {
+  const probe = ({ status = '0', silent = true, update = false, deferred = false, migrationStatus = '0', invalid = false, existingPlan = '' } = {}) => {
     const helperTrace = join(directory, 'helper-invocations.txt')
     writeFileSync(helperTrace, '', 'utf8')
+    rmSync(receiptPath, { force: true })
     const result = run(invalid ? invalidExecutable : executable, silent ? ['/S'] : [], {
       OC2_PROBE_HELPER_TRACE: helperTrace, OC2_PROBE_GUARD_STATUS: status,
       OC2_PROBE_MIGRATION_STATUS: migrationStatus, OC2_PROBE_UPDATE: update ? '1' : '0',
+      OC2_PROBE_DEFERRED: deferred ? '1' : '0',
       OC2_PROBE_EXISTING_PLAN: existingPlan,
     })
     const observation = {
       exit: result.status,
       trace: readFileSync(join(directory, 'probe-result.txt'), 'utf16le'),
       invocations: readFileSync(helperTrace, 'utf8'),
+      receipt: existsSync(receiptPath) ? readFileSync(receiptPath, 'utf16le').replace(/^\uFEFF/, '').trimEnd() : null,
     }
-    writeFileSync(join(directory, `case-${++sequence}.json`), JSON.stringify({ status, silent, update, migrationStatus, invalid, ...observation }, null, 2), 'utf8')
+    writeFileSync(join(directory, `case-${++sequence}.json`), JSON.stringify({ status, silent, update, deferred, migrationStatus, invalid, ...observation }, null, 2), 'utf8')
     return observation
+  }
+  await t.test('deferred update continues when directory validation succeeds', () => {
+    const result = probe({ update: true, deferred: true })
+    assert.equal(result.exit, 0)
+    assert.match(result.trace, /continued/)
+    assert.doesNotMatch(result.trace, /message:|aborted|status=/)
+    assert.equal(result.receipt, null)
+  })
+  for (const failure of [{ status: '2' }, { invalid: true }, { status: 'timeout' }]) {
+    await t.test(`deferred update blocks unavailable validation ${JSON.stringify(failure)}`, () => {
+      const result = probe({ ...failure, update: true, deferred: true })
+      assert.equal(result.exit, 1)
+      assert.match(result.trace, /aborted/)
+      assert.match(result.trace, /registers:saved-zero\|saved-one\|saved-two/)
+      assert.doesNotMatch(result.trace, /message:|continued/)
+      assert.doesNotMatch(result.invocations, /--oc2-migrate-update/)
+      assert.equal(result.receipt, `2.4.1|directory_check_failed|${join(directory, 'chosen')}|restart=0`)
+    })
   }
   for (const silent of [false, true]) {
     await t.test(`allowed directory: silent=${silent}`, () => {
@@ -202,6 +231,7 @@ SectionEnd
         assert.equal(result.trace.includes('message:'), !silent)
         assert.doesNotMatch(result.trace, /aborted|inside the BepInEx|plan:.+migration\.json/)
         assert.doesNotMatch(result.invocations, /--oc2-migrate-update/)
+        assert.equal(result.receipt, null)
         if (failure.invalid) assert.match(result.trace, /status=error/)
         else {
           assert.match(result.trace, new RegExp(`status=${failure.status}`))

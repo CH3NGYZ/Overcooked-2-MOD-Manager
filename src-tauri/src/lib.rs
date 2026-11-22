@@ -375,11 +375,13 @@ pub fn run() {
             commands::system::cancel_startup_probe,
             commands::system::relaunch_as_admin,
             commands::update::check_app_update,
+            commands::update::stage_app_update,
             commands::update::install_app_update,
+            commands::system::apply_staged_app_update,
         ])
         .build(context)
         .expect("error while building tauri application")
-        .run(|_, event| {
+        .run(|app, event| {
             // Explicit exit codes belong to the updater's own handoff. User
             // exits must acquire the same gate before doing blocking work.
             if let tauri::RunEvent::ExitRequested {
@@ -387,8 +389,19 @@ pub fn run() {
             } = event
             {
                 api.prevent_exit();
-                // Dropping the join handle detaches the exit worker.
-                let _ = commands::system::request_user_exit();
+                let state = app.state::<app_state::AppState>().inner().clone();
+                match commands::system::request_user_exit(state, false) {
+                    Ok(worker) => {
+                        tauri::async_runtime::spawn(async move {
+                            match worker.await {
+                                Ok(Err(error)) => log::warn!("系统退出未交接：{error}"),
+                                Err(error) => log::error!("系统退出工作进程失败：{error}"),
+                                Ok(Ok(())) => {}
+                            }
+                        });
+                    }
+                    Err(error) => log::warn!("系统退出请求已拒绝：{error}"),
+                }
             }
         });
 }

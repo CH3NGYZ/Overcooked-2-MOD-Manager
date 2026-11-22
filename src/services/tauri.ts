@@ -408,6 +408,13 @@ export const api = {
   checkAppUpdate: (locale: 'zh-CN' | 'zh-TW' | 'en' | 'ko' | 'ja', force = false) =>
     invoke<AppUpdateCheckResult>('check_app_update', { locale, force }),
   installAppUpdate: () => invoke<OperationResult>('install_app_update'),
+  stageAppUpdate: async (channel: string, onProgress: (progress: DownloadProgress) => void) => {
+    const onUpdate = new Channel<DownloadProgress>()
+    onUpdate.onmessage = onProgress
+    try { await invoke<void>('stage_app_update', { channel, onUpdate }) }
+    finally { onUpdate.onmessage = () => undefined }
+  },
+  applyStagedAppUpdate: () => invoke<void>('apply_staged_app_update'),
   chooseGameDirectory: () => open({ multiple: false, directory: true }),
   /** 选择要导入的地图 ZIP。 */
   chooseLevelSetZip: () => open({

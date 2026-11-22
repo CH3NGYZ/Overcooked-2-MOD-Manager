@@ -1,6 +1,6 @@
 import { onBeforeUnmount, onMounted } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { appUpdateState } from '../appUpdateState'
+import { appUpdateBusy, appUpdateState, beginStagedAppUpdate, finishStagedAppUpdate } from '../appUpdateState'
 import { useModChanges } from '../modChanges/store'
 import { isChangePlanLocked } from '../modChanges/workflow'
 import { backendMessageOf } from '../locale/backend'
@@ -15,7 +15,7 @@ interface PageCloseGuard {
 
 const pageGuards: PageCloseGuard[] = []
 
-export const appCloseBlocked = () => appUpdateState.stage === 'installing' || appUpdateState.stage === 'handoff'
+export const appCloseBlocked = () => appUpdateBusy()
   || isChangePlanLocked(useModChanges().state.value?.phase)
 
 /** Route transitions can briefly overlap page lifetimes. The newest mounted
@@ -37,23 +37,38 @@ export function useAppCloseGuard() {
   let closing = false
   let unlisten: (() => void) | null = null
 
+  async function requestExit(restart: boolean) {
+    if (disposed || closing || appCloseBlocked()) return
+    const guard = pageGuards.at(-1)
+    if (guard?.blocked()) return
+    closing = true
+    let applyingStaged = false
+    try {
+      if (guard && !await guard.requestLeave()) return
+      // A route change, save or update may start while its dialog is open.
+      if (disposed || appCloseBlocked() || guard !== pageGuards.at(-1) || guard?.blocked()) return
+      applyingStaged = beginStagedAppUpdate()
+      if (restart && !applyingStaged) return
+      if (restart) await api.applyStagedAppUpdate()
+      else await api.exitApp()
+      if (applyingStaged) finishStagedAppUpdate()
+    } catch (reason) {
+      const needsDownload = applyingStaged && finishStagedAppUpdate(reason ?? 'update.installFailedManual')
+      if (!needsDownload && !disposed) message.error(backendMessageOf(reason))
+    } finally { closing = false }
+  }
+
+  async function applyUpdate() {
+    if (!isTauri() || appUpdateState.stage !== 'ready') return
+    await requestExit(true)
+  }
+
   async function listenForClose() {
     if (!isTauri()) return
     try {
       const stop = await getCurrentWindow().onCloseRequested(async event => {
         event.preventDefault()
-        if (disposed || closing || appCloseBlocked()) return
-        const guard = pageGuards.at(-1)
-        if (guard?.blocked()) return
-        closing = true
-        try {
-          if (guard && !await guard.requestLeave()) return
-          // A route change, save or update may start while its dialog is open.
-          if (disposed || appCloseBlocked() || guard !== pageGuards.at(-1) || guard?.blocked()) return
-          await api.exitApp()
-        } catch (reason) {
-          if (!disposed) message.error(backendMessageOf(reason))
-        } finally { closing = false }
+        await requestExit(false)
       })
       if (disposed) stop()
       else unlisten = stop
@@ -68,4 +83,5 @@ export function useAppCloseGuard() {
     unlisten?.()
     unlisten = null
   })
+  return { applyUpdate }
 }

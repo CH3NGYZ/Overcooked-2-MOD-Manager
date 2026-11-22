@@ -1,26 +1,32 @@
 <script setup lang="ts">
 import { t } from '../i18n'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, shallowRef, watch } from 'vue'
 import { NButton } from 'naive-ui'
 import { api, watchAppUpdatePhase } from '../services/tauri'
 import AppModal from './AppModal.vue'
 import MarkdownBody from './MarkdownBody.vue'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { beginDownloadTask, endDownloadTask } from '../downloadTask'
-import { appUpdateState, beginAppUpdate, finishAppUpdate } from '../appUpdateState'
+import {
+  appUpdateBusy, appUpdateState, beginAppUpdate, beginBackgroundAppUpdate,
+  finishAppUpdate, finishBackgroundAppUpdate, setBackgroundAppUpdateProgress,
+} from '../appUpdateState'
 
 const update = computed(() => appUpdateState.update)
-const show = computed(() => appUpdateState.stage !== 'idle')
+const show = computed(() => ['required', 'installing', 'manual', 'stageFailed'].includes(appUpdateState.stage)
+  || appUpdateState.stage === 'handoff' && !update.value?.background_install)
 const installing = computed(() => appUpdateState.stage === 'installing')
-const busy = computed(() => installing.value || appUpdateState.stage === 'handoff')
+const busy = computed(appUpdateBusy)
 const manual = computed(() => appUpdateState.stage === 'manual')
+const stageFailed = computed(() => appUpdateState.stage === 'stageFailed')
+const manualRequired = computed(() => manual.value && appUpdateState.error !== 'update.deferredUnsupported')
 const failureDetail = computed(() => {
   const text = translateBackendMessage(appUpdateState.error)
-  return text === t('update.manualRequired') ? '' : text
+  return manual.value && text === t('update.manualRequired') ? '' : text
 })
-const phaseText = ref('')
-const openingRelease = ref(false)
-const releaseError = ref('')
+const phaseText = shallowRef('')
+const openingRelease = shallowRef(false)
+const releaseError = shallowRef('')
 
 let disposed = false
 const listeners: (() => void)[] = []
@@ -48,6 +54,23 @@ onUnmounted(() => {
 
 const bodyText = computed(() => update.value?.body?.trim() ?? '')
 
+async function stageUpdate() {
+  const channel = beginBackgroundAppUpdate()
+  if (!channel) return
+  releaseError.value = ''
+  try {
+    await api.stageAppUpdate(channel, setBackgroundAppUpdateProgress)
+    finishBackgroundAppUpdate()
+  } catch (reason) {
+    const error = reason instanceof Error ? reason.message : typeof reason === 'string' ? reason : 'update.stageFailed'
+    finishBackgroundAppUpdate(error || 'update.stageFailed')
+  }
+}
+
+watch(() => appUpdateState.stage, stage => {
+  if (stage === 'backgroundRequired') void stageUpdate()
+}, { immediate: true })
+
 async function install() {
   if (!beginAppUpdate()) return
   phaseText.value = t('dialogs.preparingDownload')
@@ -69,7 +92,7 @@ async function install() {
 }
 
 async function openRelease() {
-  if (!manual.value || openingRelease.value) return
+  if ((!manual.value && !stageFailed.value) || openingRelease.value) return
   openingRelease.value = true
   releaseError.value = ''
   try {
@@ -92,8 +115,8 @@ async function openRelease() {
         <h2 class="title">{{ t('dialogs.versionAvailable', { version: 'v' + update?.version }) }}</h2>
         <span v-if="update" class="version-line muted">v{{ update.current_version }} → v{{ update.version }}</span>
       </div>
-      <p v-if="manual" class="update-requirement">{{ t('update.manualRequired') }}</p>
-      <div v-if="manual && failureDetail" class="update-error" role="alert">
+      <p v-if="manualRequired" class="update-requirement">{{ t('update.manualRequired') }}</p>
+      <div v-if="(manual || stageFailed) && failureDetail" class="update-error" role="alert">
         {{ failureDetail }}
       </div>
       <div v-if="releaseError" class="update-error" role="alert">{{ releaseError }}</div>
@@ -102,10 +125,14 @@ async function openRelease() {
       <div v-if="phaseText" class="phase" role="status">{{ translateBackendMessage(phaseText) }}</div>
     </div>
     <template #footer>
-      <n-button v-if="manual" type="primary" :loading="openingRelease" @click="openRelease">
+      <n-button v-if="manual || stageFailed" :type="manual ? 'primary' : 'default'"
+        :loading="openingRelease" @click="openRelease">
         {{ t('dialogs.openReleasePage') }}
       </n-button>
-      <n-button v-else type="primary" :loading="busy" :disabled="busy" @click="install">
+      <n-button v-if="stageFailed" type="primary" :disabled="openingRelease" @click="stageUpdate">
+        {{ t('update.retryDownload') }}
+      </n-button>
+      <n-button v-else-if="!manual" type="primary" :loading="busy" :disabled="busy" @click="install">
         {{ t('dialogs.update') }}
       </n-button>
     </template>

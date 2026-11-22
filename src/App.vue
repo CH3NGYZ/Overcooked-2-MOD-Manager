@@ -194,10 +194,11 @@ onMounted(() => {
     -->
     <n-message-provider placement="bottom-left">
       <n-dialog-provider>
-        <AppCloseGuard />
         <AppWebLinks />
         <div class="app-shell">
-          <AppTitleBar :version="version" />
+          <AppCloseGuard v-slot="{ applyUpdate }">
+            <AppTitleBar :version="version" @apply-update="applyUpdate" />
+          </AppCloseGuard>
           <div class="app-body" :inert="appUpdateState.stage !== 'idle'">
             <AppSidebar />
             <main class="app-main">              <header class="page-header">

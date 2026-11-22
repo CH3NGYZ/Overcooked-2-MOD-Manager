@@ -694,7 +694,7 @@ export interface RepositorySourceImportResult {
   access_error: string | null
   builtin_fallback_available: boolean
 }
-export interface AppUpdateInfo { version: string; current_version: string; body?: string; date?: string; download_size?: number; manifest_url: string; installer_url?: string; installer_signature: string; installer_name: string; installer_type?: 'exe' | 'msi' | 'app'; provider?: Provider; source_channel?: string }
+export interface AppUpdateInfo { version: string; current_version: string; body?: string; date?: string; download_size?: number; manifest_url: string; installer_url?: string; installer_signature: string; installer_name: string; installer_type?: 'exe' | 'msi' | 'app'; provider?: Provider; source_channel?: string; background_install?: boolean }
 export interface AppUpdateChannelStatus { id: string; provider: Provider; mode: string; status: string; error?: string }
 export interface AppUpdateChannelEvent { region: string; channel: AppUpdateChannelStatus }
 export interface AppUpdatePhaseEvent { region: string; phase: 'manifest' | 'download' | 'install' | 'skipped'; message?: string; update?: AppUpdateInfo }

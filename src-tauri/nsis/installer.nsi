@@ -90,11 +90,12 @@ OutFile "${OUTFILE}"
 InstallDir "${PLACEHOLDER_INSTALL_DIR}"
 
 VIProductVersion "${VERSIONWITHBUILD}"
-VIAddVersionKey "ProductName" "${PRODUCTNAME}"
-VIAddVersionKey "FileDescription" "${PRODUCTNAME}"
-VIAddVersionKey "LegalCopyright" "${COPYRIGHT}"
-VIAddVersionKey "FileVersion" "${VERSION}"
-VIAddVersionKey "ProductVersion" "${VERSION}"
+VIAddVersionKey /LANG=1033 "ProductName" "${PRODUCTNAME}"
+VIAddVersionKey /LANG=1033 "FileDescription" "${PRODUCTNAME}"
+VIAddVersionKey /LANG=1033 "LegalCopyright" "${COPYRIGHT}"
+VIAddVersionKey /LANG=1033 "FileVersion" "${VERSION}"
+VIAddVersionKey /LANG=1033 "ProductVersion" "${VERSION}"
+VIAddVersionKey /LANG=1033 "OC2DeferredUpdate" "1"
 
 # additional plugins
 !addplugindir "${ADDITIONALPLUGINSPATH}"
@@ -413,6 +414,14 @@ Function OC2ValidateInstallDirectory
     DetailPrint "Install directory validation: directory=$INSTDIR; status=$0"
     DetailPrint "$1"
     ${If} $0 != 1
+      ${If} $OC2DeferredUpdate = 1
+        !insertmacro OC2_UPDATE_RESULT "directory_check_failed"
+        SetErrorLevel 1
+        Pop $2
+        Pop $1
+        Pop $0
+        Abort
+      ${EndIf}
       DetailPrint "$(OC2InstallDirectoryValidationFailed)"
       ${IfNot} ${Silent}
         MessageBox MB_OK|MB_ICONEXCLAMATION "$(OC2InstallDirectoryValidationFailed)" /SD IDOK
@@ -450,6 +459,7 @@ Function OC2ValidateInstallDirectory
     ${IfNot} ${Silent}
       MessageBox MB_OK|MB_ICONSTOP "$2" /SD IDOK
     ${EndIf}
+    !insertmacro OC2_UPDATE_RESULT "directory_check_failed"
     SetErrorLevel 1
     Pop $2
     Pop $1
@@ -549,7 +559,11 @@ FunctionEnd
   !include "{{this}}"
 {{/each}}
 
+!insertmacro OC2_DEFERRED_UPDATE_FUNCTIONS
+
 Function .onInit
+  Call OC2WaitForUpdateOwner
+
   ${GetOptions} $CMDLINE "/P" $PassiveMode
   ${IfNot} ${Errors}
     StrCpy $PassiveMode 1
@@ -702,16 +716,21 @@ SectionEnd
 
 Section Install
   Call OC2ValidateInstallDirectory
+  ${If} $OC2DeferredUpdate = 1
+    Call OC2CheckDeferredTarget
+  ${EndIf}
+  ClearErrors
   SetOutPath $INSTDIR
 
-  !ifmacrodef NSIS_HOOK_PREINSTALL
-    !insertmacro NSIS_HOOK_PREINSTALL
-  !endif
-
-  !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
+  ${If} $OC2DeferredUpdate != 1
+    !ifmacrodef NSIS_HOOK_PREINSTALL
+      !insertmacro NSIS_HOOK_PREINSTALL
+    !endif
+    !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
+  ${EndIf}
 
   ; Copy main executable
-  File "${MAINBINARYSRCPATH}"
+  !insertmacro OC2_STAGE_MAIN_BINARY
 
   ; Copy resources
   {{#each resources_dirs}}
@@ -725,6 +744,12 @@ Section Install
   {{#each binaries}}
     File /a "/oname={{this}}" "{{no-escape @key}}"
   {{/each}}
+  ${If} $OC2DeferredUpdate = 1
+  ${AndIf} ${Errors}
+    !insertmacro OC2_UPDATE_RESULT "write_resources_failed"
+    SetErrorLevel 1
+    Abort
+  ${EndIf}
 
   ; Create file associations
   {{#each file_associations as |association| ~}}
@@ -742,7 +767,19 @@ Section Install
   {{/each}}
 
   ; Create uninstaller
+  ${If} $OC2DeferredUpdate = 1
+    ClearErrors
+  ${EndIf}
   WriteUninstaller "$INSTDIR\uninstall.exe"
+  ${If} $OC2DeferredUpdate = 1
+  ${AndIf} ${Errors}
+    !insertmacro OC2_UPDATE_RESULT "write_uninstaller_failed"
+    SetErrorLevel 1
+    Abort
+  ${EndIf}
+  ${If} $OC2DeferredUpdate = 1
+    Call OC2ReplaceDeferredMain
+  ${EndIf}
 
   ; Save $INSTDIR in registry for future installations
   WriteRegStr SHCTX "${MANUPRODUCTKEY}" "" $INSTDIR
@@ -810,19 +847,31 @@ Function .onInstSuccess
   ${If} $OC2MigrationPlan != ""
     ; Finish program relocation before starting the new manager.
     DetailPrint "$(OC2Migrating)"
-    nsExec::ExecToStack '"$PLUGINSDIR\OC2InstallGuard.exe" --oc2-migrate-update finish "$OC2MigrationPlan"'
+    ${If} $OC2DeferredUpdate = 1
+    ${AndIf} $OC2RestartAfterUpdate != 1
+      nsExec::ExecToStack '"$PLUGINSDIR\OC2InstallGuard.exe" --oc2-migrate-update finish "$OC2MigrationPlan" --no-restart'
+    ${Else}
+      nsExec::ExecToStack '"$PLUGINSDIR\OC2InstallGuard.exe" --oc2-migrate-update finish "$OC2MigrationPlan"'
+    ${EndIf}
     Pop $0
     Pop $1
     ${If} $0 != 0
       DetailPrint "$1"
       MessageBox MB_OK|MB_ICONSTOP "$(OC2MigrationFailed)" /SD IDOK
+      !insertmacro OC2_UPDATE_RESULT "migration_finish_failed"
       SetErrorLevel 1
+    ${Else}
+      !insertmacro OC2_UPDATE_RESULT "installed"
     ${EndIf}
     Return
   ${EndIf}
   !ifmacrodef NSIS_HOOK_ONINSTSUCCESS
     !insertmacro NSIS_HOOK_ONINSTSUCCESS
   !endif
+  ${If} $OC2DeferredUpdate = 1
+    !insertmacro OC2_UPDATE_RESULT "installed"
+    Return
+  ${EndIf}
 
   ; Check for `/R` flag only in silent and passive installers because
   ; GUI installer has a toggle for the user to (re)start the app
@@ -837,6 +886,9 @@ Function .onInstSuccess
 FunctionEnd
 
 Function .onInstFailed
+  ${If} $OC2StagedMain != ""
+    Delete "$OC2StagedMain"
+  ${EndIf}
   ${If} $OC2MigrationPlan != ""
     nsExec::ExecToLog '"$PLUGINSDIR\OC2InstallGuard.exe" --oc2-migrate-update restore "$OC2MigrationPlan"'
     Pop $0

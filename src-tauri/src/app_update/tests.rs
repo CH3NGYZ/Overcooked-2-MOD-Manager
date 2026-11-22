@@ -119,6 +119,19 @@ fn tauri_windows_arguments_preserve_paths_and_only_use_success_hook_relaunch() {
 }
 
 #[test]
+fn only_silent_explicit_apply_supplies_the_success_relaunch_flag() {
+    let path = std::path::Path::new("C:/Users/Test User/管理器");
+    assert_eq!(
+        deferred_nsis_args(path, 1234, false),
+        "/S /UPDATE /OC2WaitForPid=1234 /D=C:/Users/Test User/管理器"
+    );
+    assert_eq!(
+        deferred_nsis_args(path, 1234, true),
+        "/S /UPDATE /OC2WaitForPid=1234 /OC2AutoLaunch /D=C:/Users/Test User/管理器"
+    );
+}
+
+#[test]
 fn relocation_arguments_keep_the_old_directory_for_installer_safety_hooks() {
     use std::path::Path;
     let executable = Path::new("C:/game/BepInEx/plugins/Manager/OC2ModManager.exe");

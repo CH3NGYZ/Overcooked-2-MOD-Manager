@@ -139,7 +139,7 @@ pub fn read_file_metadata(path: &Path) -> FileMetadata {
 }
 
 #[cfg(windows)]
-fn read_version_string(path: &Path, key: &str) -> Option<String> {
+pub(crate) fn read_version_string(path: &Path, key: &str) -> Option<String> {
     use std::os::windows::ffi::OsStrExt;
     use std::ptr::null_mut;
     use winapi::shared::minwindef::{LPVOID, UINT};

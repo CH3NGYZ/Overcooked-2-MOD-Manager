@@ -1,9 +1,10 @@
-import { computed, h, onBeforeUnmount, onMounted, shallowRef } from 'vue'
+import { computed, h, onBeforeUnmount, onMounted, shallowRef, watch } from 'vue'
 import { NAlert, useDialog } from 'naive-ui'
 import { t } from '../i18n'
 import { backendMessageOf } from '../locale/backend'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
+import { appUpdateState } from '../appUpdateState'
 
 type DataAction = 'clear' | 'migrate'
 
@@ -22,9 +23,14 @@ export function useManagerDataOperations() {
   const managerDataDescription = computed(() => managerDataDirectory.value || dataDirectoryError.value
     || t('tools.managerDataDirectoryLoading'))
   let directoryRequest: Promise<string> | undefined
+  let dismissConfirmation: (() => void) | undefined
   let disposed = false
 
-  onBeforeUnmount(() => { disposed = true })
+  onBeforeUnmount(() => { disposed = true; dismissConfirmation?.() })
+  const updateRequired = () => appUpdateState.stage !== 'idle'
+  watch(updateRequired, required => {
+    if (required && !clearingConfig.value && !migratingData.value) dismissConfirmation?.()
+  })
 
   function loadManagerDataDirectory(): Promise<string> {
     if (managerDataDirectory.value) return Promise.resolve(managerDataDirectory.value)
@@ -72,9 +78,9 @@ export function useManagerDataOperations() {
       negativeText: t('recycle.cancel'),
       positiveButtonProps: { type: migrating ? 'warning' : 'error' },
       maskClosable: false,
-      onAfterLeave: () => { active = false; configConfirmOpen.value = false },
+      onAfterLeave: () => { active = false; dismissConfirmation = undefined; configConfirmOpen.value = false },
       onPositiveClick: async () => {
-        if (!active || disposed || clearingConfig.value || migratingData.value) return false
+        if (!active || disposed || updateRequired() || clearingConfig.value || migratingData.value) return false
         const executing = migrating ? migratingData : clearingConfig
         actionError.value = ''
         executing.value = true
@@ -87,8 +93,13 @@ export function useManagerDataOperations() {
           if (migrating && parentDirectory !== undefined) await api.migrateManagerData(parentDirectory)
           else await api.clearAllConfig()
         } catch (reason) {
-          if (active && !disposed) actionError.value = backendMessageOf(reason)
           executing.value = false
+          if (!active || disposed) return false
+          if (updateRequired()) {
+            dismissConfirmation?.()
+            return false
+          }
+          actionError.value = backendMessageOf(reason)
           confirmation.loading = false
           confirmation.closable = true
           confirmation.closeOnEsc = true
@@ -97,14 +108,16 @@ export function useManagerDataOperations() {
         return false
       },
     })
+    dismissConfirmation = () => { active = false; confirmation.destroy() }
   }
 
   async function confirmClearAllConfig() {
-    if (disposed || managerDataBusy.value) return
+    if (disposed || updateRequired() || managerDataBusy.value) return
     configConfirmOpen.value = true
     try {
       const directory = await loadManagerDataDirectory()
-      if (!disposed) showConfirmation('clear', directory)
+      if (!disposed && !updateRequired()) showConfirmation('clear', directory)
+      else configConfirmOpen.value = false
     } catch (reason) {
       configConfirmOpen.value = false
       if (!disposed) message.error(backendMessageOf(reason))
@@ -112,13 +125,13 @@ export function useManagerDataOperations() {
   }
 
   async function confirmMigrateManagerData() {
-    if (disposed || managerDataBusy.value) return
+    if (disposed || updateRequired() || managerDataBusy.value) return
     selectingDataDirectory.value = true
     try {
       const parentDirectory = await api.chooseManagerDataParentDirectory()
-      if (!parentDirectory || disposed) return
+      if (!parentDirectory || disposed || updateRequired()) return
       const directory = await loadManagerDataDirectory()
-      if (disposed) return
+      if (disposed || updateRequired()) return
       configConfirmOpen.value = true
       showConfirmation('migrate', directory, parentDirectory)
     } catch (reason) {

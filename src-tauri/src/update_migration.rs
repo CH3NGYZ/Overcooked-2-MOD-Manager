@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-const BINARY_NAMES: &[&str] = &["OC2ModManager.exe", "uninstall.exe"];
+pub(crate) const MANAGER_EXECUTABLE: &str = "OC2ModManager.exe";
+const BINARY_NAMES: &[&str] = &[MANAGER_EXECUTABLE, "uninstall.exe"];
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Migration {
@@ -29,7 +30,7 @@ pub(crate) fn update_executable(executable: &Path) -> Result<PathBuf, String> {
         .ok_or("migrate.defaultDirectoryUnknown")?
         .join("OC2ModManager");
     install_guard::validate_install_dir(&target)?;
-    Ok(target.join("OC2ModManager.exe"))
+    Ok(target.join(MANAGER_EXECUTABLE))
 }
 
 fn resolved(path: &Path) -> Result<PathBuf, String> {
@@ -83,7 +84,7 @@ fn copy_tree(source: &Path, target: &Path) -> Result<(), String> {
 impl Migration {
     pub(crate) fn prepare(source: &Path, target: &Path, work: &Path) -> Result<Self, String> {
         if !install_guard::is_plugins_directory(source)?
-            || !source.join("OC2ModManager.exe").is_file()
+            || !source.join(MANAGER_EXECUTABLE).is_file()
         {
             return Err("migrate.noManagerFiles".into());
         }
@@ -258,8 +259,8 @@ fn migration_command(args: &[std::ffi::OsString]) -> Result<(), String> {
     match args.first().and_then(|arg| arg.to_str()) {
         Some("prepare") if args.len() == 4 => {
             let source = Path::new(&args[1]);
-            wait_until_stopped(&source.join("OC2ModManager.exe"))?;
-            let target_exe = Path::new(&args[2]).join("OC2ModManager.exe");
+            wait_until_stopped(&source.join(MANAGER_EXECUTABLE))?;
+            let target_exe = Path::new(&args[2]).join(MANAGER_EXECUTABLE);
             if target_exe.is_file() {
                 wait_until_stopped(&target_exe)?;
             }
@@ -277,13 +278,16 @@ fn migration_command(args: &[std::ffi::OsString]) -> Result<(), String> {
             )
             .map_err(|e| e.to_string())
         }
-        Some(action @ ("finish" | "restore")) if args.len() == 2 => {
+        Some(action @ ("finish" | "restore"))
+            if args.len() == 2
+                || (action == "finish" && args.len() == 3 && args[2] == "--no-restart") =>
+        {
             let bytes = fs::read(Path::new(&args[1])).map_err(|e| e.to_string())?;
             let migration: Migration = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
             if action == "restore" {
                 return migration.restore_old_binaries();
             }
-            let result = finish_legacy_migration(&migration);
+            let result = finish_legacy_migration(&migration, args.len() == 2);
             if result.is_err() {
                 migration.restore_old_binaries()?;
             }
@@ -293,8 +297,8 @@ fn migration_command(args: &[std::ffi::OsString]) -> Result<(), String> {
     }
 }
 
-fn finish_legacy_migration(migration: &Migration) -> Result<(), String> {
-    let executable = migration.target.join("OC2ModManager.exe");
+fn finish_legacy_migration(migration: &Migration, restart: bool) -> Result<(), String> {
+    let executable = migration.target.join(MANAGER_EXECUTABLE);
     let actual = crate::file_metadata::read_file_version(&executable)
         .ok_or("migrate.installedVersionUnreadable")?;
     if !version_matches(env!("CARGO_PKG_VERSION"), &actual) {
@@ -303,7 +307,9 @@ fn finish_legacy_migration(migration: &Migration) -> Result<(), String> {
     let log = crate::user_paths::logs_dir()?.join("update.log");
     fs::create_dir_all(log.parent().ok_or("migrate.logDirectoryInvalid")?)
         .map_err(|e| e.to_string())?;
-    launch_and_confirm(&executable, &log)?;
+    if restart {
+        launch_and_confirm(&executable, &log)?;
+    }
     migration.cleanup()?;
     append_log(&log, "Migration completed; old manager files removed");
     Ok(())

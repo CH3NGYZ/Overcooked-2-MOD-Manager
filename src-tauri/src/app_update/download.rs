@@ -360,6 +360,7 @@ pub(crate) enum InstallerDownloadAttempt {
 pub(crate) async fn discover_and_download_installer_update(
     state: &AppState,
     app: &AppHandle,
+    checked_channel: Option<&str>,
 ) -> Result<InstallerDownloadAttempt, String> {
     let config = state.config.load_or_default();
     let region = installer_region(&config.region);
@@ -375,6 +376,37 @@ pub(crate) async fn discover_and_download_installer_update(
             &[("reason", &error.to_string())],
         )
     })?;
+    // The supplied ID can only select a previously checked, official manifest.
+    if let Some(channel) = checked_channel
+        && let Some(info) =
+            super::cache::app_update_cache_get(state, region).and_then(|result| result.update)
+        && info.source_channel.as_deref() == Some(channel)
+        && info.background_install
+    {
+        emit_installer_phase(app, region, "download", None, Some(info.clone()));
+        match prepare_and_download_installer(
+            &download_client,
+            &info,
+            app,
+            &config.github_proxies,
+            region,
+            &config.network,
+        )
+        .await
+        {
+            Ok(download) => {
+                return Ok(InstallerDownloadAttempt::Updated {
+                    region,
+                    info,
+                    download,
+                });
+            }
+            Err(errors) => log::warn!(
+                "按已检查的渠道下载更新失败，将重新检查：渠道={channel}，原因={}",
+                errors.join("；")
+            ),
+        }
+    }
     let result = run_installer_manifest_routes(
         &client,
         &installer_manifest_sources(&config.github_proxies, region),

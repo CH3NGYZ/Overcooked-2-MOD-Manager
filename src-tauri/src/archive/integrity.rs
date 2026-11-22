@@ -6,22 +6,26 @@ use zip::ZipArchive;
 
 pub fn sha256_file(path: &Path) -> Result<String, String> {
     log::debug!("开始计算 SHA-256：文件={}", path.display());
-    let mut file = File::open(path).map_err(|e| {
+    let file = File::open(path).map_err(|e| {
         log::error!("打开待校验文件失败：文件={}，原因={}", path.display(), e);
         e.to_string()
     })?;
+    let digest = sha256_reader(file).map_err(|error| error.to_string())?;
+    log::trace!("SHA-256 计算完成：文件={}，摘要={}", path.display(), digest);
+    Ok(digest)
+}
+
+pub(crate) fn sha256_reader(mut input: impl Read) -> io::Result<String> {
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
     loop {
-        let read = file.read(&mut buffer).map_err(|e| e.to_string())?;
+        let read = input.read(&mut buffer)?;
         if read == 0 {
             break;
         }
         hasher.update(&buffer[..read]);
     }
-    let digest = format!("{:x}", hasher.finalize());
-    log::trace!("SHA-256 计算完成：文件={}，摘要={}", path.display(), digest);
-    Ok(digest)
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 pub fn verify_digest(path: &Path, digest: Option<&str>) -> Result<(), String> {

@@ -17,13 +17,13 @@ registerHooks({
     if (url.endsWith('/src/useNotify.ts')) return { format: 'module', shortCircuit: true, source: 'export const useNotify = () => ({error: text => globalThis.__guardNotices.push(text)})' }
     if (url.endsWith('/src/locale/backend.ts')) return { format: 'module', shortCircuit: true, source: 'export const backendMessageOf = reason => reason instanceof Error ? reason.message : String(reason)' }
     if (url.endsWith('/src/modChanges/store.ts')) return {format:'module',shortCircuit:true,source:'export const useModChanges=()=>({state:{get value(){return globalThis.__guardChangeState}}})'}
-    if (url.endsWith('/src/services/tauri.ts')) return { format: 'module', shortCircuit: true, source: 'export const api = {exitApp: () => globalThis.__guardExit()}' }
+    if (url.endsWith('/src/services/tauri.ts')) return { format: 'module', shortCircuit: true, source: 'export const api = {exitApp: () => globalThis.__guardExit(), applyStagedAppUpdate: () => globalThis.__guardApplyUpdate()}' }
     return next(url, context)
   },
 })
 const { usePageLeaveGuard } = await import('../src/composables/usePageLeaveGuard.ts')
 const { useAppCloseGuard, registerPageLeaveGuard } = await import('../src/composables/useAppCloseGuard.ts')
-const { requireAppUpdate, beginAppUpdate, finishAppUpdate } = await import('../src/appUpdateState.ts')
+const { appUpdateState, requireAppUpdate, beginBackgroundAppUpdate, finishBackgroundAppUpdate, beginStagedAppUpdate, finishStagedAppUpdate } = await import('../src/appUpdateState.ts')
 const tick = async () => { await nextTick(); await new Promise(resolve => setImmediate(resolve)) }
 const deferred = () => { let resolve, reject; const promise = new Promise((r, j) => { resolve = r; reject = j }); return { promise, resolve, reject } }
 const host = createRenderer({
@@ -33,9 +33,9 @@ const host = createRenderer({
 globalThis.window = new EventTarget()
 window.__TAURI_INTERNALS__ = { metadata: {} }
 
-async function setup(t, { dirty = true, busy = false, confirm = async () => false, registration, exit, guarded = true } = {}) {
+async function setup(t, { dirty = true, busy = false, confirm = async () => false, registration, exit, apply, guarded = true } = {}) {
   globalThis.__guardChangeState = null
-  const state = { dirty: shallowRef(dirty), busy: shallowRef(busy), confirms: 0, cancels: 0, stops: 0, closes: 0, exits: 0, subscriptions: 0 }
+  const state = { dirty: shallowRef(dirty), busy: shallowRef(busy), confirms: 0, cancels: 0, stops: 0, closes: 0, exits: 0, applies: 0, subscriptions: 0 }
   const listeners = new Set()
   globalThis.__guardNotices = []
   const native = {
@@ -56,6 +56,10 @@ async function setup(t, { dirty = true, busy = false, confirm = async () => fals
     assert.equal(listeners.size, 1, 'the native listener must remain registered during recovery and on failure')
     if (exit) await exit()
   }
+  globalThis.__guardApplyUpdate = async () => {
+    state.applies++
+    await apply?.()
+  }
   let guard
   const page = { setup() {
     if (guarded) guard = usePageLeaveGuard({ busy: state.busy, dirty: state.dirty,
@@ -65,13 +69,14 @@ async function setup(t, { dirty = true, busy = false, confirm = async () => fals
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: page }, { path: '/away', component: { render: () => null } }] })
   await router.push('/')
   await router.isReady()
-  const app = host.createApp({ setup() { useAppCloseGuard(); return () => h(RouterView) } }).use(router)
+  let appGuard
+  const app = host.createApp({ setup() { appGuard = useAppCloseGuard(); return () => h(RouterView) } }).use(router)
   app.mount({})
   let disposed = false
   const dispose = () => { if (!disposed) { disposed = true; app.unmount() } }
   t.after(dispose)
   await tick()
-  return { get guard() { return guard }, router, state, dispose, listeners,
+  return { get guard() { return guard }, applyUpdate: appGuard.applyUpdate, router, state, dispose, listeners,
     emitClose() {
       let prevented = 0
       const pending = Promise.all([...listeners].map(callback => callback({ preventDefault() { prevented++ } })))
@@ -257,23 +262,92 @@ test('batch preparation, displaying completion and execution block native close 
  globalThis.__guardChangeState=null
 })
 
-test('update installation and handoff reject new requests and invalidate an already pending confirmation', async t => {
+test('background downloads prevent close and ready apply shares dirty confirmation and busy gates', async t => {
   const choice = deferred()
-  const fixture = await setup(t, { confirm: () => choice.promise })
-  const pending = fixture.guard.requestLeave()
-  await tick()
-  requireAppUpdate({ version: 'test' })
-  assert.equal(beginAppUpdate(), true)
-  assert.equal(await fixture.guard.requestLeave(), false)
-  assert.ok(isNavigationFailure(await fixture.router.push('/away')))
-  choice.resolve(true)
-  assert.equal(await pending, false)
+  const handoff = deferred()
+  const fixture = await setup(t, { confirm: () => choice.promise, apply: () => handoff.promise })
+  requireAppUpdate({ version: 'test', background_install: true, source_channel: 'fixture' })
+  assert.equal(beginBackgroundAppUpdate(), 'fixture')
   await fixture.emitClose().pending
+  await fixture.applyUpdate()
+  assert.equal(fixture.state.confirms, 0)
+  finishBackgroundAppUpdate()
+  assert.equal(appUpdateState.stage, 'ready')
+  globalThis.__guardChangeState = { phase: 'executing' }
+  await fixture.applyUpdate()
+  assert.equal(fixture.state.confirms, 0)
+  globalThis.__guardChangeState = null
+  const cancelled = fixture.applyUpdate()
+  await tick()
+  await fixture.emitClose().pending
+  assert.equal(fixture.state.confirms, 1)
+  choice.resolve(false)
+  await cancelled
   assert.equal(fixture.state.exits, 0)
-  finishAppUpdate(true)
-  assert.equal(await fixture.guard.requestLeave(), false)
-  assert.equal(fixture.router.currentRoute.value.path, '/')
+  assert.equal(fixture.state.applies, 0)
   fixture.dispose()
+  const ready = await setup(t, { confirm: async () => true, apply: () => handoff.promise })
+  const applying = ready.applyUpdate()
+  await tick()
+  assert.equal(appUpdateState.stage, 'applying')
+  await ready.emitClose().pending
+  await ready.applyUpdate()
+  assert.equal(ready.state.exits, 0)
+  assert.equal(ready.state.applies, 1)
+  handoff.reject('update.stagedUnavailable')
+  await applying
+  assert.equal(appUpdateState.stage, 'stageFailed')
+  ready.dispose()
+
+  const closeResult = deferred()
+  const closingReady = await setup(t, { dirty: false, exit: () => closeResult.promise })
+  assert.equal(beginBackgroundAppUpdate(), 'fixture')
+  finishBackgroundAppUpdate()
+  const closingWithUpdate = closingReady.emitClose()
+  await tick()
+  assert.equal(appUpdateState.stage, 'applying')
+  await closingReady.applyUpdate()
+  await closingReady.emitClose().pending
+  assert.equal(closingReady.state.exits, 1)
+  assert.equal(closingReady.state.applies, 0, 'ordinary close does not request a restart')
+  closeResult.reject(new Error('update.stagedUnavailable'))
+  await closingWithUpdate.pending
+  assert.equal(appUpdateState.stage, 'stageFailed')
+  assert.equal(appUpdateState.error, 'update.stagedUnavailable')
+  assert.equal(closingReady.listeners.size, 1)
+  closingReady.dispose()
+
+  const closeBlocked = await setup(t, { dirty: false, exit: async () => { throw 'assetBundle.recoveryPending' } })
+  assert.equal(beginBackgroundAppUpdate(), 'fixture')
+  finishBackgroundAppUpdate()
+  await closeBlocked.emitClose().pending
+  assert.equal(appUpdateState.stage, 'ready', 'other failure keeps the verified package')
+  assert.deepEqual(globalThis.__guardNotices, ['assetBundle.recoveryPending'])
+  closeBlocked.dispose()
+
+  const pendingChoice = deferred()
+  const duringConfirmation = await setup(t, { confirm: () => pendingChoice.promise })
+  const pending = duringConfirmation.guard.requestLeave()
+  await tick()
+  assert.equal(duringConfirmation.state.confirms, 1)
+  assert.equal(beginStagedAppUpdate(), true)
+  assert.equal(await duringConfirmation.guard.requestLeave(), false)
+  assert.ok(isNavigationFailure(await duringConfirmation.router.push('/away')))
+  pendingChoice.resolve(true)
+  assert.equal(await pending, false)
+  await duringConfirmation.emitClose().pending
+  assert.equal(duringConfirmation.state.exits, 0)
+  assert.equal(duringConfirmation.router.currentRoute.value.path, '/')
+  finishStagedAppUpdate('update.inProgress')
+  duringConfirmation.dispose()
+
+  const normalHandoff = await setup(t, { dirty: false })
+  await normalHandoff.emitClose().pending
+  assert.equal(normalHandoff.state.exits, 1)
+  assert.equal(normalHandoff.state.applies, 0)
+  assert.equal(appUpdateState.stage, 'handoff')
+  normalHandoff.dispose()
+
   const ordinary = await setup(t, { guarded: false })
   const closing = ordinary.emitClose()
   assert.equal(closing.prevented, 1)

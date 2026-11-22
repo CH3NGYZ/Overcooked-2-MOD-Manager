@@ -9,6 +9,35 @@ fn relocation_rejects_stale_or_wrong_installed_versions() {
     }
 }
 
+#[test]
+fn deferred_finish_still_checks_the_installed_version_and_restores_on_failure() {
+    let workspace = Workspace::new();
+    let migration = workspace.prepare();
+    let old_executable = workspace.source().join("OC2ModManager.exe");
+    fs::remove_file(&old_executable).unwrap();
+    workspace.write(&workspace.target().join("OC2ModManager.exe"), b"not a PE");
+    let plan = workspace.work().join("migration.json");
+    workspace.write(&plan, &serde_json::to_vec(&migration).unwrap());
+    let args = [
+        "finish".into(),
+        plan.into_os_string(),
+        "--no-restart".into(),
+    ];
+
+    assert_eq!(
+        migration_command(&args).unwrap_err(),
+        "migrate.installedVersionUnreadable"
+    );
+    assert_eq!(fs::read(&old_executable).unwrap(), b"old manager");
+    for action in ["restore", "prepare"] {
+        let unsupported = [action.into(), args[1].clone(), args[2].clone()];
+        assert_eq!(
+            migration_command(&unsupported).unwrap_err(),
+            "migrate.invalidArguments"
+        );
+    }
+}
+
 #[cfg(windows)]
 #[test]
 fn confirms_matching_relocated_process_and_rejects_a_launch_that_exits() {

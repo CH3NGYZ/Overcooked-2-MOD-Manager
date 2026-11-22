@@ -4,17 +4,19 @@ import { readFileSync } from 'node:fs'
 
 const source = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const info = { version: '9.9.9', current_version: '2.0.2', manifest_url: 'https://example.com/latest.json', installer_signature: 'fixture', installer_name: 'fixture.exe' }
+const background = { ...info, background_install: true, source_channel: 'github-direct' }
 let instance = 0
 const fresh = () => import(`../src/appUpdateState.ts?test=${++instance}`)
 
 test('Store distribution never activates independent updater, even with an unexpected update payload', async () => {
   const s = await fresh()
-  s.applyAppUpdateCheck({ distribution: 'microsoft_store', update: info, channels: [], all_failed: false, region: 'cn' })
-  s.requireAppUpdate(info)
+  s.applyAppUpdateCheck({ distribution: 'microsoft_store', update: background, channels: [], all_failed: false, region: 'cn' })
+  s.requireAppUpdate(background)
   assert.equal(s.appUpdateState.distribution, 'microsoft_store')
   assert.equal(s.appUpdateState.stage, 'idle')
   assert.equal(s.appUpdateState.update, null)
   assert.equal(s.beginAppUpdate(), false)
+  assert.equal(s.beginBackgroundAppUpdate(), undefined)
 })
 
 test('legacy checks remain standalone; failed checks do not lock the app', async () => {
@@ -58,6 +60,65 @@ test('successful handoff remains locked pending updater exit, not idle', async (
   assert.equal(s.appUpdateState.stage, 'handoff')
 })
 
+test('background updates require a trusted channel and keep the known offer through retry', async () => {
+  const s = await fresh()
+  s.applyAppUpdateCheck({ distribution: 'standalone', update: background, channels: [], all_failed: false, region: 'global' })
+  assert.equal(s.appUpdateState.stage, 'backgroundRequired')
+  assert.equal(s.beginAppUpdate(), false)
+  assert.equal(s.beginBackgroundAppUpdate(), 'github-direct')
+  assert.equal(s.beginBackgroundAppUpdate(), undefined)
+  assert.equal(s.appUpdateBusy(), true)
+  s.setBackgroundAppUpdateProgress({ downloaded: 512, total: 1024 })
+  assert.equal(s.appUpdateState.progress.downloaded, 512)
+  assert.equal(s.beginStagedAppUpdate(), false)
+  s.finishBackgroundAppUpdate('update.stageFailed')
+  assert.equal(s.appUpdateState.stage, 'stageFailed')
+  assert.equal(s.appUpdateState.progress, null)
+  assert.equal(s.appUpdateState.error, 'update.stageFailed')
+  assert.equal(s.appUpdateBusy(), false)
+  s.requireAppUpdate({ ...background, source_channel: 'other-channel' })
+  assert.equal(s.beginBackgroundAppUpdate(), 'github-direct')
+  s.finishBackgroundAppUpdate()
+  s.setBackgroundAppUpdateProgress({ downloaded: 1, total: 2 })
+  assert.equal(s.appUpdateState.progress, null)
+  assert.equal(s.appUpdateState.stage, 'ready')
+  assert.equal(s.appUpdateBusy(), false, 'ready permits an ordinary exit without restart')
+})
+
+test('apply waits for ready, re-downloads invalid artifacts, and locks the handoff', async () => {
+  const s = await fresh()
+  s.requireAppUpdate(background)
+  s.beginBackgroundAppUpdate()
+  s.finishBackgroundAppUpdate()
+  assert.equal(s.beginStagedAppUpdate(), true)
+  assert.equal(s.beginStagedAppUpdate(), false)
+  assert.equal(s.appUpdateBusy(), true)
+  s.finishStagedAppUpdate('update.installFailedManual')
+  assert.equal(s.appUpdateState.stage, 'ready')
+  s.beginStagedAppUpdate()
+  s.finishStagedAppUpdate('update.stagedUnavailable')
+  assert.equal(s.appUpdateState.stage, 'stageFailed')
+  assert.equal(s.appUpdateState.error, 'update.stagedUnavailable')
+  s.beginBackgroundAppUpdate()
+  s.finishBackgroundAppUpdate()
+  s.beginStagedAppUpdate()
+  s.finishStagedAppUpdate()
+  assert.equal(s.appUpdateState.stage, 'handoff')
+  assert.equal(s.appUpdateBusy(), true)
+})
+
+test('a signed installer without deferred support uses manual update without retrying the same file', async () => {
+  const s = await fresh()
+  s.requireAppUpdate(background)
+  assert.equal(s.beginBackgroundAppUpdate(), 'github-direct')
+  s.finishBackgroundAppUpdate('update.deferredUnsupported')
+  assert.equal(s.appUpdateState.stage, 'manual')
+  assert.equal(s.appUpdateState.error, 'update.deferredUnsupported')
+  assert.equal(s.beginBackgroundAppUpdate(), undefined)
+  assert.equal(s.beginStagedAppUpdate(), false)
+  assert.equal(s.appUpdateBusy(), false)
+})
+
 test('startup and settings use one App-level prompt; route and drop cannot dismiss it', () => {
   const app = source('src/App.vue')
   const settings = source('src/views/SettingsView.vue')
@@ -70,7 +131,7 @@ test('startup and settings use one App-level prompt; route and drop cannot dismi
   assert.match(source('src/composables/useFileDrop.ts'), /appUpdateState.stage !== 'idle'[\s\S]*?return/)
 })
 
-test('prompt has no dismiss/retry path; all final failure forms lead to Release only', () => {
+test('prompt has no dismiss path and only background staging failures get a retry', () => {
   const prompt = source('src/components/UpdatePrompt.vue')
   assert.match(prompt, /:closable="false"/)
   assert.match(prompt, /:mask-closable="false"/)
@@ -80,9 +141,21 @@ test('prompt has no dismiss/retry path; all final failure forms lead to Release 
   assert.match(prompt, /catch \(reason\)[\s\S]*?finishAppUpdate\(false/)
   assert.match(prompt, /finally \{\s*endDownloadTask\(token\)/)
   assert.match(prompt, /api.openUpdateRepository\(\)/)
-  assert.match(prompt, /if \(!manual.value \|\| openingRelease.value\) return/)
-  assert.match(prompt, /v-if="manual"[\s\S]*?@click="openRelease"/)
-  assert.match(prompt, /v-else[\s\S]*?:disabled="busy"/)
+  assert.match(prompt, /v-if="manual \|\| stageFailed"[\s\S]*?@click="openRelease"/)
+  assert.match(prompt, /v-if="stageFailed"[^>]*@click="stageUpdate"/)
+  assert.match(prompt, /v-else-if="!manual"[^>]*:disabled="busy"/)
+})
+
+test('startup and manual detection share background download with isolated progress and guarded apply', () => {
+  const prompt = source('src/components/UpdatePrompt.vue')
+  assert.match(prompt, /watch\(\(\) => appUpdateState.stage, stage => \{\s*if \(stage === 'backgroundRequired'\) void stageUpdate\(\)/)
+  assert.match(prompt, /await api\.stageAppUpdate\(channel, setBackgroundAppUpdateProgress\)\s*finishBackgroundAppUpdate\(\)/)
+  const api = source('src/services/tauri.ts')
+  assert.match(api, /new Channel<DownloadProgress>\(\)[\s\S]*?invoke<void>\('stage_app_update', \{ channel, onUpdate \}\)/)
+  assert.match(api, /applyStagedAppUpdate: \(\) => invoke<void>\('apply_staged_app_update'\)/)
+  assert.match(source('src/App.vue'), /<AppCloseGuard v-slot="\{ applyUpdate \}">\s*<AppTitleBar :version="version" @apply-update="applyUpdate"/)
+  assert.match(source('src/components/AppTitleBar.vue'), /class="brand-version"[^\n]*\n\s*<AppUpdateStatus/)
+  assert.match(source('src/composables/useAppCloseGuard.ts'), /if \(restart\) await api.applyStagedAppUpdate\(\)\s*else await api.exitApp\(\)/)
 })
 
 test('update heading puts the muted version change after the title with a wrapping baseline layout', () => {
@@ -94,9 +167,9 @@ test('update heading puts the muted version change after the title with a wrappi
 
 test('only manual fallback keeps its guidance; release notes render without the repeated body label', () => {
   const prompt = source('src/components/UpdatePrompt.vue')
-  assert.match(prompt, /<p v-if="manual" class="update-requirement">\{\{ t\('update\.manualRequired'\) \}\}<\/p>/)
+  assert.match(prompt, /<p v-if="manualRequired" class="update-requirement">\{\{ t\('update\.manualRequired'\) \}\}<\/p>/)
   assert.doesNotMatch(prompt, /['"]update\.required['"]|body-label|dialogs\.whatSNew/)
-  assert.match(prompt, /v-if="manual && failureDetail" class="update-error" role="alert"/)
+  assert.match(prompt, /v-if="\(manual \|\| stageFailed\) && failureDetail" class="update-error" role="alert"/)
   assert.match(prompt, /<MarkdownBody v-if="bodyText" class="body" :source="bodyText"/)
   assert.match(prompt, /<div v-else class="body">\{\{ t\('dialogs\.noReleaseNotesWereProvided'\) \}\}<\/div>/)
 })
@@ -114,13 +187,18 @@ test('UI hides cancellation; native cancel, exit and close share the atomic upda
   const system = source('src-tauri/src/commands/system.rs')
   assert.match(download, /if !archive::cancel_download\(\)[\s\S]*?update.inProgress/)
   assert.match(update, /install_app_update[\s\S]*?archive::begin_app_update\(\)\?/)
-  assert.match(system, /pub async fn exit_app[^]*?request_user_exit\(\)\?[^]*?\.await/)
-  assert.match(system, /pub\(crate\) fn request_user_exit[^]*?begin_app_update\(\)\?[^]*?spawn_blocking\(move \|\| \{\s*let _exit = exit;[^]*?recompress::shutdown\(\)/)
+  assert.match(update, /pub async fn stage_app_update[^]*?channel: String,[^]*?on_update: tauri::ipc::Channel<archive::DownloadProgress>/)
+  assert.match(system, /pub async fn exit_app[^]*?request_user_exit\(state\.inner\(\)\.clone\(\), false\)\?[^]*?\.await/)
+  assert.match(system, /pub async fn apply_staged_app_update[^]*?request_user_exit\(state\.inner\(\)\.clone\(\), true\)\?[^]*?\.await/)
+  assert.match(system, /pub\(crate\) fn request_user_exit[^]*?begin_app_update\(\)\?[^]*?spawn_blocking\(move \|\| \{\s*let _exit = exit;\s*let _compression = pause_map_compression_for_exit\(\)\?;[^]*?staged::handoff\(&state, restart\)\?;[^]*?std::process::exit\(0\)/)
+  assert.match(system, /fn pause_map_compression_for_exit[^]*?recompress::quiesce_for_exit\(\)/)
   assert.match(system, /pub async fn relaunch_as_admin[^]*?spawn_blocking\(\|\| relaunch_with\(crate::elevation::launch\)\)/)
-  assert.match(system, /pub\(crate\) fn relaunch_with[^]*?begin_app_update\(\)\?[^]*?quiesce_for_exit\(\)[^]*?match launch\(\)/)
+  assert.match(system, /pub\(crate\) fn relaunch_with[^]*?begin_app_update\(\)\?[^]*?(?:pause_map_compression_for_exit|quiesce_for_exit)\(\)[^]*?match launch\(\)/)
   const lib = source('src-tauri/src/lib.rs')
   assert.match(lib, /if window.label\(\) == "main" \{\s*if let tauri::WindowEvent::CloseRequested[\s\S]*?api.prevent_close\(\)/)
-  assert.match(lib, /ExitRequested\s*\{[^}]*?code: None[^}]*?\}\s*= event\s*\{[^]*?api.prevent_exit\(\)[^]*?commands::system::request_user_exit\(\)/)
-  assert.match(source('src/composables/useAppCloseGuard.ts'), /appUpdateState.stage === 'installing' \|\| appUpdateState.stage === 'handoff'/)
+  assert.match(lib, /commands::update::stage_app_update,/)
+  assert.match(lib, /commands::system::apply_staged_app_update,/)
+  assert.match(lib, /ExitRequested\s*\{[^}]*?code: None[^}]*?\}\s*= event\s*\{[^]*?api.prevent_exit\(\)[^]*?commands::system::request_user_exit\(state, false\)/)
+  assert.match(source('src/composables/useAppCloseGuard.ts'), /appCloseBlocked = \(\) => appUpdateBusy\(\)/)
   assert.match(source('src/composables/usePageLeaveGuard.ts'), /appCloseBlocked/)
 })

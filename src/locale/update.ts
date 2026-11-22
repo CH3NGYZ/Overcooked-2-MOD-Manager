@@ -92,6 +92,46 @@ export const update: DomainMessages = {
     ko: '프로그램 업데이트를 다운로드하는 중',
     ja: 'アプリの更新をダウンロードしています',
   },
+  downloadPercent: {
+    'zh-CN': '下载更新 {percent}%', 'zh-TW': '下載更新 {percent}%', en: 'Downloading update {percent}%',
+    ko: '업데이트 다운로드 {percent}%', ja: '更新をダウンロード {percent}%',
+  },
+  verifyingUpdate: {
+    'zh-CN': '正在验证更新', 'zh-TW': '正在驗證更新', en: 'Verifying update',
+    ko: '업데이트 확인 중', ja: '更新を検証しています',
+  },
+  applyNow: {
+    'zh-CN': '立即应用更新', 'zh-TW': '立即套用更新', en: 'Apply update now',
+    ko: '지금 업데이트 적용', ja: '今すぐ更新を適用',
+  },
+  applyingUpdate: {
+    'zh-CN': '正在应用更新', 'zh-TW': '正在套用更新', en: 'Applying update',
+    ko: '업데이트 적용 중', ja: '更新を適用しています',
+  },
+  retryDownload: {
+    'zh-CN': '重试下载', 'zh-TW': '重試下載', en: 'Retry download',
+    ko: '다운로드 재시도', ja: 'ダウンロードを再試行',
+  },
+  stageFailed: {
+    'zh-CN': '无法保存更新文件，请检查磁盘空间与写入权限后重试。',
+    'zh-TW': '無法儲存更新檔案，請檢查磁碟空間與寫入權限後重試。',
+    en: 'Could not save the update. Check available disk space and write permissions, then try again.',
+    ko: '업데이트 파일을 저장할 수 없습니다. 디스크 공간과 쓰기 권한을 확인한 후 다시 시도하세요.',
+    ja: '更新ファイルを保存できませんでした。ディスクの空き容量と書き込み権限を確認してから再試行してください。',
+  },
+  stagedUnavailable: {
+    'zh-CN': '已下载的更新不可用，请重新下载。', 'zh-TW': '已下載的更新無法使用，請重新下載。',
+    en: 'The downloaded update is unavailable. Download it again.',
+    ko: '다운로드한 업데이트를 사용할 수 없습니다. 다시 다운로드하세요.',
+    ja: 'ダウンロードした更新が利用できません。もう一度ダウンロードしてください。',
+  },
+  deferredUnsupported: {
+    'zh-CN': '这个版本的安装包不支持在退出后自动安装，请从发布页手动更新。',
+    'zh-TW': '這個版本的安裝套件不支援在結束後自動安裝，請從發佈頁面手動更新。',
+    en: 'This installer cannot run automatically after the app closes. Update manually from the release page.',
+    ko: '이 설치 프로그램은 앱 종료 후 자동 설치를 지원하지 않습니다. 릴리스 페이지에서 수동으로 업데이트하세요.',
+    ja: 'このインストーラーはアプリ終了後の自動インストールに対応していません。リリースページから手動で更新してください。',
+  },
   elevationFailed: {
     'zh-CN': '未能获得管理员权限（可能取消了 UAC）',
     'zh-TW': '未能取得系統管理員權限（可能取消了 UAC）',

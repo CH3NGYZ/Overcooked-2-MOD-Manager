@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { registerHooks } from 'node:module'
 import test from 'node:test'
 import { compileScript, parse } from '@vue/compiler-sfc'
-import { createRenderer, h } from 'vue'
+import { createRenderer, h, nextTick } from 'vue'
 
 // Execute the production view setup; only IPC, dialogs and unrelated services
 // are replaced. No cleanup command reaches Tauri or the user's data directory.
@@ -29,7 +29,9 @@ registerHooks({
     if (url === 'clear-config-test:naive') return fake(`
       export const NAlert={},NButton={},NLog={},NSelect={},NTag={}
       const show=options=>{
-        globalThis.__clearAllConfigBoundary.dialogs.push(options);return options
+        const instance={ ...options, destroy(){ this.destroyed=true; this.onAfterLeave() } }
+        globalThis.__clearAllConfigBoundary.dialogs.push(instance)
+        return instance
       }
       export const useDialog=()=>({error:show,warning:show})`)
     if (url === 'clear-config-test:icons') return fake(`
@@ -64,6 +66,7 @@ registerHooks({
 })
 const { default: ToolsView } = await import('../src/views/ToolsView.vue')
 const { toolsUiDataReset } = await import('../src/locale/tools/dataReset.ts')
+const { requireAppUpdate } = await import('../src/appUpdateState.ts')
 const renderer = createRenderer({
   patchProp() {}, insert() {}, remove() {}, createElement: () => ({}), createText: () => ({}),
   createComment: () => ({}), setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null,
@@ -350,4 +353,37 @@ test('the reset domain has complete five-language irreversible-data and exit wor
   assert.match(toolsUiDataReset.migrateDataConfirm['zh-CN'], /整个.*设置.*安装清单.*缓存.*备份.*回收站.*OC2ModManager.*子目录已存在.*取消迁移/)
   assert.match(toolsUiDataReset.migrateDataPreservesGame['zh-CN'], /游戏目录.*不会被移动/)
   assert.match(toolsUiDataReset.migrateDataExit['zh-CN'], /退出.*迁移.*手动启动.*新路径/)
+})
+
+test('a mandatory update closes unconfirmed data actions and ignores a late directory selection', async t => {
+  const selection = deferred()
+  const directory = deferred()
+  const openClear = mounted(t)
+  await openClear.confirmClearAllConfig()
+  const clear = boundary.dialogs[0]
+  const inProgress = deferred()
+  const openMigration = mounted(t, { choose: async () => 'E:\\Manager Data', migrate: () => inProgress.promise })
+  await openMigration.confirmMigrateManagerData()
+  const confirming = boundary.dialogs[0]
+  const completingMigration = confirming.onPositiveClick()
+  const lateMigration = mounted(t, { choose: () => selection.promise })
+  const migration = lateMigration.confirmMigrateManagerData()
+  const lateClear = mounted(t, { directory: () => directory.promise })
+  const openingClear = lateClear.confirmClearAllConfig()
+
+  requireAppUpdate({ version: '9.9.9', background_install: true, source_channel: 'github-direct' })
+  assert.equal(await clear.onPositiveClick(), false)
+  assert.equal(confirming.destroyed, undefined)
+  inProgress.reject('update.inProgress')
+  selection.resolve('E:\\Manager Data')
+  directory.resolve('D:\\OC2ModManager')
+  await Promise.all([nextTick(), migration, openingClear, completingMigration])
+  assert.equal(clear.destroyed, true)
+  assert.equal(confirming.destroyed, true)
+  assert.equal(openMigration.managerDataBusy, false)
+  assert.equal(openClear.managerDataBusy, false)
+  assert.equal(lateMigration.managerDataBusy, false)
+  assert.equal(lateClear.managerDataBusy, false)
+  assert.deepEqual(boundary.dialogs, [])
+  assert.deepEqual(boundary.calls, [['directory']])
 })

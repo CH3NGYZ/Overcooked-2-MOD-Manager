@@ -25,6 +25,8 @@ pub(crate) use install::{
     copy_asset_pending, extract_framework_zip_pending, extract_local_mod_zip_pending,
     extract_prepared_mod_zip, prepare_repository_mod_zip,
 };
+#[cfg(windows)]
+pub(crate) use integrity::sha256_reader;
 pub(crate) use integrity::{
     validate_download_bytes, validate_download_digest, validate_download_file,
     validate_download_size, validate_zip,

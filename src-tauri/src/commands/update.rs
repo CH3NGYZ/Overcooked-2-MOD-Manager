@@ -136,14 +136,64 @@ fn failed_app_update_check(
 }
 
 #[tauri::command]
+pub async fn stage_app_update(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    channel: String,
+    on_update: tauri::ipc::Channel<archive::DownloadProgress>,
+) -> Result<(), String> {
+    let target = crate::app_update::UpdateTarget::current()?;
+    if !target.supports_background_install() {
+        return Err("update.formatUnsupported".into());
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, state, channel, on_update);
+        Err("update.formatUnsupported".into())
+    }
+    #[cfg(windows)]
+    {
+        let _update_guard = archive::begin_app_update()?;
+        let attempt = archive::observe_download_progress(
+            move |progress| {
+                let _ = on_update.send(progress);
+            },
+            discover_and_download_installer_update(&state, &app, Some(&channel)),
+        )
+        .await?;
+        let (info, download) = match attempt {
+            InstallerDownloadAttempt::Updated { info, download, .. } => (info, download),
+            InstallerDownloadAttempt::Latest => return Err("update.alreadyLatest".into()),
+            InstallerDownloadAttempt::Failed(message) => return Err(message),
+        };
+        if info.installer_type != target.kind {
+            return Err("update.manifestPlatformMismatch".into());
+        }
+        let staged = tauri::async_runtime::spawn_blocking(move || {
+            crate::app_update::staged::StagedInstaller::prepare(download, info.version)
+        })
+        .await
+        .map_err(|_| "update.stageFailed")??;
+        *state
+            .staged_app_update
+            .lock()
+            .map_err(|_| "lock.poisoned")? = Some(staged);
+        Ok(())
+    }
+}
+
+#[tauri::command]
 pub async fn install_app_update(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<OperationResult, String> {
     distribution::require_standalone()?;
+    if crate::app_update::UpdateTarget::current()?.supports_background_install() {
+        return Err("update.formatUnsupported".into());
+    }
     let _update_guard = archive::begin_app_update()?;
     log::info!("开始安装器自更新");
-    let attempt = discover_and_download_installer_update(&state, &app).await?;
+    let attempt = discover_and_download_installer_update(&state, &app, None).await?;
     let (region, info, download) = match attempt {
         InstallerDownloadAttempt::Updated {
             region,

@@ -2,7 +2,7 @@
 import { useAppCloseGuard } from '../composables/useAppCloseGuard'
 
 // This owner lives under the message provider and survives every route change.
-useAppCloseGuard()
+const { applyUpdate } = useAppCloseGuard()
 </script>
 
-<template></template>
+<template><slot :apply-update="applyUpdate" /></template>

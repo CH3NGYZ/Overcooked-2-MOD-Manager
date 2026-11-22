@@ -413,7 +413,14 @@ fn failed_dependency_write_never_reaches_map_or_mod_and_restores_prerequisites()
             )
             .unwrap_err();
         assert!(injected);
-        assert_eq!(error, "recycle.payloadModified");
+        assert_eq!(
+            error,
+            crate::file_check::report(
+                "modChanges.verifyStagedFile",
+                &payload,
+                crate::file_check::MISSING
+            )
+        );
         assert_eq!(Fingerprint::capture(&f.game).unwrap(), old_game);
         assert_eq!(Fingerprint::capture(&manifests).unwrap(), old_manifests);
         assert!(!has_pending(&journal_root).unwrap());

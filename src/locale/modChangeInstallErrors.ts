@@ -21,6 +21,19 @@ function withLocations(copy: Localized): Localized {
 }
 
 export const modChangeInstallErrors: DomainMessages = {
+  verifyInstallTarget: withLocation({ 'zh-CN': '校验变更目标失败：{reason}', 'zh-TW': '驗證變更目標失敗：{reason}', en: 'Could not verify a change target: {reason}', ko: '변경 대상을 확인하지 못했습니다: {reason}', ja: '変更対象を確認できませんでした：{reason}' }),
+  verifyStagedFile: withLocation({ 'zh-CN': '校验待应用文件失败：{reason}', 'zh-TW': '驗證待套用檔案失敗：{reason}', en: 'Could not verify a file prepared for the change: {reason}', ko: '적용할 파일을 확인하지 못했습니다: {reason}', ja: '適用するファイルを確認できませんでした：{reason}' }),
+  verifyInstallBackup: withLocation({ 'zh-CN': '校验变更备份失败：{reason}', 'zh-TW': '驗證變更備份失敗：{reason}', en: 'Could not verify a change backup: {reason}', ko: '변경 백업을 확인하지 못했습니다: {reason}', ja: '変更のバックアップを確認できませんでした：{reason}' }),
+  verifyInstallResult: withLocation({ 'zh-CN': '校验变更结果失败：{reason}', 'zh-TW': '驗證變更結果失敗：{reason}', en: 'Could not verify the result of a change: {reason}', ko: '변경 결과를 확인하지 못했습니다: {reason}', ja: '変更結果を確認できませんでした：{reason}' }),
+  writeInstallFile: withLocation({ 'zh-CN': '写入变更失败：{reason}', 'zh-TW': '寫入變更失敗：{reason}', en: 'Could not write a change: {reason}', ko: '변경 내용을 기록하지 못했습니다: {reason}', ja: '変更を書き込めませんでした：{reason}' }),
+  writeInstallBackup: withLocation({ 'zh-CN': '创建变更备份失败：{reason}', 'zh-TW': '建立變更備份失敗：{reason}', en: 'Could not save a change backup: {reason}', ko: '변경 백업을 저장하지 못했습니다: {reason}', ja: '変更のバックアップを保存できませんでした：{reason}' }),
+  installRecoveryPending: {
+    'zh-CN': '无法确认本次变更已应用或已回滚。请保留恢复文件，关闭游戏后重启管理器。\n详细原因：{reason}',
+    'zh-TW': '無法確認此次變更已套用或已回復。請保留復原檔案，關閉遊戲後重新啟動管理器。\n詳細原因：{reason}',
+    en: 'The manager could not confirm whether the changes were applied or rolled back. Keep the recovery files, close the game, and restart the manager.\nDetails: {reason}',
+    ko: '변경이 적용되었는지 또는 되돌려졌는지 확인할 수 없습니다. 복구 파일을 보관하고 게임을 닫은 뒤 관리자를 다시 시작하세요.\n자세한 원인: {reason}',
+    ja: '変更が適用されたか取り消されたかを確認できません。復旧用ファイルを残し、ゲームを閉じてからマネージャーを再起動してください。\n詳細：{reason}',
+  },
   dependencyVersionUnconfirmed: {
     'zh-CN': '「{subject}」需要「{dependency}」满足版本要求 {requirement}。管理器无法确认已启用的版本是否符合要求，会保留它。',
     'zh-TW': '「{subject}」需要「{dependency}」符合版本要求 {requirement}。管理器無法確認已啟用的版本是否符合要求，會保留它。',

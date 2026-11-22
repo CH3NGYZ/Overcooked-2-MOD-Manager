@@ -1,7 +1,8 @@
-use super::PreparedTransaction;
 use super::durable::{copy_verified, private_path, write_journal};
-use super::paths::{CONFLICT, MODIFIED, UNSAFE, io_error, validate_mutations, validate_roots};
+use super::paths::{UNSAFE, validate_mutations, validate_roots};
 use super::types::*;
+use super::{PreparedTransaction, check};
+use crate::file_check;
 use std::{collections::HashSet, fs, path::Path};
 use uuid::Uuid;
 
@@ -17,27 +18,29 @@ pub(crate) fn prepare(
     if mutations.is_empty() {
         return Err("recycle.noMovableFiles".into());
     }
-    fs::create_dir_all(transaction_root).map_err(io_error)?;
+    fs::create_dir_all(transaction_root).map_err(|error| {
+        file_check::report_io(check::WRITE, transaction_root, error, file_check::WRITE)
+    })?;
     let id = Uuid::new_v4().to_string();
     let directory = transaction_root.join(&id);
-    fs::create_dir(&directory).map_err(io_error)?;
+    create_dir(&directory, check::WRITE)?;
     let result = (|| {
-        fs::create_dir(directory.join("before")).map_err(io_error)?;
-        fs::create_dir(directory.join("after")).map_err(io_error)?;
+        create_dir(&directory.join("before"), check::WRITE_BACKUP)?;
+        create_dir(&directory.join("after"), check::WRITE)?;
         let mut records = Vec::new();
         let mut parents = Vec::new();
         let mut known_parents = HashSet::new();
         for (index, mutation) in mutations.into_iter().enumerate() {
             let operation = match mutation {
                 Mutation::File(change) => {
-                    let target = change.target.resolve(roots)?;
+                    let target = check::resolve(&change.target, roots, check::TARGET)?;
                     super::engine::verify_file_before(
                         &target,
                         &change.expected,
                         change.require_single_link,
                     )?;
                     if matches!(change.expected, Fingerprint::Directory { .. }) {
-                        return Err(CONFLICT.into());
+                        return Err(file_check::report(check::TARGET, &target, file_check::TYPE));
                     }
                     let backup = if change.expected == Fingerprint::Missing {
                         None
@@ -45,18 +48,31 @@ pub(crate) fn prepare(
                         let relative = format!("before/{index}");
                         copy_verified(
                             &target,
-                            &private_path(&directory, &relative)?,
+                            &private_path(&directory, &relative, check::BACKUP)?,
                             &change.expected,
+                            check::TARGET,
+                            check::WRITE_BACKUP,
                         )?;
                         Some(relative)
                     };
                     let (payload, after) = if let Some(source) = change.source {
                         if !matches!(source.fingerprint, Fingerprint::File { .. }) {
-                            return Err(UNSAFE.into());
+                            let reason = if source.fingerprint == Fingerprint::Missing {
+                                file_check::MISSING
+                            } else {
+                                file_check::TYPE
+                            };
+                            return Err(file_check::report(check::STAGED, &source.path, reason));
                         }
                         let relative = format!("after/{index}");
-                        let stored = private_path(&directory, &relative)?;
-                        let mut after = copy_verified(&source.path, &stored, &source.fingerprint)?;
+                        let stored = private_path(&directory, &relative, check::STAGED)?;
+                        let mut after = copy_verified(
+                            &source.path,
+                            &stored,
+                            &source.fingerprint,
+                            check::STAGED,
+                            check::WRITE,
+                        )?;
                         // Replacement retains the destination's permissions, including its DACL.
                         let permissions = change
                             .expected
@@ -82,9 +98,11 @@ pub(crate) fn prepare(
                         .join(format!(".oc2-batch-{id}-{index}.tmp"))
                         .to_string_lossy()
                         .replace('\\', "/");
-                    if Fingerprint::capture(&temporary.resolve(roots)?)? != Fingerprint::Missing {
-                        return Err(CONFLICT.into());
-                    }
+                    check::expect(
+                        &check::resolve(&temporary, roots, check::STAGED)?,
+                        check::STAGED,
+                        &Fingerprint::Missing,
+                    )?;
                     collect_missing_parents(
                         &change.target,
                         roots,
@@ -102,16 +120,17 @@ pub(crate) fn prepare(
                     }
                 }
                 Mutation::Move(change) => {
-                    let from = change.from.resolve(roots)?;
-                    let to = change.to.resolve(roots)?;
-                    if change.expected == Fingerprint::Missing
-                        || Fingerprint::capture(&from)? != change.expected
-                    {
-                        return Err(MODIFIED.into());
+                    let from = check::resolve(&change.from, roots, check::TARGET)?;
+                    let to = check::resolve(&change.to, roots, check::TARGET)?;
+                    if change.expected == Fingerprint::Missing {
+                        return Err(file_check::report(
+                            check::TARGET,
+                            &from,
+                            file_check::MISSING,
+                        ));
                     }
-                    if Fingerprint::capture(&to)? != Fingerprint::Missing {
-                        return Err(CONFLICT.into());
-                    }
+                    check::expect(&from, check::TARGET, &change.expected)?;
+                    check::expect(&to, check::TARGET, &Fingerprint::Missing)?;
                     collect_missing_parents(&change.to, roots, &mut parents, &mut known_parents)?;
                     RecordedMutation::Move {
                         from: change.from,
@@ -120,26 +139,29 @@ pub(crate) fn prepare(
                     }
                 }
                 Mutation::Tree(change) => {
-                    let target = change.target.resolve(roots)?;
-                    if Fingerprint::capture(&target)? != change.expected {
-                        return Err(MODIFIED.into());
-                    }
+                    let target = check::resolve(&change.target, roots, check::TARGET)?;
+                    check::expect(&target, check::TARGET, &change.expected)?;
                     if !matches!(
                         change.expected,
                         Fingerprint::Missing | Fingerprint::Directory { .. }
                     ) {
-                        return Err(CONFLICT.into());
+                        return Err(file_check::report(check::TARGET, &target, file_check::TYPE));
                     }
                     let (payload, after) = if let Some(source) = change.source {
-                        let expected = Fingerprint::capture(&source)?;
+                        let expected = check::capture(&source, check::STAGED)?;
                         if !matches!(expected, Fingerprint::Directory { .. }) {
-                            return Err(UNSAFE.into());
+                            let reason = if expected == Fingerprint::Missing {
+                                file_check::MISSING
+                            } else {
+                                file_check::TYPE
+                            };
+                            return Err(file_check::report(check::STAGED, &source, reason));
                         }
                         let relative = format!("after/{index}");
-                        let stored = private_path(&directory, &relative)?;
+                        let stored = private_path(&directory, &relative, check::STAGED)?;
                         super::tree::copy_tree(&source, &stored, &expected)?;
                         super::tree::preserve_replaced_permissions(&target, &stored)?;
-                        let after = Fingerprint::capture(&stored)?;
+                        let after = check::capture(&stored, check::STAGED)?;
                         (Some(relative), after)
                     } else {
                         (None, Fingerprint::Missing)
@@ -157,10 +179,13 @@ pub(crate) fn prepare(
                         .join(format!(".oc2-batch-{id}-{index}.tree-old"))
                         .to_string_lossy()
                         .replace('\\', "/");
-                    for sibling in [&temporary, &backup] {
-                        if Fingerprint::capture(&sibling.resolve(roots)?)? != Fingerprint::Missing {
-                            return Err(CONFLICT.into());
-                        }
+                    for (sibling, stage) in [(&temporary, check::STAGED), (&backup, check::BACKUP)]
+                    {
+                        check::expect(
+                            &check::resolve(sibling, roots, stage)?,
+                            stage,
+                            &Fingerprint::Missing,
+                        )?;
                     }
                     collect_missing_parents(
                         &change.target,
@@ -212,6 +237,11 @@ pub(crate) fn prepare(
         }
     }
     result
+}
+
+fn create_dir(path: &Path, stage: &str) -> Result<(), String> {
+    fs::create_dir(path)
+        .map_err(|error| file_check::report_io(stage, path, error, file_check::WRITE))
 }
 
 fn collect_missing_parents(

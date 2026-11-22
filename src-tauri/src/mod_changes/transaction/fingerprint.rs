@@ -130,10 +130,19 @@ impl Fingerprint {
 
 impl StagedFile {
     pub(crate) fn capture(path: std::path::PathBuf) -> Result<Self, String> {
-        let fingerprint = Fingerprint::capture(&path)?;
-        if !matches!(fingerprint, Fingerprint::File { .. }) {
-            return Err("modChanges.payloadChanged".into());
+        use super::check;
+        use crate::file_check;
+        let fingerprint = check::capture(&path, check::STAGED)?;
+        match fingerprint {
+            Fingerprint::File { .. } => Ok(Self { path, fingerprint }),
+            Fingerprint::Missing => Err(file_check::report(
+                check::STAGED,
+                &path,
+                file_check::MISSING,
+            )),
+            Fingerprint::Directory { .. } => {
+                Err(file_check::report(check::STAGED, &path, file_check::TYPE))
+            }
         }
-        Ok(Self { path, fingerprint })
     }
 }

@@ -1,5 +1,6 @@
 //! Persistent filesystem transaction shared by every action in a confirmed change plan.
 //! This layer neither downloads nor solves dependencies and never acquires AppState locks.
+mod check;
 mod durable;
 mod engine;
 mod fingerprint;
@@ -10,6 +11,7 @@ mod recovery;
 mod tree;
 mod types;
 
+pub(super) use check::needs_recovery;
 pub(crate) use durable::rename as durable_rename;
 pub(super) use engine::RecordProgress;
 pub(crate) use paths::{has_single_link, key as path_key};

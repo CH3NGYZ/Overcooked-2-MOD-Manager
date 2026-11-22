@@ -354,7 +354,14 @@ fn conflict_and_old_copies_leave_before_new_writes_and_restore_on_write_failure(
         },
     );
     assert!(observed);
-    assert_eq!(outcome.unwrap_err(), "recycle.payloadModified");
+    assert_eq!(
+        outcome.unwrap_err(),
+        crate::file_check::report(
+            "modChanges.verifyStagedFile",
+            &missing_payload,
+            crate::file_check::MISSING
+        )
+    );
     assert_eq!(game_and_manifest_bytes(&f), before);
 }
 

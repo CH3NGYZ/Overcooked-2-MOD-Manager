@@ -1,4 +1,5 @@
-use super::{durable, tests::Workspace, types::JournalState};
+use super::{check, durable, tests::Workspace, types::JournalState};
+use crate::file_check;
 use crate::mod_changes::application_progress::{ChangeApplicationProgress, ItemKey, Recorder};
 use serde_json::{Value, json};
 use std::cell::Cell;
@@ -118,7 +119,10 @@ fn later_write_failure_retracts_processed_items_and_leaves_unstarted_items_unmar
             |event| progress.observe(event),
         )
         .unwrap_err();
-    assert_eq!(error, "recycle.payloadModified");
+    assert_eq!(
+        error,
+        file_check::report(check::STAGED, &journal.join("after/1"), file_check::CONTENT)
+    );
     assert_eq!(w.read("first.dll"), b"old");
     assert_eq!(w.read("failed.dll"), b"old");
     assert_eq!(w.read("last.dll"), b"old");
@@ -166,9 +170,53 @@ fn an_external_preflight_change_marks_the_exact_blocking_row_before_any_write() 
     let error = pending
         .apply_with_cancel(|| false, |event| progress.observe(event))
         .unwrap_err();
-    progress.failed(error != "recycle.partialFailure");
+    assert_eq!(
+        error,
+        file_check::report(
+            check::TARGET,
+            &w.roots.game_root.join("changed.dll"),
+            file_check::CONTENT
+        )
+    );
+    progress.failed(!check::needs_recovery(&error));
     assert_eq!(updates, vec![event("changed", None, "failed")]);
     assert_eq!(w.read("first.dll"), b"old");
     assert_eq!(w.read("changed.dll"), b"external");
     assert_eq!(w.read("last.dll"), b"old");
+}
+
+#[test]
+fn missing_backup_retains_transaction_and_returns_actionable_recovery_error() {
+    let workspace = Workspace::new();
+    workspace.write("first.dll", b"old");
+    workspace.write("second.dll", b"old");
+    let pending = workspace.prepare(vec![
+        workspace.file("first.dll", Some(b"new")),
+        workspace.file("second.dll", Some(b"new")),
+    ]);
+    let journal = workspace.journal_root.join(pending.id());
+    let backup = journal.join("before/0");
+    let error = pending
+        .apply_with_cancel(
+            || false,
+            |event| {
+                if matches!(event, super::RecordProgress::Processed(0)) {
+                    std::fs::remove_file(&backup).unwrap();
+                    std::fs::remove_file(journal.join("after/1")).unwrap();
+                }
+            },
+        )
+        .unwrap_err();
+    assert_eq!(
+        error,
+        check::recovery_pending(&file_check::report(
+            check::BACKUP,
+            &backup,
+            file_check::MISSING
+        ))
+    );
+    assert!(check::needs_recovery(&error));
+    assert_eq!(workspace.read("first.dll"), b"new");
+    assert_eq!(workspace.read("second.dll"), b"old");
+    assert!(journal.join("journal.json").is_file());
 }

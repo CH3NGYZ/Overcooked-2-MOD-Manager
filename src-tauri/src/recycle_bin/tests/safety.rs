@@ -1,8 +1,8 @@
 use crate::archive;
+use crate::file_check;
 use crate::recycle_bin::delete::delete;
-use crate::recycle_bin::errors::CONFLICT;
-use crate::recycle_bin::errors::INCOMPLETE;
 use crate::recycle_bin::errors::INVALID_RECORD;
+use crate::recycle_bin::errors::{VERIFY_FILES, WRITE_RESTORED_FILE};
 use crate::recycle_bin::records::list;
 use crate::recycle_bin::records::load_record;
 use crate::recycle_bin::records::save_record;
@@ -104,7 +104,11 @@ fn restoring_disabled_dll_refuses_enabled_variant_and_keeps_both_copies() {
             &entry.id
         )
         .unwrap_err(),
-        CONFLICT
+        file_check::report(
+            WRITE_RESTORED_FILE,
+            &workspace.game.join(A),
+            file_check::EXISTS
+        )
     );
     assert_eq!(fs::read(workspace.game.join(A)).unwrap(), b"new install");
     assert_eq!(
@@ -227,7 +231,11 @@ fn forged_ids_paths_and_corrupted_payload_cannot_escape_or_destroy_data() {
             &entry.id
         )
         .unwrap_err(),
-        INCOMPLETE
+        file_check::report(
+            VERIFY_FILES,
+            &directory.join("files").join(A),
+            file_check::CONTENT
+        )
     );
     assert!(directory.exists());
     assert!(!workspace.game.join(A).exists());
@@ -250,7 +258,7 @@ fn undeclared_staged_files_are_preserved_when_restore_metadata_is_incomplete() {
             &entry.id
         )
         .unwrap_err(),
-        INCOMPLETE
+        file_check::report(VERIFY_FILES, &unknown, "recycle.fileNotRecorded")
     );
     assert_eq!(
         fs::read(&unknown).unwrap(),

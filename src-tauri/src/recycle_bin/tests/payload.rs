@@ -1,4 +1,6 @@
 use super::Workspace;
+use crate::file_check;
+use crate::recycle_bin::errors::VERIFY_FILES;
 use crate::recycle_bin::records::{RecordState, load_record, save_record};
 use crate::recycle_bin::staging::stage_with_related_manifests;
 use crate::recycle_bin::{
@@ -105,6 +107,36 @@ fn missing_or_undeclared_payload_files_are_not_exposed() {
         fs::read(payload.join("unrecorded.obj")).unwrap(),
         b"undeclared resource"
     );
+}
+
+#[test]
+fn missing_or_wrong_type_payload_reports_the_exact_staged_file() {
+    let workspace = Workspace::new();
+    let id = stage_legacy_chef(&workspace);
+    let staged = workspace.recycle.join(&id).join("files").join(FILE);
+    fs::remove_file(&staged).unwrap();
+    for reason in [file_check::MISSING, file_check::TYPE] {
+        assert_eq!(
+            restore(
+                &workspace.recycle,
+                &workspace.manifests,
+                &workspace.game,
+                &id
+            )
+            .unwrap_err(),
+            file_check::report(VERIFY_FILES, &staged, reason)
+        );
+        assert!(!workspace.game.join(FILE).exists());
+        assert_eq!(
+            load_record(&workspace.recycle.join(&id), &id)
+                .unwrap()
+                .state,
+            RecordState::Ready
+        );
+        if reason == file_check::MISSING {
+            fs::create_dir(&staged).unwrap();
+        }
+    }
 }
 
 #[test]

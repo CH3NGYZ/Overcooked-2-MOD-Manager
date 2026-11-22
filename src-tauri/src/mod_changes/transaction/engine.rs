@@ -1,5 +1,5 @@
-use super::{PreparedTransaction, durable, paths, types::*};
-use crate::{directory_watch::CommittedPaths, file_metadata::Stamp};
+use super::{PreparedTransaction, check, durable, paths, types::*};
+use crate::{directory_watch::CommittedPaths, file_check, file_metadata::Stamp};
 use std::{fs, path::Path};
 
 pub(in crate::mod_changes) enum RecordProgress {
@@ -14,9 +14,7 @@ pub(super) fn verify_file_before(
     before: &Fingerprint,
     require_single_link: bool,
 ) -> Result<(), String> {
-    if Fingerprint::capture(path)? != *before {
-        return Err(paths::MODIFIED.into());
-    }
+    check::expect(path, check::TARGET, before)?;
     if require_single_link {
         paths::guard_single_link(path)?;
     }
@@ -30,7 +28,11 @@ pub(super) fn verify_before(record: &Record, roots: &TransactionRoots) -> Result
             before,
             require_single_link,
             ..
-        } => verify_file_before(&target.resolve(roots)?, before, *require_single_link)?,
+        } => verify_file_before(
+            &check::resolve(target, roots, check::TARGET)?,
+            before,
+            *require_single_link,
+        )?,
         RecordedMutation::Tree {
             target,
             before,
@@ -38,22 +40,33 @@ pub(super) fn verify_before(record: &Record, roots: &TransactionRoots) -> Result
             temporary,
             ..
         } => {
-            if Fingerprint::capture(&target.resolve(roots)?)? != *before {
-                return Err(paths::MODIFIED.into());
-            }
-            if Fingerprint::capture(&backup.resolve(roots)?)? != Fingerprint::Missing
-                || Fingerprint::capture(&temporary.resolve(roots)?)? != Fingerprint::Missing
-            {
-                return Err(paths::CONFLICT.into());
-            }
+            check::expect(
+                &check::resolve(target, roots, check::TARGET)?,
+                check::TARGET,
+                before,
+            )?;
+            check::expect(
+                &check::resolve(backup, roots, check::BACKUP)?,
+                check::BACKUP,
+                &Fingerprint::Missing,
+            )?;
+            check::expect(
+                &check::resolve(temporary, roots, check::STAGED)?,
+                check::STAGED,
+                &Fingerprint::Missing,
+            )?;
         }
         RecordedMutation::Move { from, to, before } => {
-            if Fingerprint::capture(&from.resolve(roots)?)? != *before {
-                return Err(paths::MODIFIED.into());
-            }
-            if Fingerprint::capture(&to.resolve(roots)?)? != Fingerprint::Missing {
-                return Err(paths::CONFLICT.into());
-            }
+            check::expect(
+                &check::resolve(from, roots, check::TARGET)?,
+                check::TARGET,
+                before,
+            )?;
+            check::expect(
+                &check::resolve(to, roots, check::TARGET)?,
+                check::TARGET,
+                &Fingerprint::Missing,
+            )?;
         }
     }
     Ok(())
@@ -68,23 +81,20 @@ fn check_after(
     roots: &TransactionRoots,
     mut capture: impl FnMut(&Path, RootKind, bool) -> Result<Fingerprint, String>,
 ) -> Result<(), String> {
-    let valid = match &record.operation {
-        RecordedMutation::File { target, after, .. } => {
-            capture(&target.resolve(roots)?, target.root, false)? == *after
-        }
-        RecordedMutation::Tree { target, after, .. } => {
-            capture(&target.resolve(roots)?, target.root, true)? == *after
-        }
+    let mut verify = |target: &TransactionPath, tree: bool, expected: &Fingerprint| {
+        let path = check::resolve(target, roots, check::RESULT)?;
+        let observed = capture(&path, target.root, tree)
+            .map_err(|error| check::context(check::RESULT, &path, &error))?;
+        check::compare(&path, check::RESULT, &observed, expected, false)
+    };
+    match &record.operation {
+        RecordedMutation::File { target, after, .. } => verify(target, false, after),
+        RecordedMutation::Tree { target, after, .. } => verify(target, true, after),
         RecordedMutation::Move { from, to, before } => {
             let tree = matches!(before, Fingerprint::Directory { .. });
-            capture(&from.resolve(roots)?, from.root, tree)? == Fingerprint::Missing
-                && capture(&to.resolve(roots)?, to.root, tree)? == *before
+            verify(from, tree, &Fingerprint::Missing)?;
+            verify(to, tree, before)
         }
-    };
-    if valid {
-        Ok(())
-    } else {
-        Err(paths::MODIFIED.into())
     }
 }
 
@@ -129,13 +139,14 @@ impl PreparedTransaction {
                     // A failed durable commit write can have reached disk. Only restart
                     // recovery may decide from the published journal whether to undo it.
                     log::error!("批次提交刷盘结果待核实，保留恢复材料：{error}");
-                    return Err("recycle.partialFailure".into());
+                    return Err(check::recovery_pending(&error));
                 }
                 self.journal.error = Some(error.clone());
                 if let Err(restore_error) = self.rollback() {
                     log::error!("链式变更失败且待恢复：安装={error}，恢复={restore_error}");
-                    return Err("recycle.partialFailure".into());
+                    return Err(check::recovery_pending(&restore_error));
                 }
+                log::warn!("整链事务已回滚：事务={}，原因={error}", self.journal.id);
                 return Err(error);
             }
         };
@@ -163,10 +174,11 @@ impl PreparedTransaction {
                 .inspect_err(|_| observe(RecordProgress::Failed(index)))?;
         }
         for parent in &self.journal.created_directories {
-            if Fingerprint::capture(&parent.resolve(&self.journal.roots)?)? != Fingerprint::Missing
-            {
-                return Err(paths::MODIFIED.into());
-            }
+            check::expect(
+                &check::resolve(parent, &self.journal.roots, check::TARGET)?,
+                check::TARGET,
+                &Fingerprint::Missing,
+            )?;
         }
         if cancelled() {
             return Err("download.cancelled".into());
@@ -265,7 +277,9 @@ impl PreparedTransaction {
             let absolute = path.resolve(&self.journal.roots)?;
             // create_dir is exclusive: an externally created directory never
             // becomes ours merely because the planned target was missing.
-            fs::create_dir(&absolute).map_err(paths::io_error)?;
+            fs::create_dir(&absolute).map_err(|error| {
+                file_check::report_io(check::WRITE, &absolute, error, file_check::WRITE)
+            })?;
             self.journal.created_directory_count += 1;
             durable::sync_parent(&absolute)?;
             self.persist()?;
@@ -284,31 +298,37 @@ impl PreparedTransaction {
                 let target = target.resolve(&self.journal.roots)?;
                 let temporary = temporary.resolve(&self.journal.roots)?;
                 if let Some(payload) = payload {
-                    let payload = durable::private_path(&self.directory, payload)?;
-                    let payload_fingerprint = Fingerprint::capture(&payload)?;
-                    if !payload_fingerprint.same_content(after) {
-                        return Err(paths::MODIFIED.into());
-                    }
-                    durable::copy_verified(&payload, &temporary, &payload_fingerprint)?;
+                    let payload = durable::private_path(&self.directory, payload, check::STAGED)?;
+                    let payload_fingerprint = check::capture(&payload, check::STAGED)?;
+                    check::compare(&payload, check::STAGED, &payload_fingerprint, after, true)?;
+                    durable::copy_verified(
+                        &payload,
+                        &temporary,
+                        &payload_fingerprint,
+                        check::STAGED,
+                        check::WRITE,
+                    )?;
                     after
                         .permissions()
                         .ok_or(paths::INVALID)?
-                        .restore(&temporary)?;
-                    if Fingerprint::capture(&temporary)? != *after {
-                        return Err(paths::MODIFIED.into());
-                    }
+                        .restore(&temporary)
+                        .map_err(|error| check::writing(&temporary, &error))?;
+                    check::expect(&temporary, check::STAGED, after)?;
                     verify_file_before(&target, before, *require_single_link)?;
-                    make_writable(&target, before)?;
-                    durable::rename(&temporary, &target, true)?;
+                    make_writable(&target, before)
+                        .map_err(|error| check::writing(&target, &error))?;
+                    durable::rename_checked(&temporary, &target, true, check::WRITE)?;
                 } else {
                     durable::remove_file_checked(&target, before, *require_single_link)?;
                 }
             }
             RecordedMutation::Move { from, to, .. } => {
-                durable::rename(
+                let target = to.resolve(&self.journal.roots)?;
+                durable::rename_checked(
                     &from.resolve(&self.journal.roots)?,
-                    &to.resolve(&self.journal.roots)?,
+                    &target,
                     false,
+                    check::WRITE,
                 )?;
             }
             operation @ RecordedMutation::Tree { .. } => {

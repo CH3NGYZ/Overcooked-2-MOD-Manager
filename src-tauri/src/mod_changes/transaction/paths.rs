@@ -6,10 +6,11 @@ pub(super) const UNSAFE: &str = "recycle.unsafePath";
 pub(super) const CONFLICT: &str = "recycle.restoreTargetExists";
 pub(super) const MODIFIED: &str = "recycle.payloadModified";
 pub(super) const INVALID: &str = "recycle.invalidRecord";
+pub(super) const IO_ERROR: &str = "recycle.fileOperationFailed";
 
 pub(super) fn io_error(error: impl std::fmt::Display) -> String {
     log::error!("批次事务文件操作失败：{error}");
-    "recycle.fileOperationFailed".into()
+    IO_ERROR.into()
 }
 
 pub(super) fn is_link(metadata: &fs::Metadata) -> bool {
@@ -46,12 +47,14 @@ pub(crate) fn has_single_link(file: &fs::File) -> bool {
 }
 
 pub(super) fn guard_single_link(path: &Path) -> Result<(), String> {
-    if fs::File::open(path).is_ok_and(|file| has_single_link(&file)) {
-        Ok(())
-    } else {
-        log::warn!("已验证的资源文件不再具有唯一链接：{}", path.display());
-        Err(MODIFIED.into())
+    use crate::file_check;
+    let stage = super::check::TARGET;
+    let file = fs::File::open(path)
+        .map_err(|error| file_check::report_io(stage, path, error, file_check::READ))?;
+    if !has_single_link(&file) {
+        return Err(file_check::report(stage, path, file_check::LINK));
     }
+    Ok(())
 }
 
 pub(super) fn validate_absolute(path: &Path) -> Result<(), String> {
@@ -143,17 +146,18 @@ pub(super) fn validate_mutations(
     transaction_root: &Path,
     roots: &TransactionRoots,
 ) -> Result<(), String> {
+    let resolve = |target| super::check::resolve(target, roots, super::check::TARGET);
     let mut paths = Vec::new();
     for mutation in mutations {
         match mutation {
-            Mutation::File(change) => paths.push(change.target.resolve(roots)?),
-            Mutation::Tree(change) => paths.push(change.target.resolve(roots)?),
+            Mutation::File(change) => paths.push(resolve(&change.target)?),
+            Mutation::Tree(change) => paths.push(resolve(&change.target)?),
             Mutation::Move(change) => {
                 if change.from.root != change.to.root {
                     return Err(UNSAFE.into());
                 }
-                paths.push(change.from.resolve(roots)?);
-                paths.push(change.to.resolve(roots)?);
+                paths.push(resolve(&change.from)?);
+                paths.push(resolve(&change.to)?);
             }
         }
     }
@@ -233,7 +237,11 @@ fn validate_endpoints(paths: &[PathBuf], transaction_root: &Path) -> Result<(), 
                 .iter()
                 .any(|previous| overlaps(path, previous))
         {
-            return Err(CONFLICT.into());
+            return Err(crate::mod_changes::mutations::report_install_block(
+                "modChanges.installTargetPathCollision",
+                "transaction",
+                &[("path", &crate::display_path::display_path(path))],
+            ));
         }
     }
     Ok(())

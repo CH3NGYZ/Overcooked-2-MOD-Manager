@@ -1,7 +1,5 @@
 use super::delete::remove_entry_directory;
-use super::errors::CONFLICT;
-use super::errors::INCOMPLETE;
-use super::errors::io_error;
+use super::errors::{VERIFY_FILES, WRITE_RESTORED_FILE, io_error};
 use super::file_io::matches_fingerprint;
 use super::file_io::move_file;
 use super::file_io::rollback_moves;
@@ -10,7 +8,7 @@ use super::manifests::merge_restored_manifest;
 use super::manifests::original_manifest;
 use super::manifests::read_active_manifest;
 use super::manifests::set_active_manifest;
-use super::paths::checked_path;
+use super::paths::checked_path_for;
 use super::paths::existing_variants;
 use super::paths::manifest_path;
 use super::paths::record_directory;
@@ -19,7 +17,7 @@ use super::payload::validate_payload;
 use super::records::RecordState;
 use super::records::load_record;
 use super::records::save_record;
-use crate::mods;
+use crate::{file_check, mods};
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -43,7 +41,9 @@ pub fn restore(
     {
         return Err("recycle.wrongGameDirectory".into());
     }
-    let payload = checked_path(&directory, "files")?;
+    let verify = Some(VERIFY_FILES);
+    let write = Some(WRITE_RESTORED_FILE);
+    let payload = checked_path_for(&directory, "files", verify)?;
     validate_payload(&payload, &record)?;
     let original = original_manifest(&directory, &record)?;
     let mut originals = Vec::new();
@@ -65,23 +65,45 @@ pub fn restore(
     }
     let mut pending = Vec::new();
     for file in &record.files {
-        let staged = checked_path(&payload, &file.relative)?;
-        let target = checked_path(game_root, &file.relative)?;
-        if !staged.try_exists().map_err(io_error)? {
+        let staged = checked_path_for(&payload, &file.relative, verify)?;
+        let target = checked_path_for(game_root, &file.relative, write)?;
+        if !staged.try_exists().map_err(|error| {
+            file_check::report_io(VERIFY_FILES, &staged, error, file_check::READ)
+        })? {
             if record.state == RecordState::Preparing
-                && target.try_exists().map_err(io_error)?
-                && matches_fingerprint(&target, file)?
+                && target.try_exists().map_err(|error| {
+                    file_check::report_io(WRITE_RESTORED_FILE, &target, error, file_check::READ)
+                })?
             {
-                continue;
+                if matches_fingerprint(&target, file, write)? {
+                    continue;
+                }
+                return Err(file_check::report(
+                    WRITE_RESTORED_FILE,
+                    &target,
+                    file_check::CONTENT,
+                ));
             }
-            return Err(INCOMPLETE.into());
+            return Err(file_check::report(
+                VERIFY_FILES,
+                &staged,
+                file_check::MISSING,
+            ));
         }
-        if !matches_fingerprint(&staged, file)? {
-            return Err(INCOMPLETE.into());
+        if !matches_fingerprint(&staged, file, verify)? {
+            return Err(file_check::report(
+                VERIFY_FILES,
+                &staged,
+                file_check::CONTENT,
+            ));
         }
         let canonical = mods::canonical_dll_name(&file.relative);
-        if !existing_variants(game_root, &canonical)?.is_empty() {
-            return Err(CONFLICT.into());
+        if let Some(existing) = existing_variants(game_root, &canonical, write)?.first() {
+            return Err(file_check::report(
+                WRITE_RESTORED_FILE,
+                &game_root.join(existing),
+                file_check::EXISTS,
+            ));
         }
         pending.push(file.clone());
     }
@@ -91,9 +113,10 @@ pub fn restore(
     let result = (|| {
         for file in &pending {
             move_file(
-                &checked_path(&payload, &file.relative)?,
-                &checked_path(game_root, &file.relative)?,
+                &checked_path_for(&payload, &file.relative, verify)?,
+                &checked_path_for(game_root, &file.relative, write)?,
                 file,
+                true,
             )?;
             moved.push(file.clone());
         }
@@ -118,7 +141,10 @@ pub fn restore(
         if !files_rolled_back || !manifest_rolled_back {
             record.state = RecordState::Preparing;
             let _ = save_record(&directory, &record);
-            log::error!("MOD 恢复回滚不完整，保留回收记录：ID={}", id);
+            log::error!(
+                "MOD 恢复回滚不完整，保留回收记录：ID={}，原始失败={error}",
+                id
+            );
             return Err("recycle.partialFailure".into());
         }
         return Err(error);

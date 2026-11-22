@@ -1,5 +1,20 @@
 import type { DomainMessages } from './types'
 
+export const fileCheckReasons: DomainMessages = {
+  'error.checkedFileMissing': { 'zh-CN': '找不到文件或目录', 'zh-TW': '找不到檔案或目錄', en: 'The file or folder is missing', ko: '파일 또는 폴더가 없습니다', ja: 'ファイルまたはフォルダーが見つかりません' },
+  'error.checkedFileContent': { 'zh-CN': '内容与先前校验的结果不符', 'zh-TW': '內容與先前驗證的結果不符', en: 'The contents do not match what was previously verified', ko: '내용이 이전에 검증한 결과와 일치하지 않습니다', ja: '事前に確認した内容と一致しません' },
+  'error.checkedFileType': { 'zh-CN': '实际的文件或目录类型不符', 'zh-TW': '實際的檔案或目錄類型不符', en: 'The file or folder is not the expected type', ko: '파일 또는 폴더의 유형이 예상과 다릅니다', ja: 'ファイルまたはフォルダーの種類が想定と異なります' },
+  'error.checkedFileRead': { 'zh-CN': '无法读取文件或目录', 'zh-TW': '無法讀取檔案或目錄', en: 'The file or folder could not be read', ko: '파일 또는 폴더를 읽을 수 없습니다', ja: 'ファイルまたはフォルダーを読み取れません' },
+  'error.checkedFileAccess': { 'zh-CN': '系统拒绝访问，请检查权限', 'zh-TW': '系統拒絕存取，請檢查權限', en: 'Access was denied. Check permissions', ko: '접근이 거부되었습니다. 권한을 확인하세요', ja: 'アクセスが拒否されました。権限を確認してください' },
+  'error.checkedFileBusy': { 'zh-CN': '文件正被占用，请关闭正在使用它的程序后重试', 'zh-TW': '檔案正在使用中，請關閉使用它的程式後重試', en: 'The file is in use. Close the program using it and try again', ko: '파일이 사용 중입니다. 파일을 사용하는 프로그램을 닫고 다시 시도하세요', ja: 'ファイルは使用中です。使用しているアプリを閉じて再試行してください' },
+  'error.checkedFileExists': { 'zh-CN': '原本应为空的位置已有文件或目录', 'zh-TW': '原本應為空的位置已有檔案或目錄', en: 'A file or folder now exists where none was expected', ko: '비어 있어야 할 위치에 파일 또는 폴더가 있습니다', ja: '空であるはずの場所にファイルまたはフォルダーがあります' },
+  'error.checkedFileUnsafe': { 'zh-CN': '此路径含链接或不符合安全要求', 'zh-TW': '此路徑含連結或不符合安全要求', en: 'The path contains a link or does not meet safety requirements', ko: '경로에 링크가 있거나 안전 조건을 충족하지 않습니다', ja: 'パスにリンクが含まれているか、安全条件を満たしていません' },
+  'error.checkedFileLink': { 'zh-CN': '无法确认此文件没有其他硬链接', 'zh-TW': '無法確認此檔案沒有其他硬連結', en: 'The manager could not verify that the file has no other hard links', ko: '파일에 다른 하드 링크가 없는지 확인할 수 없습니다', ja: 'このファイルに別のハードリンクがないことを確認できません' },
+  'error.checkedFilePermissions': { 'zh-CN': '文件或目录的权限与先前记录不符', 'zh-TW': '檔案或目錄的權限與先前記錄不符', en: 'File or folder permissions do not match the earlier record', ko: '파일 또는 폴더 권한이 이전 기록과 일치하지 않습니다', ja: 'ファイルまたはフォルダーの権限が以前の記録と一致しません' },
+  'error.checkedFileWrite': { 'zh-CN': '系统未能完成写入、替换或删除', 'zh-TW': '系統未能完成寫入、取代或刪除', en: 'The system could not finish writing, replacing, or removing the file', ko: '시스템이 파일 쓰기, 교체 또는 삭제를 완료하지 못했습니다', ja: 'システムがファイルの書き込み、置換、または削除を完了できませんでした' },
+  'error.checkedFileCopy': { 'zh-CN': '文件复制未完成，请检查磁盘空间和文件是否可访问', 'zh-TW': '檔案複製未完成，請檢查磁碟空間及檔案是否可存取', en: 'The copy did not finish. Check disk space and file access', ko: '복사를 완료하지 못했습니다. 디스크 공간과 파일 접근 상태를 확인하세요', ja: 'コピーを完了できませんでした。空き容量とファイルへのアクセスを確認してください' },
+}
+
 /**
  * 安装与下载链路：ZIP 解压、下载、直链安装、回收站。
  *
@@ -302,6 +317,27 @@ export const recycle: DomainMessages = {
     en: 'Recycle bin files are incomplete or modified',
     ko: '휴지통 파일이 불완전하거나 변경되었습니다',
     ja: 'ゴミ箱のファイルが不完全か変更されています',
+  },
+  verifyFiles: {
+    'zh-CN': '恢复前校验回收站文件失败：{reason}\n位置：{path}',
+    'zh-TW': '還原前驗證回收筒檔案失敗：{reason}\n位置：{path}',
+    en: 'Could not verify recycle bin files for restoration: {reason}\nPath: {path}',
+    ko: '복구 전 휴지통 파일을 확인하지 못했습니다: {reason}\n경로: {path}',
+    ja: '復元前にゴミ箱のファイルを確認できませんでした：{reason}\n場所：{path}',
+  },
+  writeRestoredFile: {
+    'zh-CN': '恢复游戏文件失败：{reason}\n位置：{path}',
+    'zh-TW': '還原遊戲檔案失敗：{reason}\n位置：{path}',
+    en: 'Could not restore a game file: {reason}\nPath: {path}',
+    ko: '게임 파일을 복구하지 못했습니다: {reason}\n경로: {path}',
+    ja: 'ゲームファイルを復元できませんでした：{reason}\n場所：{path}',
+  },
+  fileNotRecorded: {
+    'zh-CN': '发现未登记或重复的文件',
+    'zh-TW': '發現未登記或重複的檔案',
+    en: 'An unrecorded or duplicate file was found',
+    ko: '기록되지 않았거나 중복된 파일이 있습니다',
+    ja: '未記録または重複したファイルが見つかりました',
   },
   restoreTargetExists: {
     'zh-CN': '恢复位置已有文件，拒绝覆盖',

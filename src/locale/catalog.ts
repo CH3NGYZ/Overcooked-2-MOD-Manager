@@ -9,7 +9,7 @@ import { error } from './error.ts'
 import { framework } from './framework.ts'
 import { frameworkBackend } from './frameworkBackend.ts'
 import { game } from './game.ts'
-import { archive, direct, download, recycle } from './installPipeline.ts'
+import { archive, direct, download, fileCheckReasons, recycle } from './installPipeline.ts'
 import { message } from './message.ts'
 import {
   avatar,
@@ -118,6 +118,7 @@ export const TABLES: DomainTable[] = [
   { domain: 'config', messages: config },
   { flat: true, messages: error },
   { flat: true, messages: errorExtra },
+  { flat: true, messages: fileCheckReasons },
   { domain: 'framework', messages: framework },
   { domain: 'framework', messages: frameworkBackend },
   { domain: 'game', messages: game },

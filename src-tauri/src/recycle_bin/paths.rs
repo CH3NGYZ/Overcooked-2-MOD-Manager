@@ -1,7 +1,7 @@
 use super::errors::INVALID_RECORD;
 use super::errors::UNSAFE_PATH;
-use super::errors::io_error;
-use crate::mods;
+use super::errors::{checked_error, checked_io_error};
+use crate::{file_check, mods};
 use std::fs;
 use std::path::Component;
 use std::path::Path;
@@ -24,13 +24,18 @@ pub(super) fn is_link(metadata: &fs::Metadata) -> bool {
 }
 
 pub(super) fn validate_absolute_path(path: &Path) -> Result<(), String> {
+    validate_absolute_path_for(path, None)
+}
+
+pub(super) fn validate_absolute_path_for(path: &Path, stage: Option<&str>) -> Result<(), String> {
+    let unsafe_path = |path: &Path| checked_error(stage, path, file_check::UNSAFE, UNSAFE_PATH);
     if !path.is_absolute() {
-        return Err(UNSAFE_PATH.into());
+        return Err(unsafe_path(path));
     }
     let mut checked = PathBuf::new();
     for component in path.components() {
         if matches!(component, Component::ParentDir | Component::CurDir) {
-            return Err(UNSAFE_PATH.into());
+            return Err(unsafe_path(path));
         }
         checked.push(component.as_os_str());
         if matches!(component, Component::Prefix(_)) {
@@ -39,10 +44,10 @@ pub(super) fn validate_absolute_path(path: &Path) -> Result<(), String> {
             continue;
         }
         match fs::symlink_metadata(&checked) {
-            Ok(metadata) if is_link(&metadata) => return Err(UNSAFE_PATH.into()),
+            Ok(metadata) if is_link(&metadata) => return Err(unsafe_path(&checked)),
             Ok(_) => (),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
-            Err(error) => return Err(io_error(error)),
+            Err(error) => return Err(checked_io_error(stage, &checked, error, file_check::READ)),
         }
     }
     Ok(())
@@ -68,9 +73,17 @@ pub(super) fn validate_relative(relative: &str) -> Result<(), String> {
 }
 
 pub(super) fn checked_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    checked_path_for(root, relative, None)
+}
+
+pub(super) fn checked_path_for(
+    root: &Path,
+    relative: &str,
+    stage: Option<&str>,
+) -> Result<PathBuf, String> {
     validate_relative(relative)?;
     let path = root.join(relative);
-    validate_absolute_path(&path)?;
+    validate_absolute_path_for(&path, stage)?;
     Ok(path)
 }
 
@@ -112,7 +125,11 @@ pub(super) fn file_key(relative: &str) -> String {
     mods::canonical_dll_name(&relative.replace('\\', "/")).to_lowercase()
 }
 
-pub(super) fn existing_variants(game_root: &Path, relative: &str) -> Result<Vec<String>, String> {
+pub(super) fn existing_variants(
+    game_root: &Path,
+    relative: &str,
+    stage: Option<&str>,
+) -> Result<Vec<String>, String> {
     let mut candidates = vec![relative.to_owned()];
     if Path::new(relative)
         .extension()
@@ -122,12 +139,12 @@ pub(super) fn existing_variants(game_root: &Path, relative: &str) -> Result<Vec<
     }
     let mut existing = Vec::new();
     for candidate in candidates {
-        let path = checked_path(game_root, &candidate)?;
+        let path = checked_path_for(game_root, &candidate, stage)?;
         match fs::symlink_metadata(&path) {
             Ok(metadata) if metadata.is_file() && !is_link(&metadata) => existing.push(candidate),
-            Ok(_) => return Err(UNSAFE_PATH.into()),
+            Ok(_) => return Err(checked_error(stage, &path, file_check::TYPE, UNSAFE_PATH)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
-            Err(error) => return Err(io_error(error)),
+            Err(error) => return Err(checked_io_error(stage, &path, error, file_check::READ)),
         }
     }
     Ok(existing)

@@ -1,6 +1,7 @@
 //! Whole-directory replacement uses same-volume sibling renames and a retained
 //! original tree. No recursive live deletion occurs before the durable commit.
-use super::{durable, paths, types::*};
+use super::{check, durable, paths, types::*};
+use crate::file_check;
 use std::{fs, path::Path};
 
 pub(crate) fn copy_tree(
@@ -8,69 +9,92 @@ pub(crate) fn copy_tree(
     target: &Path,
     expected: &Fingerprint,
 ) -> Result<Fingerprint, String> {
-    if !matches!(expected, Fingerprint::Directory { .. })
-        || Fingerprint::capture(source)? != *expected
-    {
-        return Err(paths::MODIFIED.into());
+    if !matches!(expected, Fingerprint::Directory { .. }) {
+        return Err(file_check::report(check::STAGED, source, file_check::TYPE));
     }
+    check::expect(source, check::STAGED, expected)?;
     copy_directory(source, target)?;
-    let after = Fingerprint::capture(target)?;
-    if after != *expected || Fingerprint::capture(source)? != *expected {
-        return Err(paths::MODIFIED.into());
-    }
+    let after = check::capture(target, check::STAGED)?;
+    check::compare(target, check::STAGED, &after, expected, false)?;
+    check::expect(source, check::STAGED, expected)?;
     Ok(after)
 }
 
 fn copy_directory(source: &Path, target: &Path) -> Result<(), String> {
-    let expected = Fingerprint::capture(source)?;
+    let expected = check::capture(source, check::STAGED)?;
     if !matches!(expected, Fingerprint::Directory { .. }) {
-        return Err(paths::UNSAFE.into());
+        let reason = if expected == Fingerprint::Missing {
+            file_check::MISSING
+        } else {
+            file_check::TYPE
+        };
+        return Err(file_check::report(check::STAGED, source, reason));
     }
-    fs::create_dir(target).map_err(paths::io_error)?;
-    for entry in fs::read_dir(source).map_err(paths::io_error)? {
-        let entry = entry.map_err(paths::io_error)?;
+    fs::create_dir(target)
+        .map_err(|error| file_check::report_io(check::WRITE, target, error, file_check::WRITE))?;
+    let read_error = |error| file_check::report_io(check::STAGED, source, error, file_check::READ);
+    for entry in fs::read_dir(source).map_err(read_error)? {
+        let entry = entry.map_err(read_error)?;
         let source = entry.path();
         let target = target.join(entry.file_name());
-        let fingerprint = Fingerprint::capture(&source)?;
+        let fingerprint = check::capture(&source, check::STAGED)?;
         match fingerprint {
             Fingerprint::File { .. } => {
-                durable::copy_verified(&source, &target, &fingerprint)?;
+                durable::copy_verified(
+                    &source,
+                    &target,
+                    &fingerprint,
+                    check::STAGED,
+                    check::WRITE,
+                )?;
                 fingerprint
                     .permissions()
                     .ok_or(paths::INVALID)?
-                    .restore(&target)?;
+                    .restore(&target)
+                    .map_err(|error| check::writing(&target, &error))?;
             }
             Fingerprint::Directory { .. } => copy_directory(&source, &target)?,
-            Fingerprint::Missing => return Err(paths::MODIFIED.into()),
+            Fingerprint::Missing => {
+                return Err(file_check::report(
+                    check::STAGED,
+                    &source,
+                    file_check::MISSING,
+                ));
+            }
         }
     }
     expected
         .permissions()
         .ok_or(paths::INVALID)?
-        .restore(target)?;
-    durable::sync_parent(target)
+        .restore(target)
+        .map_err(|error| check::writing(target, &error))?;
+    durable::sync_parent(target).map_err(|error| check::writing(target, &error))
 }
 
 pub(crate) fn preserve_replaced_permissions(before: &Path, staged: &Path) -> Result<(), String> {
-    let original = Fingerprint::capture(before)?;
+    let original = check::capture(before, check::TARGET)?;
     if original == Fingerprint::Missing {
         return Ok(());
     }
-    let replacement = Fingerprint::capture(staged)?;
+    let replacement = check::capture(staged, check::STAGED)?;
     match (&original, &replacement) {
         (Fingerprint::File { .. }, Fingerprint::File { .. }) => original
             .permissions()
             .ok_or(paths::INVALID)?
-            .restore(staged),
+            .restore(staged)
+            .map_err(|error| check::writing(staged, &error)),
         (Fingerprint::Directory { .. }, Fingerprint::Directory { .. }) => {
-            for entry in fs::read_dir(staged).map_err(paths::io_error)? {
-                let entry = entry.map_err(paths::io_error)?;
+            let read_error =
+                |error| file_check::report_io(check::STAGED, staged, error, file_check::READ);
+            for entry in fs::read_dir(staged).map_err(read_error)? {
+                let entry = entry.map_err(read_error)?;
                 preserve_replaced_permissions(&before.join(entry.file_name()), &entry.path())?;
             }
             original
                 .permissions()
                 .ok_or(paths::INVALID)?
                 .restore(staged)
+                .map_err(|error| check::writing(staged, &error))
         }
         // A file-to-directory transition has no matching permission object.
         _ => Ok(()),
@@ -93,37 +117,29 @@ pub(super) fn apply(
     else {
         return Err(paths::INVALID.into());
     };
-    let target = target.resolve(roots)?;
-    let backup = backup.resolve(roots)?;
-    let temporary = temporary.resolve(roots)?;
-    if Fingerprint::capture(&target)? != *before
-        || Fingerprint::capture(&backup)? != Fingerprint::Missing
-        || Fingerprint::capture(&temporary)? != Fingerprint::Missing
-    {
-        return Err(paths::MODIFIED.into());
-    }
+    let target = check::resolve(target, roots, check::TARGET)?;
+    let backup = check::resolve(backup, roots, check::BACKUP)?;
+    let temporary = check::resolve(temporary, roots, check::STAGED)?;
+    check::expect(&target, check::TARGET, before)?;
+    check::expect(&backup, check::BACKUP, &Fingerprint::Missing)?;
+    check::expect(&temporary, check::STAGED, &Fingerprint::Missing)?;
     if let Some(payload) = payload {
-        let payload = durable::private_path(directory, payload)?;
-        let stored = Fingerprint::capture(&payload)?;
-        if !stored.same_content(after) {
-            return Err(paths::MODIFIED.into());
-        }
+        let payload = durable::private_path(directory, payload, check::STAGED)?;
+        let stored = check::capture(&payload, check::STAGED)?;
+        check::compare(&payload, check::STAGED, &stored, after, true)?;
         copy_tree(&payload, &temporary, &stored)?;
         after
             .permissions()
             .ok_or(paths::INVALID)?
-            .restore(&temporary)?;
-        if Fingerprint::capture(&temporary)? != *after {
-            return Err(paths::MODIFIED.into());
-        }
+            .restore(&temporary)
+            .map_err(|error| check::writing(&temporary, &error))?;
+        check::expect(&temporary, check::STAGED, after)?;
     } else if *after != Fingerprint::Missing {
         return Err(paths::INVALID.into());
     }
-    if Fingerprint::capture(&target)? != *before {
-        return Err(paths::MODIFIED.into());
-    }
+    check::expect(&target, check::TARGET, before)?;
     if *before != Fingerprint::Missing {
-        durable::rename(&target, &backup, false)?;
+        durable::rename_checked(&target, &backup, false, check::WRITE_BACKUP)?;
     }
     if *after != Fingerprint::Missing {
         durable::rename(&temporary, &target, false)?;
@@ -143,24 +159,20 @@ pub(super) fn revert(operation: &RecordedMutation, roots: &TransactionRoots) -> 
     else {
         return Err(paths::INVALID.into());
     };
-    let target = target.resolve(roots)?;
-    let backup = backup.resolve(roots)?;
-    let temporary = temporary.resolve(roots)?;
-    let actual = Fingerprint::capture(&target)?;
-    let original = Fingerprint::capture(&backup)?;
+    let target = check::resolve(target, roots, check::TARGET)?;
+    let backup = check::resolve(backup, roots, check::BACKUP)?;
+    let temporary = check::resolve(temporary, roots, check::STAGED)?;
+    let actual = check::capture(&target, check::TARGET)?;
+    let original = check::capture(&backup, check::BACKUP)?;
     // Already before or interrupted during the initial copy. The UUID sibling is
     // private, but the live tree still must match the exact authorized state.
     if original == Fingerprint::Missing && actual == *before {
         remove_private_tree(&temporary)?;
         return Ok(());
     }
-    if *before == Fingerprint::Missing {
-        if original != Fingerprint::Missing || (actual != *after && actual != Fingerprint::Missing)
-        {
-            return Err(paths::MODIFIED.into());
-        }
-    } else if original != *before || (actual != *after && actual != Fingerprint::Missing) {
-        return Err(paths::MODIFIED.into());
+    check::compare(&backup, check::BACKUP, &original, before, false)?;
+    if actual != Fingerprint::Missing {
+        check::compare(&target, check::TARGET, &actual, after, false)?;
     }
     remove_private_tree(&temporary)?;
     if actual != Fingerprint::Missing {
@@ -172,10 +184,7 @@ pub(super) fn revert(operation: &RecordedMutation, roots: &TransactionRoots) -> 
         durable::rename(&backup, &target, false)?;
     }
     remove_private_tree(&temporary)?;
-    if Fingerprint::capture(&target)? != *before {
-        return Err(paths::MODIFIED.into());
-    }
-    Ok(())
+    check::expect(&target, check::RESULT, before)
 }
 
 pub(super) fn validate_cleanup(

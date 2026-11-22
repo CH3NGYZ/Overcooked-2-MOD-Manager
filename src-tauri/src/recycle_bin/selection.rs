@@ -158,7 +158,7 @@ pub(super) fn recycle_package_with_mods(
     }
     if let Some(dll) = explicit_dll {
         let relative = normalize_relative(&mods::canonical_dll_name(dll))?;
-        if existing_variants(game_root, &relative)?.is_empty() {
+        if existing_variants(game_root, &relative, None)?.is_empty() {
             return Err("mods.dllNotFound".into());
         }
     }
@@ -186,14 +186,14 @@ pub(super) fn recycle_package_with_mods(
                 .is_some_and(|selected| file_key(relative) == *selected)
                 || replacement_keys.contains(&file_key(relative))
             {
-                actual.extend(existing_variants(game_root, relative)?);
+                actual.extend(existing_variants(game_root, relative, None)?);
                 continue;
             }
             if dll.is_some() {
                 if !safe_duplicate {
                     return Err("recycle.fileSharedByOtherPackage".into());
                 }
-                actual.extend(existing_variants(game_root, relative)?);
+                actual.extend(existing_variants(game_root, relative, None)?);
                 continue;
             }
             log::debug!(
@@ -203,7 +203,7 @@ pub(super) fn recycle_package_with_mods(
             );
             continue;
         }
-        actual.extend(existing_variants(game_root, relative)?);
+        actual.extend(existing_variants(game_root, relative, None)?);
     }
     if actual.is_empty() {
         log::debug!(
@@ -306,7 +306,7 @@ pub fn recycle_unmanaged(
     {
         return Err("mods.notInPlugins".into());
     }
-    let actual = existing_variants(game_root, &relative)?;
+    let actual = existing_variants(game_root, &relative, None)?;
     if actual.is_empty() {
         return Err("mods.dllNotFound".into());
     }

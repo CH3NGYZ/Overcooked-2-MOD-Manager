@@ -1,5 +1,6 @@
+use crate::file_check;
 use crate::recycle_bin::delete::delete;
-use crate::recycle_bin::errors::UNSAFE_PATH;
+use crate::recycle_bin::errors::{UNSAFE_PATH, VERIFY_FILES, WRITE_RESTORED_FILE};
 use crate::recycle_bin::paths::is_link;
 use crate::recycle_bin::restore::restore;
 use crate::recycle_bin::selection::recycle_unmanaged;
@@ -82,7 +83,7 @@ fn junctions_in_source_destination_or_recycle_payload_never_follow_outside_paths
             &entry.id
         )
         .unwrap_err(),
-        UNSAFE_PATH
+        file_check::report(VERIFY_FILES, &bundle, file_check::UNSAFE)
     );
     assert_eq!(
         delete(&workspace.recycle, &entry.id).unwrap_err(),
@@ -105,7 +106,7 @@ fn junctions_in_source_destination_or_recycle_payload_never_follow_outside_paths
             &entry.id
         )
         .unwrap_err(),
-        UNSAFE_PATH
+        file_check::report(WRITE_RESTORED_FILE, &target_bundle, file_check::UNSAFE)
     );
     assert_eq!(fs::read(bundle.join("A.dll")).unwrap(), b"staged original");
     assert_eq!(

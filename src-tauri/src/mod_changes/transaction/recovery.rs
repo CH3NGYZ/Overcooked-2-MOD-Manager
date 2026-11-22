@@ -1,5 +1,5 @@
 use super::types::RecoveryReport;
-use super::{PreparedTransaction, durable, engine, paths, types::*};
+use super::{PreparedTransaction, check, durable, engine, paths, types::*};
 use std::{fs, path::Path};
 use uuid::Uuid;
 
@@ -155,13 +155,13 @@ impl PreparedTransaction {
                 require_single_link,
                 ..
             } => {
-                let target = target.resolve(&self.journal.roots)?;
-                let temporary = temporary.resolve(&self.journal.roots)?;
-                let actual = Fingerprint::capture(&target)?;
+                let target = check::resolve(target, &self.journal.roots, check::TARGET)?;
+                let temporary = check::resolve(temporary, &self.journal.roots, check::STAGED)?;
+                let actual = check::capture(&target, check::TARGET)?;
                 if !engine::matches_writable(&actual, before)
                     && !engine::matches_writable(&actual, after)
                 {
-                    return Err(paths::MODIFIED.into());
+                    check::compare(&target, check::TARGET, &actual, after, false)?;
                 }
                 // A write-ahead record exclusively owns this UUID temporary. Partial copies
                 // are removable, while live targets always require an exact fingerprint.
@@ -177,24 +177,29 @@ impl PreparedTransaction {
                 }
                 if engine::matches_writable(&actual, before) {
                     if let Some(permissions) = before.permissions() {
-                        permissions.restore(&target)?;
+                        permissions
+                            .restore(&target)
+                            .map_err(|error| check::writing(&target, &error))?;
                     }
                     return Ok(());
                 }
                 if let Some(backup) = backup {
-                    let backup = durable::private_path(&self.directory, backup)?;
-                    let stored = Fingerprint::capture(&backup)?;
-                    if !stored.same_content(before) {
-                        return Err(paths::MODIFIED.into());
-                    }
-                    durable::copy_verified(&backup, &temporary, &stored)?;
+                    let backup = durable::private_path(&self.directory, backup, check::BACKUP)?;
+                    let stored = check::capture(&backup, check::BACKUP)?;
+                    check::compare(&backup, check::BACKUP, &stored, before, true)?;
+                    durable::copy_verified(
+                        &backup,
+                        &temporary,
+                        &stored,
+                        check::BACKUP,
+                        check::WRITE,
+                    )?;
                     before
                         .permissions()
                         .ok_or(paths::INVALID)?
-                        .restore(&temporary)?;
-                    if Fingerprint::capture(&target)? != actual {
-                        return Err(paths::MODIFIED.into());
-                    }
+                        .restore(&temporary)
+                        .map_err(|error| check::writing(&temporary, &error))?;
+                    check::expect(&target, check::TARGET, &actual)?;
                     if *require_single_link && actual != Fingerprint::Missing {
                         paths::guard_single_link(&target)?;
                     }
@@ -205,31 +210,28 @@ impl PreparedTransaction {
                         {
                             permissions.mode |= 0o200;
                         }
-                        permissions.restore(&target)?;
+                        permissions
+                            .restore(&target)
+                            .map_err(|error| check::writing(&target, &error))?;
                     }
                     durable::rename(&temporary, &target, true)?;
                 } else {
                     durable::remove_file_checked(&target, &actual, *require_single_link)?;
                 }
-                if Fingerprint::capture(&target)? != *before {
-                    return Err(paths::MODIFIED.into());
-                }
+                check::expect(&target, check::RESULT, before)?;
             }
             RecordedMutation::Move { from, to, before } => {
-                let from = from.resolve(&self.journal.roots)?;
-                let to = to.resolve(&self.journal.roots)?;
-                let source = Fingerprint::capture(&from)?;
-                let destination = Fingerprint::capture(&to)?;
+                let from = check::resolve(from, &self.journal.roots, check::TARGET)?;
+                let to = check::resolve(to, &self.journal.roots, check::TARGET)?;
+                let source = check::capture(&from, check::TARGET)?;
+                let destination = check::capture(&to, check::TARGET)?;
                 if source == *before && destination == Fingerprint::Missing {
                     return Ok(());
                 }
-                if source != Fingerprint::Missing || destination != *before {
-                    return Err(paths::MODIFIED.into());
-                }
+                check::compare(&from, check::TARGET, &source, &Fingerprint::Missing, false)?;
+                check::compare(&to, check::TARGET, &destination, before, false)?;
                 durable::rename(&to, &from, false)?;
-                if Fingerprint::capture(&from)? != *before {
-                    return Err(paths::MODIFIED.into());
-                }
+                check::expect(&from, check::RESULT, before)?;
             }
             operation @ RecordedMutation::Tree { .. } => {
                 super::tree::revert(operation, &self.journal.roots)?

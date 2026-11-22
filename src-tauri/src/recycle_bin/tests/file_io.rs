@@ -12,23 +12,23 @@ fn verified_copy_fallback_removes_source_only_after_integrity_check() {
     let source = workspace.directory.join("source.dll");
     let target = workspace.directory.join("target.dll");
     fs::write(&source, b"cross-volume-copy fixture").unwrap();
-    let (size, sha256) = fingerprint(&source).unwrap();
+    let (size, sha256) = fingerprint(&source, None).unwrap();
     let file = StagedFile {
         relative: "fixture.dll".into(),
         size,
         sha256,
     };
-    copy_verified_and_remove(&source, &target, &file).unwrap();
+    copy_verified_and_remove(&source, &target, &file, false).unwrap();
     assert!(!source.exists());
     assert_eq!(fs::read(&target).unwrap(), b"cross-volume-copy fixture");
     fs::write(&source, b"changed fixture").unwrap();
     let another = workspace.directory.join("failed-copy.dll");
     assert_eq!(
-        copy_verified_and_remove(&source, &another, &file).unwrap_err(),
+        copy_verified_and_remove(&source, &another, &file, false).unwrap_err(),
         INCOMPLETE
     );
     assert_eq!(fs::read(&source).unwrap(), b"changed fixture");
     assert!(!another.exists());
-    assert!(copy_verified_and_remove(&source, &target, &file).is_err());
+    assert!(copy_verified_and_remove(&source, &target, &file, false).is_err());
     assert_eq!(fs::read(target).unwrap(), b"cross-volume-copy fixture");
 }

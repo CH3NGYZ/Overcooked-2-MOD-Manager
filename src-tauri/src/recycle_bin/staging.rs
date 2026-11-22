@@ -148,7 +148,7 @@ pub(super) fn stage_with_related_manifests(
     let mut files = Vec::new();
     for relative in actual_files {
         if unique.insert(relative.to_lowercase()) {
-            let (size, sha256) = fingerprint(&checked_path(game_root, &relative)?)?;
+            let (size, sha256) = fingerprint(&checked_path(game_root, &relative)?, None)?;
             files.push(StagedFile {
                 relative,
                 size,
@@ -204,6 +204,7 @@ pub(super) fn stage_with_related_manifests(
                 &checked_path(game_root, &file.relative)?,
                 &checked_path(&payload, &file.relative)?,
                 file,
+                false,
             )?;
             moved.push(file.clone());
             after_move()?;

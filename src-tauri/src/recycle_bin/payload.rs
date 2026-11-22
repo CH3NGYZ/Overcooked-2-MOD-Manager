@@ -4,10 +4,13 @@ use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
 
-use super::errors::{INCOMPLETE, INVALID_RECORD, UNSAFE_PATH, io_error};
+use super::errors::{UNSAFE_PATH, VERIFY_FILES, io_error};
 use super::file_io::matches_fingerprint;
-use super::paths::{checked_path, is_link, record_directory, validate_absolute_path};
+use super::paths::{
+    checked_path_for, is_link, record_directory, validate_absolute_path, validate_absolute_path_for,
+};
 use super::records::{RecycleRecord, load_record};
+use crate::file_check;
 
 #[derive(Clone, Debug)]
 pub(crate) struct VerifiedPayloadFile {
@@ -114,14 +117,14 @@ fn verify_record_payload(
     game_path: PathBuf,
 ) -> Result<VerifiedPayloadRecord, String> {
     let directory = record_directory(root, id)?;
-    let payload = checked_path(&directory, "files")?;
+    let payload = checked_path_for(&directory, "files", Some(VERIFY_FILES))?;
     validate_payload(&payload, record)?;
 
     let mut files = Vec::with_capacity(record.files.len());
     for file in &record.files {
-        let path = checked_path(&payload, &file.relative)?;
-        if !matches_fingerprint(&path, file)? {
-            return Err(format!("文件指纹不匹配: {}", file.relative));
+        let path = checked_path_for(&payload, &file.relative, Some(VERIFY_FILES))?;
+        if !matches_fingerprint(&path, file, Some(VERIFY_FILES))? {
+            return Err(file_check::report(VERIFY_FILES, &path, file_check::CONTENT));
         }
         files.push(VerifiedPayloadFile {
             relative: file.relative.clone(),
@@ -139,7 +142,7 @@ fn verify_record_payload(
 }
 
 pub(super) fn validate_payload(payload: &Path, record: &RecycleRecord) -> Result<(), String> {
-    validate_absolute_path(payload)?;
+    validate_absolute_path_for(payload, Some(VERIFY_FILES))?;
     let expected = record
         .files
         .iter()
@@ -147,13 +150,29 @@ pub(super) fn validate_payload(payload: &Path, record: &RecycleRecord) -> Result
         .collect::<HashSet<_>>();
     let mut observed = HashSet::new();
     for entry in WalkDir::new(payload).follow_links(false) {
-        let entry = entry.map_err(io_error)?;
-        let metadata = fs::symlink_metadata(entry.path()).map_err(io_error)?;
+        let entry = entry.map_err(|error| {
+            let path = error.path().unwrap_or(payload).to_path_buf();
+            match error.into_io_error() {
+                Some(cause) => file_check::report_io(VERIFY_FILES, &path, cause, file_check::READ),
+                None => file_check::report(VERIFY_FILES, &path, file_check::READ),
+            }
+        })?;
+        let metadata = fs::symlink_metadata(entry.path()).map_err(|error| {
+            file_check::report_io(VERIFY_FILES, entry.path(), error, file_check::READ)
+        })?;
         if is_link(&metadata) {
-            return Err(UNSAFE_PATH.into());
+            return Err(file_check::report(
+                VERIFY_FILES,
+                entry.path(),
+                file_check::UNSAFE,
+            ));
         }
         if !metadata.is_file() && !metadata.is_dir() {
-            return Err(INVALID_RECORD.into());
+            return Err(file_check::report(
+                VERIFY_FILES,
+                entry.path(),
+                file_check::TYPE,
+            ));
         }
         if metadata.is_file() {
             let relative = entry
@@ -166,7 +185,11 @@ pub(super) fn validate_payload(payload: &Path, record: &RecycleRecord) -> Result
             if !expected.contains(&key) || !observed.insert(key) {
                 // Omitted files must block readers and restore alike, never be discarded.
                 // Case-sensitive volumes must not hide an extra case-only alias.
-                return Err(INCOMPLETE.into());
+                return Err(file_check::report(
+                    VERIFY_FILES,
+                    entry.path(),
+                    "recycle.fileNotRecorded",
+                ));
             }
         }
     }

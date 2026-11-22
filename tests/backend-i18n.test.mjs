@@ -61,6 +61,35 @@ test('带路径参数的错误不会破坏插值（含反斜杠与冒号）', ()
   assert.match(text, /D:\\backups\\DIYLevel\.backup-1/, `路径未正确插值：${text}`)
 })
 
+test('安装与回收站校验区分实际步骤，五语保留具体路径和原因', () => {
+  const path = 'E:\\游戏 + 100% & 目录\\YoungLevels.dll'
+  const stages = ['modChanges.verifyInstallTarget', 'modChanges.verifyStagedFile',
+    'modChanges.verifyInstallBackup', 'modChanges.verifyInstallResult',
+    'modChanges.writeInstallFile', 'modChanges.writeInstallBackup', 'recycle.verifyFiles']
+  const reasons = ['Missing', 'Content', 'Type', 'Read', 'Access', 'Busy', 'Exists', 'Unsafe',
+    'Link', 'Permissions', 'Write', 'Copy'].map(suffix => `error.checkedFile${suffix}`)
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
+    i18n.global.locale.value = locale
+    const translatedReasons = reasons.map(translateBackendMessage)
+    assert.equal(new Set(translatedReasons).size, reasons.length)
+    for (const [index, reason] of reasons.entries()) {
+      const outcomes = stages.map(stage => {
+        assert.ok(isErrorTag(stage), stage)
+        const tag = `${stage}?path=${encodeURIComponent(path)}&reason=${encodeURIComponent(reason)}`
+        const text = backendMessageOf(tag)
+        assert.ok(text.includes(path) && text.includes(translatedReasons[index]), `${locale}: ${text}`)
+        assert.ok(!text.includes(reason), `${locale}: ${text}`)
+        assert.equal(translateBackendMessage(text), text)
+        return text
+      })
+      assert.equal(new Set(outcomes).size, stages.length)
+    }
+    const detail = `modChanges.verifyInstallBackup?path=${encodeURIComponent(path)}&reason=${reasons[0]}`
+    const pending = backendMessageOf(`modChanges.installRecoveryPending?reason=${encodeURIComponent(detail)}`)
+    assert.ok(pending.includes(backendMessageOf(detail)))
+  }
+})
+
 test('安装冲突先显示对应原因，再另起一行保留完整位置', () => {
   const path = 'BepInEx/plugins/旧版 & new 100%+/HostUtilities.dll'
   const keys = [

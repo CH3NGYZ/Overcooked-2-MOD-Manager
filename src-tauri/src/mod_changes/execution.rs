@@ -203,7 +203,7 @@ pub(super) fn commit(
         ) {
             Ok(watch_paths) => state.committed_watch_paths.publish(watch_paths),
             Err(error) => {
-                progress.failed(error != "recycle.partialFailure");
+                progress.failed(!needs_recovery(&error));
                 return Err(error);
             }
         }

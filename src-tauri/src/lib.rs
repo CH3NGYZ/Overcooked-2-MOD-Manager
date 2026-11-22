@@ -25,6 +25,7 @@ mod display_path;
 mod download;
 #[cfg(windows)]
 mod elevation;
+mod file_check;
 mod file_metadata;
 mod framework;
 mod game;

@@ -14,6 +14,16 @@ const NEW_MAP: &str = "BepInEx/plugins/OC2DIYLevel/levels/oc1_dlc/info";
 const UNVERIFIED_TARGET: &str = "modChanges.fileOwnershipConflict";
 const RECORDED_TARGET: &str = "modChanges.installTargetClaimed";
 
+fn check_error(stage: &str, path: &std::path::Path, reason: &str) -> String {
+    crate::locale_tag::with_params(
+        stage,
+        &[
+            ("path", &crate::display_path::display_path(path)),
+            ("reason", reason),
+        ],
+    )
+}
+
 fn set_old_binding(f: &mut Fixture, id: &str, primary: &str, tag: &str) {
     let repo = f
         .session
@@ -388,7 +398,14 @@ fn matching_live_and_staged_edits_cannot_impersonate_the_verified_release() {
         &f.roots,
         changes.into_iter().map(|owned| owned.mutation).collect(),
     );
-    assert_eq!(outcome.err().as_deref(), Some("recycle.payloadModified"));
+    assert_eq!(
+        outcome.err().unwrap(),
+        check_error(
+            "modChanges.verifyStagedFile",
+            &f.session.payloads["web"].stage_root.join(WEB_RESOURCE_6),
+            crate::file_check::CONTENT,
+        )
+    );
     assert_eq!(fingerprint(&f), before);
 }
 
@@ -403,7 +420,14 @@ fn adopted_file_changed_after_assembly_blocks_the_transaction() {
         &f.roots,
         changes.into_iter().map(|owned| owned.mutation).collect(),
     );
-    assert_eq!(outcome.err().as_deref(), Some("recycle.payloadModified"));
+    assert_eq!(
+        outcome.err().unwrap(),
+        check_error(
+            "modChanges.verifyInstallTarget",
+            &f.roots.game_root.join(WEB_RESOURCE_6),
+            crate::file_check::CONTENT,
+        )
+    );
     assert_eq!(fingerprint(&f), edited);
 }
 
@@ -420,7 +444,14 @@ fn adopted_file_linked_after_assembly_blocks_the_transaction() {
         &f.roots,
         changes.into_iter().map(|owned| owned.mutation).collect(),
     );
-    assert_eq!(outcome.err().as_deref(), Some("recycle.payloadModified"));
+    assert_eq!(
+        outcome.err().unwrap(),
+        check_error(
+            "modChanges.verifyInstallTarget",
+            &f.roots.game_root.join(WEB_RESOURCE_6),
+            crate::file_check::LINK,
+        )
+    );
     assert_eq!(fingerprint(&f), before);
     assert_eq!(fs::read(alias).unwrap(), b"new-runtime-6");
     assert!(!transaction::has_pending(&journal).unwrap());
@@ -454,7 +485,14 @@ fn a_link_added_during_apply_rolls_back_previous_writes() {
         |_| {},
     );
     assert!(linked.get(), "the link must be added after a real write");
-    assert_eq!(outcome.unwrap_err(), "recycle.payloadModified");
+    assert_eq!(
+        outcome.unwrap_err(),
+        check_error(
+            "modChanges.verifyInstallTarget",
+            &f.roots.game_root.join(WEB_RESOURCE_6),
+            crate::file_check::LINK,
+        )
+    );
     assert_eq!(fingerprint(&f), before);
     assert_eq!(fs::read(alias).unwrap(), b"new-runtime-6");
     assert!(!transaction::has_pending(&journal).unwrap());
@@ -475,7 +513,14 @@ fn staged_source_changed_after_assembly_blocks_the_transaction() {
         &f.roots,
         changes.into_iter().map(|owned| owned.mutation).collect(),
     );
-    assert_eq!(outcome.err().as_deref(), Some("recycle.payloadModified"));
+    assert_eq!(
+        outcome.err().unwrap(),
+        check_error(
+            "modChanges.verifyStagedFile",
+            &f.session.payloads["web"].stage_root.join(WEB_RESOURCE_6),
+            crate::file_check::CONTENT,
+        )
+    );
     assert_eq!(fingerprint(&f), before);
 }
 

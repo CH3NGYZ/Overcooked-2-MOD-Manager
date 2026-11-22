@@ -44,7 +44,7 @@ test('recycle keeps journal-before-move and restore validation-before-move order
   assert.match(staging, /if files_rolled_back && manifest_rolled_back/)
   const restore = readText(resolve(root, 'restore.rs'))
   const firstMove = restore.indexOf('move_file(')
-  for (const check of ['validate_payload(&payload, &record)?;', 'merge_restored_manifest(', 'matches_fingerprint(&staged, file)?', 'existing_variants(game_root, &canonical)?']) {
+  for (const check of ['validate_payload(&payload, &record)?;', 'merge_restored_manifest(', 'matches_fingerprint(&staged, file, verify)?', 'existing_variants(game_root, &canonical, write)?']) {
     assert.ok(restore.indexOf(check) >= 0 && restore.indexOf(check) < firstMove, check)
   }
   assert.match(restore, /restore_plans\[\.\.manifests_changed\]\.iter\(\)\.rev\(\)/)

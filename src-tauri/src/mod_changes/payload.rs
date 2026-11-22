@@ -324,7 +324,12 @@ fn stage_asset(
                 _ => return Err(package_identity_conflict(node_id, primary, matches)),
             }
         }
-        if let Some(levels) = super::level_trees::payload_level_root(node_id, &provides)? {
+        let framework = super::level_trees::unique_framework_member(node_id, &provides)?;
+        let framework_version = framework
+            .filter(|_| repo.is_none())
+            .map(|member| member.version.clone());
+        if let Some(framework) = framework {
+            let levels = super::level_trees::framework_level_root(node_id, framework)?;
             // The map inventory owns existing map DLLs. Bundled defaults are
             // composed separately and must not advertise versions we skip writing.
             provides.retain(|member| {
@@ -400,13 +405,15 @@ fn stage_asset(
                     .iter()
                     .find(|plugin| plugin.guid.eq_ignore_ascii_case(&repo.plugin_guid))
             })
-            .or_else(|| {
+            .map(|plugin| plugin.version.clone())
+            .or(framework_version)
+            .unwrap_or_else(|| {
                 actual
                     .provides
                     .iter()
                     .find(|plugin| !plugin.guid.is_empty())
-            })
-            .and_then(|plugin| plugin.version.clone());
+                    .and_then(|plugin| plugin.version.clone())
+            });
         let mut manifest = create_manifest(
             trusted,
             node_id,

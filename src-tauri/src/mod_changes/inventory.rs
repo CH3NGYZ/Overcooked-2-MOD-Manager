@@ -254,6 +254,15 @@ fn current_candidate(
             enabled: i.enabled,
         })
         .collect::<Vec<_>>();
+    let version = if manual {
+        match super::level_trees::unique_framework_member(id, &provides) {
+            Ok(Some(framework)) => framework.version.clone(),
+            Ok(None) => version,
+            Err(_) => None,
+        }
+    } else {
+        version
+    };
     let mut relations_known = repo.is_some()
         || (!changed_release
             && (!manifests.is_empty() || items.iter().any(|item| !item.relations.is_empty())));

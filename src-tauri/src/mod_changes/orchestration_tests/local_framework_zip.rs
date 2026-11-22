@@ -1,5 +1,100 @@
 use super::*;
 use crate::archive::release_download::tests::{Server, reuse_tests::served};
+use std::io::{Cursor, Write};
+
+const FRAMEWORK_GUID: &str = mods::plugin_target::DIYLEVEL_GUID;
+const SPLITTER_GUID: &str = "dev.gua.overcooked.diylevel.ingredientsplittermod";
+
+#[tokio::test]
+async fn local_diylevel_zip_reports_upgrade_using_the_main_plugin_version() {
+    let fixture = fixture(vec![]);
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (path, guid, name, version) in [
+        (
+            "OC2DIYLevel/modules/IngredientSplitter/IngredientSplitterMod.dll",
+            SPLITTER_GUID,
+            "IngredientSplitterMod",
+            "0.1.0",
+        ),
+        (
+            "OC2DIYLevel/OC2DIYLevel.dll",
+            FRAMEWORK_GUID,
+            "DIYLevel",
+            "0.11.1",
+        ),
+    ] {
+        zip.start_file(path, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(&mods::plugin_blob(guid, name, version))
+            .unwrap();
+    }
+    let bytes = zip.finish().unwrap().into_inner();
+    let old = fixture
+        .game
+        .join("BepInEx/plugins/OC2DIYLevel/OC2DIYLevel.dll");
+    let previous = mods::plugin_blob(FRAMEWORK_GUID, "DIYLevel", "0.10.0");
+    write(&old, &previous);
+    let preview = stage_preview(&fixture, "arbitrary-name.zip", &bytes);
+    let plan = planning::create(&fixture.state, manual_request(preview.clone())).unwrap();
+    assert_framework_upgrade(&plan);
+    let outcome = preparation::prepare(fixture.state.clone(), plan.plan_id, |_| {}).await;
+    assert_eq!(outcome.error, None);
+    let prepared = outcome.plan.unwrap();
+    assert_framework_upgrade(&prepared);
+    assert_eq!(fs::read(&old).unwrap(), previous);
+    let mut session = take(&fixture, &prepared);
+    let candidate = &session.payloads[&preview].candidate;
+    assert_eq!(candidate.version.as_deref(), Some("0.11.1"));
+    assert_eq!(
+        candidate
+            .provides
+            .iter()
+            .find(|member| member.guid == SPLITTER_GUID)
+            .and_then(|member| member.version.as_deref()),
+        Some("0.1.0")
+    );
+    super::super::execution::commit(&fixture.state, &mut session, |_| {}).unwrap();
+    let splitter = fixture
+        .game
+        .join("BepInEx/plugins/OC2DIYLevel/modules/IngredientSplitter/IngredientSplitterMod.dll");
+    fs::rename(&splitter, splitter.with_extension("dll.disabled")).unwrap();
+    let scanned = inventory::build(&fixture.state).unwrap();
+    let installed = scanned
+        .inventory
+        .nodes
+        .iter()
+        .filter_map(|node| node.current.as_ref())
+        .find(|candidate| {
+            candidate
+                .provides
+                .iter()
+                .any(|member| member.guid == FRAMEWORK_GUID)
+        })
+        .unwrap();
+    assert!(installed.source_id.is_none() && installed.tag.is_none());
+    assert_eq!(installed.version.as_deref(), Some("0.11.1"));
+    assert!(installed.provides.iter().any(|member| {
+        member.guid == SPLITTER_GUID
+            && member.version.as_deref() == Some("0.1.0")
+            && !member.enabled
+    }));
+}
+
+fn assert_framework_upgrade(plan: &ChangePlan) {
+    assert_eq!(plan.result.status, SolveStatus::Ready, "{:?}", plan.result);
+    let [action] = plan.result.actions.as_slice() else {
+        panic!("expected one package action: {:?}", plan.result.actions);
+    };
+    assert!(action.node_id.starts_with("preview:"));
+    assert_eq!(
+        (
+            &action.kind,
+            action.from_tag.as_deref(),
+            action.to_tag.as_deref()
+        ),
+        (&ActionKind::Upgrade, Some("0.10.0"), Some("0.11.1"))
+    );
+}
 
 #[tokio::test]
 #[ignore = "requires OC2_LOCAL_DIYLEVEL_ZIP pointing to DIYLevel v0.11.1"]
@@ -34,12 +129,22 @@ async fn real_local_diylevel_zip_installs_mod_and_preserves_the_existing_map_tre
         });
         let fixture = fixture(repositories);
         let package = fixture.game.join("BepInEx/plugins/OC2DIYLevel");
+        let core = package.join("OC2DIYLevel.dll");
         let story = package.join("levels/oc1_story");
         let test_level = package.join("levels/test_level");
         let original_marker = story.join("local-marker");
         if keep_old {
             write(&original_marker, b"user content");
         }
+        let old_core = (!online && keep_old).then(|| {
+            let bytes = mods::plugin_blob(FRAMEWORK_GUID, "DIYLevel", "0.10.0");
+            write(&core, &bytes);
+            bytes
+        });
+        let assert_uncommitted = || match &old_core {
+            Some(bytes) => assert_eq!(fs::read(&core).unwrap(), *bytes),
+            None => assert!(!core.exists()),
+        };
         let request = if online {
             write(
                 &fixture.game.join("BepInEx/core/BepInEx.dll"),
@@ -52,11 +157,17 @@ async fn real_local_diylevel_zip_installs_mod_and_preserves_the_existing_map_tre
             manual_request(stage_preview(&fixture, asset, &bytes))
         };
         let plan = planning::create(&fixture.state, request).unwrap();
-        assert!(!package.join("OC2DIYLevel.dll").exists());
+        if old_core.is_some() {
+            assert_framework_upgrade(&plan);
+        }
+        assert_uncommitted();
         assert!(!test_level.exists());
         let outcome = preparation::prepare(fixture.state.clone(), plan.plan_id, |_| {}).await;
         assert_eq!(outcome.error, None);
         let prepared = outcome.plan.unwrap();
+        if old_core.is_some() {
+            assert_framework_upgrade(&prepared);
+        }
         let mut session = take(&fixture, &prepared);
         assert!(session.plan.prepared);
         assert_eq!(
@@ -64,14 +175,20 @@ async fn real_local_diylevel_zip_installs_mod_and_preserves_the_existing_map_tre
             super::super::solve::DependencyPolicy::PreferNewest,
         );
         let payload = session.payloads.values().next().unwrap();
+        assert_eq!(payload.candidate.version.as_deref(), Some("0.11.1"));
         assert_eq!(payload.candidate.provides.len(), 4);
         assert!(payload.candidate.provides.iter().any(|member| {
             member.guid == mods::plugin_target::DIYLEVEL_GUID
                 && member.version.as_deref() == Some("0.11.1")
         }));
-        assert!(!package.join("OC2DIYLevel.dll").exists());
+        assert_uncommitted();
         super::super::execution::commit(&fixture.state, &mut session, |_| {}).unwrap();
-        assert!(package.join("OC2DIYLevel.dll").is_file());
+        assert_eq!(
+            mods::read_dll_details(&core, "OC2DIYLevel.dll")
+                .version
+                .as_deref(),
+            Some("0.11.1")
+        );
         assert!(package.join("LevelEditorStub.dll").is_file());
         assert!(package.join("common04").is_file());
         assert!(

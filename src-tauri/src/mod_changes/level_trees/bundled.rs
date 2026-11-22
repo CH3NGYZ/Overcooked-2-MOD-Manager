@@ -13,10 +13,10 @@ fn map_directory(path: &str, levels: &str) -> Option<(String, String)> {
     Some((parts[depth].into(), parts[..=depth].join("/")))
 }
 
-pub(crate) fn payload_level_root(
+pub(in crate::mod_changes) fn unique_framework_member<'a>(
     owner: &str,
-    provides: &[ProvidedPlugin],
-) -> Result<Option<String>, String> {
+    provides: &'a [ProvidedPlugin],
+) -> Result<Option<&'a ProvidedPlugin>, String> {
     let mut frameworks = provides.iter().filter(|member| {
         member
             .guid
@@ -32,6 +32,13 @@ pub(crate) fn payload_level_root(
             [framework, other].into_iter().chain(frameworks),
         ));
     }
+    Ok(Some(framework))
+}
+
+pub(in crate::mod_changes) fn framework_level_root(
+    owner: &str,
+    framework: &ProvidedPlugin,
+) -> Result<String, String> {
     let path = framework.member_key.as_deref().ok_or_else(|| {
         mutations::report_install_block(
             "modChanges.installTargetOwnershipUnverified",
@@ -44,7 +51,7 @@ pub(crate) fn payload_level_root(
         .ok_or("archive.pathEscape")?
         .to_string_lossy()
         .replace('\\', "/");
-    Ok(Some(format!("{package}/levels")))
+    Ok(format!("{package}/levels"))
 }
 
 pub(crate) fn bundled_level_root(
@@ -75,9 +82,10 @@ pub(crate) fn selected_bundled_level_root(
     current: &Candidate,
     payload: &crate::mod_changes::session::Payload,
 ) -> Result<Option<String>, String> {
-    let Some(levels) = payload_level_root(node, &current.provides)? else {
+    let Some(framework) = unique_framework_member(node, &current.provides)? else {
         return Ok(None);
     };
+    let levels = framework_level_root(node, framework)?;
     let Some(package) = mutations::final_package(solved)? else {
         return Ok(None);
     };

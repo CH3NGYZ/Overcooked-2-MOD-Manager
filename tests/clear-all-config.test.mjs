@@ -106,8 +106,8 @@ test('configuration keeps clear action and adds a non-clickable path row with a 
   assert.ok(source.indexOf(group) < source.indexOf('data-tutorial="tools-advanced"'))
   const service = readFileSync(new URL('../src/services/tauri.ts', import.meta.url), 'utf8')
   assert.match(service, /getManagerDataDirectory: \(\) => invoke<string>\('get_manager_data_directory'\)/)
-  assert.match(service, /clearAllConfig: \(\) => invoke<void>\('clear_all_config'\)/)
-  assert.match(service, /migrateManagerData: \(parentDirectory: string\) => invoke<void>\('migrate_manager_data', \{ parentDirectory \}\)/)
+  assert.match(service, /clearAllConfig: \(\) => invoke<void>\('clear_all_config', \{ locale: locale.value \}\)/)
+  assert.match(service, /migrateManagerData: \(parentDirectory: string\) => invoke<void>\('migrate_manager_data', \{ parentDirectory, locale: locale.value \}\)/)
   assert.match(service, /chooseManagerDataParentDirectory: \(\) => open\(\{ multiple: false, directory: true \}\)/)
 })
 

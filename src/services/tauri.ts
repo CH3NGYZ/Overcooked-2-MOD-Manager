@@ -372,9 +372,9 @@ export const api = {
   /** 实际管理器数据根，只读展示；清理命令不接受前端路径。 */
   getManagerDataDirectory: () => invoke<string>('get_manager_data_directory'),
   /** 确认后安排清除所有管理器数据并退出；成功不继续使用本次会话。 */
-  clearAllConfig: () => invoke<void>('clear_all_config'),
+  clearAllConfig: () => invoke<void>('clear_all_config', { locale: locale.value }),
   /** 确认后退出并迁移整个数据根；目标子目录由后端固定为 OC2ModManager。 */
-  migrateManagerData: (parentDirectory: string) => invoke<void>('migrate_manager_data', { parentDirectory }),
+  migrateManagerData: (parentDirectory: string) => invoke<void>('migrate_manager_data', { parentDirectory, locale: locale.value }),
   chooseManagerDataParentDirectory: () => open({ multiple: false, directory: true }),
   /** 当前进程权限与游戏/数据目录可写性自检。 */
   permissionStatus: () => invoke<PermissionStatus>('permission_status'),

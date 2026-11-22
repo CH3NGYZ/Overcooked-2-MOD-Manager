@@ -96,6 +96,7 @@ pub fn run() {
         }
     };
     let skip_legacy_migration = _data_session.skip_legacy_migration;
+    let data_operation_failure = _data_session.failure_diagnostics.clone();
     commands::logs::install_panic_logger();
     /*
      * 不再在启动时无条件自提权。
@@ -162,6 +163,9 @@ pub fn run() {
                     .level_for("tao", log::LevelFilter::Info)
                     .build(),
             )?;
+            if let Some(diagnostic) = &data_operation_failure {
+                log::warn!("{diagnostic}");
+            }
             let state = app_state::AppState::new().map_err(|error| {
                 log::error!("初始化应用状态失败：{error}");
                 std::io::Error::other(error.to_string())

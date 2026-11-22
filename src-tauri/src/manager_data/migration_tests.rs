@@ -28,6 +28,8 @@ fn fixture() -> Fixture {
         phase: ResetPhase::Pending,
         error: None,
         reported: false,
+        locale: None,
+        failed_from: None,
         action: DataAction::Migrate {
             source: source.clone(),
             target: target.clone(),
@@ -129,6 +131,7 @@ fn existing_destination_is_never_overwritten_even_when_empty() {
     assert!(!f.pointer.exists());
     let record = f.paths.record().unwrap().unwrap();
     assert_eq!(record.phase, ResetPhase::Failed);
+    assert_eq!(record.failed_from, Some(ResetPhase::Pending));
     assert_eq!(record.error, Some(error));
 }
 

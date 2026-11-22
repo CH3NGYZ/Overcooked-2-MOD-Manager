@@ -55,6 +55,8 @@ mod tests {
                 phase,
                 error: None,
                 reported: false,
+                locale: None,
+                failed_from: None,
                 action: super::super::storage::DataAction::Clear,
                 fingerprint: None,
                 data_root: None,

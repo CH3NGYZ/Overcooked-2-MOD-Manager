@@ -1,7 +1,9 @@
 import type { DomainMessages } from '../types.ts'
+import nativeMessages from './dataResetNative.json' with { type: 'json' }
 
 /** 管理器数据路径、迁移与清除确认，以及后端拒绝原因。 */
 export const toolsUiDataReset: DomainMessages = {
+  ...nativeMessages,
   configuration: { 'zh-CN': '配置', 'zh-TW': '設定', en: 'Configuration', ko: '설정', ja: '設定' },
   managerDataPath: { 'zh-CN': '配置路径', 'zh-TW': '設定路徑', en: 'Configuration path', ko: '설정 경로', ja: '設定の保存先' },
   managerDataDirectoryLoading: { 'zh-CN': '正在读取管理器数据路径…', 'zh-TW': '正在讀取管理器資料路徑…', en: 'Reading the manager data path…', ko: '관리자 데이터 경로를 읽는 중…', ja: 'マネージャーデータの保存先を読み込み中…' },
@@ -33,13 +35,6 @@ export const toolsUiDataReset: DomainMessages = {
   migrateDataFailed: {
     'zh-CN': '无法迁移管理器数据：{reason}', 'zh-TW': '無法遷移管理器資料：{reason}',
     en: 'Could not move manager data: {reason}', ko: '관리자 데이터를 이동할 수 없습니다: {reason}', ja: 'マネージャーデータを移動できませんでした：{reason}',
-  },
-  migrateDataTargetExists: {
-    'zh-CN': '目标「{path}」已存在。请选择一个尚未包含 OC2ModManager 子目录的父目录。',
-    'zh-TW': '目標「{path}」已存在。請選擇一個尚未包含 OC2ModManager 子目錄的上層目錄。',
-    en: '“{path}” already exists. Choose a parent folder that does not already contain OC2ModManager.',
-    ko: '대상 “{path}”이(가) 이미 있습니다. OC2ModManager 하위 폴더가 없는 상위 폴더를 선택하세요.',
-    ja: '移動先「{path}」は既に存在します。OC2ModManager サブフォルダーのない親フォルダーを選んでください。',
   },
   migrateDataUnsafe: {
     'zh-CN': '迁移路径未通过安全校验。请在当前数据目录、游戏目录和程序目录之外选择普通文件夹。',
@@ -79,13 +74,6 @@ export const toolsUiDataReset: DomainMessages = {
     ja: '確認後にマネージャーを終了し、データを削除します。次回は初期設定で起動します。',
   },
   clearAllConfigAndExit: { 'zh-CN': '清除全部并退出', 'zh-TW': '全部清除並結束', en: 'Clear everything and exit', ko: '모두 삭제하고 종료', ja: 'すべて削除して終了' },
-  clearAllConfigBusy: {
-    'zh-CN': '仍有任务正在执行，请等待完成后再清除或迁移配置。',
-    'zh-TW': '仍有工作正在執行，請等待完成後再清除或遷移設定。',
-    en: 'An operation is still running. Wait for it to finish before clearing or moving configuration.',
-    ko: '실행 중인 작업이 있습니다. 완료된 후 설정을 삭제하거나 이동해 주세요.',
-    ja: '処理が実行中です。完了してから設定を削除または移動してください。',
-  },
   clearAllConfigFailed: {
     'zh-CN': '无法准备清除管理器数据：{reason}',
     'zh-TW': '無法準備清除管理器資料：{reason}',

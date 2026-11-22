@@ -61,6 +61,7 @@ impl PreparedHelper {
         &mut self,
         paths: &ResetPaths,
         action: super::storage::DataAction,
+        locale: Option<String>,
     ) -> Result<(), String> {
         if self.child.try_wait().map_err(failed)?.is_some() {
             return Err(failed("Reset helper stopped before handoff"));
@@ -79,6 +80,8 @@ impl PreparedHelper {
             phase: ResetPhase::Pending,
             error: None,
             reported: false,
+            locale,
+            failed_from: None,
             action,
             fingerprint: None,
             data_root: Some(paths.root.clone()),
@@ -140,7 +143,10 @@ pub(super) fn run_helper(paths: &ResetPaths, token: uuid::Uuid) -> Result<(), St
                     return Ok(());
                 }
                 let _legacy = super::legacy::exclusive_for_request(paths, &record)?;
-                wait_for_owner(&record)?;
+                if let Err(error) = wait_for_owner(&record) {
+                    paths.mark_failed(record, &error)?;
+                    return Err(error);
+                }
                 return paths.finish(record);
             }
             Err(fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
@@ -185,11 +191,7 @@ pub(super) fn wait_for_owner(record: &ResetRecord) -> Result<(), String> {
     }
 }
 
-pub(super) fn show_error(error: &str) {
-    let message = format!(
-        "OC2 MOD Manager could not complete its data operation.\nRemaining data and recovery files are retained. A pending request may resume on the next start; a recorded failure is not retried automatically.\n{error}"
-    );
-    eprintln!("{message}");
+pub(super) fn show_error(message: &str) {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -202,7 +204,7 @@ pub(super) fn show_error(error: &str) {
         unsafe {
             winapi::um::winuser::MessageBoxW(
                 std::ptr::null_mut(),
-                wide(&message).as_ptr(),
+                wide(message).as_ptr(),
                 wide("OC2 MOD Manager").as_ptr(),
                 winapi::um::winuser::MB_OK | winapi::um::winuser::MB_ICONERROR,
             );
@@ -213,7 +215,7 @@ pub(super) fn show_error(error: &str) {
         // argv passes diagnostics as data rather than interpolating AppleScript.
         let _ = Command::new("/usr/bin/osascript").args([
             "-e", "on run argv\ndisplay alert \"OC2 MOD Manager\" message (item 1 of argv) as critical\nend run",
-            &message,
+            message,
         ]).status();
     }
 }

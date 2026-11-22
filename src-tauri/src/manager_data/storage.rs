@@ -27,6 +27,10 @@ pub(super) struct ResetRecord {
     pub error: Option<String>,
     #[serde(default)]
     pub reported: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed_from: Option<ResetPhase>,
     #[serde(default)]
     pub action: DataAction,
     #[serde(default)]
@@ -107,7 +111,11 @@ impl ResetPaths {
     }
 
     pub(super) fn open_lock(&self) -> Result<File, String> {
-        let path = self.parent.join(".OC2ModManager-session.lock");
+        self.open_named_lock(".OC2ModManager-session.lock")
+    }
+
+    fn open_named_lock(&self, name: &str) -> Result<File, String> {
+        let path = self.parent.join(name);
         reject_link_if_present(&path)?;
         OpenOptions::new()
             .create(true)
@@ -129,6 +137,32 @@ impl ResetPaths {
     }
 
     pub(super) fn write_record(&self, record: &ResetRecord) -> Result<(), String> {
+        let _lock = self.lock_record()?;
+        self.write_locked_record(record)
+    }
+
+    fn lock_record(&self) -> Result<File, String> {
+        let lock = self.open_named_lock(".OC2ModManager-journal.lock")?;
+        wait_for_lock(&lock, false, Duration::from_secs(2))?;
+        Ok(lock)
+    }
+
+    pub(super) fn claim_failure_notice(
+        &self,
+        token: uuid::Uuid,
+    ) -> Result<Option<ResetRecord>, String> {
+        let _lock = self.lock_record()?;
+        let Some(mut record) = self.record()?.filter(|record| {
+            record.token == token && record.phase == ResetPhase::Failed && !record.reported
+        }) else {
+            return Ok(None);
+        };
+        record.reported = true;
+        self.write_locked_record(&record)?;
+        Ok(Some(record))
+    }
+
+    fn write_locked_record(&self, record: &ResetRecord) -> Result<(), String> {
         reject_link_if_present(&self.journal())?;
         let mut temp = tempfile::NamedTempFile::new_in(&self.parent).map_err(failed)?;
         temp.write_all(&serde_json::to_vec(record).map_err(failed)?)
@@ -152,6 +186,7 @@ impl ResetPaths {
     }
 
     pub(super) fn mark_failed(&self, mut record: ResetRecord, error: &str) -> Result<(), String> {
+        record.failed_from = Some(record.phase);
         record.phase = ResetPhase::Failed;
         record.error = Some(error.to_string());
         record.reported = false;
@@ -229,10 +264,7 @@ impl ResetPaths {
             {
                 let _ = fs::rename(&quarantine, &self.root);
             }
-            record.phase = ResetPhase::Failed;
-            record.error = Some(error.clone());
-            record.reported = false;
-            self.write_record(&record)?;
+            self.mark_failed(record, &error)?;
             return Err(error);
         }
         Ok(())

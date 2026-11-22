@@ -58,10 +58,14 @@ export async function auditLocaleSources(root, tables = TABLES) {
     for (const statement of ast.statements) {
       if (!ts.isImportDeclaration(statement) || statement.importClause?.isTypeOnly) continue
       const imports = statement.importClause?.namedBindings
-      if (!imports || !ts.isNamedImports(imports)) continue
-      const names = imports.elements.filter(item => !item.isTypeOnly)
-      if (!names.length) continue
-      const imported = await import(new URL(statement.moduleSpecifier.text, pathToFileURL(file)).href)
+      const names = imports && ts.isNamedImports(imports) ? imports.elements.filter(item => !item.isTypeOnly) : []
+      const defaultName = statement.importClause?.name?.text
+      if (!names.length && !defaultName) continue
+      const url = new URL(statement.moduleSpecifier.text, pathToFileURL(file))
+      const imported = url.pathname.endsWith('.json')
+        ? await import(url.href, { with: { type: 'json' } })
+        : await import(url.href)
+      if (defaultName) bindings.set(defaultName, imported.default)
       for (const item of names) bindings.set(item.name.text, imported[item.propertyName?.text ?? item.name.text])
     }
     function checkObject(node) {

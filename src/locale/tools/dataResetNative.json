@@ -1,0 +1,25 @@
+{
+  "migrateDataTargetExists": {
+    "zh-CN": "目标「{path}」已存在。请选择一个尚未包含 OC2ModManager 子目录的父目录。",
+    "zh-TW": "目標「{path}」已存在。請選擇一個尚未包含 OC2ModManager 子目錄的上層目錄。",
+    "en": "“{path}” already exists. Choose a parent folder that does not already contain OC2ModManager.",
+    "ko": "대상 “{path}”이(가) 이미 있습니다. OC2ModManager 하위 폴더가 없는 상위 폴더를 선택하세요.",
+    "ja": "移動先「{path}」は既に存在します。OC2ModManager サブフォルダーのない親フォルダーを選んでください。"
+  },
+  "dataOperationFailed": {"zh-CN":"管理器数据操作未完成。","zh-TW":"管理器資料操作未完成。","en":"The manager could not complete the data operation.","ko":"관리자 데이터 작업을 완료하지 못했습니다.","ja":"マネージャーのデータ操作を完了できませんでした。"},
+  "dataOperationUnsafe": {"zh-CN":"源目录、目标目录或数据内容未通过安全校验。","zh-TW":"來源、目標資料夾或資料內容未通過安全檢查。","en":"The source, destination or data failed a safety check.","ko":"원본 폴더, 대상 폴더 또는 데이터가 안전성 검사를 통과하지 못했습니다.","ja":"移動元、移動先、またはデータの安全性を確認できませんでした。"},
+  "dataOperationRootUnavailable": {"zh-CN":"无法访问当前配置目录。请确认所在磁盘已连接且目录可访问。","zh-TW":"無法存取目前設定目錄。請確認所在磁碟已連接且目錄可存取。","en":"The current configuration folder is unavailable. Check that its drive is connected and the folder is accessible.","ko":"현재 설정 폴더에 접근할 수 없습니다. 해당 드라이브가 연결되어 있고 폴더에 접근할 수 있는지 확인하세요.","ja":"現在の設定フォルダーにアクセスできません。ドライブの接続とフォルダーへのアクセスを確認してください。"},
+  "clearAllConfigBusy": {"zh-CN":"仍有任务正在执行，请等待完成后再清除或迁移配置。","zh-TW":"仍有工作正在執行，請等待完成後再清除或遷移設定。","en":"An operation is still running. Wait for it to finish before clearing or moving configuration.","ko":"실행 중인 작업이 있습니다. 완료된 후 설정을 삭제하거나 이동해 주세요.","ja":"処理が実行中です。完了してから設定を削除または移動してください。"},
+  "dataOperationSource": {"zh-CN":"源目录：{path}","zh-TW":"來源資料夾：{path}","en":"Source folder: {path}","ko":"원본 폴더: {path}","ja":"移動元フォルダー：{path}"},
+  "dataOperationTarget": {"zh-CN":"目标目录：{path}","zh-TW":"目標資料夾：{path}","en":"Destination folder: {path}","ko":"대상 폴더: {path}","ja":"移動先フォルダー：{path}"},
+  "dataOperationCurrent": {"zh-CN":"当前配置路径：{path}","zh-TW":"目前設定路徑：{path}","en":"Current configuration path: {path}","ko":"현재 설정 경로: {path}","ja":"現在の設定の保存先：{path}"},
+  "dataOperationCurrentUnknown": {"zh-CN":"无法确认当前配置路径。","zh-TW":"無法確認目前設定路徑。","en":"The current configuration path could not be confirmed.","ko":"현재 설정 경로를 확인할 수 없습니다.","ja":"現在の設定の保存先を確認できませんでした。"},
+  "dataOperationPending": {"zh-CN":"阶段：准备操作","zh-TW":"階段：準備操作","en":"Stage: preparing the operation","ko":"단계: 작업 준비","ja":"段階：操作の準備"},
+  "dataOperationCopying": {"zh-CN":"阶段：复制或校验数据","zh-TW":"階段：複製或驗證資料","en":"Stage: copying or verifying data","ko":"단계: 데이터 복사 또는 확인","ja":"段階：データのコピーまたは検証"},
+  "dataOperationVerified": {"zh-CN":"阶段：复核并切换配置路径","zh-TW":"階段：再次驗證並切換設定路徑","en":"Stage: verifying and switching the configuration path","ko":"단계: 설정 경로 재확인 및 전환","ja":"段階：設定の保存先の再確認と切り替え"},
+  "dataOperationCleaning": {"zh-CN":"阶段：清理原有数据","zh-TW":"階段：清理舊有資料","en":"Stage: cleaning up previous data","ko":"단계: 기존 데이터 정리","ja":"段階：以前のデータの整理"},
+  "dataOperationStageUnknown": {"zh-CN":"阶段：无法确认","zh-TW":"階段：無法確認","en":"Stage: unknown","ko":"단계: 확인할 수 없음","ja":"段階：不明"},
+  "dataOperationRetry": {"zh-CN":"请保留源目录、目标目录和恢复文件。核对路径和权限后再重试。","zh-TW":"請保留來源、目標資料夾及復原檔案。確認路徑和權限後再試一次。","en":"Keep both folders and any recovery files. Check the paths and permissions before trying again.","ko":"두 폴더와 복구 파일을 보존하세요. 경로와 권한을 확인한 뒤 다시 시도하세요.","ja":"両方のフォルダーと復旧ファイルを保持してください。パスと権限を確認してから再試行してください。"},
+  "dataOperationSwitched": {"zh-CN":"配置路径已切换。请保留原目录和恢复文件，核对当前位置的数据后再处理旧文件。","zh-TW":"設定路徑已切換。請保留原資料夾和復原檔案，確認目前位置的資料後再處理舊檔案。","en":"The configuration path has switched. Keep the old folder and any recovery files. Check the data at the current location before handling old files.","ko":"설정 경로가 전환되었습니다. 기존 폴더와 복구 파일을 보존하고 현재 위치의 데이터를 확인한 뒤 이전 파일을 처리하세요.","ja":"設定の保存先は切り替わっています。以前のフォルダーと復旧ファイルを残し、現在の保存先を確認してから古いファイルを整理してください。"},
+  "dataOperationPreserve": {"zh-CN":"请保留现有目录和恢复文件，并查看管理器日志。","zh-TW":"請保留現有資料夾和復原檔案，並查看管理器記錄。","en":"Keep existing folders and any recovery files, and check the manager log.","ko":"기존 폴더와 복구 파일을 보존하고 관리자 로그를 확인하세요.","ja":"既存のフォルダーと復旧ファイルを残し、マネージャーのログを確認してください。"}
+}

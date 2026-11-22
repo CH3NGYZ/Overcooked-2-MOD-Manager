@@ -139,8 +139,18 @@ pub(super) fn import_from(paths: &ResetPaths, legacy: &ResetPaths) -> Result<(),
         }
     }
     if record.pending() {
-        super::handoff::wait_for_owner(&record)?;
-        legacy.finish(record)?;
+        let token = record.token;
+        let result = match super::handoff::wait_for_owner(&record) {
+            Ok(()) => legacy.finish(record),
+            Err(error) => legacy.mark_failed(record, &error),
+        };
+        if let Err(error) = result
+            && !legacy
+                .record()?
+                .is_some_and(|record| record.token == token && !record.pending())
+        {
+            return Err(error);
+        }
         record = legacy.record()?.ok_or(super::UNSAFE)?;
     }
     record.data_root = Some(legacy.root.clone());
@@ -179,6 +189,8 @@ mod tests {
             phase: ResetPhase::Pending,
             error: None,
             reported: false,
+            locale: None,
+            failed_from: None,
             action: DataAction::Migrate {
                 source: source.clone(),
                 target: target.clone(),
@@ -395,6 +407,8 @@ mod tests {
             phase: ResetPhase::Pending,
             error: None,
             reported: false,
+            locale: None,
+            failed_from: None,
             action: DataAction::Clear,
             fingerprint: None,
             data_root: None,
@@ -424,6 +438,8 @@ mod tests {
             phase: ResetPhase::Completed,
             error: None,
             reported: false,
+            locale: None,
+            failed_from: None,
             action: DataAction::Clear,
             fingerprint: None,
             data_root: None,

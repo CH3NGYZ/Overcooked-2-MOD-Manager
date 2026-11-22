@@ -8,11 +8,13 @@ use std::time::Duration;
 mod handoff;
 mod legacy;
 mod migration;
+mod notice;
 mod storage;
 #[cfg(test)]
 mod tests;
 mod webview_reset;
 
+pub(crate) use notice::install_language;
 pub(crate) use webview_reset::webview_reset_script;
 
 const HELPER_FLAG: &str = "--oc2-clear-manager-data";
@@ -34,6 +36,7 @@ pub(crate) struct DataSession {
     _legacy_lock: Option<File>,
     pub(crate) skip_legacy_migration: bool,
     pub(crate) completed_reset_token: Option<uuid::Uuid>,
+    pub(crate) failure_diagnostics: Option<String>,
 }
 
 fn completed_reset_token(record: Option<&storage::ResetRecord>) -> Option<uuid::Uuid> {
@@ -63,16 +66,17 @@ pub(crate) fn initialize() -> Result<DataSession, String> {
             Err(error) => {
                 // A damaged coordination record must not repeatedly delete data
                 // or strand the application before its diagnostic UI can start.
-                handoff::show_error(&error);
                 if paths.parent.join("data-location.json").is_file() && !paths.root.is_dir() {
                     return Err("config.directoryUnavailable".into());
                 }
+                notice::show_unrecorded(&error, None);
                 crate::user_paths::freeze_root(&crate::user_paths::root()?)?;
                 return Ok(DataSession {
                     _lock: lock,
                     _legacy_lock: legacy_lock,
                     skip_legacy_migration: true,
                     completed_reset_token: None,
+                    failure_diagnostics: Some(format!("无法读取管理器数据操作记录：{error}")),
                 });
             }
         };
@@ -87,28 +91,34 @@ pub(crate) fn initialize() -> Result<DataSession, String> {
             storage::wait_for_lock(&exclusive, false, LOCK_TIMEOUT)?;
             legacy::import(&paths)?;
             if let Some(record) = paths.record()?.filter(storage::ResetRecord::pending) {
-                let _legacy = legacy::exclusive_for_request(&paths, &record)?;
-                if let Err(error) = handoff::wait_for_owner(&record) {
-                    paths.mark_failed(record, &error)?;
-                } else if let Err(error) = paths.finish(record) {
-                    // finish persists a failed state, so retrying startup does not
-                    // repeat a partly failed deletion forever.
-                    log::error!("{error}");
-                    // Persisting Failed can itself fail (permissions/full disk).
-                    // Never loop on an unchanged destructive request in that case.
-                    if !paths.record()?.is_some_and(|record| !record.pending()) {
-                        return Err(error);
-                    }
+                let token = record.token;
+                let result = match legacy::exclusive_for_request(&paths, &record) {
+                    Ok(_legacy) => match handoff::wait_for_owner(&record) {
+                        Ok(()) => paths.finish(record),
+                        Err(error) => paths.mark_failed(record, &error),
+                    },
+                    Err(error) => Err(error),
+                };
+                if let Err(error) = result
+                    && !paths
+                        .record()?
+                        .is_some_and(|record| record.token == token && !record.pending())
+                {
+                    return Err(error);
                 }
             }
             drop(exclusive);
             continue;
         }
-        if let Some(record) = &record {
-            if record.phase == storage::ResetPhase::Failed && !record.reported {
-                handoff::show_error(record.error.as_deref().unwrap_or("Data reset failed"));
-            }
-        }
+        let failure_diagnostics = record
+            .as_ref()
+            .filter(|record| record.phase == storage::ResetPhase::Failed)
+            .map(|record| {
+                if !record.reported {
+                    notice::show_once(&paths, record);
+                }
+                notice::diagnostics(record)
+            });
         // Only a completed clear deliberately leaves the selected root absent.
         if paths.parent.join("data-location.json").is_file()
             && !paths.root.is_dir()
@@ -127,6 +137,7 @@ pub(crate) fn initialize() -> Result<DataSession, String> {
             _legacy_lock: legacy_lock,
             skip_legacy_migration: record.is_some(),
             completed_reset_token: completed_reset_token(record.as_ref()),
+            failure_diagnostics,
         });
     }
 }
@@ -138,7 +149,7 @@ pub(crate) fn run_if_requested() {
     if args.next().as_deref() != Some(std::ffi::OsStr::new(HELPER_FLAG)) {
         return;
     }
-    let result = (|| {
+    let result = (|| -> Result<bool, String> {
         let token = args
             .next()
             .and_then(|arg| arg.into_string().ok())
@@ -148,16 +159,27 @@ pub(crate) fn run_if_requested() {
             return Err(failed("Invalid reset-helper arguments"));
         }
         let paths = storage::ResetPaths::current()?;
-        handoff::run_helper(&paths, token)
+        if let Err(error) = handoff::run_helper(&paths, token) {
+            if let Ok(Some(record)) = paths.record()
+                && record.token == token
+                && record.phase == storage::ResetPhase::Failed
+            {
+                notice::show_once(&paths, &record);
+            } else {
+                eprintln!("Data operation helper stopped ({token}): {error}");
+            }
+            return Ok(false);
+        }
+        Ok(true)
     })();
     if let Err(error) = &result {
-        handoff::show_error(error);
+        notice::show_unrecorded(error, None);
     }
-    std::process::exit(if result.is_ok() { 0 } else { 1 });
+    std::process::exit(if matches!(result, Ok(true)) { 0 } else { 1 });
 }
 
 pub(crate) fn show_startup_error(error: &str) {
-    handoff::show_error(error);
+    notice::show_unrecorded(error, None);
 }
 
 struct ResetGuard;
@@ -192,20 +214,25 @@ fn validate_protected_paths(
 
 /// All locks, native-process preparation and shutdown stay on the blocking worker.
 /// No caller-provided path is accepted, and failures return without exiting.
-pub(crate) fn clear_and_exit(state: &crate::app_state::AppState) -> Result<(), String> {
-    change_and_exit(state, None)
+pub(crate) fn clear_and_exit(
+    state: &crate::app_state::AppState,
+    locale: Option<String>,
+) -> Result<(), String> {
+    change_and_exit(state, None, locale)
 }
 
 pub(crate) fn migrate_and_exit(
     state: &crate::app_state::AppState,
     parent: &Path,
+    locale: Option<String>,
 ) -> Result<(), String> {
-    change_and_exit(state, Some(parent))
+    change_and_exit(state, Some(parent), locale)
 }
 
 fn change_and_exit(
     state: &crate::app_state::AppState,
     parent: Option<&Path>,
+    locale: Option<String>,
 ) -> Result<(), String> {
     RESETTING
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -246,7 +273,11 @@ fn change_and_exit(
     if let Some(parent) = parent {
         migration::prepare(&paths, parent, state, &executable)?;
     }
-    helper.commit(&paths, action)?;
+    let locale = locale
+        .as_deref()
+        .and_then(notice::supported_language)
+        .map(str::to_owned);
+    helper.commit(&paths, action, locale)?;
     log::info!("管理器数据操作已交接；退出后由原生辅助进程完成");
     log::logger().flush();
     std::process::exit(0)

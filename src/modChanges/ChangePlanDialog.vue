@@ -38,7 +38,12 @@ const diagnostics = computed(() => {
   const notes = blockers.filter(blocker => plan.value?.status === 'ready' || !blocker.traces?.some(path => path.length))
   return { notes, hasPaths: notes.length !== blockers.length, truncated: blockers.some(blocker => blocker.traces_truncated) }
 })
-const error = computed(() => state.value?.error ? backendMessageOf(state.value.error) : '')
+const notices = computed(() => [...new Set(plan.value?.notices ?? [])])
+const error = computed(() => {
+  if (state.value?.phase !== 'failed') return ''
+  const reason = state.value.error
+  return (reason == null ? '' : backendMessageOf(reason).trim()) || t('modChanges.failureWithoutDetails')
+})
 const phase = computed(() => {
   if (state.value?.phase === 'preparing' && preparation.value) return t(`modChanges.preparation.${preparation.value.stage}`)
   if (plan.value && plan.value.status !== 'ready') return t('modChanges.phase.failed')
@@ -99,6 +104,9 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
       </div>
     </template>
     <div class="change-plan" data-mod-changes-plan :data-plan-phase="state?.phase" :data-plan-review="applyReview">
+      <NAlert v-for="notice in notices" :key="notice" type="warning" :bordered="false" data-plan-notice>
+        <span class="plan-message">{{ backendMessageOf(notice) }}</span>
+      </NAlert>
       <NAlert v-if="state?.phase === 'reconfirming' && applyReview === 'changed' && plan?.status === 'ready'" type="warning" :bordered="false">
         {{ t('modChanges.changed') }}
       </NAlert>
@@ -117,10 +125,10 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
         <p v-if="diagnostics.hasPaths" class="diagnostic-note">{{ t('modChanges.diagnostic.note') }}</p>
         <p v-if="diagnostics.truncated" class="diagnostic-note">{{ t('modChanges.diagnostic.truncated') }}</p>
       </NAlert>
-      <NAlert v-if="error" type="error" :bordered="false"><span class="plan-error">{{ error }}</span></NAlert>
+      <NAlert v-if="error" type="error" :bordered="false"><span class="plan-error plan-message">{{ error }}</span></NAlert>
       <ul v-if="diagnostics.notes.length" class="plan-notes">
         <li v-for="(blocker, index) in diagnostics.notes" :key="index">
-          {{ changeReasonText(blocker.message || blocker.code) }}
+          <span class="plan-message">{{ changeReasonText(blocker.message || blocker.code) }}</span>
           <span v-if="blocker.owner_id && names?.nodes.get(blocker.owner_id)"> · {{ names.nodes.get(blocker.owner_id) }}</span>
           <span v-if="blocker.target_guid"> · {{ names?.dependency(blocker.target_guid) }}</span>
         </li>
@@ -163,7 +171,8 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
 .plan-phase-spinner { flex: none; }
 .progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--oc2-text-3); margin-bottom: 8px; font-variant-numeric: tabular-nums; }
 .plan-notes { margin: 0; padding-left: 20px; overflow-wrap: anywhere; }
-.plan-error { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
+.plan-error { display: block; }
+.plan-message { white-space: pre-wrap; overflow-wrap: anywhere; }
 .overwrite-paths { margin: 8px 0 0; padding-inline-start: 20px; overflow-wrap: anywhere; }
 .overwrite-paths li + li { margin-block-start: 4px; }
 .overwrite-paths code { display: block; white-space: pre-wrap; }

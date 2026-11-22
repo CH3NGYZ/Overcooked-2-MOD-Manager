@@ -87,6 +87,43 @@ test('安装冲突先显示对应原因，再另起一行保留完整位置', ()
   }
 })
 
+test('地图契约和本地 MOD 冲突在五语中保留所有来源、路径与身份', () => {
+  const paths = ['BepInEx/plugins/第一处 & A%/Map', 'BepInEx/cache/第二处 + B/Map'].join('\n')
+  const path = 'BepInEx/plugins/地图 & A%/levels'
+  const sources = '地图源 A & B\n镜像 + 1'
+  const guid = 'test.plugin.owner'
+  const cases = [
+    ['levelSet.localMapSourceConflict', { map: '木犀小关', sources }, ['木犀小关', sources]],
+    ['levelSet.localMapSourceVersionUnconfirmed', { map: '木犀小关', version: '2.25+test', sources }, ['木犀小关', '2.25+test', sources]],
+    ['levelSet.mapDuplicateInstallTargets', { map: '木犀小关', paths }, ['木犀小关', paths]],
+    ['levelSet.mapDirectoryRequired', { path }, [path]],
+    ['levelSet.bundledMapDirectoryRequired', { path }, [path]],
+    ['archive.targetExists', { path }, [path]],
+    ['modChanges.installTargetPathCollision', { path: paths }, [paths]],
+    ['modChanges.mapDependencyVersionUnconfirmed', { map: '木犀小关', dependency: 'Example MOD', requirement: '>=1.3.0 <2.0' }, ['木犀小关', 'Example MOD', '>=1.3.0 <2.0']],
+    ['modChanges.mapDependencyDisabledUnconfirmed', { map: '木犀小关', dependency: 'Example MOD', requirement: '>=1.3.0 <2.0' }, ['木犀小关', 'Example MOD', '>=1.3.0 <2.0']],
+    ['modChanges.mapDependencyDeclarationsUnconfirmed', { map: '木犀小关', dependency: 'Example MOD' }, ['木犀小关', 'Example MOD']],
+    ['levelSet.zipContainsModAndMaps', {}, ['MOD', 'ZIP']],
+    ['modChanges.localModMultipleTargets', { paths }, [paths]],
+    ['modChanges.installPackageIdentityConflict', { guid, paths }, [guid, paths]],
+    ['modChanges.installMemberRelationConflict', { guid, path: 'BepInEx/plugins/Test.dll' }, [guid, 'BepInEx/plugins/Test.dll']],
+    ['modChanges.localModSourceConflict', { guid, path, sources }, [guid, path, sources]],
+    ['modChanges.installPackageIdentityMissing', { guid, path: 'My Package.zip' }, [guid, 'My Package.zip']],
+  ]
+  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
+    i18n.global.locale.value = locale
+    for (const [tag, params, expected] of cases) {
+      const query = Object.entries(params).map(([name, value]) => `${name}=${encodeURIComponent(value)}`).join('&')
+      const message = backendMessageOf(query ? `${tag}?${query}` : tag)
+      assert.notEqual(message, tag)
+      for (const value of expected) assert.ok(message.includes(value), `${locale}: ${message}`)
+      assert.equal(translateBackendMessage(message), message)
+    }
+    assert.notEqual(i18n.global.t('modChanges.failureWithoutDetails'), 'modChanges.failureWithoutDetails')
+    assert.notEqual(i18n.global.t('levelSet.localImport'), 'levelSet.localImport')
+  }
+})
+
 test('未登记的 tag 原样返回，便于发现漏翻译', () => {
   const text = inLocale('en', 'nothing.notRegistered')
   assert.equal(text, 'nothing.notRegistered')

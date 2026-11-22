@@ -90,6 +90,7 @@ export interface ChangePlan {
   actions: ChangeAction[]
   evaluations: NodeEvaluation[]
   blockers: ChangeDiagnostic[]
+  notices?: string[]
   impacts: string[]
   roots: { node_id: string; label: string; tag?: string | null }[]
   nodes: ChangeNode[]

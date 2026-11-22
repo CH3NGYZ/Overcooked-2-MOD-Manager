@@ -48,10 +48,10 @@ import InstallSourceCard from '../components/InstallSourceCard.vue'
 import InstallDetailDialog from '../components/InstallDetailDialog.vue'
 import BusyOverlay from '../components/BusyOverlay.vue'
 import { useFileDrop } from '../composables/useFileDrop'
-import { takePendingDrop, useDropRouting } from '../composables/useDropRouting'
+import { takePendingDrop } from '../composables/useDropRouting'
 import { useLevelSetImport } from '../composables/useLevelSetImport'
 import { useLevelSetScan } from '../composables/useLevelSetScan'
-import type { InstallSource, MapInfo, ModRepository } from '../types'
+import type { MapInfo, ModRepository } from '../types'
 import { demoActive, withDemoConfig, withDemoGame, withDemoLevelSets, withDemoMaps, withDemoMapSourceNodes, withDemoMods } from '../tutorial/demo'
 import { useMapReleaseDetail } from '../composables/useMapReleaseDetail'
 import { cachedInstallRelease } from '../repositoryAssets'
@@ -144,13 +144,12 @@ const sets = computed(() => withDemoLevelSets(realSets.value))
  * 确认界面与 MOD 安装共用 `InstallDetailDialog`（一个地图集当一个 MOD 展示）。
  */
 const {
+  sourceOpen: installSourceOpen,
   importing, importSource, installRelease,
   previewOpen: importPreviewOpen, detail: importDetail,
   confirmImport, discardImport,
   zipProgress, zipProgressText,
 } = useLevelSetImport()
-/** 「安装地图」来源卡片是否打开。 */
-const installSourceOpen = ref(false)
 
 /**
  * 整窗进度遮罩：来源卡片没打开时才用。
@@ -291,7 +290,7 @@ onMounted(() => {
   void prefetchAvatars(maps.value)
   // 从 MOD 页「去安装」跳过来：路径已暂存在模块里，直接接着走导入
   const pending = takePendingDrop('map')
-  if (pending) void startDropInstall(pending)
+  if (pending) void importSource({ kind: 'local', value: pending }, 'routed')
 })
 
 watch(demoActive, active => {
@@ -501,48 +500,15 @@ async function install(map: MapInfo, tag?: string, asset?: string) {
 }
 
 /**
- * 「安装地图」来源卡片：本地文件 / 拖入窗口 / 在线直链三个入口共用。
- *
- * 与「安装 MOD」同一职责定位 —— 线上装不进来的东西（作者发的离线包、自己
- * 整理的图、挂在别处的直链）走这里。暂存 → 确认 → 导入的实现下沉在
- * `useLevelSetImport`：地图管理页的整窗拖放走的是同一份，两页的确认文案、
- * 覆盖提示、暂存清理和成功提示共用同一条链。
- */
-async function handleInstallSourceSelect(source: InstallSource) {
-  await importSource(source, {
-    // 来源已经可用：先收起卡片，再交给确认弹窗
-    onStaged: () => { installSourceOpen.value = false },
-  })
-}
-
-/**
- * 拖入 / 跨页跳转过来的文件：先打开来源卡片再交给同一个处理函数。
- *
- * 卡片里的转圈是「正在暂存与识别」的唯一反馈 —— 识别一份上百 MB 的地图合集
- * 要几十秒，没有反馈用户会以为没反应。
- */
-async function startDropInstall(path: string) {
-  installSourceOpen.value = true
-  await handleInstallSourceSelect({ kind: 'local', value: path })
-}
-
-const { acceptDrop } = useDropRouting()
-
-/**
  * 整窗拖放：拖一个 ZIP 进来等价于在本页点「安装地图」。
  *
  * 拖放是窗口能力而不是某张卡片的属性（见 `useFileDrop`），所以地图管理页也
- * 能用同一条链路。先过 `acceptDrop`：纯 DLL 的包属于 MOD 域，要引导到 MOD
- * 安装页，不能在这里报「ZIP 里没有 info」。
+ * 能用同一条链路。`useLevelSetImport` 与文件选择共用分类并转交 MOD 包。
  */
 const { dragActive } = useFileDrop({
   accept: ['zip', 'dll'],
   busy: () => demoActive.value || importing.value,
-  onDrop: (path) => {
-    void (async () => {
-      if (await acceptDrop(path, 'map')) await startDropInstall(path)
-    })()
-  },
+  onDrop: path => { void importSource({ kind: 'local', value: path }, 'drop') },
 })
 
 /** 详情抽屉里的安装：把当前选中的 tag 与资产一起传下去。 */
@@ -727,7 +693,7 @@ const pageLoading = computed(() => loading.value && tree.value.length === 0)
   <InstallSourceCard v-model:show="installSourceOpen" :accept="['zip']"
     :title="t('levelSet.installMap')" :busy="importing" :drag-active="dragActive"
     :read-progress-text="importing ? zipProgressText : ''"
-    :pick-file="api.chooseLevelSetZip" @select="handleInstallSourceSelect" />
+    :pick-file="api.chooseLevelSetZip" @select="importSource" />
 
   <!--
     来源卡片没打开时的进度（本页主路径的在线安装、确认后的写盘阶段）：与卡片里

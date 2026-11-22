@@ -17,6 +17,9 @@ registerHooks({
       '/src/modChanges/store.ts': 'export const useModChanges=()=>({run:request=>globalThis.__chainEntry.run(request)})',
       '/src/composables/useDashboardStore.ts': 'export const useDashboard=()=>({game:{get value(){return {kitchen_running:globalThis.__chainEntry.running}}}})',
       '/src/composables/useMapSources.ts': 'export const useMapSources=()=>({maps:{value:globalThis.__chainEntry.maps}})',
+      '/src/composables/useDropRouting.ts': `export const useDropRouting=()=>({acceptDrop:async (path, want)=>{
+        const entry=globalThis.__chainEntry;entry.calls.push(['acceptDrop',path,want]);return entry.acceptLocal !== false
+      }})`,
       '/src/useNotify.ts': 'export const useNotify=()=>new Proxy({}, {get:(_,kind)=>text=>globalThis.__chainEntry.notices.push([kind,text])})',
       '/src/i18n.ts': 'export const t=key=>key; export const pickI18n=(_,fallback)=>fallback',
       '/src/locale/backend.ts': 'export const backendMessageOf=String; export const translateBackendMessage=String',
@@ -39,12 +42,23 @@ function fixture(extra={}) {
   globalThis.__chainEntry=f; return f
 }
 
-test('manual source installs one preview root through the shared batch and then releases staging',async()=>{
+for(const entry of ['picker','drop','routed'])test(`manual ${entry} installs one preview root through the shared batch and releases staging`,async()=>{
   const f=fixture(),flow=useModInstallFlow()
-  await flow.handleSourceSelect({kind:'file',value:'sample.zip'})
+  await flow.handleSourceSelect({kind:'local',value:'sample.zip'},entry)
   assert.deepEqual(f.plans,[{roots:[{node_id:'preview:preview-1',enabled:true}]}])
-  assert.deepEqual(f.calls,[['analyzeModSource','file','sample.zip'],['cancelModPreview','preview-1']])
+  assert.deepEqual(f.calls,[
+    ...(entry==='routed'?[]:[['acceptDrop','sample.zip','mod']]),
+    ['analyzeModSource','local','sample.zip'],['cancelModPreview','preview-1'],
+  ])
   assert.deepEqual(f.notices,[['success','modChanges.completed']]);assert.equal(flow.sourceBusy.value,false)
+})
+
+for(const entry of ['picker','drop'])test(`a map with a bundled DLL from the MOD ${entry} is never staged as a MOD`,async()=>{
+  const f=fixture({acceptLocal:false}),flow=useModInstallFlow()
+  await flow.handleSourceSelect({kind:'local',value:'map-with-dll.zip'},entry)
+  assert.deepEqual(f.calls,[['acceptDrop','map-with-dll.zip','mod']])
+  assert.deepEqual(f.plans,[])
+  assert.equal(flow.sourceBusy.value,false)
 })
 
 for(const result of [null,new Error('blocked')])test(`cancelled or failed batch never pre-uninstalls and cleans its preview: ${result}`,async()=>{
@@ -74,8 +88,8 @@ test('running game blocks manual and online MOD installation and still cleans a 
 
 test('source re-entry is blocked until its whole batch finishes',async()=>{
   let finish;const f=fixture({run:request=>{f.plans.push(request);return new Promise(resolve=>{finish=resolve})}})
-  const flow=useModInstallFlow(),pending=flow.handleSourceSelect({kind:'file',value:'first.zip'})
-  await tick();await flow.handleSourceSelect({kind:'file',value:'second.zip'})
+  const flow=useModInstallFlow(),pending=flow.handleSourceSelect({kind:'local',value:'first.zip'})
+  await tick();await flow.handleSourceSelect({kind:'local',value:'second.zip'})
   assert.equal(f.plans.length,1);assert.equal(flow.sourceBusy.value,true)
   finish(null);await pending;assert.equal(flow.sourceBusy.value,false)
 })
@@ -88,7 +102,7 @@ for(const kind of ['local','url'])test(`running game allows ${kind} maps to reac
   const scope=effectScope();const flow=scope.run(()=>useLevelSetImport());t.after(()=>scope.stop())
   const pending=flow.importSource({kind,value})
   await tick();assert.equal(flow.previewOpen.value,true);assert.deepEqual(f.plans,[])
-  assert.deepEqual(f.calls,[['stageMapSource',kind,value]])
+  assert.deepEqual(f.calls,staged?[['stageMapSource',kind,value]]:[['acceptDrop',value,'map'],['stageMapSource',kind,value]])
   flow.confirmImport();await nextTick();await pending
   assert.deepEqual(f.plans,[{roots:[],map_import:{zip_path:'map.zip',selected:['Map-A'],origin:null}}])
   assert.deepEqual(f.notices,[['success','levelSet.imported']])
@@ -116,6 +130,16 @@ for(const [tag,asset] of [[undefined,undefined],['v1.0','chosen.zip']])test(`run
 test('cancelling map detail makes no plan and preserves the user ZIP',async t=>{
   const f=fixture({staged:{path:'user.zip',staged:false,sets:[{dir_name:'Map-A',name:'Map A',plugins:[],conflicts:[]}]}})
   const scope=effectScope(),flow=scope.run(()=>useLevelSetImport());t.after(()=>scope.stop())
-  const pending=flow.importSource({kind:'file',value:'user.zip'});await tick();flow.discardImport();await pending
-  assert.deepEqual(f.plans,[]);assert.deepEqual(f.calls,[['stageMapSource','file','user.zip']])
+  const pending=flow.importSource({kind:'local',value:'user.zip'},'routed');await tick();flow.discardImport();await pending
+  assert.deepEqual(f.plans,[]);assert.deepEqual(f.calls,[['stageMapSource','local','user.zip']])
+})
+
+for(const entry of ['picker','drop'])test(`a MOD package entering from the map ${entry} is never staged as a map`,async t=>{
+  const f=fixture({acceptLocal:false})
+  const scope=effectScope(),flow=scope.run(()=>useLevelSetImport());t.after(()=>scope.stop())
+  await flow.importSource({kind:'local',value:'mixed.zip'},entry)
+  assert.deepEqual(f.calls,[['acceptDrop','mixed.zip','map']])
+  assert.deepEqual(f.plans,[])
+  assert.equal(flow.importing.value,false)
+  assert.equal(flow.previewOpen.value,false)
 })

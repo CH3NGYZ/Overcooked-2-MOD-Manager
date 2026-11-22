@@ -28,7 +28,7 @@ import InstallSourceCard from '../components/InstallSourceCard.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
 import { useDependencyInstallGuide } from '../composables/useDependencyInstallGuide'
 import { useFileDrop } from '../composables/useFileDrop'
-import { takePendingDrop, useDropRouting } from '../composables/useDropRouting'
+import { takePendingDrop } from '../composables/useDropRouting'
 import { useModRepositoryPreview } from '../composables/useModRepositoryPreview'
 import OnlineCard, { type CardAction, type CardDependencyTag } from '../components/OnlineCard.vue'
 import SourceGroupSlot from '../components/SourceGroupSlot.vue'
@@ -78,14 +78,6 @@ const {
   pickSourceFile: pickInstallSourceFile,
 } = useModInstallFlow()
 
-/** 拖入 / 跨页跳转过来的文件：打开来源卡片后走同一条预览链路。 */
-async function startDropInstall(path: string) {
-  openInstallSource()
-  await handleInstallSourceSelect({ kind: 'local', value: path })
-}
-
-const { acceptDrop } = useDropRouting()
-
 /**
  * 整窗拖放：拖 DLL / ZIP 进来等价于点「安装 MOD」。
  *
@@ -93,17 +85,12 @@ const { acceptDrop } = useDropRouting()
  * 来源卡片只负责显示高亮，不再自己挂监听 —— 以前监听挂在卡片里，能不能拖
  * 取决于「这页碰巧挂没挂那张卡片」。
  *
- * 先过 `acceptDrop`：含 `info` 的 ZIP 是地图包（哪怕它也带 DLL），装进来
- * 只会得到一个空预览，必须引导到地图安装页。
+ * `useModInstallFlow` 与文件选择共用分类并转交地图包。
  */
 const { dragActive } = useFileDrop({
   accept: ['dll', 'zip'],
   busy: () => demoActive.value || installSourceBusy.value,
-  onDrop: (path) => {
-    void (async () => {
-      if (await acceptDrop(path, 'mod')) await startDropInstall(path)
-    })()
-  },
+  onDrop: path => { void handleInstallSourceSelect({ kind: 'local', value: path }, 'drop') },
 })
 
 /** 仓库卡片 / 详情抽屉的「安装 / 重装 / 更新」：先检查关系，再下载预览。 */
@@ -129,7 +116,7 @@ onMounted(() => {
   void ensureLoaded()
   // 从地图页「去安装」跳过来：路径已暂存在模块里，直接接着走预览
   const pending = takePendingDrop('mod')
-  if (pending) void startDropInstall(pending)
+  if (pending) void handleInstallSourceSelect({ kind: 'local', value: pending }, 'routed')
 })
 watch(demoActive, active => { if (!active) void ensureLoaded() })
 

@@ -1,10 +1,8 @@
 /**
  * 拖放的跨域路由：这个包到底属于 MOD 域还是地图域。
  *
- * 两个域用**同一份**判定（后端 `classify_drop_source`）：含 `info` 就是地图包，
- * 即使它还带着作者随包的修复插件。判定放在拖入那一刻，而不是等装完再发现 ——
- * 把地图包拖到 MOD 页时，`analyze_mod_source` 会给出「0 个 DLL · 0 个 MOD」的
- * 空预览，而且「立即安装」还真能点、还真会喷彩花，用户以为装上了。
+ * 两个域用后端 `classify_drop_source` 判定：纯地图或含随包插件的地图走地图入口，
+ * 独立 MOD 与地图同包时走 MOD 入口。
  *
  * 判错域时不静默失败：弹窗说清楚这是什么包，并给一条「去安装」的跳转。跳转
  * 前把路径存进模块级 `pendingDrop`，目标页挂载后自己取走接着走安装流程 ——
@@ -20,6 +18,7 @@ import { backendMessageOf } from '../locale/backend'
 
 /** 拖放归属的两个域。 */
 export type DropDomain = 'mod' | 'map'
+export type InstallSourceEntry = 'picker' | 'drop' | 'routed'
 
 /**
  * 跳转到另一个域之前暂存的待装路径。
@@ -43,17 +42,20 @@ export function useDropRouting() {
   const message = useNotify()
 
   /** 询问是否去另一个域的安装页；返回 true 表示用户点了「去安装」。 */
-  function offerOtherDomain(target: DropDomain) {
+  function offerOtherDomain(target: DropDomain, containsMaps: boolean) {
+    const hint = target === 'map'
+      ? 'tools.mapPackageDetectedHint'
+      : containsMaps ? 'levelSet.zipContainsModAndMaps' : 'tools.modPackageDetectedHint'
     return new Promise<boolean>((resolve) => {
       dialog.warning({
         title: target === 'map' ? t('tools.mapPackageDetected') : t('tools.modPackageDetected'),
-        content:
-          target === 'map' ? t('tools.mapPackageDetectedHint') : t('tools.modPackageDetectedHint'),
+        content: t(hint),
         positiveText: t('tools.goToInstall'),
         negativeText: t('recycle.cancel'),
         onPositiveClick: () => resolve(true),
         onNegativeClick: () => resolve(false),
         onClose: () => resolve(false),
+        onAfterLeave: () => resolve(false),
       })
     })
   }
@@ -79,7 +81,7 @@ export function useDropRouting() {
     if (kind.kind === want) return true
 
     const target: DropDomain = kind.kind === 'map' ? 'map' : 'mod'
-    const go = await offerOtherDomain(target)
+    const go = await offerOtherDomain(target, kind.map_sets > 0)
     if (!go) return false
     pendingDrop.value = { path, domain: target }
     await router.push(target === 'map' ? { name: 'maps-online' } : { name: 'mods-online' })

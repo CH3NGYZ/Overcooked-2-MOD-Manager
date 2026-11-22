@@ -108,13 +108,14 @@ test('a single map or MOD switch commits silently through normal preparation', a
   }
 })
 
-test('an extra dependency action, a different package member, or a blocker still opens review', async () => {
+test('an extra dependency action, a different package member, a notice, or a blocker still opens review', async () => {
   const { request, choice } = toggle('mod', true, 'owner-dll')
   const [action] = choice.actions
   for (const plan of [
     { ...choice, actions: [action, { ...action, node_id: 'mod:dependent' }], impacts: ['mod:owner', 'mod:dependent'] },
     { ...choice, actions: [action, { ...action, kind: 'disable', node_id: 'mod:conflict' }], impacts: ['mod:owner', 'mod:conflict'] },
     { ...choice, actions: [{ ...action, member_key: 'different-dll' }] },
+    { ...choice, notices: ['levelSet.localMapSourceConflict'] },
     { ...choice, status: 'incomplete', blockers: [{ code: 'search_exhausted' }] },
   ]) {
     const f = fixture({ plan: async () => plan }), pending = f.run(request)

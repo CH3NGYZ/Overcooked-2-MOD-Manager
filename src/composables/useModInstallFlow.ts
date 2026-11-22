@@ -1,6 +1,7 @@
 /** Local DLL, ZIP, URL and dropped files join the same atomic change plan. */
 import { ref } from 'vue'
 import { useGameOperationGate } from './useGameOperationGate'
+import { useDropRouting, type InstallSourceEntry } from './useDropRouting'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { t } from '../i18n'
@@ -12,6 +13,7 @@ import type { InstallSource, ModPreview } from '../types'
 export function useModInstallFlow() {
   const message = useNotify()
   const { blockModOperation } = useGameOperationGate()
+  const { acceptDrop } = useDropRouting()
   const changes = useModChanges()
   const sourceOpen = ref(false)
   const sourceBusy = ref(false)
@@ -33,13 +35,16 @@ export function useModInstallFlow() {
     }
   }
 
-  async function handleSourceSelect(source: InstallSource) {
-    if (blockModOperation() || sourceBusy.value) return
+  async function handleSourceSelect(source: InstallSource, entry: InstallSourceEntry = 'picker') {
+    if (sourceBusy.value || (entry !== 'drop' && blockModOperation())) return
     sourceBusy.value = true
     const token = source.kind === 'url' ? beginDownloadTask({
       label: t('direct.onlineFile'), retry: () => { void handleSourceSelect(source) },
     }) : null
     try {
+      if (source.kind === 'local' && entry !== 'routed' && !(await acceptDrop(source.value, 'mod'))) return
+      if (entry === 'drop' && blockModOperation()) return
+      if (entry !== 'picker') sourceOpen.value = true
       const next = await api.analyzeModSource(source.kind, source.value)
       if (token !== null) endDownloadTask(token)
       sourceOpen.value = false

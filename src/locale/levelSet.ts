@@ -38,6 +38,20 @@ export const levelSet: DomainMessages = {
     ko: '같은 이름의 레벨 세트 "{name}"이(가) 이미 있습니다. 먼저 처리하세요.',
     ja: '同じ名前のレベルセット「{name}」が既にあります。先に処理してください。',
   },
+  mapDirectoryRequired: {
+    'zh-CN': '地图需要使用文件夹，但此位置是文件。请先备份并核对该文件，再重新生成方案。\n位置：{path}',
+    'zh-TW': '地圖需要使用資料夾，但此位置是檔案。請先備份並確認該檔案，再重新產生方案。\n位置：{path}',
+    en: 'The map needs a folder, but a file occupies this location. Back up and check the file, then create a new plan.\nLocation: {path}',
+    ko: '맵에 필요한 폴더 위치에 파일이 있습니다. 파일을 백업하고 확인한 뒤 새 계획을 만드세요.\n위치: {path}',
+    ja: 'マップ用のフォルダーが必要な場所にファイルがあります。ファイルをバックアップして確認し、計画を作り直してください。\n場所：{path}',
+  },
+  bundledMapDirectoryRequired: {
+    'zh-CN': '安装包里的地图文件必须放在 levels 下各自的子文件夹中。请换用正确的安装包，或请发布者检查此条目。\n位置：{path}',
+    'zh-TW': '安裝套件中的地圖檔案必須放在 levels 下各自的子資料夾中。請改用正確的安裝套件，或請發佈者檢查此項目。\n位置：{path}',
+    en: 'Map files in the package must be inside a separate subfolder for each map under levels. Use a corrected package or ask the publisher to check this entry.\nLocation: {path}',
+    ko: '설치 패키지의 맵 파일은 levels 아래 맵별 하위 폴더에 있어야 합니다. 수정된 패키지를 사용하거나 배포자에게 이 항목을 확인해 달라고 요청하세요.\n위치: {path}',
+    ja: 'インストールパッケージ内のマップファイルは levels 配下のマップごとのサブフォルダーに入れる必要があります。修正済みパッケージを使うか、配布元にこの項目の確認を依頼してください。\n場所：{path}',
+  },
   moveFailed: {
     'zh-CN': '移动关卡集失败：{reason}',
     'zh-TW': '移動關卡集失敗：{reason}',
@@ -58,6 +72,13 @@ export const levelSet: DomainMessages = {
     en: 'No level set was selected',
     ko: '선택한 레벨 세트가 없습니다',
     ja: 'レベルセットが選択されていません',
+  },
+  zipContainsModAndMaps: {
+    'zh-CN': '这个 ZIP 同时包含 MOD 和地图。请从 MOD 下载页安装，随包地图会在同一安装方案中处理。',
+    'zh-TW': '這個 ZIP 同時包含 MOD 和地圖。請從 MOD 下載頁安裝，隨套件附帶的地圖會在同一安裝方案中處理。',
+    en: 'This ZIP contains a MOD and maps. Install it from the MOD Downloads page to handle the bundled maps in the same plan.',
+    ko: '이 ZIP에 MOD와 맵이 함께 들어 있습니다. MOD 다운로드 페이지에서 설치하면 동봉된 맵도 같은 설치 계획에서 처리됩니다.',
+    ja: 'この ZIP には MOD とマップが含まれています。MOD ダウンロードページからインストールすると、同梱マップも同じ計画で処理されます。',
   },
   zipWithoutInfo: {
     'zh-CN': '这个 ZIP 里没有找到任何关卡集（缺少 info 文件）',
@@ -629,6 +650,29 @@ export const levelSet: DomainMessages = {
     ja: '「マップ管理」で表示',
   },
   // 地图管理页 · 卡片详情里的「绑定的地图」
+  installOrigin: { 'zh-CN': '安装来源', 'zh-TW': '安裝來源', en: 'Installation source', ko: '설치 출처', ja: 'インストール元' },
+  localImport: { 'zh-CN': '本地导入', 'zh-TW': '本機匯入', en: 'Local import', ko: '로컬 가져오기', ja: 'ローカルから取り込み' },
+  localMapSourceConflict: {
+    'zh-CN': '「{map}」的线上来源对这个版本给出了不同的依赖或冲突要求。管理器会检查随包要求和各来源一致的要求。其余要求请和作者核对。\n相关来源：\n{sources}',
+    'zh-TW': '「{map}」的線上來源對此版本提供了不同的相依或衝突要求。管理器會檢查隨套件提供及各來源一致的要求。其餘要求請向作者確認。\n相關來源：\n{sources}',
+    en: 'Online sources disagree on the requirements or conflicts for this version of “{map}”. The manager checks the package’s own requirements and those shared by the sources. Check the remaining requirements with the author.\nAffected sources:\n{sources}',
+    ko: '“{map}”의 이 버전에 대한 종속성이나 충돌 조건이 온라인 소스마다 다릅니다. 패키지에 포함된 요구 사항과 소스가 공통으로 명시한 요구 사항을 확인합니다. 나머지는 제작자에게 확인하세요.\n관련 소스:\n{sources}',
+    ja: '「{map}」のこのバージョンについて、配布元ごとに依存条件や競合条件が異なります。パッケージに含まれる要件と配布元で一致した要件を確認します。残りは作者に確認してください。\n該当する配布元：\n{sources}',
+  },
+  localMapSourceVersionUnconfirmed: {
+    'zh-CN': '包内地图「{map}」的版本为 {version}。以下来源未提供适用于该版本的声明。仍可继续安装，管理器会检查可核实的要求。\n相关来源：\n{sources}',
+    'zh-TW': '套件內地圖「{map}」的版本為 {version}。以下來源未提供適用於該版本的宣告。仍可繼續安裝，管理器會檢查可確認的要求。\n相關來源：\n{sources}',
+    en: 'This package contains version {version} of “{map}”. The sources below do not provide declarations for this version. You can continue installing. The manager will check the requirements it can verify.\nAffected sources:\n{sources}',
+    ko: '패키지에 포함된 지도 “{map}”의 버전은 {version}입니다. 아래 소스에는 이 버전에 적용되는 선언이 없습니다. 설치를 계속할 수 있으며, 관리자는 확인 가능한 요구 사항을 검사합니다.\n관련 소스:\n{sources}',
+    ja: 'パッケージに含まれる「{map}」のバージョンは {version} です。以下の配布元には、このバージョンに適用される宣言がありません。インストールは続行できます。管理アプリは確認できる要件をチェックします。\n該当する配布元：\n{sources}',
+  },
+  mapDuplicateInstallTargets: {
+    'zh-CN': '游戏目录里有多份「{map}」，管理器无法确定要替换哪一份。请备份后核对以下目录，把多余的副本移出游戏目录再试。\n相关目录：\n{paths}',
+    'zh-TW': '遊戲資料夾中有多份「{map}」，管理器無法確定要取代哪一份。請備份後確認下列資料夾，將多餘的副本移出遊戲資料夾後再試。\n相關資料夾：\n{paths}',
+    en: 'The game folder contains multiple copies of “{map}”, so the manager cannot select one to replace. Back up the folders below and check which copy to keep. Move the extra copies out of the game folder before retrying.\nAffected folders:\n{paths}',
+    ko: '게임 폴더에 “{map}”의 복사본이 여러 개 있어 교체할 대상을 결정할 수 없습니다. 아래 폴더를 백업한 뒤 남길 복사본을 확인하세요. 나머지를 게임 폴더 밖으로 옮기고 다시 시도하세요.\n관련 폴더:\n{paths}',
+    ja: 'ゲームフォルダーに「{map}」のコピーが複数あり、置き換える対象を特定できません。以下のフォルダーをバックアップし、残すコピーを確認してください。余分なコピーをゲームフォルダーの外へ移動して再試行してください。\n該当するフォルダー：\n{paths}',
+  },
   boundMap: {
     'zh-CN': '绑定的地图',
     'zh-TW': '綁定的地圖',

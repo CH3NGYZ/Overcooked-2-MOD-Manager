@@ -21,6 +21,8 @@ registerHooks({
         options.onPositiveClick()
       }})`)
     if (url.endsWith('/src/modChanges/store.ts')) return fixture(`export const useModChanges=()=>({run:async request=>{globalThis.__cachedDownload.plans.push(request);return {ok:true,message:''}}})`)
+    if (url.endsWith('/src/composables/useDropRouting.ts')) return fixture(`
+      export const useDropRouting = () => ({ acceptDrop: () => { throw new Error('Online releases do not enter local package routing') } })`)
     if (url.endsWith('/src/services/tauri.ts')) return fixture(`
       export const watchLevelSetZipProgress = async () => () => {}
       export const api = new Proxy({}, {get: (_, key) => (...args) => {

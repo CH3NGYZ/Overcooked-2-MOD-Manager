@@ -340,6 +340,7 @@ export interface LevelSetInfo {
    * 本地 ZIP 导入或老版本装的没有记录，为空串。
    */
   installed_mapset_version?: string
+  local_import?: boolean
   /** MD5(baseUID + version)：随版本变化，不能当稳定身份。 */
   uid: string
   /** 稳定身份（老导出可能为空）。 */
@@ -618,9 +619,7 @@ export type ModSourceKind = InstallSource['kind']
 /**
  * 拖进来的本地文件到底是什么包。
  *
- * 判据只有一条：**含 `info` 就是地图包**（地图包常带作者随包的修复插件，
- * 只按「有没有 DLL」判断会把它误判成 MOD）。来源由后端 `classify_drop_source`
- * 给出，前端两个域共用，不各自再判一次。
+ * 后端 `classify_drop_source` 统一决定安装入口；含地图的独立 MOD 仍返回 `mod`。
  */
 export interface DropSourceKind {
   kind: 'map' | 'mod' | 'unknown'

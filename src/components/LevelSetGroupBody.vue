@@ -171,7 +171,11 @@ function actionsOf(set: LevelSetInfo) {
         <div class="detail-section">
           <div class="detail-section-title">{{ t('levelSet.bindStatusSection') }}</div>
           <div class="detail-grid">
-            <div class="detail-row detail-row--wide">
+            <div v-if="set.local_import" class="detail-row detail-row--wide">
+              <span class="detail-label">{{ t('levelSet.installOrigin') }}</span>
+              <span class="detail-value" data-level-set-origin="local">{{ t('levelSet.localImport') }}</span>
+            </div>
+            <div v-if="!set.local_import || ctx.actionOf(set)?.kind === 'update'" class="detail-row detail-row--wide">
               <span class="detail-label">{{ t(ctx.actionOf(set)?.kind === 'update' ? 'mapVersion.defaultSource' : 'levelSet.boundMap') }}</span>
               <span class="detail-value">
                 <template v-if="ctx.bindingOf(set)">

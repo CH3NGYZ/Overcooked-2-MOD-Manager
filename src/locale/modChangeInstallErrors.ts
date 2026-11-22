@@ -10,7 +10,115 @@ function withLocation(copy: Localized): Localized {
   }
 }
 
+function withLocations(copy: Localized): Localized {
+  return {
+    'zh-CN': `${copy['zh-CN']}\n涉及位置：\n{paths}`,
+    'zh-TW': `${copy['zh-TW']}\n涉及位置：\n{paths}`,
+    en: `${copy.en}\nAffected locations:\n{paths}`,
+    ko: `${copy.ko}\n관련 위치:\n{paths}`,
+    ja: `${copy.ja}\n該当する場所：\n{paths}`,
+  }
+}
+
 export const modChangeInstallErrors: DomainMessages = {
+  mapDependencyVersionUnconfirmed: {
+    'zh-CN': '「{map}」需要「{dependency}」满足版本要求 {requirement}。管理器无法确认已启用的版本是否符合要求，会保留它。',
+    'zh-TW': '「{map}」需要「{dependency}」符合版本要求 {requirement}。管理器無法確認已啟用的版本是否符合要求，會保留它。',
+    en: '“{map}” requires “{dependency}” to meet the version requirement {requirement}. The manager will keep the enabled version but could not verify that it meets this requirement.',
+    ko: '“{map}”에 필요한 “{dependency}”의 버전 조건은 {requirement}입니다. 활성화된 버전이 이 조건을 충족하는지 확인하지 못했으며 해당 버전을 유지합니다.',
+    ja: '「{map}」には「{dependency}」のバージョン条件 {requirement} があります。有効なバージョンが条件を満たすかは確認できませんでした。そのバージョンは維持されます。',
+  },
+  mapDependencyDisabledUnconfirmed: {
+    'zh-CN': '「{map}」需要「{dependency}」满足版本要求 {requirement}。该 MOD 当前已停用，管理器无法确认它的版本和依赖是否满足要求，将保持停用。核对前，地图可能无法正常运行。',
+    'zh-TW': '「{map}」需要「{dependency}」符合版本要求 {requirement}。該 MOD 目前已停用，管理器無法確認其版本與相依項目是否符合要求，將維持停用。確認前，地圖可能無法正常執行。',
+    en: '“{map}” requires “{dependency}” to meet the version requirement {requirement}. This MOD will stay disabled because the manager could not verify its version or dependencies. The map may not work until these are checked.',
+    ko: '“{map}”에 필요한 “{dependency}”의 버전 조건은 {requirement}입니다. 이 MOD의 버전이나 종속성이 조건을 충족하는지 확인하지 못해 비활성화 상태를 유지합니다. 확인하기 전에는 맵이 정상적으로 작동하지 않을 수 있습니다.',
+    ja: '「{map}」には「{dependency}」のバージョン条件 {requirement} があります。この MOD のバージョンや依存関係が条件を満たすか確認できなかったため、無効のままにします。確認するまでマップが正常に動かない場合があります。',
+  },
+  mapDependencyDeclarationsUnconfirmed: {
+    'zh-CN': '管理器缺少「{dependency}」当前版本的部分依赖或冲突信息，无法确认它和「{map}」是否兼容。当前安装保持不变。',
+    'zh-TW': '管理器缺少「{dependency}」目前版本的部分相依或衝突資訊，無法確認它與「{map}」是否相容。目前安裝維持不變。',
+    en: 'Some dependency or conflict information for the installed version of “{dependency}” is missing. The manager could not confirm compatibility with “{map}” and will keep the current installation.',
+    ko: '설치된 “{dependency}” 버전의 종속성 또는 충돌 정보가 일부 없어 “{map}”과 호환되는지 확인하지 못했습니다. 현재 설치 상태는 유지됩니다.',
+    ja: 'インストール済みの「{dependency}」に関する依存・競合情報が一部不足しており、「{map}」との互換性を確認できませんでした。現在のインストールは維持されます。',
+  },
+  ambiguousOwnership: {
+    'zh-CN': '管理器无法确认本次变更应修改哪些文件，已停止。请刷新列表再试。如果仍失败，请保留现有文件并提供日志。',
+    'zh-TW': '管理器無法確認此次變更應修改哪些檔案，已停止。請重新整理清單再試。如果仍失敗，請保留現有檔案並提供記錄。',
+    en: 'The manager stopped because it could not determine which files to change. Refresh the list and try again. If it fails again, keep the existing files and share the log.',
+    ko: '변경할 파일을 확인할 수 없어 작업을 중지했습니다. 목록을 새로 고친 뒤 다시 시도하세요. 또 실패하면 기존 파일을 보관하고 로그를 공유해 주세요.',
+    ja: '変更すべきファイルを確認できなかったため、処理を止めました。一覧を更新して再試行し、再度失敗する場合は既存のファイルを残してログを共有してください。',
+  },
+  failureWithoutDetails: {
+    'zh-CN': '这一步未完成，管理器没有收到具体原因。请重新生成方案。如果仍失败，请提供本次操作的日志。',
+    'zh-TW': '此步驟未完成，管理器沒有收到具體原因。請重新產生方案。如果仍失敗，請提供此次操作的記錄。',
+    en: 'This step did not complete, and no details were returned. Create a new plan. If it fails again, share the log for this operation.',
+    ko: '이 단계를 완료하지 못했고 구체적인 원인이 반환되지 않았습니다. 계획을 다시 만드세요. 또 실패하면 이 작업의 로그를 공유해 주세요.',
+    ja: 'この手順を完了できず、詳しい原因も返されませんでした。計画を作り直し、再度失敗する場合はこの操作のログを共有してください。',
+  },
+  localModMultipleTargets: withLocations({
+    'zh-CN': '本地安装包匹配到多份已装 MOD，无法确定该替换哪一份。请核对下面的位置。若要保留多份，请选择只包含目标 MOD 的安装包。',
+    'zh-TW': '本機安裝套件比對到多份已安裝 MOD，無法確定要取代哪一份。請確認下方的位置。若要保留多份，請選擇只包含目標 MOD 的安裝套件。',
+    en: 'The local package matches multiple installed MODs, so the manager cannot select one to replace. Check the locations below. To keep the other copies, select a package containing just the target MOD.',
+    ko: '로컬 패키지에 해당하는 설치된 MOD가 여러 개여서 교체할 대상을 결정할 수 없습니다. 아래 위치를 확인하세요. 다른 복사본을 유지하려면 대상 MOD만 포함된 패키지를 선택하세요.',
+    ja: 'ローカルパッケージに一致するインストール済み MOD が複数あり、置き換える対象を特定できません。以下の場所を確認してください。他のコピーを残すには、対象の MOD だけが入ったパッケージを選んでください。',
+  }),
+  installPackageIdentityConflict: withLocations({
+    'zh-CN': '安装包中有多份主插件（{guid}）。请换用只包含一份主插件的安装包，或联系发布者。',
+    'zh-TW': '安裝套件中有多份主要外掛（{guid}）。請改用只包含一份主要外掛的安裝套件，或聯絡發佈者。',
+    en: 'The package contains multiple copies of its main plugin ({guid}). Use a package containing exactly one copy or contact the publisher.',
+    ko: '패키지에 기본 플러그인({guid})의 복사본이 여러 개 있습니다. 복사본이 하나만 들어 있는 패키지를 사용하거나 게시자에게 문의하세요.',
+    ja: 'パッケージに主プラグイン（{guid}）が複数含まれています。1 つだけ入ったパッケージを使用するか、配布元に問い合わせてください。',
+  }),
+  installPackageIdentityMissing: withLocation({
+    'zh-CN': '安装包中找不到仓库源声明的主插件（{guid}）。请核对所选附件，或联系仓库源维护者。',
+    'zh-TW': '安裝套件中找不到來源宣告的主要外掛（{guid}）。請確認所選附件，或聯絡來源維護者。',
+    en: 'The package does not contain the main plugin declared by the source ({guid}). Check the selected attachment or contact the repository maintainer.',
+    ko: '패키지에서 소스가 명시한 기본 플러그인({guid})을 찾을 수 없습니다. 선택한 첨부 파일을 확인하거나 저장소 유지보수 담당자에게 문의하세요.',
+    ja: 'パッケージに配布元が宣言した主プラグイン（{guid}）が見つかりません。選んだ添付ファイルを確認するか、配布元に問い合わせてください。',
+  }),
+  installBundledMapPluginUnverified: withLocation({
+    'zh-CN': '随包地图带有无法核实的插件，管理器已停止安装。请核对安装包，或联系发布者。',
+    'zh-TW': '隨套件附帶的地圖含有無法確認的外掛，管理器已停止安裝。請確認安裝套件，或聯絡發佈者。',
+    en: 'A bundled map contains plugins the manager could not verify, so installation stopped. Check the package or contact the publisher.',
+    ko: '동봉된 맵에 관리자 앱이 확인할 수 없는 플러그인이 있어 설치를 중지했습니다. 패키지를 확인하거나 게시자에게 문의하세요.',
+    ja: '同梱マップに確認できないプラグインがあるため、インストールを中止しました。パッケージを確認するか、配布元に問い合わせてください。',
+  }),
+  installMemberRelationConflict: withLocation({
+    'zh-CN': '插件（{guid}）对应的来源给出了不同的依赖或冲突要求。请核对所选版本，或联系仓库源维护者。',
+    'zh-TW': '外掛（{guid}）對應的來源提供了不同的相依或衝突要求。請確認所選版本，或聯絡來源維護者。',
+    en: 'The sources for plugin {guid} declare different requirements or conflicts. Check the selected version or contact the repository maintainer.',
+    ko: '플러그인({guid})에 해당하는 소스마다 종속성이나 충돌 조건이 다릅니다. 선택한 버전을 확인하거나 저장소 유지보수 담당자에게 문의하세요.',
+    ja: 'プラグイン（{guid}）の依存条件や競合条件が配布元によって異なります。選んだバージョンを確認するか、配布元に問い合わせてください。',
+  }),
+  localModSourceConflict: withLocation({
+    'zh-CN': '各来源对本地安装包中的插件（{guid}）给出了不同的依赖或冲突要求。仍可继续安装，管理器会检查各来源一致的要求。其余要求尚未确认，可向发布者核对。\n相关来源：\n{sources}',
+    'zh-TW': '各來源對本機安裝套件中的外掛（{guid}）提供了不同的相依或衝突要求。仍可繼續安裝，管理器會檢查各來源一致的要求。其餘要求尚未確認，可向發佈者確認。\n相關來源：\n{sources}',
+    en: 'Sources disagree on the dependencies or conflicts for plugin {guid} in this local package. You can continue installing. The manager will check the requirements shared by the sources. The remaining requirements are unconfirmed and can be checked with the publisher.\nAffected sources:\n{sources}',
+    ko: '이 로컬 패키지에 포함된 플러그인({guid})의 종속성이나 충돌 조건이 소스마다 다릅니다. 설치를 계속할 수 있으며, 관리자는 소스가 공통으로 명시한 요구 사항을 검사합니다. 확인되지 않은 나머지 요구 사항은 게시자에게 문의하세요.\n관련 소스:\n{sources}',
+    ja: 'このローカルパッケージ内のプラグイン（{guid}）について、配布元ごとに依存条件や競合条件が異なります。インストールは続行できます。管理アプリは配布元で一致した要件をチェックします。未確認の要件は公開者に確認できます。\n該当する配布元：\n{sources}',
+  }),
+  installTargetIdentityConflict: {
+    'zh-CN': '有多份安装记录指向同一项目（{name}）。请刷新列表再试。如果仍失败，请保留现有文件和安装记录，并提供日志。',
+    'zh-TW': '有多份安裝記錄指向同一項目（{name}）。請重新整理清單再試。如果仍失敗，請保留現有檔案和安裝記錄並提供記錄檔。',
+    en: 'Multiple installation records point to the same item ({name}). Refresh the list and try again. If it fails again, keep the files and installation records and share the log.',
+    ko: '같은 항목({name})을 가리키는 설치 기록이 여러 개 있습니다. 목록을 새로 고친 뒤 다시 시도하세요. 또 실패하면 파일과 설치 기록을 보관하고 로그를 공유해 주세요.',
+    ja: '同じ項目（{name}）を指すインストール記録が複数あります。一覧を更新して再試行し、再度失敗する場合はファイルとインストール記録を残してログを共有してください。',
+  },
+  installTargetOwnershipUnverified: {
+    'zh-CN': '无法确认应该由哪条安装记录管理「{name}」。请刷新列表再试。如果仍失败，请保留现有文件并提供日志。',
+    'zh-TW': '無法確認應由哪一筆安裝記錄管理「{name}」。請重新整理清單再試。如果仍失敗，請保留現有檔案並提供記錄。',
+    en: 'The manager could not verify which installation record owns “{name}”. Refresh the list and try again. If it fails again, keep the files and share the log.',
+    ko: '어느 설치 기록에서 “{name}” 항목을 관리하는지 확인할 수 없습니다. 목록을 새로 고친 뒤 다시 시도하세요. 또 실패하면 파일을 보관하고 로그를 공유해 주세요.',
+    ja: '「{name}」を管理するインストール記録を確認できませんでした。一覧を更新して再試行し、再度失敗する場合はファイルを残してログを共有してください。',
+  },
+  installTargetMissing: withLocation({
+    'zh-CN': '预期的安装文件已不存在，或该位置已不再是文件。请刷新列表，核对文件是否已被移动，再重试。',
+    'zh-TW': '預期的安裝檔案已不存在，或該位置已不再是檔案。請重新整理清單，確認檔案是否已被移動，再試一次。',
+    en: 'The expected installed file is missing, or this location no longer points to a file. Refresh the list, check whether the file was moved, and retry.',
+    ko: '예상한 설치 파일이 없거나 해당 위치가 더 이상 파일을 가리키지 않습니다. 목록을 새로 고치고 파일이 이동했는지 확인한 뒤 다시 시도하세요.',
+    ja: '想定していたインストール済みファイルが存在しないか、この場所がファイルを指していません。一覧を更新し、ファイルが移動されたか確認してから再試行してください。',
+  }),
   // Also used to display the legacy file-ownership tag from previous versions.
   fileOwnershipConflict: withLocation({
     'zh-CN': '管理器无法确认这个位置能否安全替换。请保留现有文件，并将日志发给管理器维护者。',

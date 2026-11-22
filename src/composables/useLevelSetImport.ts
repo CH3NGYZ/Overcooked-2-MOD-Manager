@@ -25,6 +25,7 @@ import { backendMessageOf } from '../locale/backend'
 import { cachedInstallRelease } from '../repositoryAssets'
 import { beginDownloadTask, endDownloadTask, failDownloadTask } from '../downloadTask'
 import { useMapSources } from './useMapSources'
+import { useDropRouting, type InstallSourceEntry } from './useDropRouting'
 import type { InstallDetailModel } from '../installDetail'
 import type {
   InstallSource, LevelSetZipProgress, StagedMapSource, ZipLevelSet,
@@ -41,6 +42,8 @@ export function useLevelSetImport() {
   const message = useNotify()
   const changes = useModChanges()
   const { maps } = useMapSources()
+  const { acceptDrop } = useDropRouting()
+  const sourceOpen = ref(false)
   /** 正在处理一份来源：暂存 / 识别 / 等确认 / 导入，期间入口按钮转圈并禁用。 */
   const importing = ref(false)
   const pending = ref<PendingBatch | null>(null)
@@ -169,11 +172,9 @@ export function useLevelSetImport() {
   /**
    * 导入一个来源（本地路径或直链）。
    *
-   * `onStaged` 在「暂存并识别成功」之后、详情弹窗之前调用：来源卡片据此收起
-   * 自己（弹窗才是接下来的主角），暂存失败时卡片留在原地显示错误。
-   * 失败已就地提示，不向调用方抛。
+   * 文件选择和拖放共用后端分类。跨页转交的路径已分类，直接暂存。
    */
-  async function importSource(source: InstallSource, options?: { onStaged?: () => void }) {
+  async function importSource(source: InstallSource, entry: InstallSourceEntry = 'picker') {
     if (importing.value) return
     importing.value = true
     /**
@@ -190,10 +191,12 @@ export function useLevelSetImport() {
     const token = source.kind === 'url'
       ? beginDownloadTask({
         label: t('levelSet.installMap'),
-        retry: () => { void importSource(source, options) },
+        retry: () => { void importSource(source, entry) },
       })
       : null
     try {
+      if (source.kind === 'local' && entry !== 'routed' && !(await acceptDrop(source.value, 'map'))) return
+      if (entry !== 'picker') sourceOpen.value = true
       // 上一轮可能留下旧进度：暂存一开始先清空，避免显示上次的条目
       zipProgress.value = null
       const staged = await api.stageMapSource(source.kind, source.value)
@@ -201,7 +204,7 @@ export function useLevelSetImport() {
       // 识别结束，接下来是确认弹窗：不能把「正在读取」留在界面上
       zipProgress.value = null
       if (staged.staged) stagedFile = staged.path
-      options?.onStaged?.()
+      sourceOpen.value = false
       await finishStaged(staged)
     } catch (reason) {
       if (token !== null) failDownloadTask(token, reason)
@@ -276,7 +279,7 @@ export function useLevelSetImport() {
   }
 
   return {
-    importing, importSource, installRelease, previewOpen, detail, confirmImport, discardImport,
+    sourceOpen, importing, importSource, installRelease, previewOpen, detail, confirmImport, discardImport,
     zipProgress, zipProgressText,
   }
 }

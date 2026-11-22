@@ -122,18 +122,19 @@ test('地图 ZIP 的导入只有一份实现，两个地图页共用', () => {
  * 拦下来并引导到对面页面 —— 否则用户看到的是一份空预览（0 个 DLL）或者
  * 一个「没有 info」的地图包，点「安装」还会成功（喷彩花），实际什么都没装。
  */
-test('四个页面都先过 acceptDrop，再走自己域的安装链路', () => {
-  for (const [name, source, want] of [
-    ['ModsOnlineView', modsOnline, "acceptDrop(path, 'mod')"],
-    ['ModsLocalView', modsLocal, "acceptDrop(path, 'mod')"],
-    ['MapsOnlineView', mapsOnline, "acceptDrop(path, 'map')"],
-    ['LevelsView', levels, "acceptDrop(path, 'map')"],
-  ]) {
-    assert.match(source, new RegExp(want.replace(/[[\]()']/g, '\\$&')), `${name} 必须先问 acceptDrop`)
-    assert.match(source, /await acceptDrop\(path/, `${name} 的拦截必须在安装前完成`)
-    assert.match(source, /startDropInstall/, `${name} 应把「打开卡片 + 走预览」收成一个函数`)
-    assert.match(source, /takePendingDrop\(/, `${name} 要接住从对面页面跳过来的路径`)
+test('MOD 和地图的拖放与文件选择都进入共享的分类入口', () => {
+  for (const [name, source] of [['ModsOnlineView', modsOnline], ['ModsLocalView', modsLocal]]) {
+    assert.match(source, /@select="handleInstallSourceSelect"/, `${name} 的文件选择必须走共享入口`)
+    assert.match(source, /onDrop:[^\n]+handleInstallSourceSelect\(\{ kind: 'local', value: path \}, 'drop'\)/)
+    assert.match(source, /takePendingDrop\('mod'\)[\s\S]+handleInstallSourceSelect\(\{ kind: 'local', value: pending \}, 'routed'\)/)
   }
+  assert.match(modInstallFlow, /source\.kind === 'local' && entry !== 'routed' && !\(await acceptDrop\(source\.value, 'mod'\)\)[\s\S]+await api\.analyzeModSource/)
+  for (const [name, source] of [['MapsOnlineView', mapsOnline], ['LevelsView', levels]]) {
+    assert.match(source, /@select="importSource"/, `${name} 的文件选择必须走共享入口`)
+    assert.match(source, /onDrop:[^\n]+importSource\(\{ kind: 'local', value: path \}, 'drop'\)/)
+    assert.match(source, /takePendingDrop\('map'\)[\s\S]+importSource\(\{ kind: 'local', value: pending \}, 'routed'\)/)
+  }
+  assert.match(importFlowSource, /source\.kind === 'local' && entry !== 'routed' && !\(await acceptDrop\(source\.value, 'map'\)\)[\s\S]+await api\.stageMapSource/)
 })
 
 test('跨页路由只有一份实现，且只在设备端分类一次', () => {
@@ -153,12 +154,11 @@ test('跨页路由只有一份实现，且只在设备端分类一次', () => {
   assert.equal(tauriService.match(/classifyDropSource:/g).length, 1, 'IPC 包装只此一处')
 })
 
-test('分类命令在后端注册，且按 info 判定地图包', () => {
+test('分类命令在后端注册，地图与独立 MOD 混合包分流', () => {
   assert.match(rustLib, /commands::drop_source::classify_drop_source/, 'lib.rs 必须注册这个命令')
   assert.match(rustCommands, /pub async fn classify_drop_source/, '命令必须是 async（要读 ZIP）')
-  assert.match(rustCommands, /let kind = if contents\.map_sets > 0/, '含 info 的 ZIP 判成 map')
-  assert.match(rustCommands, /else if contents\.plugins > 0/, '没有 info 但有 DLL 的判成 mod')
-  // 判据在后端只有一条：含 `info` 就是地图包（不靠扩展名、不靠目录名）
+  assert.match(rustCommands, /let kind = if contents\.map_sets > 0 && !contents\.mod_bundled_maps/, '纯地图和地图随包插件走地图入口')
+  assert.match(rustCommands, /else if contents\.plugins > 0/, '独立 MOD 及随该 MOD 打包的地图走 MOD 入口')
   assert.match(rustLevelZip, /pub fn classify_zip/)
 })
 

@@ -18,7 +18,7 @@ function canApplyDirectly(request: ChangeRequest, plan: ChangePlan) {
   if (!request.roots) return false
   const root = request.roots[0]
   if (!root || request.roots.length !== 1 || request.map_import || root.candidate_id != null || root.asset_name != null
-    || plan.status !== 'ready' || plan.blockers.length || plan.install_notes.length
+    || plan.status !== 'ready' || plan.blockers.length || plan.install_notes.length || plan.notices?.length
     || plan.roots.length !== 1 || plan.roots[0]?.node_id !== root.node_id
     || plan.impacts.some(id => id !== root.node_id)) return false
   const node = plan.nodes.find(node => node.node_id === root.node_id)

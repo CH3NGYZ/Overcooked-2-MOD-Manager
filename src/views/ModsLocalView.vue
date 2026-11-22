@@ -58,7 +58,7 @@ import InstallSourceCard from '../components/InstallSourceCard.vue'
 import PageLoading from '../components/PageLoading.vue'
 import { useModInstallFlow } from '../composables/useModInstallFlow'
 import { useFileDrop } from '../composables/useFileDrop'
-import { takePendingDrop, useDropRouting } from '../composables/useDropRouting'
+import { takePendingDrop } from '../composables/useDropRouting'
 import { useModRepositoryPreview } from '../composables/useModRepositoryPreview'
 import { useModRemoval } from '../composables/useModRemoval'
 import { useModsLocalCardExpansion } from '../composables/useModsLocalCardExpansion'
@@ -251,7 +251,7 @@ onMounted(() => {
   void ensureLoaded()
   // 从地图页「去安装」跳过来：路径已暂存在模块里，直接接着走预览
   const pending = takePendingDrop('mod')
-  if (pending) void startDropInstall(pending)
+  if (pending) void handleInstallSourceSelect({ kind: 'local', value: pending }, 'routed')
 })
 watch(demoActive, active => { if (!active) void ensureLoaded() })
 
@@ -916,31 +916,18 @@ const {
   pickSourceFile: pickInstallSourceFile,
 } = useModInstallFlow()
 
-/** 拖入 / 跨页跳转过来的文件：打开来源卡片后走同一条预览链路。 */
-async function startDropInstall(path: string) {
-  installSourceOpen.value = true
-  await handleInstallSourceSelect({ kind: 'local', value: path })
-}
-
-const { acceptDrop } = useDropRouting()
-
 /**
  * 整窗拖放：拖 DLL / ZIP 进来等价于点「安装 MOD」。
  *
  * 与 MOD 安装页同一份实现、同一份扩展名规则：本页没有「安装」按钮，拖放是
  * 本页的安装入口，所以它必须由页面注册而不是躲在来源卡片里。
  *
- * 先过 `acceptDrop`：含 `info` 的 ZIP 是地图包（哪怕它也带 DLL），在这里装
- * 只会得到一个空预览 + 一张没装上的地图，必须引导到地图安装页。
+ * `useModInstallFlow` 与文件选择共用分类并转交地图包。
  */
 const { dragActive } = useFileDrop({
   accept: ['dll', 'zip'],
   busy: () => demoActive.value || installSourceBusy.value,
-  onDrop: (path) => {
-    void (async () => {
-      if (await acceptDrop(path, 'mod')) await startDropInstall(path)
-    })()
-  },
+  onDrop: path => { void handleInstallSourceSelect({ kind: 'local', value: path }, 'drop') },
 })
 
 /** 更新锁定选定根版本，下载验证后整批提交。 */

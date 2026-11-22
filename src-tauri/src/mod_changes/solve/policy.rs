@@ -38,6 +38,15 @@ pub(crate) enum DependencyPolicy {
 }
 
 impl DependencyPolicy {
+    pub(in crate::mod_changes) fn diagnostic_preference(self) -> &'static str {
+        match self {
+            Self::KeepInstalled => "keep_compatible_installed",
+            Self::MapInstall => "keep_compatible_installed_for_map",
+            Self::MapFilesOnly => "disabled_map_content_without_dependency_repairs",
+            Self::PreferNewest => "prefer_compatible_newest_keep_compatible_runtime",
+        }
+    }
+
     pub(crate) fn for_plan(
         inventory: &Inventory,
         request: &ChangeRequest,

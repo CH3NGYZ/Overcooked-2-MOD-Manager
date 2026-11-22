@@ -1,5 +1,5 @@
 use super::{
-    paths,
+    diagnostics, paths,
     types::{Fingerprint, RootKind, TransactionPath, TransactionRoots},
 };
 use crate::file_check;
@@ -67,7 +67,22 @@ pub(super) fn compare(
         _ if same_content => file_check::PERMISSIONS,
         _ => file_check::CONTENT,
     };
+    log_mismatch(path, stage, observed, expected, content_only);
     Err(file_check::report(stage, path, reason))
+}
+
+pub(super) fn log_mismatch(
+    path: &Path,
+    stage: &str,
+    observed: &Fingerprint,
+    expected: &Fingerprint,
+    content_only: bool,
+) {
+    log::warn!(
+        target: diagnostics::TARGET,
+        "整链事务校验不符：{}步骤={stage}，路径={:?}，期望={}，实测={}，只比较内容={content_only}",
+        diagnostics::Location, diagnostics::path(path), diagnostics::Stamp(expected), diagnostics::Stamp(observed)
+    );
 }
 
 pub(super) fn expect(path: &Path, stage: &str, expected: &Fingerprint) -> Result<(), String> {

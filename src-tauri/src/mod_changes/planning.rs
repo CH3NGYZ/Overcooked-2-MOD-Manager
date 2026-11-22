@@ -160,6 +160,45 @@ fn add_subject(trusted: &mut TrustedInventory, subject: EvaluationSubject) -> Re
 }
 
 pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<ChangePlan, String> {
+    let op = uuid::Uuid::new_v4().to_string();
+    let trace = OperationTrace::new(&op, "plan");
+    let map = wire_request.map_import.as_ref();
+    log::info!(
+        "整链入口 op={op} roots={} preview_roots={} exact_roots={} map_import={} map_selected={} map_download_requested={} map_source_declared={} bulk_toggle={} scoped_toggle={} repair={}",
+        wire_request.roots.len(),
+        wire_request
+            .roots
+            .iter()
+            .filter(|root| root.intent.node_id.starts_with("preview:"))
+            .count(),
+        wire_request
+            .roots
+            .iter()
+            .filter(|root| root.intent.candidate_id.is_some())
+            .count(),
+        map.is_some(),
+        map.map_or(0, |map| map.selected.len()),
+        map.is_some_and(|map| map.download_id.is_some()),
+        map.is_some_and(|map| map.origin.is_some()),
+        wire_request.bulk_toggle,
+        wire_request.toggle_scope.is_some(),
+        wire_request.repair_dependencies_of.is_some(),
+    );
+    let mut step = "validate_request";
+    let outcome = create_inner(state, wire_request, &trace, &mut step);
+    match &outcome {
+        Ok(plan) => log_plan(&op, "plan_returned", plan, trace.elapsed_ms(), false),
+        Err(error) => trace.failure(step, error),
+    }
+    outcome
+}
+
+fn create_inner(
+    state: &AppState,
+    wire_request: PlanRequest,
+    trace: &OperationTrace<'_>,
+    step: &mut &'static str,
+) -> Result<ChangePlan, String> {
     let repair = wire_request.repair_dependencies_of.as_deref();
     if wire_request.roots.len() > 1024
         || (repair.is_none() && wire_request.roots.is_empty() && wire_request.map_import.is_none())
@@ -171,12 +210,15 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
     {
         return Err("modChanges.installationBlocked".into());
     }
+    *step = "lease_and_recovery";
     let mut lease = SessionLease::creating(state)?;
     {
         let _operation = state.operation.lock().map_err(|_| "lock.poisoned")?;
         super::guard::ensure_recovered(state)?;
     }
+    *step = "installed_inventory";
     let trusted = (*inventory::cached(state)?).clone();
+    *step = "validate_target_scope";
     ensure_toggle_scope(state, &trusted, &wire_request)?;
     if let Some(id) = repair {
         let installed = trusted.files.get(id).is_some_and(|files| {
@@ -192,15 +234,14 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
             return Err("modChanges.targetChanged".into());
         }
     }
+    *step = "create_staging";
     let data = state
         .config
         .config_path()
         .parent()
         .ok_or("archive.pathEscape")?
         .to_path_buf();
-    let staging = data
-        .join("mod-change-staging")
-        .join(uuid::Uuid::new_v4().to_string());
+    let staging = data.join("mod-change-staging").join(trace.op);
     super::transaction::Fingerprint::capture(&staging)?;
     fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
     let request = ChangeRequest {
@@ -243,6 +284,7 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
         created: std::time::Instant::now(),
     };
     let result = (|| -> Result<ChangePlan, String> {
+        *step = "attach_preview";
         for root in session.wire_request.roots.clone() {
             if let Some(preview) = root.intent.node_id.strip_prefix("preview:") {
                 attach_preview(state, &mut session, preview)?;
@@ -266,6 +308,7 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
             }
             _ => None,
         };
+        *step = "attach_exact_root";
         for root in &session.wire_request.roots {
             if !root.intent.node_id.starts_with("preview:") {
                 attach_exact_root(
@@ -280,6 +323,7 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
             duplicate_release::attach_dependencies(&mut session.trusted, owner_id, &data);
         }
         if session.wire_request.map_import.is_some() {
+            *step = "attach_map_import";
             super::map_payload::attach(state, &mut session)?;
         }
         session.dependency_policy = if session.wire_request.roots.is_empty()
@@ -296,8 +340,11 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
                 session.map_payload.is_some(),
             )
         };
-        resolve(state, &mut session)?;
+        *step = "initial_solve";
+        resolve_stage(state, &mut session, "initial")?;
+        *step = "game_run_guard";
         super::live_game::check_plan(state, &session)?;
+        *step = "freeze_payloads";
         remember_payloads(&mut session)?;
         Ok(session.plan.clone())
     })();
@@ -307,11 +354,6 @@ pub(crate) fn create(state: &AppState, wire_request: PlanRequest) -> Result<Chan
             Ok(plan)
         }
         Err(error) => {
-            log::warn!(
-                "整链规划失败 op={} reason={}",
-                session.operation_id(),
-                crate::http_diagnostics::redact_text(&error)
-            );
             let _ = super::execution::cleanup(state, &session.staging);
             Err(error)
         }
@@ -622,31 +664,49 @@ fn attach_preview(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(), String> {
-    let original = &session.trusted.inventory;
-    let op = session.operation_id();
-    let map_trace = session.map_payload.is_some()
-        || original.nodes.iter().any(|node| {
-            node.kind == NodeKind::Map
-                && (session
-                    .request
-                    .roots
-                    .iter()
-                    .any(|root| root.node_id == node.id)
-                    || session.request.repair_dependencies_of.as_deref() == Some(&node.id))
-        });
-    log::info!(
-        "整链开始求解 op={op} policy={:?} verified={} roots={} repair={}",
-        session.dependency_policy,
-        session.verified_payloads.len(),
-        crate::http_diagnostics::redact_text(&format!("{:?}", session.request.roots)),
-        crate::http_diagnostics::redact_text(
-            session
-                .request
-                .repair_dependencies_of
-                .as_deref()
-                .unwrap_or("")
+    resolve_stage(state, session, "fixture")
+}
+
+pub(super) fn resolve_stage(
+    state: &AppState,
+    session: &mut PlanSession,
+    stage: &'static str,
+) -> Result<(), String> {
+    let op = session.operation_id().to_owned();
+    let trace = OperationTrace::new(&op, stage);
+    let mut step = "policy";
+    let outcome = resolve_inner(state, session, &trace, &mut step);
+    match &outcome {
+        Ok(()) => log_plan(
+            &op,
+            stage,
+            &session.plan,
+            trace.elapsed_ms(),
+            stage == "initial" || session.plan.result.status != SolveStatus::Ready,
         ),
+        Err(error) => trace.failure(step, error),
+    }
+    outcome
+}
+
+fn resolve_inner(
+    state: &AppState,
+    session: &mut PlanSession,
+    trace: &OperationTrace<'_>,
+    step: &mut &'static str,
+) -> Result<(), String> {
+    let original = &session.trusted.inventory;
+    let op = trace.op;
+    let stage = trace.stage;
+    log::info!(
+        "整链开始求解 op={op} stage={stage} policy={:?} preference={} verified={} roots={} repair={}",
+        session.dependency_policy,
+        session.dependency_policy.diagnostic_preference(),
+        session.verified_payloads.len(),
+        session.request.roots.len(),
+        session.request.repair_dependencies_of.is_some(),
     );
     let unbound = session.unbound_toggle_roots();
     let mut input = Cow::Borrowed(original);
@@ -662,12 +722,15 @@ pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(),
             }
         }
     }
+    *step = "load_claim_index";
     let mut releases = super::mutations::LooseReleaseSearch::new(state, session)?;
+    *step = "solve_graph";
     let (mut result, mut solved) = match super::inventory_maps::runtime_conflict::solve_toggle(
         state,
         session,
         &input,
         &mut releases,
+        trace,
     )? {
         Some(plan) => plan,
         None => super::solve::solve_with_policy(
@@ -680,10 +743,10 @@ pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(),
                 .map_payload
                 .as_ref()
                 .map_or_else(BTreeSet::new, |batch| batch.detached_active_members()),
-            (map_trace || session.dependency_policy == DependencyPolicy::PreferNewest)
-                .then_some(op),
+            Some(trace),
         )?,
     };
+    *step = "resolve_claims";
     let claims = releases.finish(state, solved.as_ref())?;
     if !unbound.is_empty() {
         if let Some(solved) = &mut solved {
@@ -699,6 +762,7 @@ pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(),
         }
         result.evaluations = super::evaluate(solved.as_ref().unwrap_or(original));
     }
+    *step = "validate_solution";
     let retirements = if let Some(solved) = &solved {
         inventory::validate_solution(&session.trusted, &session.request, solved, &unbound)?;
         session
@@ -719,13 +783,6 @@ pub(crate) fn resolve(state: &AppState, session: &mut PlanSession) -> Result<(),
             .iter()
             .filter_map(|root| session.payloads.get(&root.node_id))
             .flat_map(|payload| payload.notices.iter().cloned()),
-    );
-    log::info!(
-        "整链求解完成 op={op} status={:?} actions={} blockers={} notices={}",
-        result.status,
-        crate::http_diagnostics::redact_text(&format!("{:?}", result.actions)),
-        crate::http_diagnostics::redact_text(&format!("{:?}", result.blockers)),
-        crate::http_diagnostics::redact_text(&format!("{:?}", result.notices)),
     );
     session.release_target_claims = claims;
     session.plan = presentation(

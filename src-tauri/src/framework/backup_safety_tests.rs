@@ -28,8 +28,22 @@ fn rejects_nested_and_same_directory_before_creating_a_backup() {
     let backup_root = framework.join("plugins/OC2ModManager/backups");
     assert!(backup_bepinex_dir(&workspace.game(), &backup_root).is_err());
     assert!(!backup_root.exists());
-    assert!(copy_dir(&framework, &framework).is_err());
-    assert!(copy_dir(&framework, &workspace.game()).is_err());
+    assert!(
+        copy_dir(&FrameworkStep::new(
+            "test/copy_tree",
+            &framework,
+            &framework
+        ))
+        .is_err()
+    );
+    assert!(
+        copy_dir(&FrameworkStep::new(
+            "test/copy_tree",
+            &framework,
+            &workspace.game()
+        ))
+        .is_err()
+    );
     assert_eq!(
         fs::read(framework.join("plugins/mod.dll")).unwrap(),
         b"original"
@@ -65,6 +79,46 @@ fn rejects_nested_restore_before_removing_the_existing_framework() {
     assert_eq!(
         fs::read(nested_backup.join("snapshot.txt")).unwrap(),
         b"backup"
+    );
+}
+
+#[test]
+fn framework_failures_report_io_and_restore_staging_paths() {
+    let workspace = Workspace::new();
+    let game = workspace.game();
+    let capture = crate::http_diagnostics::capture_test_logs(
+        "app_lib::framework",
+        workspace.0.file_name().unwrap().to_str().unwrap(),
+    );
+    let blocked_root = workspace.0.join("occupied-backup-root");
+    fs::write(&blocked_root, b"do not overwrite").unwrap();
+    assert!(backup_bepinex_dir(&game, &blocked_root).is_err());
+    assert_eq!(fs::read(&blocked_root).unwrap(), b"do not overwrite");
+
+    let backup = backup_bepinex_dir(&game, &workspace.0.join("snapshots")).unwrap();
+    let framework = game.join("BepInEx");
+    fs::remove_dir_all(&framework).unwrap();
+    fs::write(&framework, b"unexpected file").unwrap();
+    assert!(restore_backup_dir(&backup, &game).is_err());
+    assert_eq!(fs::read(&framework).unwrap(), b"unexpected file");
+
+    let messages = capture.messages();
+    assert!(
+        messages.iter().any(|line| {
+            line.contains("stage=backup_directory/create_root")
+                && line.contains("occupied-backup-root")
+                && line.contains("os_code=Some(")
+        }),
+        "{messages:?}"
+    );
+    assert!(
+        messages.iter().any(|line| {
+            line.contains("stage=restore_directory/stage_existing_tree")
+                && line.contains("reason=source_not_directory")
+                && line.contains("staged=Some(")
+                && line.contains("BepInEx.before-restore-")
+        }),
+        "{messages:?}"
     );
 }
 

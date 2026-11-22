@@ -59,11 +59,13 @@ impl Search<'_, '_> {
         self.visited.clear();
         self.failure = None;
         self.failure_traces = Default::default();
+        let start = std::time::Instant::now();
         let result = self.visit(state);
         self.trace.pass(
             pass,
             self.runtime_replacement_limit,
             self.visited.len(),
+            start.elapsed().as_millis(),
             &result,
         );
         result
@@ -148,6 +150,7 @@ impl Search<'_, '_> {
                     None,
                     Some("candidate_relations_unknown"),
                 );
+                self.trace.branch(node, "candidate_relations_unknown", None);
                 self.mark_failure(node, None, true, "candidate_relations_unknown");
                 return Err(SearchFailure::Blocked(true));
             }
@@ -259,6 +262,11 @@ impl Search<'_, '_> {
                 if self.repair_allowed(&state, *owner, owned, issue, &protected) {
                     self.repair(&state, *owner, issue, &protected)
                 } else {
+                    self.trace.branch(
+                        &state.inventory.nodes[*owner],
+                        "block_without_dependency_repair",
+                        Some(&issue.relation),
+                    );
                     (Vec::new(), None)
                 };
             let mut tried_repair = !branches.is_empty();

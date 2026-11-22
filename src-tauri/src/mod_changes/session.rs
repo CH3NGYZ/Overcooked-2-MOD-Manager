@@ -3,8 +3,10 @@ use super::{install_notes::InstallNote, inventory::*, model::*, transaction::Fin
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
+    fmt::Arguments,
     path::PathBuf,
     sync::Arc,
+    time::Instant,
 };
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -79,6 +81,137 @@ pub(crate) struct ChangePlan {
     pub untracked_overwrites: Vec<UntrackedOverwrite>,
     pub install_notes: Vec<InstallNote>,
     pub prepared: bool,
+}
+
+pub(super) const DETAIL_LIMIT: usize = 24;
+pub(super) const VERIFICATION_SUMMARY_STAGE: &str = "verification_summary";
+
+pub(super) fn log_detail(value: Arguments<'_>) -> String {
+    let value = crate::http_diagnostics::redact_text(&value.to_string());
+    let Some((end, _)) = value.char_indices().nth(1400) else {
+        return value;
+    };
+    format!("{}…", &value[..end])
+}
+
+pub(super) struct OperationTrace<'a> {
+    pub op: &'a str,
+    pub stage: &'static str,
+    started: Instant,
+}
+
+impl<'a> OperationTrace<'a> {
+    pub(super) fn new(op: &'a str, stage: &'static str) -> Self {
+        Self {
+            op,
+            stage,
+            started: Instant::now(),
+        }
+    }
+
+    pub(super) fn elapsed_ms(&self) -> u128 {
+        self.started.elapsed().as_millis()
+    }
+
+    pub(super) fn failure(&self, step: &str, error: &str) {
+        let op = self.op;
+        let stage = self.stage;
+        let elapsed_ms = self.elapsed_ms();
+        let reason = crate::locale_tag::diagnostic_tag(error);
+        if error == "download.cancelled" {
+            log::info!(
+                "整链取消 op={op} step={step} stage={stage} elapsed_ms={elapsed_ms} reason={reason}"
+            );
+        } else {
+            log::warn!(
+                "整链失败 op={op} step={step} stage={stage} elapsed_ms={elapsed_ms} reason={reason}"
+            );
+        }
+    }
+}
+
+pub(super) fn log_plan(op: &str, stage: &str, plan: &ChangePlan, elapsed_ms: u128, detail: bool) {
+    let result = &plan.result;
+    log::info!(
+        "整链方案 op={op} stage={stage} plan={} status={:?} prepared={} actions={} blockers={} notices={} impacts={} retire_groups={} overwrites={} install_notes={} elapsed_ms={elapsed_ms}",
+        plan.plan_id,
+        result.status,
+        plan.prepared,
+        result.actions.len(),
+        result.blockers.len(),
+        result.notices.len(),
+        result.impacts.len(),
+        plan.retired_mod_copies.len(),
+        plan.untracked_overwrites.len(),
+        plan.install_notes.len(),
+    );
+    if !detail || !log::log_enabled!(log::Level::Info) {
+        return;
+    }
+    for action in result.actions.iter().take(DETAIL_LIMIT) {
+        log::info!(
+            "整链行动 op={op} stage={stage} {}",
+            log_detail(format_args!(
+                "node={:?} member={:?} action={:?} from={:?} to={:?} reasons={:?} omitted_reasons={}",
+                action.node_id,
+                action.member_key,
+                action.kind,
+                action.from_tag,
+                action.to_tag,
+                action.reason_details.iter().take(4).collect::<Vec<_>>(),
+                action.reason_details.len().saturating_sub(4),
+            ))
+        );
+    }
+    for blocker in result.blockers.iter().take(DETAIL_LIMIT) {
+        log::info!(
+            "整链阻断 op={op} stage={stage} {}",
+            log_detail(format_args!(
+                "kind={} owner={:?} target={:?} incomplete={} reason={:?} traces={} traces_truncated={}",
+                blocker.code,
+                blocker.owner_id,
+                blocker.target_guid,
+                blocker.incomplete,
+                crate::locale_tag::diagnostic_tag(&blocker.message),
+                blocker.traces.len(),
+                blocker.traces_truncated,
+            ))
+        );
+    }
+    for overwrite in plan.untracked_overwrites.iter().take(DETAIL_LIMIT) {
+        log::info!(
+            "整链覆盖确认 op={op} stage={stage} {}",
+            log_detail(format_args!(
+                "node={:?} path={:?}",
+                overwrite.node_id, overwrite.path,
+            ))
+        );
+    }
+    let retirements = plan
+        .retired_mod_copies
+        .iter()
+        .flat_map(|(id, copies)| copies.iter().map(move |copy| (id, copy)));
+    for (id, copy) in retirements.clone().take(DETAIL_LIMIT) {
+        log::info!(
+            "整链旧副本处理 op={op} stage={stage} {}",
+            log_detail(format_args!(
+                "node={id:?} version={:?} path={:?}",
+                copy.version, copy.dll_file,
+            ))
+        );
+    }
+    let omitted = [
+        result.actions.len(),
+        result.blockers.len(),
+        plan.untracked_overwrites.len(),
+        retirements.count(),
+    ]
+    .into_iter()
+    .map(|count| count.saturating_sub(DETAIL_LIMIT))
+    .sum::<usize>();
+    if omitted != 0 {
+        log::info!("整链方案明细已截断 op={op} stage={stage} omitted={omitted}");
+    }
 }
 
 #[derive(Clone)]
@@ -201,16 +334,35 @@ impl SessionLease {
     }
 
     pub fn take(state: &crate::app_state::AppState, id: &str) -> Result<Self, String> {
-        let mut sessions = state.mod_changes.lock().map_err(|_| "lock.poisoned")?;
+        let rejected = |reason: &str| {
+            log::warn!(
+                "整链方案未受理：plan={:?}，原因={reason}",
+                uuid::Uuid::parse_str(id).ok()
+            );
+            reason.to_owned()
+        };
+        let mut sessions = state
+            .mod_changes
+            .lock()
+            .map_err(|_| rejected("lock.poisoned"))?;
         if sessions.busy.is_some() {
-            return Err("modChanges.busy".into());
+            return Err(rejected("modChanges.busy"));
         }
-        let session = sessions.plans.remove(id).ok_or("modChanges.planExpired")?;
+        let session = sessions
+            .plans
+            .remove(id)
+            .ok_or_else(|| rejected("modChanges.planExpired"))?;
         if session.created.elapsed() >= std::time::Duration::from_secs(3600) {
             drop(sessions);
-            if let Err(error) = super::execution::cleanup(state, &session.staging) {
-                log::warn!("过期整链暂存未清理：{error}");
-            }
+            let trace = OperationTrace::new(session.operation_id(), "expire_plan");
+            let step = match super::execution::cleanup(state, &session.staging) {
+                Ok(()) => "staging_cleaned",
+                Err(error) => {
+                    trace.failure("cleanup_staging", &error);
+                    "staging_cleanup_failed"
+                }
+            };
+            trace.failure(step, "modChanges.planExpired");
             return Err("modChanges.planExpired".into());
         }
         sessions.busy = Some(id.to_string());

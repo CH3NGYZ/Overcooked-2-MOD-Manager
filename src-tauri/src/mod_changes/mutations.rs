@@ -212,17 +212,30 @@ impl Builder<'_> {
         let key = inventory::key(&mods::canonical_dll_name(relative));
         match self.ownership.get(&key) {
             Some(owners) if owners.len() == 1 && owners.contains(owner) => Ok(()),
-            Some(_) => Err(self.ownership_block(&key, owner).report(owner, relative)),
+            Some(_) => Err(self.report_ownership_conflict(&key, owner, relative)),
             None => Err(InstallBlock::Unverified.report(owner, relative)),
         }
     }
 
-    fn ownership_block(&self, key: &str, owner: &str) -> InstallBlock {
-        if self.records.claims(key).any(|record| record.owner != owner) {
+    fn report_ownership_conflict(&self, key: &str, owner: &str, relative: &str) -> String {
+        let mut claims = self
+            .records
+            .claims(key)
+            .filter(|record| record.owner != owner)
+            .peekable();
+        let block = if claims.peek().is_some() {
+            self.diagnose_record_claim(
+                owner,
+                relative,
+                Some(key),
+                "different_or_unbound_owner",
+                claims,
+            );
             InstallBlock::InstallRecord
         } else {
             InstallBlock::PathOwned
-        }
+        };
+        block.report(owner, relative)
     }
 
     pub fn add_move(
@@ -542,9 +555,7 @@ impl Builder<'_> {
                 && !restoring_owned
                 && owners.is_some_and(|owners| owners.len() != 1 || !owners.contains(&node.id))
             {
-                return Err(self
-                    .ownership_block(&ownership_key, &node.id)
-                    .report(&node.id, &destination));
+                return Err(self.report_ownership_conflict(&ownership_key, &node.id, &destination));
             }
             if is_dll && loose.is_none() && !restoring_owned {
                 let canonical = mods::canonical_dll_name(&destination);
@@ -658,6 +669,13 @@ impl Builder<'_> {
             } else {
                 InstallBlock::RecordExists
             };
+            self.diagnose_record_claim(
+                &node.id,
+                &manifest_target.relative,
+                None,
+                "install_record_path_occupied",
+                self.records.at_relative(&manifest_target.relative),
+            );
             return Err(reason.report(&node.id, &manifest_target.relative));
         }
         let staged = generated(

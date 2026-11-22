@@ -3,6 +3,7 @@ use super::evaluate::{evaluate, matches, owned_targets, same_guid, scoped_relati
 use super::inventory::TrustedInventory;
 use super::model::*;
 use super::mutations::LooseReleaseSearch;
+use super::session::OperationTrace;
 use crate::models::{RelationKind, RepositoryRelation};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
@@ -352,6 +353,12 @@ impl Search<'_, '_> {
                     .is_some_and(|installed| installed.id != candidate.id),
             );
             if replaced_installed > limit {
+                self.trace.candidate(
+                    &state.inventory.nodes[index],
+                    &candidate,
+                    relation,
+                    "skip_replacement_budget",
+                );
                 self.preference_pruned = true;
                 return None;
             }
@@ -359,6 +366,12 @@ impl Search<'_, '_> {
         let installed = state.inventory.nodes[index].current.as_ref();
         if self.replacement_only.contains(&index) {
             if installed.is_some_and(|current| current.id == candidate.id) {
+                self.trace.candidate(
+                    &state.inventory.nodes[index],
+                    &candidate,
+                    relation,
+                    "skip_unproven_old_package",
+                );
                 return None;
             }
             // The combined old group cannot supply switch defaults for its new
@@ -466,6 +479,7 @@ impl Search<'_, '_> {
     ) -> Option<SearchState> {
         let node = &state.inventory.nodes[index];
         if self.fixed.contains(&index) || !node.mutable || self.replacement_only.contains(&index) {
+            self.trace.branch(node, "skip_protected_switch", None);
             return None;
         }
         let guid = if self.whole_mod_package(node) {
@@ -500,6 +514,7 @@ impl Search<'_, '_> {
             // currently satisfied required edges, rather than protecting every DLL
             // merely because one member provides a required GUID.
             if !next.inventory.nodes[index].enabled {
+                self.trace.branch(node, "keep_required_node_enabled", None);
                 return None;
             }
             for owner_index in protected {
@@ -515,6 +530,11 @@ impl Search<'_, '_> {
                         .iter()
                         .any(|(_, plugin)| matches(&owned.relation, plugin) == Some(true));
                     if before && !after {
+                        self.trace.branch(
+                            node,
+                            "keep_required_member_enabled",
+                            Some(&owned.relation),
+                        );
                         return None;
                     }
                 }
@@ -650,6 +670,24 @@ impl Search<'_, '_> {
                 || !node.mutable
                 || node.kind == NodeKind::Map
             {
+                if self.trace.observing()
+                    && node
+                        .current
+                        .iter()
+                        .chain(&node.candidates)
+                        .any(|candidate| provides(candidate, &relation.guid))
+                {
+                    let reason = if self.fixed.contains(&index) {
+                        "skip_fixed_provider"
+                    } else if state.decided.contains(&index) {
+                        "skip_decided_provider"
+                    } else if !node.mutable {
+                        "skip_immutable_provider"
+                    } else {
+                        "skip_map_as_automatic_mod_provider"
+                    };
+                    self.trace.branch(node, reason, Some(relation));
+                }
                 continue;
             }
             // A switch or installed repair should re-enable a suitable installed
@@ -673,6 +711,20 @@ impl Search<'_, '_> {
                 if node.current.as_ref().is_some_and(|current| {
                     !proven_upgrade && !preserves_package_identity(current, &candidate)
                 }) {
+                    if self.trace.observing()
+                        && (provides(&candidate, &relation.guid)
+                            || node
+                                .current
+                                .as_ref()
+                                .is_some_and(|current| provides(current, &relation.guid)))
+                    {
+                        self.trace.candidate(
+                            node,
+                            &candidate,
+                            Some(relation),
+                            "skip_package_identity_changed",
+                        );
+                    }
                     continue;
                 }
                 let retires_conflicting_provider = proven_upgrade
@@ -688,6 +740,12 @@ impl Search<'_, '_> {
                             })
                     })
                 {
+                    self.trace.candidate(
+                        node,
+                        &candidate,
+                        Some(relation),
+                        "keep_runtime_until_mismatch_confirmed",
+                    );
                     continue;
                 }
                 if !retires_conflicting_provider
@@ -797,7 +855,7 @@ pub(super) fn solve_with_policy(
     loose_releases: Option<&mut LooseReleaseSearch<'_>>,
     policy: DependencyPolicy,
     detached_map_members: BTreeSet<&str>,
-    operation_id: Option<&str>,
+    operation: Option<&OperationTrace<'_>>,
 ) -> Result<(SolveResult, Option<Inventory>), String> {
     let failure = |blocker: Diagnostic| SolveResult {
         status: if blocker.incomplete {
@@ -818,7 +876,7 @@ pub(super) fn solve_with_policy(
         loose_releases,
         policy,
         detached_map_members,
-        operation_id,
+        operation,
     ) {
         Ok((result, solved)) => Ok((result, Some(solved))),
         Err(SolveError::Graph(blocker)) => Ok((failure(*blocker), None)),
@@ -844,8 +902,9 @@ fn solve_inner<'a>(
     loose_releases: Option<&'a mut LooseReleaseSearch<'_>>,
     policy: DependencyPolicy,
     detached_map_members: BTreeSet<&str>,
-    operation_id: Option<&'a str>,
+    operation: Option<&'a OperationTrace<'a>>,
 ) -> Result<(SolveResult, Inventory), SolveError> {
+    let trace = trace::SolveTrace::new(operation);
     let replacement_only = |id: &str| {
         trusted.is_some_and(|trusted| trusted.duplicate_releases.upgrades.contains_key(id))
     };
@@ -871,6 +930,11 @@ fn solve_inner<'a>(
                 .iter()
                 .position(|node| node.id == id && node.can_repair_dependencies())
                 .ok_or_else(|| diagnostic("root_missing", Some(id), true))?;
+            trace.branch(
+                &inventory.nodes[index],
+                "repair_installed_keep_version_and_switches",
+                None,
+            );
             roots.insert(index);
             state.decided.insert(index);
             Some(index)
@@ -897,6 +961,7 @@ fn solve_inner<'a>(
         }
         let node = &mut state.inventory.nodes[index];
         let before = node.clone();
+        trace.root(&inventory.nodes[index], root);
         if (root.member_key.is_some()
             && trusted.is_some_and(|trusted| trusted.atomic_mod_package(&node.id)))
             || (replacement_only(&node.id)
@@ -1059,7 +1124,7 @@ fn solve_inner<'a>(
         failure_traces: diagnostics::FailureTraces::default(),
         catalog_unknown: inventory.nodes.iter().any(|node| !node.candidates_complete),
         policy,
-        trace: trace::SolveTrace::new(operation_id),
+        trace,
         pass: SearchPass::CompatibleVersions,
         preference_remaining: MAX_SEARCH_STATES,
         preference_pruned: false,

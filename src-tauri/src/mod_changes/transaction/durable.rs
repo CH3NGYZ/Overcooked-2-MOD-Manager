@@ -1,6 +1,6 @@
-use super::check;
 use super::paths::{INVALID, io_error, validate_absolute, validate_relative};
 use super::types::{Fingerprint, Journal};
+use super::{check, diagnostics};
 use crate::file_check;
 use std::{
     fs,
@@ -15,7 +15,7 @@ pub(super) fn sync_parent(path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         File::open(parent)
             .and_then(|file| file.sync_all())
-            .map_err(io_error)?;
+            .map_err(|error| super::paths::io_at(parent, "sync_parent", error))?;
     }
     #[cfg(not(unix))]
     let _ = path;
@@ -34,7 +34,14 @@ pub(super) fn rename_checked(
 ) -> Result<(), String> {
     validate_absolute(source).map_err(|error| check::context(stage, source, &error))?;
     validate_absolute(target).map_err(|error| check::context(stage, target, &error))?;
-    let write_error = |error| file_check::report_io(stage, target, error, file_check::WRITE);
+    let write_error = |error: std::io::Error| {
+        log::warn!(
+            target: diagnostics::TARGET,
+            "整链事务改名失败：{}步骤={stage}，源={:?}，目标={:?}，允许替换={replace}，OS码={:?}，分类={:?}",
+            diagnostics::Location, diagnostics::path(source), diagnostics::path(target), error.raw_os_error(), error.kind()
+        );
+        file_check::report_io(stage, target, error, file_check::WRITE)
+    };
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -58,15 +65,24 @@ pub(super) fn rename_checked(
         }
         fs::rename(source, target).map_err(write_error)?;
     }
-    sync_parent(source).map_err(|error| check::context(stage, source, &error))?;
-    sync_parent(target).map_err(|error| check::context(stage, target, &error))
+    let sync = |path| {
+        sync_parent(path).map_err(|error| {
+            log::warn!(
+                target: diagnostics::TARGET,
+                "整链事务已改名但未能确认刷盘：{}步骤={stage}，源={:?}，目标={:?}，失败位置={:?}",
+                diagnostics::Location, diagnostics::path(source), diagnostics::path(target), diagnostics::path(path)
+            );
+            check::context(stage, path, &error)
+        })
+    };
+    sync(source)?;
+    sync(target)
 }
 
 pub(super) fn write_journal(directory: &Path, journal: &Journal) -> Result<(), String> {
     let temporary = directory.join(format!("journal-{}.tmp", Uuid::new_v4()));
     let bytes = serde_json::to_vec(journal).map_err(io_error)?;
-    let write_error =
-        |error| file_check::report_io(check::WRITE, &temporary, error, file_check::WRITE);
+    let write_error = |error| diagnostic_io(check::WRITE, &temporary, error, file_check::WRITE);
     let mut output = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -79,13 +95,35 @@ pub(super) fn write_journal(directory: &Path, journal: &Journal) -> Result<(), S
 }
 
 pub(super) fn read_journal(directory: &Path) -> Result<Journal, String> {
+    const MAX_JOURNAL_BYTES: u64 = 32 * 1024 * 1024;
     let path = directory.join("journal.json");
-    validate_absolute(&path)?;
-    let metadata = fs::metadata(&path).map_err(io_error)?;
-    if !metadata.is_file() || metadata.len() > 32 * 1024 * 1024 {
+    validate_absolute(&path).inspect_err(|error| {
+        log::warn!(
+            target: diagnostics::TARGET,
+            "整链事务记录路径无效：{}路径={:?}，原因={:?}",
+            diagnostics::Location, diagnostics::path(&path), crate::locale_tag::diagnostic_tag(error),
+        );
+    })?;
+    let metadata = fs::metadata(&path)
+        .map_err(|error| super::paths::io_at(&path, "read_journal_metadata", error))?;
+    if !metadata.is_file() || metadata.len() > MAX_JOURNAL_BYTES {
+        log::warn!(
+            target: diagnostics::TARGET,
+            "整链事务记录类型或大小不符合要求：{}路径={:?}，是普通文件={}，大小={}，上限={MAX_JOURNAL_BYTES}",
+            diagnostics::Location, diagnostics::path(&path), metadata.is_file(), metadata.len(),
+        );
         return Err(INVALID.into());
     }
-    serde_json::from_slice(&fs::read(path).map_err(io_error)?).map_err(|_| INVALID.into())
+    let bytes =
+        fs::read(&path).map_err(|error| super::paths::io_at(&path, "read_journal", error))?;
+    serde_json::from_slice(&bytes).map_err(|error| {
+        log::warn!(
+            target: diagnostics::TARGET,
+            "整链事务记录解析失败：{}路径={:?}，类型={:?}，行={}，列={}",
+            diagnostics::Location, diagnostics::path(&path), error.classify(), error.line(), error.column(),
+        );
+        INVALID.into()
+    })
 }
 
 pub(super) fn private_path(
@@ -107,18 +145,35 @@ pub(super) fn copy_verified(
     source_stage: &str,
     write_stage: &str,
 ) -> Result<Fingerprint, String> {
+    copy_file(source, target, expected, source_stage, write_stage).inspect_err(|error| {
+        log::warn!(
+            target: diagnostics::TARGET,
+            "整链事务复制失败：{}源={:?}，目标={:?}，源步骤={source_stage}，写步骤={write_stage}，期望={}，错误={:?}",
+            diagnostics::Location, diagnostics::path(source), diagnostics::path(target),
+            diagnostics::Stamp(expected), crate::locale_tag::diagnostic_tag(error)
+        );
+    })
+}
+
+fn copy_file(
+    source: &Path,
+    target: &Path,
+    expected: &Fingerprint,
+    source_stage: &str,
+    write_stage: &str,
+) -> Result<Fingerprint, String> {
     check::expect(source, source_stage, expected)?;
     validate_absolute(target).map_err(|error| check::context(write_stage, target, &error))?;
-    let write_error = |error| file_check::report_io(write_stage, target, error, file_check::WRITE);
+    let write_error = |error| diagnostic_io(write_stage, target, error, file_check::WRITE);
     let mut input = File::open(source)
-        .map_err(|error| file_check::report_io(source_stage, source, error, file_check::READ))?;
+        .map_err(|error| diagnostic_io(source_stage, source, error, file_check::READ))?;
     let mut output = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(target)
         .map_err(write_error)?;
     std::io::copy(&mut input, &mut output)
-        .map_err(|error| file_check::report_io(write_stage, target, error, file_check::COPY))?;
+        .map_err(|error| diagnostic_io(write_stage, target, error, file_check::COPY))?;
     output.sync_all().map_err(write_error)?;
     drop(output);
     let target_stage = if write_stage == check::WRITE_BACKUP {
@@ -131,6 +186,16 @@ pub(super) fn copy_verified(
     check::expect(source, source_stage, expected)?;
     sync_parent(target).map_err(|error| check::context(write_stage, target, &error))?;
     Ok(actual)
+}
+
+pub(super) fn diagnostic_io(
+    stage: &str,
+    path: &Path,
+    error: std::io::Error,
+    fallback: &'static str,
+) -> String {
+    super::paths::log_io(path, stage, &error);
+    file_check::report_io(stage, path, error, fallback)
 }
 
 pub(super) fn remove_file_checked(
@@ -147,7 +212,7 @@ pub(super) fn remove_file_checked(
     }
     // The write-ahead record retains the original permissions if clearing readonly crashes.
     let mut permissions = fs::metadata(path)
-        .map_err(|error| file_check::report_io(check::TARGET, path, error, file_check::READ))?
+        .map_err(|error| diagnostic_io(check::TARGET, path, error, file_check::READ))?
         .permissions();
     if permissions.readonly() {
         #[cfg(unix)]
@@ -158,9 +223,9 @@ pub(super) fn remove_file_checked(
         #[cfg(not(unix))]
         permissions.set_readonly(false);
         fs::set_permissions(path, permissions)
-            .map_err(|error| file_check::report_io(check::WRITE, path, error, file_check::WRITE))?;
+            .map_err(|error| diagnostic_io(check::WRITE, path, error, file_check::WRITE))?;
     }
     fs::remove_file(path)
-        .map_err(|error| file_check::report_io(check::WRITE, path, error, file_check::WRITE))?;
+        .map_err(|error| diagnostic_io(check::WRITE, path, error, file_check::WRITE))?;
     sync_parent(path).map_err(|error| check::writing(path, &error))
 }

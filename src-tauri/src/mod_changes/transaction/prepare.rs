@@ -1,28 +1,46 @@
 use super::durable::{copy_verified, private_path, write_journal};
 use super::paths::{UNSAFE, validate_mutations, validate_roots};
 use super::types::*;
-use super::{PreparedTransaction, check};
+use super::{PreparedTransaction, check, diagnostics};
 use crate::file_check;
 use std::{collections::HashSet, fs, path::Path};
 use uuid::Uuid;
 
 /// Sources must already represent the complete validated download set. Only private staging
 /// is written here; the write-ahead journal is published after all source copies verify.
-pub(crate) fn prepare(
+pub(crate) fn prepare_for_operation(
     transaction_root: &Path,
     roots: &TransactionRoots,
     mutations: Vec<Mutation>,
+    operation: Option<&str>,
 ) -> Result<PreparedTransaction, String> {
-    validate_roots(transaction_root, roots)?;
-    validate_mutations(&mutations, transaction_root, roots)?;
+    let id = Uuid::new_v4().to_string();
+    let _scope = diagnostics::enter(&id);
+    let directory = transaction_root.join(&id);
+    if let Some(operation) = operation {
+        log::info!(
+            target: diagnostics::TARGET,
+            "开始准备整链事务 op={} txn={id} 目录={:?} 游戏根={:?} 数据根={:?} 记录数={}",
+            file_check::log_field(operation), diagnostics::path(&directory), diagnostics::path(&roots.game_root),
+            diagnostics::path(&roots.data_root), mutations.len(),
+        );
+    }
+    let failed = |stage: &str, error: &str| {
+        log::warn!(
+            target: diagnostics::TARGET,
+            "整链事务准备失败：事务={id}，阶段={stage}，目录={:?}，未写入正式目标，错误={:?}",
+            diagnostics::path(&directory), crate::locale_tag::diagnostic_tag(error)
+        );
+    };
+    validate_roots(transaction_root, roots).inspect_err(|error| failed("validate_roots", error))?;
+    validate_mutations(&mutations, transaction_root, roots)
+        .inspect_err(|error| failed("validate_mutations", error))?;
     if mutations.is_empty() {
         return Err("recycle.noMovableFiles".into());
     }
     fs::create_dir_all(transaction_root).map_err(|error| {
-        file_check::report_io(check::WRITE, transaction_root, error, file_check::WRITE)
+        super::durable::diagnostic_io(check::WRITE, transaction_root, error, file_check::WRITE)
     })?;
-    let id = Uuid::new_v4().to_string();
-    let directory = transaction_root.join(&id);
     create_dir(&directory, check::WRITE)?;
     let result = (|| {
         create_dir(&directory.join("before"), check::WRITE_BACKUP)?;
@@ -31,6 +49,7 @@ pub(crate) fn prepare(
         let mut parents = Vec::new();
         let mut known_parents = HashSet::new();
         for (index, mutation) in mutations.into_iter().enumerate() {
+            let _step = diagnostics::step(index, "prepare_record");
             let operation = match mutation {
                 Mutation::File(change) => {
                     let target = check::resolve(&change.target, roots, check::TARGET)?;
@@ -209,13 +228,14 @@ pub(crate) fn prepare(
             });
         }
         // Detect a changing scene across the preparation window before publishing a journal.
-        for record in &records {
+        for (index, record) in records.iter().enumerate() {
+            let _step = diagnostics::step(index, "verify_prepared_record");
             super::engine::verify_before(record, roots)?;
         }
         super::paths::validate_records(&records, transaction_root, roots)?;
         let journal = Journal {
             version: 1,
-            id,
+            id: id.clone(),
             roots: roots.clone(),
             state: JournalState::Prepared,
             records,
@@ -230,7 +250,8 @@ pub(crate) fn prepare(
             journal,
         })
     })();
-    if result.is_err() {
+    if let Err(error) = &result {
+        failed("stage_and_publish", error);
         // No game/data target was touched. Recovery material is unnecessary until publication.
         if let Err(error) = super::recovery::remove_private_tree(&directory) {
             log::warn!("清理未发布事务失败：{error}");
@@ -239,9 +260,18 @@ pub(crate) fn prepare(
     result
 }
 
+#[cfg(test)]
+pub(crate) fn prepare(
+    transaction_root: &Path,
+    roots: &TransactionRoots,
+    mutations: Vec<Mutation>,
+) -> Result<PreparedTransaction, String> {
+    prepare_for_operation(transaction_root, roots, mutations, None)
+}
+
 fn create_dir(path: &Path, stage: &str) -> Result<(), String> {
     fs::create_dir(path)
-        .map_err(|error| file_check::report_io(stage, path, error, file_check::WRITE))
+        .map_err(|error| super::durable::diagnostic_io(stage, path, error, file_check::WRITE))
 }
 
 fn collect_missing_parents(

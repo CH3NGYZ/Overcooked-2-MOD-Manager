@@ -82,6 +82,43 @@ pub(super) fn game(relative: &str) -> TransactionPath {
 }
 
 #[test]
+fn rejected_transaction_preparation_still_correlates_operation_and_failure() {
+    let workspace = Workspace::new();
+    let marker = workspace
+        ._temporary
+        .path()
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let operation = uuid::Uuid::new_v4().to_string();
+    let capture = crate::http_diagnostics::capture_test_logs(diagnostics::TARGET, marker);
+    let invalid_root = workspace.roots.game_root.join("transactions");
+    assert!(
+        prepare_for_operation(
+            &invalid_root,
+            &workspace.roots,
+            Vec::new(),
+            Some(&operation)
+        )
+        .is_err()
+    );
+    let messages = capture.messages();
+    let transaction_id = messages
+        .iter()
+        .find(|line| line.contains(&format!("op={operation}")))
+        .and_then(|line| line.split_once("txn="))
+        .and_then(|(_, value)| value.split_ascii_whitespace().next())
+        .unwrap();
+    assert!(
+        messages
+            .iter()
+            .any(|line| line.contains(&format!("事务={transaction_id}，阶段=validate_roots")))
+    );
+    assert!(!invalid_root.exists());
+}
+
+#[test]
 fn prepared_does_not_change_targets_and_batch_commits_every_file() {
     let w = Workspace::new();
     w.write("plugins/a.dll", b"old A");
@@ -129,6 +166,93 @@ fn domain_check_before_apply_rejects_with_no_live_writes_or_pending_journal() {
     assert!(!w.roots.game_root.join("levels").exists());
     assert!(!journal.exists());
     assert!(!has_pending(&w.journal_root).unwrap());
+}
+
+#[cfg(windows)]
+#[test]
+fn locked_replacement_logs_transaction_record_endpoints_os_code_and_rollback() {
+    use std::os::windows::fs::OpenOptionsExt;
+    use winapi::um::winnt::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+
+    let workspace = Workspace::new();
+    workspace.write("plugins/dependency.dll", b"old dependency");
+    workspace.write("plugins/locked-target.dll", b"old target");
+    let pending = workspace.prepare(vec![
+        workspace.file("plugins/dependency.dll", Some(b"new dependency")),
+        workspace.file("plugins/locked-target.dll", Some(b"new target")),
+    ]);
+    let id = pending.id().to_owned();
+    let journal = workspace.journal_root.join(&id);
+    let capture = crate::http_diagnostics::capture_test_logs(diagnostics::TARGET, &id);
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .open(workspace.roots.game_root.join("plugins/locked-target.dll"))
+        .unwrap();
+    let error = pending.apply().unwrap_err();
+    drop(lock);
+    assert!(error.starts_with("modChanges.writeInstallFile?"), "{error}");
+    let messages = capture.messages();
+    assert!(
+        messages.iter().any(|message| message.contains("改名失败")
+            && message.contains("记录号=2")
+            && message.contains("locked-target.dll")
+            && (message.contains("OS码=Some(5)") || message.contains("OS码=Some(32)"))
+            && message.contains("允许替换=true")),
+        "{messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("记录状态=Applying")
+                && message.contains("before")
+                && message.contains("after")
+                && message.contains("sha256=")
+                && message.contains("locked-target.dll")),
+        "{messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("阶段=rolled_back") && message.contains("已回滚=2")),
+        "{messages:?}"
+    );
+    assert_eq!(workspace.read("plugins/dependency.dll"), b"old dependency");
+    assert_eq!(workspace.read("plugins/locked-target.dll"), b"old target");
+    assert!(!journal.exists());
+    assert!(!has_pending(&workspace.journal_root).unwrap());
+}
+
+#[test]
+fn cancellation_after_journal_starts_reports_no_live_write() {
+    let workspace = Workspace::new();
+    workspace.write("plugins/a.dll", b"old");
+    let pending = workspace.prepare(vec![workspace.file("plugins/a.dll", Some(b"new"))]);
+    let id = pending.id().to_owned();
+    let capture = crate::http_diagnostics::capture_test_logs(diagnostics::TARGET, &id);
+    let checks = AtomicUsize::new(0);
+    assert_eq!(
+        pending
+            .apply_with_cancel(
+                || checks.fetch_add(1, Ordering::SeqCst) >= 1,
+                |_| panic!("no record should start writing"),
+            )
+            .unwrap_err(),
+        "download.cancelled"
+    );
+    let messages = capture.messages();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("阶段=no_live_write"))
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|message| message.contains("阶段=rolled_back"))
+    );
+    assert_eq!(workspace.read("plugins/a.dll"), b"old");
+    assert!(!workspace.journal_root.join(id).exists());
 }
 
 #[test]
@@ -339,6 +463,7 @@ fn wrong_game_root_is_blocked_and_prepared_journal_is_retained() {
     let w = Workspace::new();
     let pending = w.prepare(vec![w.file("a.dll", Some(b"A"))]);
     let directory = pending.directory.clone();
+    let capture = crate::http_diagnostics::capture_test_logs(diagnostics::TARGET, pending.id());
     drop(pending);
     let mut roots = w.roots.clone();
     roots.game_root = w.roots.game_root.join("other");
@@ -348,6 +473,50 @@ fn wrong_game_root_is_blocked_and_prepared_journal_is_retained() {
         1
     );
     assert!(directory.join("journal.json").exists());
+    let messages = capture.messages();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("字段=roots") && message.contains("journal.json"))
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("当前游戏根=") && message.contains("other"))
+    );
+}
+
+#[test]
+fn invalid_journal_logs_parse_location_without_copying_content() {
+    let workspace = Workspace::new();
+    let pending = workspace.prepare(vec![workspace.file("a.dll", Some(b"A"))]);
+    let id = pending.id().to_owned();
+    let journal = pending.directory.join("journal.json");
+    drop(pending);
+    let invalid = br#"{"version":"private marker not for logs"}"#;
+    fs::write(&journal, invalid).unwrap();
+    let capture = crate::http_diagnostics::capture_test_logs(diagnostics::TARGET, &id);
+    assert_eq!(
+        recover_all(&workspace.journal_root, &workspace.roots)
+            .unwrap()
+            .blocked,
+        [id]
+    );
+    let messages = capture.messages();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("journal.json")
+                && message.contains("类型=Data")
+                && message.contains("行=1")
+                && message.contains("列="))
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|message| !message.contains("private marker"))
+    );
+    assert_eq!(fs::read(journal).unwrap(), invalid);
 }
 
 #[test]

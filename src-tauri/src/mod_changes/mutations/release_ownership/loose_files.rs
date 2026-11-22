@@ -150,7 +150,7 @@ impl Builder<'_> {
             };
             let report = |block: InstallBlock| block.report(&node.id, &physical);
             let unknown = || report(InstallBlock::Unverified);
-            let claimed = || report(self.ownership_block(&key, &node.id));
+            let claimed = || self.report_ownership_conflict(&key, &node.id, &physical);
             let scope = proof.as_ref().map_err(|failure| {
                 if foreign_manifest {
                     claimed()
@@ -225,6 +225,7 @@ impl Builder<'_> {
                 registered,
                 scan_owner,
                 false,
+                Some(&node.id),
             )
             .map_err(report)?;
             result.loose.insert(
@@ -247,6 +248,7 @@ impl Builder<'_> {
         registered: &[crate::level_sets::RegisteredLevelSetPlugin],
         scan_owner: Option<&str>,
         standalone: bool,
+        requester: Option<&str>,
     ) -> Result<(), InstallBlock> {
         let resolve = |name: &str| -> Option<PathBuf> {
             fs::canonicalize(game(name).resolve(&self.roots).ok()?).ok()
@@ -267,12 +269,12 @@ impl Builder<'_> {
         let key = inventory::key(&mods::canonical_dll_name(relative));
         let claims = self
             .records
-            .members()
-            .map(|(file, _)| (file, InstallBlock::InstallRecord))
+            .claimed_files()
+            .map(|(file, record)| (file, InstallBlock::InstallRecord, Some(record)))
             .chain(
                 registered
                     .iter()
-                    .map(|entry| (entry.dll.as_str(), InstallBlock::MapProtected)),
+                    .map(|entry| (entry.dll.as_str(), InstallBlock::MapProtected, None)),
             )
             .chain(self.session.trusted.files.iter().flat_map(|(id, node)| {
                 let key = &key;
@@ -280,9 +282,9 @@ impl Builder<'_> {
                     .members
                     .iter()
                     .filter(move |member| Some(id.as_str()) != scan_owner || member.key != *key)
-                    .map(|m| (m.dll_file.as_str(), InstallBlock::PathOwned))
+                    .map(|m| (m.dll_file.as_str(), InstallBlock::PathOwned, None))
             }));
-        self.ensure_physically_unclaimed(relative, &real_path, claims)
+        self.ensure_physically_unclaimed(relative, &real_path, claims, requester)
     }
 
     pub(super) fn verify_member(

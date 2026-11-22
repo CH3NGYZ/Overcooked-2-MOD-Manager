@@ -5,7 +5,7 @@ use super::paths::is_safe_relative;
 use crate::asset_bundle::LevelSetMetadata;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, hash_map::Entry};
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -116,38 +116,69 @@ pub(crate) fn checked_registered_plugins(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound && !path.is_symlink() => {
             return Ok(Vec::new());
         }
-        Err(error) => return Err(error.to_string()),
+        Err(error) => {
+            if strict {
+                log::warn!(
+                    "随包插件登记校验失败：stage=read reason=unreadable registry={:?} io_kind={:?} os_code={:?} symlink={}",
+                    crate::file_check::log_path(&path),
+                    error.kind(),
+                    error.raw_os_error(),
+                    path.is_symlink()
+                );
+            }
+            return Err(error.to_string());
+        }
     };
     let parsed: LevelSetPluginRegistryFile = match serde_json::from_str(&text) {
         Ok(parsed) => parsed,
         Err(error) => {
             log::warn!(
-                "随包插件登记表解析失败，按空表处理：文件={}，原因={}",
-                path.display(),
-                error
+                "随包插件登记解析失败：stage=parse reason=invalid_json registry={:?} strict={strict} category={:?} line={} column={}",
+                crate::file_check::log_path(&path),
+                error.classify(),
+                error.line(),
+                error.column()
             );
             return Err("modChanges.ambiguousOwnership".into());
         }
     };
     if parsed.version > LEVEL_SET_PLUGIN_REGISTRY_VERSION {
         log::warn!(
-            "随包插件登记表版本比当前程序新，按空表处理：文件={}，版本={}",
-            path.display(),
-            parsed.version
+            "随包插件登记版本不受支持：stage=version reason=unsupported_version registry={:?} strict={strict} version={} supported_version={LEVEL_SET_PLUGIN_REGISTRY_VERSION}",
+            crate::file_check::log_path(&path),
+            parsed.version,
         );
         return Err("modChanges.ambiguousOwnership".into());
     }
-    let mut seen = HashSet::new();
+    let mut seen = HashMap::new();
     let mut entries = Vec::new();
-    for entry in parsed.entries {
-        match normalize_registered_dll(&entry.dll) {
-            Some(dll) if seen.insert(dll.to_lowercase()) => {
+    for (index, entry) in parsed.entries.into_iter().enumerate() {
+        let Some(dll) = normalize_registered_dll(&entry.dll) else {
+            if strict {
+                log::warn!(
+                    "随包插件登记校验失败：stage=entries reason=unsafe_relative_path registry={:?} entry=entries[{index}].dll",
+                    crate::file_check::log_path(&path)
+                );
+                return Err("modChanges.ambiguousOwnership".into());
+            }
+            continue;
+        };
+        match seen.entry(dll.to_lowercase()) {
+            Entry::Vacant(first) => {
+                first.insert(index);
                 entries.push(RegisteredLevelSetPlugin {
                     dll,
                     owner: entry.owner,
                 });
             }
-            _ if strict => return Err("modChanges.ambiguousOwnership".into()),
+            Entry::Occupied(first) if strict => {
+                log::warn!(
+                    "随包插件登记校验失败：stage=entries reason=duplicate_normalized_path registry={:?} entry=entries[{index}].dll first_entry=entries[{}].dll",
+                    crate::file_check::log_path(&path),
+                    first.get()
+                );
+                return Err("modChanges.ambiguousOwnership".into());
+            }
             _ => {}
         }
     }

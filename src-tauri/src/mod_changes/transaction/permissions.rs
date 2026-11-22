@@ -1,10 +1,11 @@
-use super::paths::io_error;
+use super::paths::io_at;
 use super::types::PermissionsSnapshot;
 use std::{fs, path::Path};
 
 impl PermissionsSnapshot {
     pub(super) fn capture(path: &Path) -> Result<Self, String> {
-        let metadata = fs::metadata(path).map_err(io_error)?;
+        let metadata =
+            fs::metadata(path).map_err(|error| io_at(path, "permission_metadata", error))?;
         Ok(Self {
             readonly: metadata.permissions().readonly(),
             #[cfg(unix)]
@@ -23,13 +24,17 @@ impl PermissionsSnapshot {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(path, fs::Permissions::from_mode(self.mode)).map_err(io_error)?;
+            fs::set_permissions(path, fs::Permissions::from_mode(self.mode))
+                .map_err(|error| io_at(path, "write_permissions", error))?;
         }
         #[cfg(not(unix))]
         {
-            let mut permissions = fs::metadata(path).map_err(io_error)?.permissions();
+            let mut permissions = fs::metadata(path)
+                .map_err(|error| io_at(path, "permission_metadata", error))?
+                .permissions();
             permissions.set_readonly(self.readonly);
-            fs::set_permissions(path, permissions).map_err(io_error)?;
+            fs::set_permissions(path, permissions)
+                .map_err(|error| io_at(path, "write_permissions", error))?;
         }
         Ok(())
     }
@@ -52,11 +57,11 @@ mod windows {
     }
 
     pub(super) fn read_acl(path: &Path) -> Result<Vec<u8>, String> {
-        let path = wide(path);
+        let encoded = wide(path);
         let mut size = 0;
         unsafe {
             GetFileSecurityW(
-                path.as_ptr(),
+                encoded.as_ptr(),
                 DACL_SECURITY_INFORMATION,
                 std::ptr::null_mut(),
                 0,
@@ -64,12 +69,16 @@ mod windows {
             )
         };
         if size == 0 || size > 1024 * 1024 {
-            return Err(io_error(std::io::Error::last_os_error()));
+            return Err(io_at(
+                path,
+                "read_acl_size",
+                std::io::Error::last_os_error(),
+            ));
         }
         let mut buffer = vec![0; size as usize];
         if unsafe {
             GetFileSecurityW(
-                path.as_ptr(),
+                encoded.as_ptr(),
                 DACL_SECURITY_INFORMATION,
                 buffer.as_mut_ptr().cast(),
                 size,
@@ -77,7 +86,7 @@ mod windows {
             )
         } == 0
         {
-            return Err(io_error(std::io::Error::last_os_error()));
+            return Err(io_at(path, "read_acl", std::io::Error::last_os_error()));
         }
         buffer.truncate(size as usize);
         // SetFileSecurity may clear AUTO_INHERITED bookkeeping while retaining
@@ -104,23 +113,27 @@ mod windows {
             )
         } == 0
         {
-            return Err(io_error(std::io::Error::last_os_error()));
+            return Err(io_at(
+                path,
+                "read_acl_control",
+                std::io::Error::last_os_error(),
+            ));
         }
         let protection = if control & SE_DACL_PROTECTED != 0 {
             PROTECTED_DACL_SECURITY_INFORMATION
         } else {
             UNPROTECTED_DACL_SECURITY_INFORMATION
         };
-        let path = wide(path);
+        let encoded = wide(path);
         if unsafe {
             SetFileSecurityW(
-                path.as_ptr(),
+                encoded.as_ptr(),
                 DACL_SECURITY_INFORMATION | protection,
                 descriptor.as_mut_ptr().cast(),
             )
         } == 0
         {
-            return Err(io_error(std::io::Error::last_os_error()));
+            return Err(io_at(path, "write_acl", std::io::Error::last_os_error()));
         }
         Ok(())
     }

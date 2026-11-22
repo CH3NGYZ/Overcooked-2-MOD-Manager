@@ -1,5 +1,5 @@
 use super::types::RecoveryReport;
-use super::{PreparedTransaction, check, durable, engine, paths, types::*};
+use super::{PreparedTransaction, check, diagnostics, durable, engine, paths, types::*};
 use std::{fs, path::Path};
 use uuid::Uuid;
 
@@ -50,25 +50,67 @@ pub(crate) fn recover_all(
             continue;
         }
         let id = entry.file_name().to_string_lossy().into_owned();
-        if !directory.join("journal.json").exists() {
+        let journal_path = directory.join("journal.json");
+        if !journal_path.exists() {
             // A preparation interrupted before publication touched no live targets.
             // Keep its staging for diagnosis; it must never be guessed into a rollback.
             continue;
         }
         let result = (|| {
+            let _scope = diagnostics::enter(&id);
             let journal = durable::read_journal(&directory)?;
-            if journal.version != 1
-                || journal.id != id
-                || Uuid::parse_str(&id).is_err()
-                || journal.roots != *roots
-                || journal.created_directory_count > journal.created_directories.len()
-            {
+            let invalid_field = if journal.version != 1 {
+                Some("schema_version")
+            } else if journal.id != id || Uuid::parse_str(&id).is_err() {
+                Some("transaction_id")
+            } else if journal.roots != *roots {
+                Some("roots")
+            } else if journal.created_directory_count > journal.created_directories.len() {
+                Some("parent_count")
+            } else {
+                None
+            };
+            if let Some(field) = invalid_field {
+                log::warn!(
+                    target: diagnostics::TARGET,
+                    "整链恢复记录校验失败：{}路径={:?}，字段={field}，实际版本={}，预期版本=1，ID与目录一致={}，父目录已建={}，计划父目录={}",
+                    diagnostics::Location, diagnostics::path(&journal_path), journal.version,
+                    journal.id == id, journal.created_directory_count, journal.created_directories.len(),
+                );
+                if field == "roots" {
+                    log::warn!(
+                        target: diagnostics::TARGET,
+                        "整链恢复根目录不符：{}记录游戏根={:?}，当前游戏根={:?}，记录数据根={:?}，当前数据根={:?}",
+                        diagnostics::Location,
+                        diagnostics::path(&journal.roots.game_root), diagnostics::path(&roots.game_root),
+                        diagnostics::path(&journal.roots.data_root), diagnostics::path(&roots.data_root),
+                    );
+                }
                 return Err(paths::INVALID.to_string());
             }
-            paths::validate_records(&journal.records, transaction_root, roots)?;
+            paths::validate_records(&journal.records, transaction_root, roots).inspect_err(|error| {
+                log::warn!(
+                    target: diagnostics::TARGET,
+                    "整链恢复变更记录校验失败：{}路径={:?}，记录数={}，原因={:?}",
+                    diagnostics::Location, diagnostics::path(&journal_path), journal.records.len(),
+                    crate::locale_tag::diagnostic_tag(error),
+                );
+            })?;
             for parent in &journal.created_directories {
-                let absolute = parent.resolve(roots)?;
+                let absolute = parent.resolve(roots).inspect_err(|error| {
+                    log::warn!(
+                        target: diagnostics::TARGET,
+                        "整链恢复父目录无效：{}父目录={:?}，原因={:?}",
+                        diagnostics::Location, diagnostics::endpoint(roots, parent),
+                        crate::locale_tag::diagnostic_tag(error),
+                    );
+                })?;
                 if paths::overlaps(&absolute, transaction_root) {
+                    log::warn!(
+                        target: diagnostics::TARGET,
+                        "整链恢复父目录与事务根重叠：{}父目录={:?}，事务根={:?}",
+                        diagnostics::Location, diagnostics::path(&absolute), diagnostics::path(transaction_root),
+                    );
                     return Err(paths::UNSAFE.to_string());
                 }
             }
@@ -86,7 +128,12 @@ pub(crate) fn recover_all(
             Ok(())
         })();
         if let Err(error) = result {
-            log::error!("批次 {id} 自动恢复被阻止，保留全部材料：{error}");
+            log::error!(
+                "批次 {:?} 自动恢复被阻止，保留恢复材料：记录={:?}，原因={:?}",
+                crate::file_check::log_field(&id),
+                diagnostics::path(&journal_path),
+                crate::locale_tag::diagnostic_tag(&error)
+            );
             report.blocked.push(id);
         }
     }
@@ -111,15 +158,39 @@ impl PreparedTransaction {
             ) {
                 continue;
             }
+            let _step = diagnostics::step(index, "rollback_record");
             self.journal.records[index].phase = RecordPhase::Reverting;
-            self.persist()?;
+            self.persist().inspect_err(|error| {
+                diagnostics::record(
+                    &self.journal,
+                    &self.directory,
+                    index,
+                    "rollback_journal_before",
+                    error,
+                );
+            })?;
             if let Err(error) = self.revert_record(index) {
+                diagnostics::record(
+                    &self.journal,
+                    &self.directory,
+                    index,
+                    "rollback_record",
+                    &error,
+                );
                 self.journal.error = Some(error.clone());
                 let _ = self.persist();
                 return Err(error);
             }
             self.journal.records[index].phase = RecordPhase::Reverted;
-            self.persist()?;
+            self.persist().inspect_err(|error| {
+                diagnostics::record(
+                    &self.journal,
+                    &self.directory,
+                    index,
+                    "rollback_journal_after",
+                    error,
+                );
+            })?;
         }
         for parent in self.journal.created_directories[..self.journal.created_directory_count]
             .iter()
@@ -136,7 +207,14 @@ impl PreparedTransaction {
                 {
                     ()
                 }
-                Err(error) => return Err(paths::io_error(error)),
+                Err(error) => {
+                    log::warn!(
+                        target: diagnostics::TARGET,
+                        "整链事务回滚目录失败：事务={}，目录={:?}，OS码={:?}，分类={:?}",
+                        self.id(), diagnostics::path(&path), error.raw_os_error(), error.kind()
+                    );
+                    return Err(paths::io_error(error));
+                }
             }
         }
         self.journal.state = JournalState::Cleaned;
@@ -252,6 +330,7 @@ impl PreparedTransaction {
                 self.journal.records[index].operation,
                 RecordedMutation::Tree { .. }
             ) {
+                let _step = diagnostics::step(index, "cleanup_record");
                 let phase = self.journal.records[index].phase;
                 if phase == RecordPhase::Pending {
                     continue;
@@ -260,11 +339,23 @@ impl PreparedTransaction {
                     super::tree::validate_cleanup(
                         &self.journal.records[index].operation,
                         &self.journal.roots,
-                    )?;
+                    )
+                    .inspect_err(|error| {
+                        diagnostics::record(
+                            &self.journal,
+                            &self.directory,
+                            index,
+                            "validate_cleanup",
+                            error,
+                        );
+                    })?;
                     self.journal.records[index].phase = RecordPhase::Purging;
                     self.persist()?;
                 }
-                super::tree::cleanup(&self.journal.records[index].operation, &self.journal.roots)?;
+                super::tree::cleanup(&self.journal.records[index].operation, &self.journal.roots)
+                    .inspect_err(|error| {
+                    diagnostics::record(&self.journal, &self.directory, index, "clean_tree", error);
+                })?;
             }
         }
         // Keep journal until all private payloads are gone. Interrupted committed cleanup
@@ -295,7 +386,7 @@ pub(crate) fn remove_private_tree(path: &Path) -> Result<(), String> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(paths::io_error(error)),
+        Err(error) => return Err(paths::io_at(path, "private_cleanup_metadata", error)),
     };
     if paths::is_link(&metadata) {
         return Err(paths::UNSAFE.into());
@@ -310,12 +401,14 @@ pub(crate) fn remove_private_tree(path: &Path) -> Result<(), String> {
             }
             #[cfg(not(unix))]
             permissions.set_readonly(false);
-            fs::set_permissions(path, permissions).map_err(paths::io_error)?;
+            fs::set_permissions(path, permissions)
+                .map_err(|error| paths::io_at(path, "private_cleanup_permissions", error))?;
         }
-        for entry in fs::read_dir(path).map_err(paths::io_error)? {
-            remove_private_tree(&entry.map_err(paths::io_error)?.path())?;
+        let read_error = |error| paths::io_at(path, "private_cleanup_list", error);
+        for entry in fs::read_dir(path).map_err(read_error)? {
+            remove_private_tree(&entry.map_err(read_error)?.path())?;
         }
-        fs::remove_dir(path).map_err(paths::io_error)?;
+        fs::remove_dir(path).map_err(|error| paths::io_at(path, "private_cleanup_rmdir", error))?;
         durable::sync_parent(path)
     } else {
         let fingerprint = Fingerprint::capture(path)?;

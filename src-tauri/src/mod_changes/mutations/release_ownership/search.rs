@@ -111,6 +111,7 @@ impl<'a> LooseReleaseSearch<'a> {
                         registered,
                         Some(&nodes[index].id),
                         false,
+                        None,
                     )
                     .is_err()
                 {

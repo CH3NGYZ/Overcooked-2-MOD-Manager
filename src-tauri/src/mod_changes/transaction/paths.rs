@@ -9,8 +9,25 @@ pub(super) const INVALID: &str = "recycle.invalidRecord";
 pub(super) const IO_ERROR: &str = "recycle.fileOperationFailed";
 
 pub(super) fn io_error(error: impl std::fmt::Display) -> String {
-    log::error!("批次事务文件操作失败：{error}");
+    log::error!(
+        "批次事务文件操作失败：{}详情={:?}",
+        super::diagnostics::Location,
+        crate::file_check::log_field(&error.to_string())
+    );
     IO_ERROR.into()
+}
+
+pub(super) fn io_at(path: &Path, operation: &str, error: std::io::Error) -> String {
+    log_io(path, operation, &error);
+    IO_ERROR.into()
+}
+
+pub(super) fn log_io(path: &Path, operation: &str, error: &std::io::Error) {
+    log::warn!(
+        target: super::diagnostics::TARGET,
+        "整链事务文件操作失败：{}操作={operation}，路径={:?}，OS码={:?}，分类={:?}",
+        super::diagnostics::Location, super::diagnostics::path(path), error.raw_os_error(), error.kind()
+    );
 }
 
 pub(super) fn is_link(metadata: &fs::Metadata) -> bool {
@@ -74,7 +91,7 @@ pub(super) fn validate_absolute(path: &Path) -> Result<(), String> {
             Ok(metadata) if is_link(&metadata) => return Err(UNSAFE.into()),
             Ok(_) => (),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
-            Err(error) => return Err(io_error(error)),
+            Err(error) => return Err(io_at(&current, "validate_path", error)),
         }
     }
     Ok(())

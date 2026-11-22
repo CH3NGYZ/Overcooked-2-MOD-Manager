@@ -3,7 +3,7 @@ use super::*;
 use crate::mod_changes::{
     evaluate::{same_guid, targets},
     mutations,
-    session::PlanSession,
+    session::{OperationTrace, PlanSession},
     transaction::*,
 };
 use std::{cmp::Ordering, fs};
@@ -15,6 +15,7 @@ pub(in crate::mod_changes) fn solve_toggle(
     session: &PlanSession,
     original: &Inventory,
     loose_releases: &mut mutations::LooseReleaseSearch<'_>,
+    trace: &OperationTrace<'_>,
 ) -> Result<Option<(SolveResult, Option<Inventory>)>, String> {
     let [root] = session.request.roots.as_slice() else {
         return Ok(None);
@@ -107,7 +108,7 @@ pub(in crate::mod_changes) fn solve_toggle(
             Some(&mut *loose_releases),
             session.dependency_policy,
             Default::default(),
-            Some(session.operation_id()),
+            Some(trace),
         )
     };
     let (mut result, solved) = if conflicts.is_empty() {

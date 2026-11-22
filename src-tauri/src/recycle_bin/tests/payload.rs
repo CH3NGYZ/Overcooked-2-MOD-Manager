@@ -85,6 +85,43 @@ fn changed_payload_fingerprint_is_not_exposed() {
 }
 
 #[test]
+fn restore_logs_expected_and_actual_fingerprints_without_logging_payload_bytes() {
+    let workspace = Workspace::new();
+    let id = stage_legacy_chef(&workspace);
+    let record_dir = workspace.recycle.join(&id);
+    let staged = record_dir.join("files").join(FILE);
+    let record = load_record(&record_dir, &id).unwrap();
+    let replacement = b"private test fixture contents";
+    fs::write(&staged, replacement).unwrap();
+    let (actual_size, actual_hash) =
+        crate::recycle_bin::file_io::fingerprint(&staged, None).unwrap();
+    let captured = crate::http_diagnostics::capture_test_logs("app_lib::recycle_bin::file_io", &id);
+
+    assert_eq!(
+        restore(
+            &workspace.recycle,
+            &workspace.manifests,
+            &workspace.game,
+            &id
+        )
+        .unwrap_err(),
+        file_check::report(VERIFY_FILES, &staged, file_check::CONTENT)
+    );
+    let messages = captured.messages();
+    assert_eq!(messages.len(), 1);
+    let message = &messages[0];
+    assert!(message.contains(VERIFY_FILES));
+    assert!(message.contains("DIYChef.dll"));
+    assert!(message.contains(&format!("预期字节数={}", record.files[0].size)));
+    assert!(message.contains(&format!("实际字节数={actual_size}")));
+    assert!(message.contains(&record.files[0].sha256));
+    assert!(message.contains(&actual_hash));
+    assert!(!message.contains(std::str::from_utf8(replacement).unwrap()));
+    assert_eq!(fs::read(staged).unwrap(), replacement);
+    assert!(!workspace.game.join(FILE).exists());
+}
+
+#[test]
 fn missing_or_undeclared_payload_files_are_not_exposed() {
     let workspace = Workspace::new();
     let id = stage_legacy_chef(&workspace);

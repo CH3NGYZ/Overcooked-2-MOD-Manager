@@ -10,6 +10,8 @@ mod apply_order;
 mod declared_mod_bundle;
 #[path = "orchestration_tests/dependency_policy.rs"]
 mod dependency_policy;
+#[path = "orchestration_tests/diagnostic_logs.rs"]
+mod diagnostic_logs;
 #[path = "orchestration_tests/disable_fallback.rs"]
 mod disable_fallback;
 #[path = "orchestration_tests/duplicate_release_target.rs"]

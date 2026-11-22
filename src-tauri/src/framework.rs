@@ -87,6 +87,88 @@ pub(crate) const DIYLEVEL_BACKUP: FrameworkBackupSpec<'static> = FrameworkBackup
     files: &[],
 };
 
+struct FrameworkStep<'a> {
+    stage: &'static str,
+    source: &'a Path,
+    target: &'a Path,
+    staged: Option<&'a Path>,
+}
+
+impl<'a> FrameworkStep<'a> {
+    fn new(stage: &'static str, source: &'a Path, target: &'a Path) -> Self {
+        Self {
+            stage,
+            source,
+            target,
+            staged: None,
+        }
+    }
+
+    fn with_staged(mut self, staged: Option<&'a Path>) -> Self {
+        self.staged = staged;
+        self
+    }
+
+    fn log(&self, reason: &str, path: Option<&Path>, error: Option<&std::io::Error>) {
+        log::warn!(
+            "框架备份或恢复失败：stage={} reason={reason} source={:?} target={:?} staged={:?} operation_path={:?} io_kind={:?} os_code={:?}",
+            self.stage,
+            crate::file_check::log_path(self.source),
+            crate::file_check::log_path(self.target),
+            self.staged.map(crate::file_check::log_path),
+            path.map(crate::file_check::log_path),
+            error.map(std::io::Error::kind),
+            error.and_then(std::io::Error::raw_os_error),
+        );
+    }
+
+    fn io<T>(&self, result: std::io::Result<T>, path: &Path) -> Result<T, String> {
+        result.map_err(|error| {
+            self.log("io", Some(path), Some(&error));
+            error.to_string()
+        })
+    }
+
+    fn checked<T>(&self, result: Result<T, String>, reason: &'static str) -> Result<T, String> {
+        result.inspect_err(|error| {
+            let code = crate::locale_tag::diagnostic_tag(error);
+            log::warn!(
+                "框架校验未通过：stage={} reason={reason} source={:?} target={:?} staged={:?} tag={code}",
+                self.stage,
+                crate::file_check::log_path(self.source),
+                crate::file_check::log_path(self.target),
+                self.staged.map(crate::file_check::log_path),
+            );
+        })
+    }
+
+    fn source_is_dir(&self) -> bool {
+        match fs::metadata(self.source) {
+            Ok(metadata) if metadata.is_dir() => true,
+            Ok(_) => {
+                self.log("source_not_directory", Some(self.source), None);
+                false
+            }
+            Err(error) => {
+                self.log("source_unreadable", Some(self.source), Some(&error));
+                false
+            }
+        }
+    }
+
+    fn copy_file(&self) -> Result<(), String> {
+        if let Some(parent) = self.target.parent() {
+            self.io(fs::create_dir_all(parent), parent)?;
+        }
+        fs::copy(self.source, self.target)
+            .map(|_| ())
+            .map_err(|error| {
+                self.log("copy_failed", None, Some(&error));
+                error.to_string()
+            })
+    }
+}
+
 /// 备份一个框架：目录树 + 根文件 + 清单快照。
 ///
 /// 返回备份目录路径。清单快照写在备份根部的 `framework-manifest.toml`，
@@ -99,24 +181,38 @@ pub(crate) fn backup_framework(
     manifest_id: &str,
 ) -> Result<PathBuf, String> {
     for directory in spec.directories.iter() {
-        let source = game::safe_game_path(game_root, directory)?;
+        let attempted = game_root.join(directory.as_ref());
+        let source = FrameworkStep::new("backup/resolve_source", &attempted, backup_root).checked(
+            game::safe_game_path(game_root, directory),
+            "source_resolution_failed",
+        )?;
         ensure_copy_paths_disjoint(&source, backup_root)?;
     }
-    fs::create_dir_all(backup_root).map_err(|e| e.to_string())?;
+    FrameworkStep::new("backup/create_root", game_root, backup_root)
+        .io(fs::create_dir_all(backup_root), backup_root)?;
     let target = backup_root.join(format!(
         "{}{}-{}",
         spec.prefix,
         Utc::now().format("%Y%m%d%H%M%S"),
         Uuid::new_v4().simple()
     ));
-    fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+    FrameworkStep::new("backup/create_snapshot", game_root, &target)
+        .io(fs::create_dir_all(&target), &target)?;
 
     // 目录树：按原相对路径放回备份里，恢复时原样拷回游戏目录
     for directory in spec.directories.iter() {
-        copy_dir(
-            &game::safe_game_path(game_root, directory)?,
-            &target.join(directory.as_ref()),
-        )?;
+        let destination = target.join(directory.as_ref());
+        let attempted = game_root.join(directory.as_ref());
+        let source = FrameworkStep::new("backup/resolve_source", &attempted, &destination)
+            .checked(
+                game::safe_game_path(game_root, directory),
+                "source_resolution_failed",
+            )?;
+        copy_dir(&FrameworkStep::new(
+            "backup/copy_tree",
+            &source,
+            &destination,
+        ))?;
     }
     // 根目录的散文件：存在才拷，缺失不算错误（比如 macOS 没有 winhttp.dll）
     for relative in spec.files {
@@ -125,10 +221,7 @@ pub(crate) fn backup_framework(
             continue;
         }
         let destination = target.join(relative);
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        fs::copy(&source, &destination).map_err(|e| e.to_string())?;
+        FrameworkStep::new("backup/copy_file", &source, &destination).copy_file()?;
     }
 
     /*
@@ -149,9 +242,15 @@ pub(crate) fn backup_framework(
             Vec::new(),
         )
     });
-    diy_level::scope_manifest(spec, &mut manifest)?;
-    write_backup_manifest(&target, &manifest)?;
-    diy_level::write_layout(&target, spec)?;
+    FrameworkStep::new("backup/scope_manifest", manifests_dir, &target).checked(
+        diy_level::scope_manifest(spec, &mut manifest),
+        "invalid_manifest_scope",
+    )?;
+    write_backup_manifest(manifests_dir, &target, &manifest)?;
+    FrameworkStep::new("backup/write_layout", game_root, &target).checked(
+        diy_level::write_layout(&target, spec),
+        "layout_write_failed",
+    )?;
     log::info!(
         "框架备份完成：前缀={}，路径={}，清单ID={}，清单文件数={}",
         spec.prefix,
@@ -163,12 +262,20 @@ pub(crate) fn backup_framework(
 }
 
 /// 把清单写进备份目录根部（与 `archive::write_manifest` 同样的原子写法）。
-fn write_backup_manifest(backup: &Path, manifest: &archive::InstallManifest) -> Result<(), String> {
-    let text = toml::to_string_pretty(manifest).map_err(|e| e.to_string())?;
+fn write_backup_manifest(
+    manifests_dir: &Path,
+    backup: &Path,
+    manifest: &archive::InstallManifest,
+) -> Result<(), String> {
     let path = backup.join(FRAMEWORK_BACKUP_MANIFEST);
     let temp = backup.join(format!("{FRAMEWORK_BACKUP_MANIFEST}.tmp"));
-    fs::write(&temp, text).map_err(|e| e.to_string())?;
-    fs::rename(&temp, &path).map_err(|e| e.to_string())?;
+    let step = FrameworkStep::new("backup/write_manifest", manifests_dir, &path);
+    let text = step.checked(
+        toml::to_string_pretty(manifest).map_err(|error| error.to_string()),
+        "manifest_serialization_failed",
+    )?;
+    step.io(fs::write(&temp, text), &temp)?;
+    step.io(fs::rename(&temp, &path), &path)?;
     Ok(())
 }
 
@@ -199,8 +306,19 @@ fn framework_files_on_disk(game_root: &Path, spec: &FrameworkBackupSpec<'_>) -> 
 
 /// 读取备份里的清单快照；旧备份没有这个文件时返回 `None`。
 pub(crate) fn read_backup_manifest(backup: &Path) -> Option<archive::InstallManifest> {
-    let text = fs::read_to_string(backup.join(FRAMEWORK_BACKUP_MANIFEST)).ok()?;
-    toml::from_str(&text).ok()
+    let path = backup.join(FRAMEWORK_BACKUP_MANIFEST);
+    let step = FrameworkStep::new("restore/read_snapshot_manifest", &path, backup);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            step.log("manifest_read_failed", Some(&path), Some(&error));
+            return None;
+        }
+    };
+    toml::from_str(&text)
+        .inspect_err(|_| step.log("invalid_manifest", Some(&path), None))
+        .ok()
 }
 
 /// 恢复一个框架备份：先删现有内容，再整体还原，最后写回清单。
@@ -209,13 +327,12 @@ pub(crate) fn read_backup_manifest(backup: &Path) -> Option<archive::InstallMani
 ///
 /// ## 为什么 `*.before-restore-*` 必须删掉
 ///
-/// 删除前会把现有内容另存一份，失败时用来回滚。但恢复成功后这个目录必须
+/// 删除前会把现有内容另存一份。恢复成功后这个目录必须
 /// 立刻删除：它就在游戏根目录下（`BepInEx.before-restore-<ts>`、
 /// `OC2DIYLevel.before-restore-<ts>`），MOD 扫描会把里面的 DLL 当成插件，
 /// 于是用户看到「刚恢复完就冒出一堆重复/低版本 MOD」，甚至出现同 GUID 冲突。
 ///
-/// 也就是说它不是「给用户后悔用的备份」，只是**本次操作的回滚素材**：
-/// 真正的后悔入口是备份列表里的快照。所以成功即删，失败才用。
+/// 它不是备份列表里的快照；恢复中断时可能留下，供后续排查或手动恢复。
 pub(crate) fn restore_framework_backup(
     game_root: &Path,
     backup: &Path,
@@ -223,54 +340,86 @@ pub(crate) fn restore_framework_backup(
     manifests_dir: &Path,
     manifest_id: &str,
 ) -> Result<(), String> {
-    if !backup.is_dir() {
+    if !FrameworkStep::new("restore/check_snapshot", backup, game_root).source_is_dir() {
         return Err("backup.notFound".into());
     }
-    diy_level::verify_restore_ownership(spec, manifests_dir, manifest_id)?;
+    FrameworkStep::new("restore/check_ownership", backup, manifests_dir).checked(
+        diy_level::verify_restore_ownership(spec, manifests_dir, manifest_id),
+        "ownership_not_verified",
+    )?;
     // 恢复前的另存目录：放在备份根的同级，避开被还原的目录树
     let stamp = Utc::now().timestamp();
-    let mut staged = Vec::new();
     // Validate every destination and backup source before removing anything.
-    let directories = spec
+    let mut directories = spec
         .directories
         .iter()
         .map(|directory| {
-            let destination = game::safe_game_path(game_root, directory)?;
-            let source = game::safe_game_path(backup, directory)?;
-            if !source.is_dir() {
+            let backup_path = backup.join(directory.as_ref());
+            let game_path = game_root.join(directory.as_ref());
+            let resolve = FrameworkStep::new("restore/resolve_paths", &backup_path, &game_path);
+            let destination = resolve.checked(
+                game::safe_game_path(game_root, directory),
+                "target_resolution_failed",
+            )?;
+            let source = resolve.checked(
+                game::safe_game_path(backup, directory),
+                "source_resolution_failed",
+            )?;
+            if !FrameworkStep::new("restore/check_snapshot_tree", &source, &destination)
+                .source_is_dir()
+            {
                 return Err("backup.notFound".to_string());
             }
             ensure_copy_paths_disjoint(&source, &destination)?;
-            Ok((directory.as_ref(), source, destination))
+            Ok((directory.as_ref(), source, destination, None))
         })
         .collect::<Result<Vec<_>, String>>()?;
-    for (directory, _, destination) in &directories {
+    for (directory, source, destination, staged) in &mut directories {
         if !destination.exists() {
             continue;
         }
-        let previous = game::safe_game_path(
-            game_root,
-            &format!(
-                "{directory}.before-restore-{stamp}-{}",
-                Uuid::new_v4().simple()
-            ),
-        )?;
-        archive::clear_readonly(destination)?;
-        copy_dir(destination, &previous)?;
-        staged.push(previous.clone());
-        fs::remove_dir_all(destination).map_err(|e| e.to_string())?;
+        let relative = format!(
+            "{directory}.before-restore-{stamp}-{}",
+            Uuid::new_v4().simple()
+        );
+        let staged_path = game_root.join(&relative);
+        let previous = FrameworkStep::new("restore/resolve_staged_path", source, destination)
+            .with_staged(Some(&staged_path))
+            .checked(
+                game::safe_game_path(game_root, &relative),
+                "staged_path_resolution_failed",
+            )?;
+        stage_existing_tree("restore/stage_existing_tree", destination, &previous)?;
+        FrameworkStep::new("restore/remove_existing_tree", source, destination)
+            .with_staged(Some(&previous))
+            .io(fs::remove_dir_all(&*destination), destination)?;
         log::info!("恢复前已另存：路径={}", previous.display());
+        *staged = Some(previous);
     }
     for relative in spec.files {
         let destination = game_root.join(relative);
         if destination.exists() {
-            let _ = fs::remove_file(&destination);
+            if let Err(error) = fs::remove_file(&destination) {
+                FrameworkStep::new(
+                    "restore/remove_existing_file",
+                    &backup.join(relative),
+                    &destination,
+                )
+                .log(
+                    "continuing_after_remove_failed",
+                    Some(&destination),
+                    Some(&error),
+                );
+            }
         }
     }
 
     // 整体还原
-    for (_, source, destination) in &directories {
-        copy_dir(source, destination)?;
+    for (_, source, destination, staged) in &directories {
+        copy_dir(
+            &FrameworkStep::new("restore/copy_tree", source, destination)
+                .with_staged(staged.as_deref()),
+        )?;
     }
     for relative in spec.files {
         let source = backup.join(relative);
@@ -278,29 +427,30 @@ pub(crate) fn restore_framework_backup(
             continue;
         }
         let destination = game_root.join(relative);
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        fs::copy(&source, &destination).map_err(|e| e.to_string())?;
+        FrameworkStep::new("restore/copy_file", &source, &destination).copy_file()?;
     }
 
     /*
-     * 还原完成，回滚素材用完即弃。
+     * 文件还原后清理另存目录。
      *
      * 删不掉不算恢复失败（目录已经正确还原了），但必须留日志并如实告知：
      * 残留目录会被 MOD 扫描当成插件，用户需要自己删。
      */
     let mut leftovers = Vec::new();
-    for previous in staged {
-        archive::clear_readonly(&previous)?;
+    for (_, source, destination, staged) in directories {
+        let Some(previous) = staged else {
+            continue;
+        };
+        let step = FrameworkStep::new("restore/cleanup_staged_tree", &source, &destination)
+            .with_staged(Some(&previous));
+        step.checked(
+            archive::clear_readonly(&previous),
+            "staged_clear_readonly_failed",
+        )?;
         match fs::remove_dir_all(&previous) {
             Ok(()) => log::info!("已清理恢复前暂存：路径={}", previous.display()),
             Err(error) => {
-                log::warn!(
-                    "恢复前暂存清理失败：路径={}，原因={}",
-                    previous.display(),
-                    error
-                );
+                step.log("staged_remove_failed", Some(&previous), Some(&error));
                 leftovers.push(previous.display().to_string());
             }
         }
@@ -330,8 +480,14 @@ pub(crate) fn restore_framework_backup(
             Vec::new(),
         )
     });
-    diy_level::scope_manifest(spec, &mut manifest)?;
-    archive::write_manifest(manifests_dir, &manifest)?;
+    FrameworkStep::new("restore/scope_manifest", backup, manifests_dir).checked(
+        diy_level::scope_manifest(spec, &mut manifest),
+        "invalid_manifest_scope",
+    )?;
+    FrameworkStep::new("restore/write_manifest", backup, manifests_dir).checked(
+        archive::write_manifest(manifests_dir, &manifest),
+        "manifest_write_failed",
+    )?;
     log::info!(
         "框架备份恢复完成：前缀={}，路径={}，清单文件数={}",
         spec.prefix,
@@ -347,16 +503,29 @@ pub(crate) fn validate_framework_backup_in(
     backup_root: &Path,
     spec: &FrameworkBackupSpec<'_>,
 ) -> Result<PathBuf, String> {
-    let target = fs::canonicalize(backup_path).map_err(|_| "backup.notFound".to_string())?;
-    let root = fs::canonicalize(backup_root).map_err(|_| "backup.unavailable".to_string())?;
+    let step = FrameworkStep::new("validate/backup_location", backup_path, backup_root);
+    let target = fs::canonicalize(backup_path).map_err(|error| {
+        step.log("backup_resolution_failed", Some(backup_path), Some(&error));
+        "backup.notFound".to_string()
+    })?;
+    let root = fs::canonicalize(backup_root).map_err(|error| {
+        step.log(
+            "backup_root_resolution_failed",
+            Some(backup_root),
+            Some(&error),
+        );
+        "backup.unavailable".to_string()
+    })?;
     let name = target
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or_default();
     if !name.starts_with(spec.prefix) || !target.is_dir() {
+        step.log("wrong_kind", Some(&target), None);
         return Err("backup.wrongKind".into());
     }
     if target.parent() != Some(root.as_path()) {
+        step.log("outside_backup_root", Some(&target), None);
         return Err("backup.outsideRoot".into());
     }
     Ok(target)
@@ -375,19 +544,21 @@ pub(crate) fn backup_bepinex_dir(game_root: &Path, backup_root: &Path) -> Result
      * 备份源与备份目标天然不相交。保留这条检查纯属防御：将来的调用方如果把
      * 备份目标指到游戏目录内，这里仍然会拦住递归复制。
      */
-    ensure_copy_paths_disjoint(&game_root.join("BepInEx"), backup_root)?;
-    let target = bepinex_backup_path(backup_root)?;
-    copy_dir(&game_root.join("BepInEx"), &target)?;
-    Ok(target)
-}
-
-fn bepinex_backup_path(backup_root: &Path) -> Result<PathBuf, String> {
-    fs::create_dir_all(backup_root).map_err(|e| e.to_string())?;
-    Ok(backup_root.join(format!(
+    let source = game_root.join("BepInEx");
+    ensure_copy_paths_disjoint(&source, backup_root)?;
+    FrameworkStep::new("backup_directory/create_root", &source, backup_root)
+        .io(fs::create_dir_all(backup_root), backup_root)?;
+    let target = backup_root.join(format!(
         "BepInEx.backup-{}-{}",
         Utc::now().format("%Y%m%d%H%M%S"),
         Uuid::new_v4().simple()
-    )))
+    ));
+    copy_dir(&FrameworkStep::new(
+        "backup_directory/copy_tree",
+        &source,
+        &target,
+    ))?;
+    Ok(target)
 }
 
 pub(crate) fn restore_preserved_dirs(backup: &Path, game_root: &Path) -> Result<(), String> {
@@ -395,7 +566,11 @@ pub(crate) fn restore_preserved_dirs(backup: &Path, game_root: &Path) -> Result<
         let source = backup.join(name);
         let destination = game_root.join("BepInEx").join(name);
         if source.exists() {
-            copy_dir(&source, &destination)?;
+            copy_dir(&FrameworkStep::new(
+                "restore_preserved/copy_tree",
+                &source,
+                &destination,
+            ))?;
         }
     }
     Ok(())
@@ -406,31 +581,49 @@ pub(crate) fn restore_preserved_dirs(backup: &Path, game_root: &Path) -> Result<
 /// 与 `restore_framework_backup` 一样，回滚素材用完即删：`BepInEx.before-restore-*`
 /// 留在游戏根目录下会被 MOD 扫描当成插件，表现为「刚回滚完就多出一批重复 MOD」。
 pub(crate) fn restore_backup_dir(backup: &Path, game_root: &Path) -> Result<(), String> {
-    if !backup.is_dir() {
+    let destination = game_root.join("BepInEx");
+    if !FrameworkStep::new("restore_directory/check_snapshot", backup, &destination).source_is_dir()
+    {
         return Err("backup.notFound".into());
     }
-    let destination = game_root.join("BepInEx");
     ensure_copy_paths_disjoint(backup, &destination)?;
     let mut previous = None;
     if destination.exists() {
         let staged = game_root.join(format!("BepInEx.before-restore-{}", Utc::now().timestamp()));
-        archive::clear_readonly(&destination)?;
-        copy_dir(&destination, &staged)?;
+        stage_existing_tree(
+            "restore_directory/stage_existing_tree",
+            &destination,
+            &staged,
+        )?;
+        FrameworkStep::new(
+            "restore_directory/remove_existing_tree",
+            backup,
+            &destination,
+        )
+        .with_staged(Some(&staged))
+        .io(fs::remove_dir_all(&destination), &destination)?;
         previous = Some(staged);
-        fs::remove_dir_all(&destination).map_err(|e| e.to_string())?;
     }
-    copy_dir(backup, &destination)?;
+    copy_dir(
+        &FrameworkStep::new("restore_directory/copy_tree", backup, &destination)
+            .with_staged(previous.as_deref()),
+    )?;
 
     // 删除失败不影响回滚结果，但必须留痕：残留目录会污染 MOD 扫描
     if let Some(staged) = previous {
-        archive::clear_readonly(&staged)?;
+        let step = FrameworkStep::new(
+            "restore_directory/cleanup_staged_tree",
+            backup,
+            &destination,
+        )
+        .with_staged(Some(&staged));
+        step.checked(
+            archive::clear_readonly(&staged),
+            "staged_clear_readonly_failed",
+        )?;
         match fs::remove_dir_all(&staged) {
             Ok(()) => log::info!("已清理回滚前暂存：路径={}", staged.display()),
-            Err(error) => log::warn!(
-                "回滚前暂存清理失败：路径={}，原因={}",
-                staged.display(),
-                error
-            ),
+            Err(error) => step.log("staged_remove_failed", Some(&staged), Some(&error)),
         }
     }
     Ok(())
@@ -446,10 +639,14 @@ pub(crate) fn restore_backup_dir(backup: &Path, game_root: &Path) -> Result<(), 
 /// 检查用「最近存在的祖先」解析，因此目标目录尚未创建时也能识别出
 /// 目录联接（junction）造成的逻辑包含关系。
 pub(crate) fn ensure_copy_paths_disjoint(source: &Path, destination: &Path) -> Result<(), String> {
-    let source =
-        game::resolve_existing_ancestor(&std::path::absolute(source).map_err(|e| e.to_string())?)?;
-    let destination = game::resolve_existing_ancestor(
-        &std::path::absolute(destination).map_err(|e| e.to_string())?,
+    let step = FrameworkStep::new("validate/disjoint_paths", source, destination);
+    let source = step.checked(
+        game::resolve_existing_ancestor(&step.io(std::path::absolute(source), source)?),
+        "source_resolution_failed",
+    )?;
+    let destination = step.checked(
+        game::resolve_existing_ancestor(&step.io(std::path::absolute(destination), destination)?),
+        "target_resolution_failed",
     )?;
     #[cfg(windows)]
     let (source, destination) = (
@@ -457,40 +654,65 @@ pub(crate) fn ensure_copy_paths_disjoint(source: &Path, destination: &Path) -> R
         PathBuf::from(destination.to_string_lossy().to_lowercase()),
     );
     if source == destination {
+        step.log("same_directory", Some(&destination), None);
         return Err("backup.sameDirectory".into());
     }
     if source.starts_with(&destination) || destination.starts_with(&source) {
+        step.log("overlapping_directories", Some(&destination), None);
         return Err("backup.overlap".into());
     }
     Ok(())
 }
 
-fn copy_dir(source: &Path, destination: &Path) -> Result<(), String> {
-    if !source.is_dir() {
+fn stage_existing_tree(stage: &'static str, existing: &Path, staged: &Path) -> Result<(), String> {
+    let step = FrameworkStep::new(stage, existing, staged).with_staged(Some(staged));
+    step.checked(
+        archive::clear_readonly(existing),
+        "source_clear_readonly_failed",
+    )?;
+    copy_dir(&step)
+}
+
+fn copy_dir(step: &FrameworkStep<'_>) -> Result<(), String> {
+    let (source, destination) = (step.source, step.target);
+    if !step.source_is_dir() {
         return Err(crate::locale_tag::with_params(
             "mods.directoryMissing",
             &[("path", &source.display().to_string())],
         ));
     }
-    ensure_copy_paths_disjoint(source, destination)?;
-    fs::create_dir_all(destination).map_err(|e| e.to_string())?;
+    step.checked(
+        ensure_copy_paths_disjoint(source, destination),
+        "copy_paths_not_verified",
+    )?;
+    step.io(fs::create_dir_all(destination), destination)?;
     for entry in walkdir::WalkDir::new(source).follow_links(false) {
-        let entry = entry.map_err(|error| error.to_string())?;
+        let entry = entry.map_err(|error| {
+            step.log(
+                "walk_source_failed",
+                Some(error.path().unwrap_or(source)),
+                error.io_error(),
+            );
+            error.to_string()
+        })?;
         if entry.file_type().is_symlink() {
+            step.log("source_link", Some(entry.path()), None);
             return Err("archive.pathEscape".into());
         }
-        let relative = entry
-            .path()
-            .strip_prefix(source)
-            .map_err(|e| e.to_string())?;
+        let relative = entry.path().strip_prefix(source).map_err(|error| {
+            step.log("outside_source", Some(entry.path()), None);
+            error.to_string()
+        })?;
         let target = destination.join(relative);
         if entry.file_type().is_dir() {
-            fs::create_dir_all(target).map_err(|e| e.to_string())?;
+            step.io(fs::create_dir_all(&target), &target)?;
         } else {
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            FrameworkStep {
+                source: entry.path(),
+                target: &target,
+                ..*step
             }
-            fs::copy(entry.path(), target).map_err(|e| e.to_string())?;
+            .copy_file()?;
         }
     }
     Ok(())

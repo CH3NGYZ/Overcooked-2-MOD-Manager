@@ -1,6 +1,7 @@
 use super::delete::remove_entry_directory;
 use super::errors::UNSAFE_PATH;
 use super::errors::io_error;
+use super::errors::{log_failure, log_path};
 use super::file_io::fingerprint;
 use super::file_io::move_file;
 use super::file_io::rollback_moves;
@@ -17,6 +18,7 @@ use super::records::StagedFile;
 use super::records::save_record;
 use crate::archive;
 use crate::archive::InstallManifest;
+use crate::file_check;
 use crate::models::ModRecycleEntry;
 use chrono::Utc;
 use std::collections::HashSet;
@@ -143,12 +145,17 @@ pub(super) fn stage_with_related_manifests(
         return Err("recycle.insideModsDirectory".into());
     }
     let id = Uuid::new_v4().to_string();
-    let directory = record_directory(root, &id)?;
+    let directory = record_directory(root, &id)
+        .inspect_err(|error| log_failure("暂存", &id, "定位回收记录", root, error))?;
     let mut unique = HashSet::new();
     let mut files = Vec::new();
     for relative in actual_files {
         if unique.insert(relative.to_lowercase()) {
-            let (size, sha256) = fingerprint(&checked_path(game_root, &relative)?, None)?;
+            let path = checked_path(game_root, &relative).inspect_err(|error| {
+                log_failure("暂存", &id, "核对源路径", &game_root.join(&relative), error);
+            })?;
+            let (size, sha256) = fingerprint(&path, None)
+                .inspect_err(|error| log_failure("暂存", &id, "读取源文件指纹", &path, error))?;
             files.push(StagedFile {
                 relative,
                 size,
@@ -157,7 +164,7 @@ pub(super) fn stage_with_related_manifests(
         }
     }
     let mut record = RecycleRecord {
-        id,
+        id: id.clone(),
         name,
         // 仓库名的多语言快照：回收站列表要能随界面语言渲染，而删除之后
         // 仓库可能已从源文档下线，无处可查，所以在这里固化下来。
@@ -174,17 +181,25 @@ pub(super) fn stage_with_related_manifests(
         state: RecordState::Preparing,
         diychef_resources_imported,
     };
-    fs::create_dir_all(&directory).map_err(io_error)?;
-    let payload = checked_path(&directory, "files")?;
-    fs::create_dir_all(&payload).map_err(io_error)?;
+    let failed = |phase, path: &Path, error: &str| log_failure("暂存", &id, phase, path, error);
+    fs::create_dir_all(&directory)
+        .map_err(io_error)
+        .inspect_err(|error| failed("创建回收记录目录", &directory, error))?;
+    let payload = checked_path(&directory, "files")
+        .inspect_err(|error| failed("定位文件暂存目录", &directory, error))?;
+    fs::create_dir_all(&payload)
+        .map_err(io_error)
+        .inspect_err(|error| failed("创建文件暂存目录", &payload, error))?;
     log::info!(
-        "MOD 移入回收站开始：ID={}，名称={}，文件数={}",
+        "MOD 移入回收站开始：ID={}，名称={:?}，文件数={}，暂存={:?}，游戏={:?}",
         record.id,
-        record.name,
-        record.files.len()
+        file_check::log_field(&record.name),
+        record.files.len(),
+        log_path(&payload),
+        log_path(game_root),
     );
     // Journal exists before any file is removed, including interrupted operations.
-    let journal_result = (|| {
+    let journal_result: Result<(), String> = (|| {
         save_record(&directory, &record)?;
         if let Some(bytes) = original_manifest {
             write_atomic(&checked_path(&directory, "manifest.toml")?, bytes)?;
@@ -192,40 +207,61 @@ pub(super) fn stage_with_related_manifests(
         Ok(())
     })();
     if let Err(error) = journal_result {
-        let _ = remove_entry_directory(&directory);
+        failed(
+            "写入回收记录或原清单（尚未移动游戏文件）",
+            &directory,
+            &error,
+        );
+        let _ = remove_entry_directory(&directory).inspect_err(|error| {
+            failed("清理未完成的回收记录目录", &directory, error);
+        });
         return Err(error);
     }
     let mut moved = Vec::new();
     let mut manifest_changed = false;
     let mut related_changed = 0usize;
-    let result = (|| {
+    let mut phase = "移动游戏文件";
+    let result = (|| -> Result<(), String> {
         for file in &record.files {
-            move_file(
-                &checked_path(game_root, &file.relative)?,
-                &checked_path(&payload, &file.relative)?,
-                file,
-                false,
-            )?;
+            phase = "移动游戏文件";
+            let source = checked_path(game_root, &file.relative).inspect_err(|error| {
+                failed("核对移动源路径", &game_root.join(&file.relative), error);
+            })?;
+            let target = checked_path(&payload, &file.relative).inspect_err(|error| {
+                failed("核对移动目标路径", &payload.join(&file.relative), error);
+            })?;
+            move_file(&source, &target, file, false)
+                .inspect_err(|error| failed(phase, &source, error))?;
             moved.push(file.clone());
+            phase = "移动后复核";
             after_move()?;
         }
+        phase = "提交主安装清单";
         if let Some(manifest) = manifest {
             set_active_manifest(manifests_dir, &manifest.repository_id, remaining_manifest)?;
             manifest_changed = true;
         }
+        phase = "提交关联安装清单";
         for related in &record.related_manifests {
             set_active_manifest(
                 manifests_dir,
                 &related.package_id,
                 related.remaining()?.as_ref(),
-            )?;
+            )
+            .inspect_err(|error| {
+                failed(
+                    phase,
+                    &manifests_dir.join(format!("{}.toml", related.package_id)),
+                    error,
+                );
+            })?;
             related_changed += 1;
         }
+        phase = "提交回收记录为就绪";
         record.state = RecordState::Ready;
         save_record(&directory, &record)
     })();
     if let Err(error) = result {
-        log::error!("MOD 回收失败，回滚：ID={}，原因={}", record.id, error);
         let files_rolled_back = rollback_moves(&payload, game_root, &moved);
         let mut manifest_rolled_back = !manifest_changed
             || manifest
@@ -233,20 +269,59 @@ pub(super) fn stage_with_related_manifests(
                 .is_some_and(|(manifest, bytes)| {
                     manifest_path(manifests_dir, &manifest.repository_id)
                         .and_then(|path| write_atomic(&path, bytes))
+                        .inspect_err(|error| {
+                            failed(
+                                "回滚主安装清单",
+                                &manifests_dir.join(format!("{}.toml", manifest.repository_id)),
+                                error,
+                            );
+                        })
                         .is_ok()
                 });
         for related in record.related_manifests[..related_changed].iter().rev() {
             manifest_rolled_back &= manifest_path(manifests_dir, &related.package_id)
                 .and_then(|path| write_atomic(&path, related.original.as_bytes()))
+                .inspect_err(|error| {
+                    failed(
+                        "回滚关联安装清单",
+                        &manifests_dir.join(format!("{}.toml", related.package_id)),
+                        error,
+                    );
+                })
                 .is_ok();
         }
         if files_rolled_back && manifest_rolled_back {
-            let _ = remove_entry_directory(&directory);
+            let cleaned = remove_entry_directory(&directory)
+                .inspect_err(|error| {
+                    failed("回滚后清理回收目录", &directory, error);
+                })
+                .is_ok();
+            log::warn!(
+                "MOD 回收失败，回滚已完成：ID={}，目录={:?}，阶段={phase}，原因={}，回滚文件数={}，回滚清单数={}，回收目录已清理={cleaned}",
+                record.id,
+                log_path(&directory),
+                crate::locale_tag::diagnostic_tag(&error),
+                moved.len(),
+                related_changed + if manifest_changed { 1 } else { 0 },
+            );
             return Err(error);
         }
         record.state = RecordState::Preparing;
-        let _ = save_record(&directory, &record);
-        log::error!("MOD 回收回滚未完成，保留全部暂存信息：ID={}", record.id);
+        let saved = save_record(&directory, &record)
+            .inspect_err(|error| {
+                failed(
+                    "保存未完成回收的记录",
+                    &directory.join("record.json"),
+                    error,
+                );
+            })
+            .is_ok();
+        log::error!(
+            "MOD 回收回滚未完成，保留回收目录以便排查：ID={}，目录={:?}，阶段={phase}，原因={}，文件回滚={files_rolled_back}，清单回滚={manifest_rolled_back}，未完成状态已保存={saved}",
+            record.id,
+            log_path(&directory),
+            crate::locale_tag::diagnostic_tag(&error),
+        );
         return Err("recycle.partialFailure".into());
     }
     for file in &record.files {

@@ -313,6 +313,78 @@ fn sharing_owned_files_blocks_replacement() {
 }
 
 #[test]
+fn unbound_old_record_logs_real_claim_without_printing_manifest_notes() {
+    let mut fixture = fixture();
+    let path = "BepInEx/plugins/stale-owner-log.dll";
+    let disabled = mods::disabled_dll_file(path);
+    let requester = "diagnostic-requester";
+    let old_file = "manifests/legacy-stale-owner-log.toml";
+    let note = "fixture-note-not-for-diagnostics";
+    add_mod(&mut fixture, requester, vec![], vec![]);
+    payload(&mut fixture, requester, path, true);
+    let mut old = archive::new_manifest(
+        "legacy-stale-owner-log",
+        "v3.7",
+        BTreeMap::new(),
+        BTreeMap::new(),
+        vec![disabled.clone(), "unrelated-private-resource".into()],
+        vec![],
+    );
+    old.repository_binding = Some(crate::models::ModRepositoryBinding {
+        provider: crate::models::Provider::Github,
+        owner: "ExampleOrg".into(),
+        repository: "ExamplePack".into(),
+        tag: "v3.7".into(),
+        channel: crate::models::Channel::Stable,
+    });
+    old.note_i18n.insert("en".into(), note.into());
+    old.installed_dll_versions
+        .insert(mods::manifest_dll_key(path), "3.6.1".into());
+    write(
+        &fixture.roots.data_root,
+        old_file,
+        toml::to_string(&old).unwrap().as_bytes(),
+    );
+    write(&fixture.roots.game_root, &disabled, b"old");
+    let capture = crate::http_diagnostics::capture_test_logs(
+        "app_lib::mod_changes::mutations::records::diagnostics",
+        path,
+    );
+    assert_eq!(
+        assemble(&fixture.session, fixture.roots.clone()).unwrap_err(),
+        format!("modChanges.installTargetClaimed?path={path}")
+    );
+    let messages = capture.messages();
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    let message = &messages[0];
+    for expected in [
+        requester,
+        "unknown-package:legacy-stale-owner-log",
+        old_file,
+        "ExampleOrg",
+        "ExamplePack",
+        "Stable",
+        "Release Tag=\"v3.7\"",
+        "旧DLL版本快照=Some((\"recorded\", Some(\"3.6.1\")))",
+        &disabled,
+        "different_or_unbound_owner",
+        "active=missing",
+        "disabled=file:3B",
+    ] {
+        assert!(
+            message.contains(expected),
+            "missing {expected:?}: {message}"
+        );
+    }
+    assert!(!message.contains(note));
+    assert!(!message.contains("unrelated-private-resource"));
+    assert_eq!(
+        fs::read(fixture.roots.game_root.join(disabled)).unwrap(),
+        b"old"
+    );
+}
+
+#[test]
 fn member_toggle_uses_final_inventory_without_replaying_actions() {
     let mut f = fixture();
     let path = "BepInEx/plugins/member.dll";

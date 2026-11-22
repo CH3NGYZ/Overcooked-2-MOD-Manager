@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn zip_classification_logs_missing_and_invalid_inputs_without_dumping_contents() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("classify-invalid.zip");
+    let capture = crate::http_diagnostics::capture_test_logs(
+        "app_lib::level_sets::zip_inspect",
+        root.path().file_name().unwrap().to_str().unwrap(),
+    );
+    assert!(classify_zip(&path).is_err());
+    std::fs::write(&path, "fixture-private-payload").unwrap();
+    assert!(
+        classify_zip(&path)
+            .unwrap_err()
+            .starts_with("archive.zipReadFailed?")
+    );
+    let messages = capture.messages();
+    assert_eq!(messages.len(), 2, "{messages:?}");
+    assert!(messages[0].contains("阶段=open") && messages[0].contains("NotFound"));
+    assert!(
+        messages[1].contains("阶段=open_archive") && messages[1].contains("类别=invalid_archive")
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|line| !line.contains("fixture-private-payload"))
+    );
+}
+
+#[test]
 fn recognizes_framework_maps_by_guid_and_layout() {
     let root = tempfile::tempdir().unwrap();
     let zip = root.path().join("with-levels.zip");

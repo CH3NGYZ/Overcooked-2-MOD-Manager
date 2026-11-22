@@ -1,4 +1,4 @@
-use super::{PreparedTransaction, check, durable, paths, types::*};
+use super::{PreparedTransaction, check, diagnostics, durable, paths, types::*};
 use crate::{directory_watch::CommittedPaths, file_check, file_metadata::Stamp};
 use std::{fs, path::Path};
 
@@ -131,29 +131,65 @@ impl PreparedTransaction {
         before_commit: impl FnOnce() -> Result<(), String>,
         mut observe: impl FnMut(RecordProgress),
     ) -> Result<CommittedPaths, String> {
-        let result = self.apply_inner(&cancelled, before_apply, before_commit, &mut observe);
+        let _scope = diagnostics::enter(&self.journal.id);
+        let mut entered_live_write = false;
+        let result = self.apply_inner(&cancelled, before_apply, before_commit, &mut |event| {
+            if matches!(&event, RecordProgress::Applying(_)) {
+                entered_live_write = true;
+            }
+            observe(event);
+        });
         let mut committed = match result {
             Ok(committed) => committed,
             Err(error) => {
                 if self.journal.state == JournalState::Committed {
                     // A failed durable commit write can have reached disk. Only restart
                     // recovery may decide from the published journal whether to undo it.
-                    log::error!("批次提交刷盘结果待核实，保留恢复材料：{error}");
+                    diagnostics::transaction(
+                        &self.journal,
+                        &self.directory,
+                        "commit_durability_unknown",
+                        &error,
+                    );
                     return Err(check::recovery_pending(&error));
                 }
+                diagnostics::transaction(&self.journal, &self.directory, "apply_failed", &error);
+                let applied = self
+                    .journal
+                    .records
+                    .iter()
+                    .any(|record| record.phase == RecordPhase::Applied)
+                    || self.journal.created_directory_count != 0;
                 self.journal.error = Some(error.clone());
                 if let Err(restore_error) = self.rollback() {
-                    log::error!("链式变更失败且待恢复：安装={error}，恢复={restore_error}");
+                    let stage = if entered_live_write || applied {
+                        "rollback_failed"
+                    } else {
+                        "no_live_write_cleanup_failed"
+                    };
+                    diagnostics::transaction(&self.journal, &self.directory, stage, &restore_error);
                     return Err(check::recovery_pending(&restore_error));
                 }
-                log::warn!("整链事务已回滚：事务={}，原因={error}", self.journal.id);
+                let stage = if applied {
+                    "rolled_back"
+                } else if entered_live_write {
+                    "apply_started_recovery_completed"
+                } else {
+                    "no_live_write"
+                };
+                diagnostics::transaction(&self.journal, &self.directory, stage, &error);
                 return Err(error);
             }
         };
         observe(RecordProgress::Committed);
         // A durable commit is final. Cleanup failure must never turn into a rollback.
         if let Err(error) = self.cleanup() {
-            log::warn!("批次已提交，恢复材料待清理：{error}");
+            diagnostics::transaction(
+                &self.journal,
+                &self.directory,
+                "committed_cleanup_failed",
+                &error,
+            );
         }
         self.finish_watch_paths(&mut committed);
         Ok(committed)
@@ -170,8 +206,17 @@ impl PreparedTransaction {
             return Err(paths::INVALID.into());
         }
         for (index, record) in self.journal.records.iter().enumerate() {
-            verify_before(record, &self.journal.roots)
-                .inspect_err(|_| observe(RecordProgress::Failed(index)))?;
+            let _step = diagnostics::step(index, "verify_before_apply");
+            verify_before(record, &self.journal.roots).inspect_err(|error| {
+                diagnostics::record(
+                    &self.journal,
+                    &self.directory,
+                    index,
+                    "verify_before_apply",
+                    error,
+                );
+                observe(RecordProgress::Failed(index));
+            })?;
         }
         for parent in &self.journal.created_directories {
             check::expect(
@@ -190,12 +235,23 @@ impl PreparedTransaction {
             if cancelled() {
                 return Err("download.cancelled".into());
             }
+            let _step = diagnostics::step(index, "apply_record");
             self.apply_record(index, || observe(RecordProgress::Applying(index)))
-                .inspect_err(|_| observe(RecordProgress::Failed(index)))?;
+                .inspect_err(|error| {
+                    diagnostics::record(
+                        &self.journal,
+                        &self.directory,
+                        index,
+                        "apply_record",
+                        error,
+                    );
+                    observe(RecordProgress::Failed(index));
+                })?;
             observe(RecordProgress::Processed(index));
         }
         let mut committed = CommittedPaths::default();
         for (index, record) in self.journal.records.iter().enumerate() {
+            let _step = diagnostics::step(index, "verify_before_commit");
             check_after(record, &self.journal.roots, |path, root, tree| {
                 if root != RootKind::Game {
                     return Fingerprint::capture(path);
@@ -206,7 +262,16 @@ impl PreparedTransaction {
                 }
                 Ok(actual)
             })
-            .inspect_err(|_| observe(RecordProgress::Failed(index)))?;
+            .inspect_err(|error| {
+                diagnostics::record(
+                    &self.journal,
+                    &self.directory,
+                    index,
+                    "verify_before_commit",
+                    error,
+                );
+                observe(RecordProgress::Failed(index));
+            })?;
         }
         before_commit()?;
         self.journal.state = JournalState::Committed;
@@ -245,7 +310,9 @@ impl PreparedTransaction {
     }
 
     pub(super) fn persist(&self) -> Result<(), String> {
-        durable::write_journal(&self.directory, &self.journal)
+        durable::write_journal(&self.directory, &self.journal).inspect_err(|error| {
+            diagnostics::transaction(&self.journal, &self.directory, "persist_journal", error);
+        })
     }
 
     pub(super) fn apply_record(
@@ -278,7 +345,7 @@ impl PreparedTransaction {
             // create_dir is exclusive: an externally created directory never
             // becomes ours merely because the planned target was missing.
             fs::create_dir(&absolute).map_err(|error| {
-                file_check::report_io(check::WRITE, &absolute, error, file_check::WRITE)
+                durable::diagnostic_io(check::WRITE, &absolute, error, file_check::WRITE)
             })?;
             self.journal.created_directory_count += 1;
             durable::sync_parent(&absolute)?;

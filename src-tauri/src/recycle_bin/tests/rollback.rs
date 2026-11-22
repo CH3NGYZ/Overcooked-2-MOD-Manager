@@ -66,6 +66,17 @@ fn mid_move_failure_rolls_back_files_and_leaves_original_manifest_untouched() {
     workspace.write(B, b"second");
     let manifest = workspace.manifest("package", &[A, B]);
     let original = fs::read(workspace.manifests.join("package.toml")).unwrap();
+    let captured = crate::http_diagnostics::capture_test_logs(
+        "app_lib::recycle_bin::staging",
+        workspace.directory.file_name().unwrap().to_str().unwrap(),
+    );
+    let injected = crate::locale_tag::with_params(
+        "recycle.verifyFiles",
+        &[
+            ("path", "fixture-private-path"),
+            ("reason", "fixture-private-error"),
+        ],
+    );
     let error = stage(
         &workspace.recycle,
         &workspace.manifests,
@@ -76,10 +87,10 @@ fn mid_move_failure_rolls_back_files_and_leaves_original_manifest_untouched() {
         manifest.files.clone(),
         manifest.files.clone(),
         None,
-        &mut || Err("injected failure".into()),
+        &mut || Err(injected.clone()),
     )
     .unwrap_err();
-    assert_eq!(error, "injected failure");
+    assert_eq!(error, injected);
     assert_eq!(fs::read(workspace.game.join(A)).unwrap(), b"first");
     assert_eq!(fs::read(workspace.game.join(B)).unwrap(), b"second");
     assert_eq!(
@@ -87,6 +98,24 @@ fn mid_move_failure_rolls_back_files_and_leaves_original_manifest_untouched() {
         original
     );
     assert!(list(&workspace.recycle).unwrap().is_empty());
+    let messages = captured.messages();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("阶段=移动后复核")
+                && message.contains("recycle.verifyFiles")),
+        "{messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|message| !message.contains("fixture-private-error")
+                && !message.contains("fixture-private-path"))
+    );
+    assert!(messages.iter().any(|message| message.contains("回滚已完成")
+        && message.contains("回滚文件数=1")
+        && message.contains("回滚清单数=0")
+        && message.contains("回收目录已清理=true")));
 }
 
 #[test]

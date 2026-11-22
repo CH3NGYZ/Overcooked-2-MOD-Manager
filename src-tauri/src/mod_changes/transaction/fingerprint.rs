@@ -1,4 +1,4 @@
-use super::paths::{MODIFIED, UNSAFE, io_error, is_link, validate_absolute};
+use super::paths::{MODIFIED, UNSAFE, io_at, io_error, is_link, validate_absolute};
 use super::types::{Fingerprint, PermissionsSnapshot, StagedFile};
 use crate::file_metadata::Stamp;
 use sha2::{Digest, Sha256};
@@ -34,7 +34,7 @@ impl Fingerprint {
         let metadata = match fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Self::Missing),
-            Err(error) => return Err(io_error(error)),
+            Err(error) => return Err(io_at(path, "fingerprint_metadata", error)),
         };
         if is_link(&metadata) {
             return Err(UNSAFE.into());
@@ -45,12 +45,15 @@ impl Fingerprint {
         let stamp = committed.as_ref().and_then(|_| Stamp::capture(path).ok());
         let permissions = PermissionsSnapshot::capture(path)?;
         let fingerprint = if metadata.is_file() {
-            let mut input = File::open(path).map_err(io_error)?;
+            let mut input =
+                File::open(path).map_err(|error| io_at(path, "fingerprint_open", error))?;
             let mut digest = Sha256::new();
             let mut size = 0;
             let mut buffer = [0_u8; 64 * 1024];
             loop {
-                let count = input.read(&mut buffer).map_err(io_error)?;
+                let count = input
+                    .read(&mut buffer)
+                    .map_err(|error| io_at(path, "fingerprint_read", error))?;
                 if count == 0 {
                     break;
                 }
@@ -68,10 +71,11 @@ impl Fingerprint {
             visit(path, &fingerprint)?;
             fingerprint
         } else if metadata.is_dir() {
+            let read_error = |error| io_at(path, "fingerprint_list", error);
             let mut children = fs::read_dir(path)
-                .map_err(io_error)?
+                .map_err(read_error)?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(io_error)?;
+                .map_err(read_error)?;
             children.sort_by_key(|entry| entry.file_name());
             let mut digest = Sha256::new();
             for entry in children {

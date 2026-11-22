@@ -1,6 +1,26 @@
 use super::*;
 use crate::archive::test_support::{requires, temp_manifest_dir};
 
+#[test]
+fn manifest_load_logs_invalid_path_and_parse_location_without_raw_input() {
+    let directory = tempfile::tempdir().unwrap();
+    let id = "invalid-load-diagnostic";
+    let path = directory.path().join(format!("{id}.toml"));
+    fs::write(&path, "repository_id = [\"private manifest fixture\"\n").unwrap();
+    let capture = crate::http_diagnostics::capture_test_logs("app_lib::archive::manifests", id);
+    assert!(read_manifest(directory.path(), id).is_none());
+    assert!(read_manifests(directory.path()).is_empty());
+    let messages = capture.messages();
+    assert_eq!(messages.len(), 2, "{messages:?}");
+    assert!(
+        messages
+            .iter()
+            .all(|message| message.contains("TOML错误字节位置=Some")
+                && !message.contains("private manifest fixture")),
+        "{messages:?}"
+    );
+}
+
 /*
  * 旧清单只有单语 `package_name` / `group` / `note`。
  *

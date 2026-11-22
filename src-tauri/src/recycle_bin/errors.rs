@@ -12,6 +12,23 @@ pub(super) const WRITE_RESTORED_FILE: &str = "recycle.writeRestoredFile";
 
 pub(super) const NO_FILES: &str = "recycle.noMovableFiles";
 
+pub(super) use crate::file_check::log_path;
+
+pub(super) fn log_failure(
+    action: &str,
+    id: &str,
+    stage: &str,
+    path: &std::path::Path,
+    error: &str,
+) {
+    log::warn!(
+        "回收站{action}失败：ID={:?}，阶段={stage}，路径={:?}，原因={:?}",
+        crate::file_check::log_field(id),
+        log_path(path),
+        crate::locale_tag::diagnostic_tag(error),
+    );
+}
+
 pub(super) fn io_error(error: impl std::fmt::Display) -> String {
     log::error!("回收站文件操作失败：{}", error);
     #[cfg(test)]
@@ -39,6 +56,14 @@ pub(super) fn checked_io_error(
 ) -> String {
     match stage {
         Some(stage) => crate::file_check::report_io(stage, path, error, fallback),
-        None => io_error(error),
+        None => {
+            log::warn!(
+                "回收站文件系统操作失败：路径={:?}，操作={fallback}，OS码={:?}，分类={:?}",
+                log_path(path),
+                error.raw_os_error(),
+                error.kind(),
+            );
+            IO_ERROR.into()
+        }
     }
 }

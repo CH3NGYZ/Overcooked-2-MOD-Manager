@@ -24,6 +24,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
+use zip::result::ZipError;
 
 /// ZIP 里识别出的一个关卡集。
 #[derive(Debug, Clone)]
@@ -60,14 +61,24 @@ pub struct ZipContents {
 
 /// 地图可带随图插件。只有实读出地图目录上层的 DIYLevel 才走 MOD 整包安装。
 pub fn classify_zip(zip_path: &Path) -> Result<ZipContents, String> {
-    let file = fs::File::open(zip_path).map_err(|error| error.to_string())?;
+    let file = fs::File::open(zip_path).map_err(|error| {
+        log::warn!(
+            "ZIP 分类失败：阶段=open，路径={:?}，I/O={:?}，OS码={:?}",
+            crate::file_check::log_path(zip_path),
+            error.kind(),
+            error.raw_os_error(),
+        );
+        error.to_string()
+    })?;
     let mut archive = zip::ZipArchive::new(file).map_err(|error| {
+        log_classification_error(zip_path, "open_archive", None, &error);
         crate::locale_tag::with_params("archive.zipReadFailed", &[("reason", &error.to_string())])
     })?;
     let mut info_dirs: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut plugin_entries = Vec::new();
     for index in 0..archive.len() {
         let entry = archive.by_index(index).map_err(|error| {
+            log_classification_error(zip_path, "read_entry", Some(index), &error);
             crate::locale_tag::with_params(
                 "archive.zipEntryReadFailed",
                 &[("reason", &error.to_string())],
@@ -78,7 +89,13 @@ pub fn classify_zip(zip_path: &Path) -> Result<ZipContents, String> {
         }
         let name = entry
             .name()
-            .map_err(|error| error.to_string())?
+            .map_err(|error| {
+                log::warn!(
+                    "ZIP 分类失败：阶段=entry_name_encoding，路径={:?}，条目索引={index}",
+                    crate::file_check::log_path(zip_path)
+                );
+                error.to_string()
+            })?
             .replace('\\', "/");
         if is_junk_entry(&name) {
             continue;
@@ -119,6 +136,7 @@ pub fn classify_zip(zip_path: &Path) -> Result<ZipContents, String> {
                     .map_err(Into::into)
             })
             .map_err(|error| {
+                log_classification_error(zip_path, "read_possible_framework", Some(*index), &error);
                 crate::locale_tag::with_params(
                     "archive.zipEntryReadFailed",
                     &[("reason", &format!("{name}: {error}"))],
@@ -134,11 +152,41 @@ pub fn classify_zip(zip_path: &Path) -> Result<ZipContents, String> {
             break;
         }
     }
-    Ok(ZipContents {
+    let contents = ZipContents {
         map_sets: info_dirs.len(),
         plugins: plugin_entries.len(),
         mod_bundled_maps,
-    })
+    };
+    log::info!(
+        "ZIP 分类完成：路径={:?}，条目={}，含info目录={}，DLL={}，DIYLevel混合包={}",
+        crate::file_check::log_path(zip_path),
+        archive.len(),
+        contents.map_sets,
+        contents.plugins,
+        contents.mod_bundled_maps,
+    );
+    Ok(contents)
+}
+
+fn log_classification_error(path: &Path, stage: &str, index: Option<usize>, error: &ZipError) {
+    let (reason, io, method) = match error {
+        ZipError::Io(error) => ("io", Some((error.kind(), error.raw_os_error())), None),
+        ZipError::InvalidArchive(_) => ("invalid_archive", None, None),
+        ZipError::UnsupportedArchive(reason) if *reason == ZipError::PASSWORD_REQUIRED => {
+            ("password_required", None, None)
+        }
+        ZipError::UnsupportedArchive(_) => ("unsupported_archive", None, None),
+        ZipError::InvalidPassword => ("invalid_password", None, None),
+        ZipError::FileNotFound => ("entry_missing", None, None),
+        ZipError::CompressionMethodNotSupported(method) => {
+            ("unsupported_compression", None, Some(method))
+        }
+        _ => ("other_zip_error", None, None),
+    };
+    log::warn!(
+        "ZIP 分类失败：阶段={stage}，路径={:?}，条目索引={index:?}，类别={reason}，I/O={io:?}，压缩方式={method:?}",
+        crate::file_check::log_path(path),
+    );
 }
 
 pub(crate) fn require_map_only_zip(path: &Path) -> Result<(), String> {

@@ -161,11 +161,19 @@ impl Builder<'_> {
             if !within(&canonical, mods::file_state::PLUGINS_DIR) {
                 return Ok(None);
             }
-            if self
+            let mut competing_records = self
                 .records
                 .portable_claims(&canonical)
-                .any(|claim| claim.relative != record.relative)
-            {
+                .filter(|claim| claim.relative != record.relative)
+                .peekable();
+            if competing_records.peek().is_some() {
+                self.diagnose_record_claim(
+                    owner,
+                    &canonical,
+                    Some(source),
+                    "reinstall_path_claimed_by_another_record",
+                    competing_records,
+                );
                 return Err(ReleaseTargetError::ForeignManifest {
                     owner: owner.into(),
                     message: InstallBlock::InstallRecord.report(owner, &canonical),

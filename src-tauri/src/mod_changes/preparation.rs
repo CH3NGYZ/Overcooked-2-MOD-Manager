@@ -34,12 +34,12 @@ async fn prepare_inner(
         .ok_or("modChanges.planExpired")?
         .operation_id()
         .to_owned();
-    let outcome = prepare_session(&state, &mut lease, progress).await;
+    let trace = OperationTrace::new(&op, "prepare");
+    log::info!("整链开始准备 op={op} plan={id}");
+    let mut step = "validate_plan";
+    let outcome = prepare_session(&state, &mut lease, progress, &trace, &mut step).await;
     if let Err(error) = &outcome {
-        log::warn!(
-            "整链准备失败 op={op} reason={}",
-            crate::http_diagnostics::redact_text(error)
-        );
+        trace.failure(step, error);
     }
     outcome
 }
@@ -48,9 +48,16 @@ async fn prepare_session(
     state: &AppState,
     lease: &mut SessionLease,
     progress: &PreparationReporter,
+    trace: &OperationTrace<'_>,
+    step: &mut &'static str,
 ) -> Result<ChangePlan, String> {
     let session = lease.session.as_mut().ok_or("modChanges.planExpired")?;
     if session.plan.prepared {
+        log::info!(
+            "整链复用已准备方案 op={} plan={}",
+            trace.op,
+            session.plan.plan_id
+        );
         return Ok(session.plan.clone());
     }
     if session.plan.result.status != SolveStatus::Ready {
@@ -58,10 +65,13 @@ async fn prepare_session(
     }
     progress.synchronize(session);
     let before = approval_signature(session)?;
+    let initial_plan = session.plan.plan_id.clone();
+    let initial_actions = session.plan.result.actions.len();
     // Freeze and recheck existing payloads before extending the plan.
     let fresh_state = state.clone();
     let revision = session.trusted.revision.clone();
     let fingerprints = session.payload_fingerprints.clone();
+    *step = "verify_initial_revision_and_payloads";
     tauri::async_runtime::spawn_blocking(move || {
         ensure_fresh(&fresh_state, &revision)?;
         verify_fingerprints(&fingerprints)
@@ -77,15 +87,28 @@ async fn prepare_session(
     }
     // Each iteration resolves the entire graph. A newly discovered package member
     // may change which asset another node needs; no live file is touched here.
-    for _ in 0..512 {
+    for round in 1..=512 {
+        *step = "before_resolve";
         if archive::is_download_cancelled() {
             return Err("download.cancelled".into());
         }
         // Re-solving a map toggle can inspect live manifest ownership and DLL links.
+        *step = "resolve_verified_graph";
+        let solve_stage = if round <= 4 {
+            "verification"
+        } else {
+            VERIFICATION_SUMMARY_STAGE
+        };
+        if round == 5 {
+            log::info!(
+                "整链实包复核搜索明细已达 4 轮上限 op={}，后续仍记录方案结论",
+                trace.op
+            );
+        }
         let resolve_state = state.clone();
         let mut owned = lease.session.take().ok_or("modChanges.planExpired")?;
         let (owned, outcome) = tauri::async_runtime::spawn_blocking(move || {
-            let result = planning::resolve(&resolve_state, &mut owned);
+            let result = planning::resolve_stage(&resolve_state, &mut owned, solve_stage);
             (owned, result)
         })
         .await
@@ -97,6 +120,7 @@ async fn prepare_session(
         if session.plan.result.status != SolveStatus::Ready {
             break;
         }
+        *step = "game_run_guard";
         live_game::check_plan(state, session)?;
         let pending = session
             .solved
@@ -112,8 +136,10 @@ async fn prepare_session(
             })
             .next();
         let Some((node_id, candidate)) = pending else {
+            *step = "select_verified_payloads";
             select_payloads(session)?;
             progress.stage(PreparationStage::Finalizing, None);
+            *step = "freeze_mutations";
             let prepare_state = state.clone();
             // Moving the session into the blocking task keeps all disk-heavy work off IPC.
             let mut owned = lease.session.take().ok_or("modChanges.planExpired")?;
@@ -126,28 +152,44 @@ async fn prepare_session(
             lease.session = Some(outcome.0);
             outcome.1?;
             let session = lease.session.as_mut().ok_or("modChanges.planExpired")?;
-            if approval_signature(session)? != before {
+            *step = "compare_approval";
+            let changed = approval_signature(session)? != before;
+            if changed {
                 session.plan.plan_id = uuid::Uuid::new_v4().to_string();
             }
             session.plan.prepared = true;
             log::info!(
-                "整链准备完成 op={} plan={} actions={} mutations={}",
-                session.operation_id(),
+                "整链复核结论 op={} initial_plan={initial_plan} plan={} approval_changed={changed} initial_actions={initial_actions} actions={} mutations={} rounds={round}",
+                trace.op,
                 session.plan.plan_id,
                 session.plan.result.actions.len(),
-                session.mutations.as_ref().map_or(0, Vec::len)
+                session.mutations.as_ref().map_or(0, Vec::len),
+            );
+            log_plan(
+                trace.op,
+                "awaiting_apply",
+                &session.plan,
+                trace.elapsed_ms(),
+                true,
             );
             return Ok(session.plan.clone());
         };
+        *step = "reuse_verified_candidate";
         if let Some(payload) = session
             .verified_payloads
             .get(&(node_id.clone(), candidate.id.clone()))
         {
             let actual = payload.candidate.clone();
             replace_candidate(session, &node_id, &actual)?;
+            log::info!(
+                "整链复用实包 op={} round={round} {}",
+                trace.op,
+                log_detail(format_args!("node={node_id:?} candidate={:?}", actual.id))
+            );
             progress.verified(&node_id, &actual.id);
             continue;
         }
+        *step = "select_download_asset";
         let repository_id = candidate
             .source_id
             .as_deref()
@@ -159,13 +201,15 @@ async fn prepare_session(
             .find(|root| root.intent.node_id == node_id)
             .and_then(|r| r.asset_name.clone());
         log::info!(
-            "整链下载候选 op={} node={} source={} tag={} asset={}",
-            session.operation_id(),
-            crate::http_diagnostics::redact_text(&node_id),
-            crate::http_diagnostics::redact_text(repository_id),
-            crate::http_diagnostics::redact_text(candidate.tag.as_deref().unwrap_or("")),
-            crate::http_diagnostics::redact_text(asset_name.as_deref().unwrap_or("")),
+            "整链下载候选 op={} round={round} {}",
+            trace.op,
+            log_detail(format_args!(
+                "node={node_id:?} source={repository_id:?} tag={:?} requested_asset={asset_name:?}",
+                candidate.tag,
+            ))
         );
+        *step = "download_asset";
+        let download_started = std::time::Instant::now();
         progress.stage(PreparationStage::Downloading, Some(&node_id));
         let reporter = progress.clone();
         let download_node = node_id.clone();
@@ -184,6 +228,9 @@ async fn prepare_session(
             ),
         )
         .await?;
+        let download_ms = download_started.elapsed().as_millis();
+        *step = "verify_downloaded_asset";
+        let verify_started = std::time::Instant::now();
         progress.stage(PreparationStage::Verifying, Some(&node_id));
         let extract_state = state.clone();
         let trusted = session.trusted.clone();
@@ -192,7 +239,7 @@ async fn prepare_session(
             .join(format!("asset-{}", uuid::Uuid::new_v4()));
         let extract_node = node_id.clone();
         let payload = tauri::async_runtime::spawn_blocking(move || {
-            super::payload::from_downloaded(
+            let payload = super::payload::from_downloaded(
                 &extract_state,
                 &trusted,
                 download,
@@ -200,23 +247,62 @@ async fn prepare_session(
                 &candidate,
                 asset_name.as_deref(),
                 &target,
-            )
+            )?;
+            Ok::<_, String>((candidate, payload))
         })
         .await
         .map_err(|e| e.to_string())??;
+        let (advertised, payload) = payload;
+        *step = "record_verified_candidate";
         replace_candidate(session, &node_id, &payload.candidate)?;
         let verified_candidate = payload.candidate.id.clone();
         let actual = &payload.candidate;
         log::info!(
-            "整链候选实包已验证 op={} id={} files={} actual={}",
-            session.operation_id(),
-            crate::http_diagnostics::redact_text(&verified_candidate),
+            "整链候选实包已验证 op={} round={round} download_ms={download_ms} verify_ms={} files={} {}",
+            trace.op,
+            verify_started.elapsed().as_millis(),
             payload.files.len(),
-            crate::http_diagnostics::redact_text(&format!(
-                "provides={:?} relations={:?}",
-                actual.provides, actual.relations
+            log_detail(format_args!(
+                "node={node_id:?} candidate={verified_candidate:?} tag={:?} previous_version={:?} version={:?} previous_members={} members={} provides_changed={} previous_relations={} relations={} relations_changed={} metadata_known={} metadata_known_changed={}",
+                actual.tag,
+                advertised.version,
+                actual.version,
+                advertised.provides.len(),
+                actual.provides.len(),
+                advertised.provides != actual.provides,
+                advertised.relations.len(),
+                actual.relations.len(),
+                advertised.relations != actual.relations,
+                actual.relations_known,
+                advertised.relations_known != actual.relations_known,
             )),
         );
+        if round <= DETAIL_LIMIT && log::log_enabled!(log::Level::Info) {
+            if advertised.provides != actual.provides {
+                log::info!(
+                    "整链实包插件差异 op={} round={round} {}",
+                    trace.op,
+                    log_detail(format_args!(
+                        "node={node_id:?} previous={:?} actual={:?}",
+                        advertised.provides.iter().take(6).collect::<Vec<_>>(),
+                        actual.provides.iter().take(6).collect::<Vec<_>>()
+                    ))
+                );
+            }
+            if advertised.relations != actual.relations {
+                log::info!(
+                    "整链实包关系差异 op={} round={round} {}",
+                    trace.op,
+                    log_detail(format_args!(
+                        "node={node_id:?} previous={:?} actual={:?}",
+                        advertised.relations.iter().take(6).collect::<Vec<_>>(),
+                        actual.relations.iter().take(6).collect::<Vec<_>>()
+                    ))
+                );
+            }
+        } else if round == DETAIL_LIMIT + 1 {
+            log::info!("整链实包差异明细已达 {DETAIL_LIMIT} 轮上限 op={}", trace.op);
+        }
         session
             .verified_payloads
             .insert((node_id.clone(), payload.candidate.id.clone()), payload);
@@ -225,6 +311,7 @@ async fn prepare_session(
         planning::remember_payloads(session)?;
         progress.verified(&node_id, &verified_candidate);
     }
+    *step = "return_unready_plan";
     let session = lease.session.as_mut().ok_or("modChanges.planExpired")?;
     if session.plan.result.status == SolveStatus::Ready {
         session.plan.result.status = SolveStatus::Incomplete;
@@ -241,11 +328,12 @@ async fn prepare_session(
     }
     session.plan.plan_id = uuid::Uuid::new_v4().to_string();
     planning::remember_payloads(session)?;
-    log::info!(
-        "整链准备未通过 op={} status={:?} plan={}",
-        session.operation_id(),
-        session.plan.result.status,
-        session.plan.plan_id
+    log_plan(
+        trace.op,
+        "preparation_blocked",
+        &session.plan,
+        trace.elapsed_ms(),
+        true,
     );
     Ok(session.plan.clone())
 }

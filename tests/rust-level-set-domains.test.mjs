@@ -61,7 +61,7 @@ test('map IPCs defer the game gate to concrete MOD mutations', () => {
   const execute = readText(resolve(root, '../mod_changes/execution.rs'))
   assert.match(prepare, /if live_game::touches_mods\([\s\S]*?guard::ensure_game_stopped/)
   assert.match(execute, /let touches_mods = live_game::touches_mods\([\s\S]*?if touches_mods \{\s*guard::ensure_game_stopped/)
-  assert.match(execute, /let check_targets\s*=\s*\|\|\s*\{\s*check_game\(\)\?;/)
+  assert.match(execute, /let check_targets\s*=\s*\|\|\s*-> Result<\(\), String>\s*\{\s*transaction_stage\.set\("verify_live_claims_before_write"\);\s*check_game\(\)\?;/)
   assert.match(execute, /transaction\.apply_checked\(\s*crate::archive::is_download_cancelled,\s*check_targets,/)
   assert.match(readText(resolve(root, '../mods/repository_download.rs')), /game::ensure_game_stopped/)
 })

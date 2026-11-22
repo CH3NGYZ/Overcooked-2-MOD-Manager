@@ -1,6 +1,15 @@
 //! Reasons established by the checks that stop an installation or replacement.
 pub(crate) fn report_install_block(tag: &str, owner: &str, params: &[(&str, &str)]) -> String {
-    log::warn!("整链安装检查未通过：节点={owner}，原因={tag}，详情={params:?}");
+    if log::log_enabled!(log::Level::Warn) {
+        let details: Vec<_> = params
+            .iter()
+            .map(|(key, value)| (*key, crate::file_check::log_field(value)))
+            .collect();
+        log::warn!(
+            "整链安装检查未通过：节点={:?}，原因={tag}，详情={details:?}",
+            crate::file_check::log_field(owner)
+        );
+    }
     crate::locale_tag::with_params(tag, params)
 }
 

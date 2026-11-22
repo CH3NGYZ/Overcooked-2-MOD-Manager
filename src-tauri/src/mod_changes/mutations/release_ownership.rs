@@ -74,8 +74,15 @@ impl Builder<'_> {
             .parent()
             .and_then(Path::to_str)
             .ok_or_else(|| block(InstallBlock::Unverified))?;
-        self.ensure_loose_path_unclaimed(&physical, parent, &registry, Some(owner), true)
-            .map_err(block)?;
+        self.ensure_loose_path_unclaimed(
+            &physical,
+            parent,
+            &registry,
+            Some(owner),
+            true,
+            Some(owner),
+        )
+        .map_err(block)?;
         Ok((physical, fingerprint))
     }
 }
@@ -195,7 +202,8 @@ impl Builder<'_> {
         &self,
         relative: &str,
         real_path: &Path,
-        claims: impl Iterator<Item = (&'a str, InstallBlock)>,
+        claims: impl Iterator<Item = (&'a str, InstallBlock, Option<&'a records::InstallRecord>)>,
+        requester: Option<&str>,
     ) -> Result<(), InstallBlock> {
         for map in &self.protected_maps {
             let map_root = game(map)
@@ -225,25 +233,55 @@ impl Builder<'_> {
         };
         let relative = mods::canonical_dll_name(relative);
         let key = path_key(Path::new(&relative));
-        for (claim, reason) in claims {
+        for (claim, reason, record) in claims {
+            let diagnose = |reason| {
+                if let (Some(requester), Some(record)) = (requester, record) {
+                    self.diagnose_record_claim(
+                        requester,
+                        &relative,
+                        Some(claim),
+                        reason,
+                        std::iter::once(record),
+                    );
+                }
+            };
             let canonical = mods::canonical_dll_name(claim);
             if path_key(Path::new(&canonical)) == key {
                 // A case-folded collision can also protect a distinct file on
                 // a case-sensitive volume. Don't name an unconfirmed owner.
                 return Err(if inventory::key(&canonical) == inventory::key(&relative) {
+                    diagnose("record_claim_matches_requested_path");
                     reason
                 } else {
+                    diagnose("portable_path_collision_with_record");
                     InstallBlock::AliasesOrLink
                 });
             }
-            ensure_other_file(claim, reason)?;
+            let ensure = |path: &str| {
+                ensure_other_file(path, reason).inspect_err(|error| {
+                    if let (Some(requester), Some(record)) = (requester, record) {
+                        log::warn!(
+                            "安装清单物理归属核对失败 op={}：申请者={:?}，清单={:?}，目标={:?}，检查的清单文件状态路径={:?}，结果={error:?}",
+                            self.session.operation_id(), crate::file_check::log_field(requester),
+                            crate::file_check::log_field(&record.relative), crate::file_check::log_field(&relative),
+                            crate::file_check::log_field(path),
+                        );
+                    }
+                    diagnose(if matches!(error, InstallBlock::InstallRecord) {
+                        "record_claim_resolves_to_same_file"
+                    } else {
+                        "record_claim_could_not_be_verified"
+                    });
+                })
+            };
+            ensure(claim)?;
             if canonical.to_ascii_lowercase().ends_with(".dll") {
                 let other = if canonical == claim {
                     mods::disabled_dll_file(&canonical)
                 } else {
                     canonical
                 };
-                ensure_other_file(&other, reason)?;
+                ensure(&other)?;
             }
         }
         Ok(())

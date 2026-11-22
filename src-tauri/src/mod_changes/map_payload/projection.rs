@@ -1,5 +1,6 @@
 //! Merge actual sandbox maps into the trusted baseline without uninstalling it.
 use super::*;
+use crate::mod_changes::session::log_detail;
 use std::collections::HashSet;
 
 pub(super) fn seed_snapshots(
@@ -22,7 +23,24 @@ pub(super) fn seed_snapshots(
                     metadata.author.as_str(),
                     metadata.version.as_str()
                 )),
-                diagnostic(&map.id)
+                log_detail(format_args!(
+                    "map_id={:?} source_id={:?} provider={:?} repo={:?}/{:?} channel={:?} tag={:?} release_derived={} release_cache_unix_ms={:?} cached_releases={} base_relations={} relation_overrides={} last_error={:?}",
+                    map.id,
+                    map.source_id,
+                    map.provider,
+                    map.username,
+                    map.repository,
+                    map.channel,
+                    map.tag,
+                    map.release_derived,
+                    map.releases_cached_at,
+                    map.cached_releases.len(),
+                    map.relations.len(),
+                    map.release_relations.len(),
+                    map.last_error
+                        .as_deref()
+                        .map(crate::locale_tag::diagnostic_tag),
+                ))
             );
         }
         let matched = || {
@@ -115,7 +133,7 @@ pub(super) fn seed_snapshots(
 }
 
 fn diagnostic(value: &impl std::fmt::Debug) -> String {
-    crate::http_diagnostics::redact_text(&format!("{value:?}"))
+    log_detail(format_args!("{value:?}"))
 }
 
 pub(super) fn merge(

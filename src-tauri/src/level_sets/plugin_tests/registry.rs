@@ -1,4 +1,6 @@
 use super::*;
+use crate::http_diagnostics::capture_test_logs;
+use crate::level_sets::plugin_registry::checked_registered_plugins;
 
 /// 登记表：读写往返、路径归一化、坏数据只丢自己、合并以新归属为准。
 #[test]
@@ -67,6 +69,60 @@ fn plugin_registry_round_trips_and_normalizes_paths() {
     );
     assert_eq!(merged.len(), 1);
     assert_eq!(merged[0].owner, owner);
+
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn strict_plugin_registry_reports_failure_stages_without_untrusted_values() {
+    let (root, _game, _recycle) = workspace("strict-registry-log");
+    let manifests = root.join("manifests");
+    let path = registry_path(&manifests);
+    let root_name = root.file_name().unwrap().to_str().unwrap();
+    let capture = capture_test_logs("app_lib::level_sets::plugin_registry", root_name);
+    assert!(
+        checked_registered_plugins(&manifests, true)
+            .unwrap()
+            .is_empty()
+    );
+
+    for record in [
+        r#"{"version":1,"entries":[{"dll":"../raw-marker.dll"}]}"#,
+        r#"{"version":1,"entries":[{"dll":".\\BepInEx\\raw-marker.dll"},{"dll":"BepInEx/RAW-MARKER.dll"}]}"#,
+        r#"{"version":"raw-marker"}"#,
+        r#"{"version":2,"entries":[{"dll":"raw-marker.dll"}]}"#,
+    ] {
+        std::fs::write(&path, record).unwrap();
+        assert_eq!(
+            checked_registered_plugins(&manifests, true).unwrap_err(),
+            "modChanges.ambiguousOwnership"
+        );
+    }
+    std::fs::write(&path, b"\xffraw-marker").unwrap();
+    assert!(checked_registered_plugins(&manifests, true).is_err());
+
+    let messages = capture.messages();
+    let evidence = [
+        "stage=entries reason=unsafe_relative_path",
+        "stage=entries reason=duplicate_normalized_path",
+        "stage=parse reason=invalid_json",
+        "stage=version reason=unsupported_version",
+        "stage=read reason=unreadable",
+    ];
+    assert_eq!(messages.len(), evidence.len(), "{messages:?}");
+    for (message, expected) in messages.iter().zip(evidence) {
+        assert!(message.contains(expected), "{message}");
+        assert!(message.contains("level-set-plugins.json"), "{message}");
+        assert!(
+            !message.to_ascii_lowercase().contains("raw-marker"),
+            "{message}"
+        );
+    }
+    assert!(messages[0].contains("entry=entries[0].dll"));
+    assert!(messages[1].contains("entry=entries[1].dll first_entry=entries[0].dll"));
+    assert!(messages[2].contains("category=Data line=1 column="));
+    assert!(messages[3].contains("version=2 supported_version=1"));
+    assert!(messages[4].contains("io_kind=InvalidData"));
 
     std::fs::remove_dir_all(&root).unwrap();
 }

@@ -2,6 +2,8 @@ use super::*;
 use sha2::{Digest, Sha256};
 use std::io::ErrorKind;
 
+mod diagnostics;
+
 pub(super) struct InstallRecord {
     pub relative: String,
     pub manifest: archive::InstallManifest,
@@ -22,8 +24,14 @@ pub(super) fn install_record_path(repository_id: &str) -> TransactionPath {
 impl InstallRecords {
     pub fn read(root: &Path, session: &PlanSession) -> Result<Self, String> {
         let mut result = Self::default();
-        let unreadable = |relative: &str, error| {
-            log::debug!("无法读取安装记录：路径={relative}，系统错误={error}");
+        let unreadable = |relative: &str, error: std::io::Error| {
+            log::warn!(
+                "整链安装清单读取失败 op={}：文件={:?}，类型={:?}，OS码={:?}",
+                session.operation_id(),
+                crate::file_check::log_path(&root.join(relative)),
+                error.kind(),
+                error.raw_os_error(),
+            );
             InstallBlock::RecordUnreadable.report("install-record", relative)
         };
         let directory = root.join("manifests");
@@ -49,8 +57,15 @@ impl InstallRecords {
                 path.file_name().unwrap_or_default().to_string_lossy()
             );
             let text = fs::read_to_string(&path).map_err(|error| unreadable(&relative, error))?;
-            let manifest = toml::from_str::<archive::InstallManifest>(&text)
-                .map_err(|_| InstallBlock::RecordInvalid.report("install-record", &relative))?;
+            let manifest = toml::from_str::<archive::InstallManifest>(&text).map_err(|error| {
+                log::warn!(
+                    "整链安装清单解析失败 op={}：文件={:?}，TOML错误字节位置={:?}",
+                    session.operation_id(),
+                    crate::file_check::log_path(&path),
+                    error.span()
+                );
+                InstallBlock::RecordInvalid.report("install-record", &relative)
+            })?;
             let mut owners = session.trusted.files.iter().filter(|(_, node)| {
                 node.manifests
                     .iter()
@@ -78,13 +93,25 @@ impl InstallRecords {
     }
 
     pub fn members(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.claimed_files()
+            .map(|(file, record)| (file, record.owner.as_str()))
+    }
+
+    pub fn claimed_files(&self) -> impl Iterator<Item = (&str, &InstallRecord)> {
         self.records.iter().flat_map(|record| {
             record
                 .manifest
                 .files
                 .iter()
-                .map(|file| (file.as_str(), record.owner.as_str()))
+                .map(move |file| (file.as_str(), record))
         })
+    }
+
+    pub fn at_relative<'a>(&'a self, relative: &'a str) -> impl Iterator<Item = &'a InstallRecord> {
+        let key = path_key(Path::new(relative));
+        self.records
+            .iter()
+            .filter(move |record| path_key(Path::new(&record.relative)) == key)
     }
 
     pub fn portable_claims(&self, path: &str) -> impl Iterator<Item = &InstallRecord> {

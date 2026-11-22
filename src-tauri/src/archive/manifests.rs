@@ -183,13 +183,19 @@ pub fn write_manifest(manifest_dir: &Path, manifest: &InstallManifest) -> Result
 
 pub fn read_manifest(manifest_dir: &Path, repository_id: &str) -> Option<InstallManifest> {
     let path = manifest_dir.join(format!("{}.toml", repository_id));
-    let text = match fs::read_to_string(&path) {
+    read_manifest_at(&path)
+}
+
+fn read_manifest_at(path: &Path) -> Option<InstallManifest> {
+    let text = match fs::read_to_string(path) {
         Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
         Err(error) => {
-            log::trace!(
-                "读取 MOD 安装清单失败或不存在：仓库={}，原因={}",
-                repository_id,
-                error
+            log::warn!(
+                "读取 MOD 安装清单失败：文件={:?}，类型={:?}，OS码={:?}",
+                crate::file_check::log_path(path),
+                error.kind(),
+                error.raw_os_error()
             );
             return None;
         }
@@ -198,9 +204,9 @@ pub fn read_manifest(manifest_dir: &Path, repository_id: &str) -> Option<Install
         Ok(manifest) => Some(manifest),
         Err(error) => {
             log::warn!(
-                "解析 MOD 安装清单失败：仓库={}，原因={}",
-                repository_id,
-                error
+                "解析 MOD 安装清单失败：文件={:?}，TOML错误字节位置={:?}",
+                crate::file_check::log_path(path),
+                error.span()
             );
             None
         }
@@ -219,8 +225,7 @@ pub fn read_manifests(manifest_dir: &Path) -> Vec<InstallManifest> {
                 .extension()
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("toml"))
         })
-        .filter_map(|entry| fs::read_to_string(entry.path()).ok())
-        .filter_map(|text| toml::from_str::<InstallManifest>(&text).ok())
+        .filter_map(|entry| read_manifest_at(&entry.path()))
         .collect::<Vec<_>>();
     log::debug!(
         "读取 MOD 安装清单完成：目录={}，数量={}",

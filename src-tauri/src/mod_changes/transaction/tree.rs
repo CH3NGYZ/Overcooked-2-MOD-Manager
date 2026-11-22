@@ -31,8 +31,8 @@ fn copy_directory(source: &Path, target: &Path) -> Result<(), String> {
         return Err(file_check::report(check::STAGED, source, reason));
     }
     fs::create_dir(target)
-        .map_err(|error| file_check::report_io(check::WRITE, target, error, file_check::WRITE))?;
-    let read_error = |error| file_check::report_io(check::STAGED, source, error, file_check::READ);
+        .map_err(|error| durable::diagnostic_io(check::WRITE, target, error, file_check::WRITE))?;
+    let read_error = |error| durable::diagnostic_io(check::STAGED, source, error, file_check::READ);
     for entry in fs::read_dir(source).map_err(read_error)? {
         let entry = entry.map_err(read_error)?;
         let source = entry.path();
@@ -200,11 +200,22 @@ pub(super) fn validate_cleanup(
     else {
         return Ok(());
     };
-    let actual = Fingerprint::capture(&backup.resolve(roots)?)?;
+    let backup = backup.resolve(roots)?;
+    let actual = Fingerprint::capture(&backup)?;
     if actual != Fingerprint::Missing && actual != *before {
+        check::log_mismatch(&backup, check::BACKUP, &actual, before, false);
         return Err(paths::MODIFIED.into());
     }
-    if Fingerprint::capture(&temporary.resolve(roots)?)? != Fingerprint::Missing {
+    let temporary = temporary.resolve(roots)?;
+    let actual = Fingerprint::capture(&temporary)?;
+    if actual != Fingerprint::Missing {
+        check::log_mismatch(
+            &temporary,
+            check::STAGED,
+            &actual,
+            &Fingerprint::Missing,
+            false,
+        );
         return Err(paths::MODIFIED.into());
     }
     Ok(())

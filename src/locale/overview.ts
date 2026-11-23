@@ -193,45 +193,45 @@ export const overview: DomainMessages = {
     ko: '새로 고침',
     ja: '更新へ',
   },
-  // 共 {count} 个仓库 · {failed} 个刷新失败
-  repositoriesFailedToRefresh: {
-    'zh-CN': '共 {count} 个仓库 · {failed} 个刷新失败',
-    'zh-TW': '共 {count} 個倉庫 · {failed} 個重新整理失敗',
-    en: '{count} repositories · {failed} failed to refresh',
-    ko: '저장소 {count}개 · {failed}개 새로 고침 실패',
-    ja: 'リポジトリ {count} 件 · {failed} 件が更新失敗',
+  // 共 {count} 个 MOD · {failed} 个刷新失败
+  modsFailedToRefresh: {
+    'zh-CN': '共 {count} 个 MOD · {failed} 个刷新失败',
+    'zh-TW': '共 {count} 個 MOD · {failed} 個重新整理失敗',
+    en: '{count} MODs · {failed} failed to refresh',
+    ko: 'MOD {count}개 · {failed}개 새로 고침 실패',
+    ja: 'MOD {count} 件 · {failed} 件が更新失敗',
   },
-  // 共 {count} 个仓库 · 全部正常
-  repositoriesAllHealthy: {
-    'zh-CN': '共 {count} 个仓库 · 全部正常',
-    'zh-TW': '共 {count} 個倉庫 · 全部正常',
-    en: '{count} repositories · all healthy',
-    ko: '저장소 {count}개 · 모두 정상',
-    ja: 'リポジトリ {count} 件 · すべて正常',
+  // 共 {count} 个 MOD · 全部正常
+  modsAllHealthy: {
+    'zh-CN': '共 {count} 个 MOD · 全部正常',
+    'zh-TW': '共 {count} 個 MOD · 全部正常',
+    en: '{count} MODs · all healthy',
+    ko: 'MOD {count}개 · 모두 정상',
+    ja: 'MOD {count} 件 · すべて正常',
   },
-  // 尚未加载任何仓库
-  noRepositoriesLoadedYet: {
-    'zh-CN': '尚未加载任何仓库',
-    'zh-TW': '尚未載入任何倉庫',
-    en: 'No repositories loaded yet',
-    ko: '아직 저장소가 없습니다',
-    ja: 'リポジトリがまだありません',
+  // 尚未加载任何 MOD
+  noModsLoadedYet: {
+    'zh-CN': '尚未加载任何 MOD',
+    'zh-TW': '尚未載入任何 MOD',
+    en: 'No MODs loaded yet',
+    ko: '아직 불러온 MOD가 없습니다',
+    ja: '読み込まれた MOD はまだありません',
   },
-  // 共 {count} 个，其中 {updates} 个可更新
-  installedCanUpdate: {
-    'zh-CN': '共 {count} 个，其中 {updates} 个可更新',
-    'zh-TW': '共 {count} 個，其中 {updates} 個可更新',
-    en: '{count} installed, {updates} can update',
-    ko: '{count}개 중 {updates}개 업데이트 가능',
-    ja: '{count} 件中 {updates} 件が更新可能',
+  // 已安装 {count}
+  installedCount: {
+    'zh-CN': '已安装 {count}',
+    'zh-TW': '已安裝 {count}',
+    en: '{count} installed',
+    ko: '{count}개 설치됨',
+    ja: 'インストール済み {count} 件',
   },
-  // 共 {count} 个，全部为最新版
-  installedAllUpToDate: {
-    'zh-CN': '共 {count} 个，全部为最新版',
-    'zh-TW': '共 {count} 個，全部為最新版',
-    en: '{count} installed, all up to date',
-    ko: '{count}개 모두 최신 버전',
-    ja: '{count} 件すべて最新版',
+  // 安装数量未知
+  localCountUnavailable: {
+    'zh-CN': '安装数量未知',
+    'zh-TW': '安裝數量未知',
+    en: 'Installed count unknown',
+    ko: '설치 수를 알 수 없음',
+    ja: 'インストール済み件数は不明',
   },
   // 共 {count} 张地图 · 全部正常
   mapsAllHealthy: {
@@ -257,30 +257,6 @@ export const overview: DomainMessages = {
     en: 'Map catalog not loaded yet',
     ko: '지도 카탈로그를 아직 읽지 않았습니다',
     ja: '地図カタログは未読み込みです',
-  },
-  // 共 {count} 张地图，其中 {updates} 张可更新
-  installedMapsCanUpdate: {
-    'zh-CN': '共 {count} 张地图，其中 {updates} 张可更新',
-    'zh-TW': '共 {count} 張地圖，其中 {updates} 張可更新',
-    en: '{count} maps installed, {updates} can update',
-    ko: '지도 {count}개 중 {updates}개 업데이트 가능',
-    ja: '地図 {count} 件中 {updates} 件が更新可能',
-  },
-  // 共 {count} 张地图
-  installedMaps: {
-    'zh-CN': '共 {count} 张地图',
-    'zh-TW': '共 {count} 張地圖',
-    en: '{count} maps installed',
-    ko: '지도 {count}개 설치됨',
-    ja: '地図 {count} 件インストール済み',
-  },
-  // 还没有安装任何地图
-  noMapsInstalled: {
-    'zh-CN': '还没有安装任何地图',
-    'zh-TW': '還沒有安裝任何地圖',
-    en: 'No maps installed yet',
-    ko: '아직 설치된 지도가 없습니다',
-    ja: 'インストール済みの地図はありません',
   },
   // 全部 MOD
   allMods: {

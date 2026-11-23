@@ -46,7 +46,7 @@ import { demoActive, withDemoConfig, withDemoDiyLevelTarget, withDemoGame, withD
 
 const router = useRouter()
 const message = useNotify()
-const { ensureLoaded, load, modsLoading: realModsLoading, modsStatus, modsGeneration,
+const { ensureLoaded, load, modsLoading: realModsLoading, modsGeneration,
   error: realError, mods: realMods, diyLevelTarget: realDiyLevelTarget, game: realGame, config: realConfig } = useDashboard()
 const mods = computed(() => withDemoMods(realMods.value))
 const config = computed(() => withDemoConfig(realConfig.value))
@@ -59,8 +59,18 @@ const frameworkOk = computed(() => game.value?.bepinex.installed === true)
 const { runtimeState } = useModRepositoryRefresh()
 const { maps: realMaps, catalogCount, loadMaps: loadOnlineMaps, refreshingHint } = useMapSources()
 const maps = computed(() => withDemoMaps(realMaps.value))
-const { scanning: levelSetScanning, levelSets: realLevelSets, hasResult: hasLocalMaps, contextRevision } = useLevelSetScan()
+const { scanning: levelSetScanning, levelSets: realLevelSets, hasResult: hasLocalMaps } = useLevelSetScan()
 const levelSets = computed(() => withDemoLevelSets(realLevelSets.value))
+
+function localInstalledStats(items: readonly { enabled: boolean }[] | null, reading: boolean) {
+  if (items === null) {
+    return { value: '—', sub: t(reading ? 'levelSet.scanning' : 'overview.localCountUnavailable') }
+  }
+  return {
+    value: String(items.filter((item) => item.enabled).length),
+    sub: t('overview.installedCount', { count: items.length }),
+  }
+}
 
 /** Counts publish after scanning; each version conclusion follows its own online entry. */
 const modStatuses = computed(() => mods.value.map((mod) =>
@@ -89,7 +99,6 @@ onMounted(() => {
 
 /* ===== BepInEx 框架 ===== */
 
-const frameworkVersion = computed(() => game.value?.bepinex.version ?? '')
 const frameworkEnabled = computed(() => game.value?.winhttp_state === 'modenabled')
 /** 框架的完整状态文案：未装 / 已装未启用 / 正常。 */
 const frameworkValue = computed(() => {
@@ -102,7 +111,7 @@ const frameworkSub = computed(() => {
       ? t('overlays.existingModFolderFoundKeptAfterInstall')
       : t('overview.installItToLoadMods')
   }
-  return frameworkVersion.value ? `BepInEx ${frameworkVersion.value}` : t('tools.versionUnknown')
+  return game.value?.bepinex.version || t('tools.versionUnknown')
 })
 
 const working = ref(false)
@@ -144,34 +153,9 @@ const diyLevelValue = computed(() => {
   return diyLevelEnabled.value ? t('modsLocal.enabled2') : t('modsLocal.disabled')
 })
 
-/**
- * 地图集数量。
- *
- * 只数 `levels/` 下的**文件夹**（一个文件夹 = 一个地图集），散文件不算。
- * 这个数据只有专用的 `diy_level_info` 命令才有（MOD 扫描不带它），
- * 所以要单独读一次；失败按 0 处理，不能让整张卡片报错。
- */
-const diyLevelPacks = ref(0)
-watch(contextRevision, () => { diyLevelPacks.value = 0 }, { flush: 'sync' })
-watch([realLevelSets, demoActive], async (_, _previous, onCleanup) => {
-  if (demoActive.value || !hasLocalMaps.value || !realDiyLevelTarget.value || modsStatus.value !== 'ready') return
-  const generation = modsGeneration.value, context = contextRevision.value
-  let current = true
-  onCleanup(() => { current = false })
-  const isCurrent = () => current && context === contextRevision.value
-    && generation === modsGeneration.value && modsStatus.value === 'ready'
-  try {
-    const info = await api.diyLevelInfo()
-    if (isCurrent()) diyLevelPacks.value = info.level_packs ?? 0
-  } catch { if (isCurrent()) diyLevelPacks.value = 0 }
-}, { immediate: true })
-
-const diyLevelSub = computed(() => {
-  if (!diyLevelOk.value) return t('framework.customMapsLoadOnlyAfterInstallingThis')
-  const version = diyLevelMod.value?.version ?? t('tools.versionUnknown')
-  const packs = demoActive.value ? withDemoLevelSets([]).length : diyLevelPacks.value
-  return `${t('modsOnline.versions')} ${version} · ${t('framework.mapPacks')} ${packs}`
-})
+const diyLevelSub = computed(() => diyLevelMod.value
+  ? diyLevelMod.value.version || t('tools.versionUnknown')
+  : t('framework.customMapsLoadOnlyAfterInstallingThis'))
 
 /** 切换 DIYLevel 启用状态：走后端与 MOD 列表相同的 .dll 改名逻辑。 */
 async function toggleDiyLevel(enabled: boolean) {
@@ -201,7 +185,10 @@ function openDiyLevelSettings() {
 
 /* ===== 已安装 MOD（含可更新数量） ===== */
 
-const installedMods = computed(() => mods.value)
+const localModsStats = computed(() => localInstalledStats(
+  demoActive.value || modsGeneration.value > 0 ? mods.value : null,
+  modsLoading.value,
+))
 
 /**
  * 可更新的 MOD。
@@ -211,22 +198,6 @@ const installedMods = computed(() => mods.value)
  */
 const updatable = computed(() => modStatuses.value
   .filter((entry) => !entry.mod.is_dependency && entry.mod.update_available).map((entry) => entry.mod))
-
-/**
- * 卡片副标题：有更新时报「N 个可更新」，没有时只报总数。
- * 主数值永远是已安装总数 —— 这张卡回答的是「我装了多少」，
- * 可更新只是附加信息，不该反过来占据主位（否则没更新时显示 0 很空洞）。
- */
-const installedSub = computed(() => {
-  const total = installedMods.value.length
-  if (modsLoading.value) return t('tools.checking')
-  if (!total) return t('modsLocal.noModsInstalled')
-  if (localReposChecking.value) return t('tools.checking')
-  const updates = updatable.value.length
-  return updates
-    ? t('overview.installedCanUpdate', { count: total, updates })
-    : t('overview.installedAllUpToDate', { count: total })
-})
 
 /**
  * 跳到 MOD 管理页。
@@ -272,11 +243,11 @@ const failedRepositories = computed(() =>
  */
 const onlineSub = computed(() => {
   const total = onlineRepositories.value.length
-  if (!total) return t('overview.noRepositoriesLoadedYet')
+  if (!total) return t('overview.noModsLoadedYet')
   if (!failedRepositories.value.length) {
-    return t('overview.repositoriesAllHealthy', { count: total })
+    return t('overview.modsAllHealthy', { count: total })
   }
-  return t('overview.repositoriesFailedToRefresh', {
+  return t('overview.modsFailedToRefresh', {
     count: total,
     failed: failedRepositories.value.length,
   })
@@ -332,30 +303,13 @@ const onlineMapsSub = computed(() => {
   return t('overview.mapsFailedToRefresh', { count, failed })
 })
 
-/**
- * 主数值：读本地地图期间不显示 0。
- *
- * 列表还没回来时 0 不是结论，只是「还不知道」—— 与「读取中」的按钮并排放着
- * 会让人以为一张地图都没装。未知一律显示破折号。
- */
 const localMapsChecking = computed(() => levelSetScanning.value
   || !!refreshingHint.value.entryStateUnavailable
   || levelSets.value.some((set) => levelSetIsRefreshing(set, maps.value, refreshingHint.value)))
-const localMapsValue = computed(() =>
-  !demoActive.value && !hasLocalMaps.value ? '—' : String(levelSets.value.length))
-
-const localMapsSub = computed(() => {
-  const total = levelSets.value.length
-  // 读取期间「还没有安装任何地图」同样是没有根据的结论。
-  if (!total) {
-    return levelSetScanning.value ? t('levelSet.scanningPreparing') : t('overview.noMapsInstalled')
-  }
-  const updates = updatableMaps.value.length
-  if (!updates && localMapsChecking.value) return t('tools.checking')
-  return updates
-    ? t('overview.installedMapsCanUpdate', { count: total, updates })
-    : t('overview.installedMaps', { count: total })
-})
+const localMapsStats = computed(() => localInstalledStats(
+  demoActive.value || hasLocalMaps.value ? levelSets.value : null,
+  levelSetScanning.value,
+))
 
 /**
  * 本地地图卡的按钮文案：读取中 → 「读取中」+ 转圈；读完 → 「去更新」/「去管理」。
@@ -463,13 +417,13 @@ watch(demoActive, active => {
 
           <!--
             本地 MOD：整张卡可点，跳 MOD 管理页。
-            主数值是安装总数，旁边并列「N 可更新」。
+            主数值是启用数，旁边并列「N 可更新」；副标题保留安装总数。
             按钮随状态分支：有更新 →「去更新」并定位第一条；无更新 →「去管理」。
           -->
           <StatCard data-tutorial="overview-card-local-mods"
-            :label="t('overview.localMods')" :value="modsLoading && !installedMods.length ? '—' : String(installedMods.length)"
+            :label="t('overview.localMods')" :value="localModsStats.value"
             :extra="{ count: updatable.length, label: t('tools.update') }"
-            :sub="installedSub"
+            :sub="localModsStats.sub"
             :tone="updatable.length ? 'warning' : 'success'"
             clickable @click="openLocalMods">
             <template #action>
@@ -482,7 +436,7 @@ watch(demoActive, active => {
               <n-button size="small" :secondary="!updatable.length"
                 :type="updatable.length ? 'warning' : 'default'"
                 :loading="localReposChecking"
-                :disabled="!installedMods.length" @click.stop="openLocalMods">
+                :disabled="!mods.length" @click.stop="openLocalMods">
                 <template #icon>
                   <CloudDownloadOutline v-if="updatable.length" width="14" height="14" />
                   <SettingsOutline v-else width="14" height="14" />
@@ -509,7 +463,7 @@ watch(demoActive, active => {
         <div class="column-cards">
           <!--
             DIYLevel：与 BepInEx 同形态（摘要 + 开关 + 跳转）。
-            数值是启用状态，副标题给出版本与地图集数量。
+            数值是启用状态，安装后副标题只显示版本号。
           -->
           <StatCard data-tutorial="overview-card-diy-level"
             :label="t('framework.diylevelFramework')" :value="diyLevelValue"
@@ -527,7 +481,7 @@ watch(demoActive, active => {
           </StatCard>
 
           <!--
-            在线地图：主数值是地图源声明的条目数，并列「N 刷新失败」。
+            在线地图：主数值按地图身份去重，并列「N 刷新失败」。
             有失败时「去刷新」并高亮第一张失败地图；全部正常时「去安装」。
           -->
           <StatCard data-tutorial="overview-card-online-maps"
@@ -550,13 +504,13 @@ watch(demoActive, active => {
           </StatCard>
 
           <!--
-            本地地图：主数值是本地关卡集数量，并列「N 可更新」。
+            本地地图：主数值是启用数，并列「N 可更新」；副标题保留安装总数。
             有更新 →「去更新」并定位第一张；无更新 →「去管理」。
           -->
           <StatCard data-tutorial="overview-card-local-maps"
-            :label="t('overview.localMaps')" :value="localMapsValue"
+            :label="t('overview.localMaps')" :value="localMapsStats.value"
             :extra="{ count: updatableMaps.length, label: t('tools.update') }"
-            :sub="localMapsSub"
+            :sub="localMapsStats.sub"
             :tone="updatableMaps.length ? 'warning' : 'success'"
             clickable @click="openLocalMaps">
             <template #action>

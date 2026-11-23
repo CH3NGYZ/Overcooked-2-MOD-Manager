@@ -175,14 +175,6 @@ export const frameworkUi: DomainMessages = {
     ko: 'DIYLevel 프레임워크 관리',
     ja: 'DIYLevel フレームワーク管理',
   },
-  // 地图集
-  mapPacks: {
-    'zh-CN': '地图集',
-    'zh-TW': '地圖集',
-    en: 'Map packs',
-    ko: '맵 팩',
-    ja: 'マップパック',
-  },
   // 安装来源
   installSource: {
     'zh-CN': '安装来源',

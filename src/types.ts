@@ -232,10 +232,6 @@ export interface DiyLevelInfo {
   enabled: boolean
   version?: string | null
   dll_file?: string | null
-  /** 地图目录 `BepInEx/plugins/OC2DIYLevel/levels` 是否存在。 */
-  has_levels_dir: boolean
-  /** 地图集数量：只数 `levels/` 下的文件夹（散文件不算）。 */
-  level_packs: number
   /** 已有的 DIYLevel 目录备份（绝对路径，升序）。 */
   backups?: string[]
 }

@@ -341,12 +341,6 @@ onMounted(() => { void refresh() })
       </div>
     </div>
 
-    <!--
-      地图集区块已移除：下一步会把「地图管理」做成与 MOD 管理同级的独立页面，
-      这里再放一份列表会与那个页面重复。后端 level_packs / open_diy_level_directory
-      仍保留，供新页面与总览卡片使用。
-    -->
-
     <!-- 备份/恢复/卸载期间的全屏遮罩：这些操作都在整目录拷贝，不能被打断 -->
     <BusyOverlay :show="!!busyText" :description="busyText ?? undefined" />
   </n-spin>

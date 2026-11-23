@@ -56,11 +56,11 @@ export const tutorialOverview: DomainMessages = {
     ja: 'オンラインMOD',
   },
   'overview.onlineMods.body': {
-    'zh-CN': '数值是当前地区可见的仓库数，副标题说明有没有刷新失败。点卡片进下载页；有失败时按钮变「去刷新」，直接跳到出错的那个。',
-    'zh-TW': '數值是目前地區看得到幾個倉庫，副標題說明有沒有重新整理失敗。點卡片進下載頁；有倉庫失敗時按鈕變成「去重新整理」，直接跳到出錯的那個。',
-    en: 'The value counts repositories visible in your region, and the subtitle says whether any refresh failed. Click the card to open the download page; if some failed, the button jumps straight to the first broken repository.',
-    ko: '값은 현재 지역에서 보이는 저장소 수이고, 부제는 새로 고침 실패 여부를 알려 줍니다. 카드를 누르면 다운로드 페이지로 가며, 실패가 있으면 버튼이 첫 실패 저장소로 바로 이동합니다.',
-    ja: '値は現在の地域で見えるリポジトリ数、副題は更新に失敗したかどうかです。カードを押すとダウンロードページへ移動し、失敗があればボタンで最初の失敗リポジトリへ直接飛べます。',
+    'zh-CN': '大数字是当前地区可见的在线 MOD 数。点卡片进下载页；有刷新失败时，「去刷新」会定位到第一个失败的条目。',
+    'zh-TW': '大數字是目前地區可見的線上 MOD 數。點卡片進下載頁；有重新整理失敗時，「去重新整理」會定位到第一個失敗的項目。',
+    en: 'The large number counts online MODs visible in your region. Click the card to open the download page. If a refresh failed, Refresh jumps to the first affected entry.',
+    ko: '큰 숫자는 현재 지역에서 볼 수 있는 온라인 MOD 수입니다. 카드를 누르면 다운로드 페이지가 열립니다. 새로 고침에 실패한 항목이 있으면 새로 고침 버튼으로 첫 항목으로 이동합니다.',
+    ja: '大きな数字は現在の地域で表示されるオンライン MOD の件数です。カードを押すとダウンロードページが開き、更新に失敗した項目があれば「更新へ」で最初の項目に移動します。',
   },
   // 本地 MOD
   'overview.localMods.title': {
@@ -71,11 +71,11 @@ export const tutorialOverview: DomainMessages = {
     ja: 'ローカルMOD',
   },
   'overview.localMods.body': {
-    'zh-CN': '数值是已装的 MOD 数（不含随包依赖），旁边是可更新数。点卡片进管理页，有更新时直接定位到第一个可更新的 MOD。',
-    'zh-TW': '數值是磁碟上已安裝的 MOD 數（不含隨包依賴），旁邊是可更新的數量。點卡片進管理頁，有更新時直接定位到第一個可更新的 MOD。',
-    en: 'The value counts MODs installed on disk (bundled dependencies excluded), with the updatable count beside it. Click the card to open the manage page, which jumps to the first updatable MOD when there is one.',
-    ko: '값은 디스크에 설치된 MOD 수(동봉 의존성 제외)이고 옆에 업데이트 가능 수가 붙습니다. 카드를 누르면 관리 페이지로 가며, 업데이트가 있으면 첫 항목으로 바로 이동합니다.',
-    ja: '値はディスク上の MOD 数(同梱依存を除く)で、隣が更新可能数です。カードを押すと管理ページへ移動し、更新があれば最初の更新可能な MOD に直接移動します。',
+    'zh-CN': '大数字是已启用的 MOD 数，小字是已安装总数（含停用）。有更新时会单独标出数量。点卡片进管理页，有更新时会定位到第一个可更新的 MOD。',
+    'zh-TW': '大數字是已啟用的 MOD 數，小字是已安裝總數（含停用）。有更新時會另外標出數量。點卡片進管理頁，有更新時會定位到第一個可更新的 MOD。',
+    en: 'The large number counts enabled MODs. The line below counts all installed MODs, including disabled ones. Updates are counted separately. Click the card to open the management page and jump to the first available update, if any.',
+    ko: '큰 숫자는 활성화된 MOD 수이고, 아래 줄은 비활성 항목을 포함한 전체 설치 수입니다. 업데이트 수는 따로 표시됩니다. 카드를 누르면 관리 페이지가 열리고, 업데이트가 있으면 첫 항목으로 이동합니다.',
+    ja: '大きな数字は有効な MOD の件数、下の行は無効なものも含めたインストール件数です。更新可能な件数は別に表示されます。カードを押すと管理ページが開き、更新があれば最初の項目に移動します。',
   },
 
   // ===== 右列：地图链路 =====
@@ -103,11 +103,11 @@ export const tutorialOverview: DomainMessages = {
     ja: 'DIYLevel ランタイム',
   },
   'overview.diyLevel.body': {
-    'zh-CN': '自定义地图进游戏的前提。数值是启用状态，下一行是版本号与地图集数量；点卡片去设置页的抽屉安装、备份或恢复。',
-    'zh-TW': '自訂地圖進遊戲的前提。數值是啟用狀態，下一行是版本號與地圖集數量；點卡片到設定頁的抽屜安裝、備份或還原。',
-    en: 'What custom maps need to show up in game. The value is the enabled state, the line below shows the version and how many map packs are installed; clicking the card opens the drawer in Settings to install, back up or restore it.',
-    ko: '사용자 지도가 게임에 나오기 위한 전제입니다. 값은 활성 상태, 아래 줄은 버전과 지도 팩 수입니다. 카드를 누르면 설정의 서랍에서 설치·백업·복원할 수 있습니다.',
-    ja: 'カスタムマップをゲームで使うための前提です。値は有効状態、下の行はバージョンとマップパック数です。カードを押すと設定の引き出しから導入・バックアップ・復元ができます。',
+    'zh-CN': '自定义地图需要 DIYLevel 才能加载。卡片显示安装和启用状态，已安装时下方显示版本号。点卡片可在设置里安装、备份或恢复。',
+    'zh-TW': '自訂地圖需要 DIYLevel 才能載入。卡片顯示安裝和啟用狀態，已安裝時下方顯示版本號。點卡片可在設定裡安裝、備份或還原。',
+    en: 'Custom maps require DIYLevel. The card shows whether it is installed and enabled, with the version below once installed. Click the card to install, back up or restore it in Settings.',
+    ko: '사용자 지도를 불러오려면 DIYLevel이 필요합니다. 카드는 설치 및 활성 상태를 표시하며, 설치되어 있으면 아래 줄에 버전이 나옵니다. 카드를 누르면 설정에서 설치·백업·복원할 수 있습니다.',
+    ja: 'カスタムマップの読み込みには DIYLevel が必要です。カードにはインストールと有効化の状態が表示され、インストール済みなら下にバージョンが表示されます。カードから設定を開き、導入・バックアップ・復元ができます。',
   },
   // 在线地图
   'overview.onlineMaps.title': {
@@ -118,11 +118,11 @@ export const tutorialOverview: DomainMessages = {
     ja: 'オンライン地図',
   },
   'overview.onlineMaps.body': {
-    'zh-CN': '数值是地图源里能下载的地图条目数，副标题写着有几条刷新失败。点卡片进下载页；有失败时直接定位到第一张刷新失败的地图。',
-    'zh-TW': '數值是地圖源裡能下載的地圖條目數，副標題寫著幾條重新整理失敗。點卡片進下載頁；有失敗時直接定位到第一張重新整理失敗的地圖。',
-    en: 'The value counts downloadable entries in the map sources, and the subtitle reports how many failed to refresh. Click the card to open the download page; if any failed, it jumps to the first one.',
-    ko: '값은 지도 소스에서 받을 수 있는 지도 항목 수이고, 부제에 새로 고침 실패 수가 나옵니다. 카드를 누르면 다운로드 페이지로 가며, 실패가 있으면 첫 실패 지도로 이동합니다.',
-    ja: '値はマップソースから取得できる地図の件数、副題は更新に失敗した件数です。カードを押すとダウンロードページへ移動し、失敗があれば最初の失敗した地図へ飛びます。',
+    'zh-CN': '同一张地图即使有多个下载来源，也只算一张。副标题提示目录是否已确认、有无刷新失败。点卡片进下载页；有失败时定位到第一个出错的条目。',
+    'zh-TW': '同一張地圖即使有多個下載來源，也只算一張。副標題提示目錄是否已確認、有無重新整理失敗。點卡片進下載頁；有失敗時定位到第一個出錯的項目。',
+    en: 'A map counts once even if it has several download sources. The subtitle shows catalog or refresh status. Click the card to open the download page and jump to the first entry that failed to refresh, if any.',
+    ko: '다운로드 소스가 여러 개여도 같은 지도는 한 번만 셉니다. 아래 줄에는 카탈로그 또는 새로 고침 상태가 표시됩니다. 카드를 누르면 다운로드 페이지가 열리고, 실패한 항목이 있으면 첫 항목으로 이동합니다.',
+    ja: '同じ地図はダウンロード元が複数あっても 1 件と数えます。下の行にはカタログや更新の状態が表示されます。カードを押すとダウンロードページが開き、更新に失敗した項目があれば最初の項目に移動します。',
   },
   // 本地地图
   'overview.localMaps.title': {
@@ -133,10 +133,10 @@ export const tutorialOverview: DomainMessages = {
     ja: 'ローカル地図',
   },
   'overview.localMaps.body': {
-    'zh-CN': '数值是本地关卡集数量，一个文件夹算一张，读盘中显示「—」；旁边是可更新的数量。点卡片进管理页，有更新时定位到第一张。',
-    'zh-TW': '數值是本機關卡集數量，一個資料夾算一張，讀取中顯示「—」；旁邊是可更新的數量。點卡片進管理頁，有更新時定位到第一張。',
-    en: 'The value counts local level sets, one folder per map, and shows “—” while reading; the updatable count is beside it. Click the card to open the manage page, which jumps to the first updatable map.',
-    ko: '값은 로컬 레벨 세트 수(폴더 하나가 지도 하나)이고 읽는 동안에는 "—"로 표시됩니다. 옆은 업데이트 가능 수입니다. 카드를 누르면 관리 페이지로 가서 첫 항목으로 이동합니다.',
-    ja: '値はローカルのレベルセット数(フォルダ 1 つが地図 1 枚)で、読み込み中は「—」と表示されます。隣が更新可能数です。カードを押すと管理ページへ移動し、更新があれば先頭へ移動します。',
+    'zh-CN': '大数字是已启用的地图数，小字是已安装总数（含停用）。还没有读取结果时显示「—」，不是 0。点卡片进管理页，有更新时会定位到第一张。',
+    'zh-TW': '大數字是已啟用的地圖數，小字是已安裝總數（含停用）。還沒有讀取結果時顯示「—」，不是 0。點卡片進管理頁，有更新時會定位到第一張。',
+    en: 'The large number counts enabled maps. The line below counts all installed maps, including disabled ones. Until the count is known, the card shows “—”, not 0. Click to open the management page and jump to the first available update, if any.',
+    ko: '큰 숫자는 활성화된 지도 수이고, 아래 줄은 비활성 지도를 포함한 전체 설치 수입니다. 읽기 결과가 나오기 전에는 0이 아닌 "—"가 표시됩니다. 카드를 누르면 관리 페이지가 열리고, 업데이트가 있으면 첫 지도로 이동합니다.',
+    ja: '大きな数字は有効な地図の件数、下の行は無効なものも含めたインストール件数です。件数が分かるまでは 0 ではなく「—」が表示されます。カードを押すと管理ページが開き、更新があれば最初の項目に移動します。',
   },
 }

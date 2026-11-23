@@ -62,16 +62,9 @@ test('拆分不得增加历史兼容表之外的重复 key', () => {
 test('测试消费的完整 tag 与运行时五语嵌套树一致', () => {
   for (const code of LOCALE_CODES) {
     const messages = buildMessages(code)
-    const shadowed = []
     for (const [tag, entry] of REGISTERED) {
       const actual = tag.split('.').reduce((value, key) => value?.[key], messages)
-      if (actual === undefined) shadowed.push(tag)
-      else assert.equal(actual, entry[code], `${tag}/${code}`)
+      assert.equal(actual, entry[code], `${tag}/${code}`)
     }
-    // 旧地图抽屉的子键被 frameworkUi.mapPacks 覆盖；本批保持运行时行为并禁止新增遮蔽。
-    assert.deepEqual(shadowed.sort(), [
-      'framework.mapPacks.count', 'framework.mapPacks.empty',
-      'framework.mapPacks.openDir', 'framework.mapPacks.title',
-    ])
   }
 })

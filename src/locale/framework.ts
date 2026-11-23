@@ -310,34 +310,4 @@ export const framework: DomainMessages = {
     ko: '백업이 삭제되었습니다',
     ja: 'バックアップを削除しました',
   },
-
-  // ===== DIYLevel 地图集（原抽屉里的区块，已移到地图管理页备用）=====
-  'mapPacks.title': {
-    'zh-CN': '地图集',
-    'zh-TW': '地圖集',
-    en: 'Map packs',
-    ko: '맵 팩',
-    ja: 'マップパック',
-  },
-  'mapPacks.empty': {
-    'zh-CN': '还没有地图集。把地图文件夹放进 levels 目录即可，每个文件夹算一个地图集。',
-    'zh-TW': '還沒有地圖集。把地圖資料夾放進 levels 目錄即可，每個資料夾算一個地圖集。',
-    en: 'No map packs yet. Drop map folders into the levels folder — each folder counts as one pack.',
-    ko: '아직 맵 팩이 없습니다. 맵 폴더를 levels 폴더에 넣으면 폴더 하나가 맵 팩 하나입니다.',
-    ja: 'マップパックがありません。マップフォルダーを levels フォルダーに入れてください（1 フォルダー＝1 パック）。',
-  },
-  'mapPacks.count': {
-    'zh-CN': '当前有 {count} 个地图集（每张地图集是 levels 下的一个文件夹）。',
-    'zh-TW': '目前有 {count} 個地圖集（每張地圖集是 levels 下的一個資料夾）。',
-    en: 'Currently {count} map packs (each is a folder under levels).',
-    ko: '현재 맵 팩 {count}개(각각 levels 아래의 폴더)입니다.',
-    ja: '現在 {count} 個のマップパックがあります（各 levels 配下のフォルダー）。',
-  },
-  'mapPacks.openDir': {
-    'zh-CN': '打开 levels 目录',
-    'zh-TW': '開啟 levels 目錄',
-    en: 'Open levels folder',
-    ko: 'levels 폴더 열기',
-    ja: 'levels フォルダーを開く',
-  },
 }

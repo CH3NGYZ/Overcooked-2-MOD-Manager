@@ -1,31 +1,5 @@
 use super::*;
 
-#[test]
-fn counts_only_directories_under_levels() {
-    let root = std::env::temp_dir().join(format!("oc2-diy-levels-{}", uuid::Uuid::new_v4()));
-    let levels = root.join("levels");
-    std::fs::create_dir_all(&levels).unwrap();
-
-    // 空目录：0 个地图集
-    assert_eq!(count_level_packs(&levels), 0);
-
-    // 两个文件夹 + 三个散文件 → 只数出来 2
-    std::fs::create_dir_all(levels.join("Pack A")).unwrap();
-    std::fs::create_dir_all(levels.join("Pack B")).unwrap();
-    std::fs::write(levels.join("readme.txt"), b"notes").unwrap();
-    std::fs::write(levels.join("preview.png"), b"png").unwrap();
-    std::fs::write(levels.join("config.json"), b"{}").unwrap();
-    assert_eq!(count_level_packs(&levels), 2);
-
-    // 嵌套目录只按顶层算：Pack A 里再建一个不算新地图集
-    std::fs::create_dir_all(levels.join("Pack A/inner")).unwrap();
-    assert_eq!(count_level_packs(&levels), 2);
-
-    // 目录不存在：0，不报错
-    std::fs::remove_dir_all(&root).unwrap();
-    assert_eq!(count_level_packs(&levels), 0);
-}
-
 struct Fixture {
     root: PathBuf,
     game: PathBuf,
@@ -82,25 +56,10 @@ impl Drop for Fixture {
 }
 
 #[test]
-fn info_reuses_completed_scan_and_uses_highest_disabled_plugins_real_directory() {
+fn info_reuses_completed_scan_and_reports_highest_disabled_plugin() {
     let fixture = Fixture::new();
     let lower = fixture.plugin("OC2DIYLevel", "1.2.3", true);
     let highest = fixture.plugin("RenamedFastInit", "1.2.3.4", false);
-    std::fs::create_dir_all(
-        fixture
-            .game
-            .join("BepInEx/plugins/OC2DIYLevel/levels/OldOnly"),
-    )
-    .unwrap();
-    for name in ["A", "B"] {
-        std::fs::create_dir_all(
-            fixture
-                .game
-                .join("BepInEx/plugins/RenamedFastInit/levels")
-                .join(name),
-        )
-        .unwrap();
-    }
     let generation = fixture.publish(vec![lower, highest]);
     let info = get_diy_level_info_blocking(&fixture.state).unwrap();
     assert!(info.installed);
@@ -110,7 +69,6 @@ fn info_reuses_completed_scan_and_uses_highest_disabled_plugins_real_directory()
         info.dll_file.as_deref(),
         Some("BepInEx/plugins/RenamedFastInit/DIYLevel.dll")
     );
-    assert_eq!(info.level_packs, 2);
     let root = std::fs::canonicalize(&fixture.game).unwrap();
     assert_eq!(
         fixture
@@ -140,8 +98,6 @@ fn pending_or_ambiguous_scans_do_not_choose_a_historical_or_first_directory() {
     fixture.publish(vec![]);
     let info = get_diy_level_info_blocking(&fixture.state).unwrap();
     assert!(!info.installed);
-    assert!(!info.has_levels_dir);
-    assert_eq!(info.level_packs, 0);
 }
 
 #[test]

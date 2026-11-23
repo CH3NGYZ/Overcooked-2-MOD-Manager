@@ -56,15 +56,6 @@ pub struct DiyLevelInfo {
     pub version: Option<String>,
     /// DLL 的游戏相对路径，用于开关与打开目录。
     pub dll_file: Option<String>,
-    /// 本地地图目录（`BepInEx/plugins/OC2DIYLevel/levels`）是否存在。
-    #[serde(default)]
-    pub has_levels_dir: bool,
-    /// 地图集数量：只看 `levels/` 下的**文件夹**个数。
-    ///
-    /// 一个地图集就是 `levels/` 下的一个目录，目录里的散文件（readme、
-    /// 缩略图等）不属于任何地图集，不计数。目录不可读时为 0。
-    #[serde(default)]
-    pub level_packs: u32,
     /// 已有的 DIYLevel 目录备份（绝对路径，按名称升序）。
     ///
     /// 只备份 `BepInEx/plugins/OC2DIYLevel` 这一个文件夹 —— 它是框架本体

@@ -38,28 +38,17 @@ fn get_diy_level_info_blocking(state: &AppState) -> Result<DiyLevelInfo, String>
             enabled: false,
             version: None,
             dll_file: None,
-            has_levels_dir: false,
-            level_packs: 0,
             backups,
         });
     };
     let root = PathBuf::from(&game_root);
-    let (snapshot, roots) = mods::snapshot::level_roots(state, &root)?;
+    let (snapshot, _) = mods::snapshot::level_roots(state, &root)?;
     let target = selected_target(&snapshot);
-    let levels_dir = roots
-        .package_root()
-        .map(|directory| directory.join("levels"));
     Ok(DiyLevelInfo {
         installed: target.is_some(),
         enabled: target.is_some_and(|item| item.enabled),
         version: target.and_then(|item| item.version.clone()),
         dll_file: target.map(|item| item.dll_file.clone()),
-        has_levels_dir: levels_dir
-            .as_ref()
-            .is_some_and(|directory| directory.is_dir()),
-        level_packs: levels_dir
-            .as_ref()
-            .map_or(0, |directory| count_level_packs(directory)),
         backups,
     })
 }
@@ -67,21 +56,6 @@ fn get_diy_level_info_blocking(state: &AppState) -> Result<DiyLevelInfo, String>
 fn selected_target(snapshot: &LocalModSnapshot) -> Option<&InstalledMod> {
     let dll = snapshot.diy_level_target.as_deref()?;
     snapshot.mods.iter().find(|item| item.dll_file == dll)
-}
-
-/// 地图集数量 = `levels/` 下的文件夹个数。
-///
-/// 只数目录：`levels/` 里直接放的散文件（说明文档、缩略图、配置）不属于
-/// 任何地图集。目录不存在或不可读都返回 0 —— 这是只读的展示信息，
-/// 不该因为权限问题让整个面板报错。
-fn count_level_packs(levels_dir: &Path) -> u32 {
-    let Ok(entries) = std::fs::read_dir(levels_dir) else {
-        return 0;
-    };
-    entries
-        .flatten()
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-        .count() as u32
 }
 
 /// 旧客户端框架开关入口；实际变更必须通过统一计划确认。
@@ -400,4 +374,4 @@ fn delete_diy_level_backup_blocking(
 }
 
 #[cfg(test)]
-mod diy_level_packs_tests;
+mod tests;

@@ -1,6 +1,8 @@
 use super::loose_files::{LooseFile, exact_replacement};
+use super::manifest_replacement::ManifestReplacement;
 use super::missing_install::MissingInstallRecord;
 use super::*;
+use crate::mod_changes::progress::PreparationError;
 use crate::mod_changes::session::UntrackedOverwrite;
 
 #[derive(Debug)]
@@ -28,11 +30,12 @@ impl From<ReleaseTargetError> for String {
 pub(in crate::mod_changes) struct ReleaseTargetClaims {
     pub(super) loose: BTreeMap<(String, String), LooseFile>,
     missing_records: BTreeMap<String, MissingInstallRecord>,
+    orphan_records: BTreeMap<String, ManifestReplacement>,
 }
 
 impl ReleaseTargetClaims {
     pub fn is_empty(&self) -> bool {
-        self.loose.is_empty() && self.missing_records.is_empty()
+        self.loose.is_empty() && self.missing_records.is_empty() && self.orphan_records.is_empty()
     }
 
     pub fn overwrites(&self) -> Vec<UntrackedOverwrite> {
@@ -59,6 +62,65 @@ impl ReleaseTargetClaims {
         owner: &str,
     ) -> Option<&MissingInstallRecord> {
         self.missing_records.get(owner)
+    }
+
+    pub(in crate::mod_changes::mutations) fn orphan_record(
+        &self,
+        owner: &str,
+    ) -> Option<&ManifestReplacement> {
+        self.orphan_records.get(owner)
+    }
+
+    pub fn check_orphan_replacements(
+        &self,
+        session: &PlanSession,
+        roots: &TransactionRoots,
+        changes: &[OwnedMutation],
+    ) -> Result<(), PreparationError> {
+        let intent = session.wire_request.manifest_overwrite.is_some();
+        if intent
+            && !self
+                .orphan_records
+                .values()
+                .any(ManifestReplacement::fulfills_intent)
+        {
+            return Err("modChanges.targetChanged".into());
+        }
+        let mut pending = self
+            .orphan_records
+            .iter()
+            .filter(|(_, record)| record.confirmation_required());
+        self.verify_orphan_game_writes(roots, changes)?;
+        if let Some((owner, record)) = pending.next() {
+            return if !intent && pending.next().is_none() {
+                Err(record.offer_error(owner, roots))
+            } else {
+                Err(InstallBlock::RecordExists
+                    .report(owner, &record.relative)
+                    .into())
+            };
+        }
+        Ok(())
+    }
+
+    pub fn verify_orphan_game_writes(
+        &self,
+        roots: &TransactionRoots,
+        changes: &[OwnedMutation],
+    ) -> Result<(), String> {
+        for (owner, record) in &self.orphan_records {
+            record.verify_game_writes(owner, roots, changes)?;
+        }
+        Ok(())
+    }
+
+    pub fn orphan_original_files(
+        &self,
+    ) -> Vec<(TransactionPath, crate::file_metadata::FileIdentity)> {
+        self.orphan_records
+            .values()
+            .map(|record| (data(&record.relative), record.stamp.identity.clone()))
+            .collect()
     }
 
     pub fn consumes(&self, node: &str) -> bool {
@@ -89,6 +151,16 @@ impl ReleaseTargetClaims {
                 .iter()
                 .chain(&actual.missing_records)
                 .find(|(key, _)| self.missing_records.get(*key) != actual.missing_records.get(*key))
+            {
+                return Err(InstallBlock::VerificationChanged.report(owner, &record.relative));
+            }
+            if let Some((owner, record)) = self
+                .orphan_records
+                .iter()
+                .chain(&actual.orphan_records)
+                .find(|(owner, _)| {
+                    self.orphan_records.get(*owner) != actual.orphan_records.get(*owner)
+                })
             {
                 return Err(InstallBlock::VerificationChanged.report(owner, &record.relative));
             }
@@ -134,6 +206,9 @@ impl ReleaseTargetClaims {
                 return Err(InstallBlock::VerificationChanged.report(owner, &relative));
             }
         }
+        for (owner, record) in &self.orphan_records {
+            record.verify_vacancy(owner, roots)?;
+        }
         Ok(())
     }
 
@@ -152,6 +227,7 @@ impl ReleaseTargetClaims {
         let builder = Builder::indexed(session, roots, map_roots(session, solved)?)?;
         let mut result = Self::default();
         let mut seen = BTreeSet::new();
+        let mut reserved_records = BTreeSet::new();
         for (node, payload) in std::iter::once(first).chain(releases) {
             let current = node
                 .current
@@ -163,7 +239,21 @@ impl ReleaseTargetClaims {
             if let Some(record) =
                 builder.missing_install_record(&node.id, payload, levels.as_deref())?
             {
+                if !reserved_records.insert(path_key(Path::new(&record.relative))) {
+                    return Err(InstallBlock::InstallRecord
+                        .report(&node.id, &record.relative)
+                        .into());
+                }
                 result.missing_records.insert(node.id.clone(), record);
+            } else if node.kind == NodeKind::Mod
+                && let Some(record) = builder.orphan_manifest_replacement(&node.id, payload)?
+            {
+                if !reserved_records.insert(path_key(Path::new(&record.relative))) {
+                    return Err(InstallBlock::InstallRecord
+                        .report(&node.id, &record.relative)
+                        .into());
+                }
+                result.orphan_records.insert(node.id.clone(), record);
             }
             builder.collect_loose_files(
                 solved,

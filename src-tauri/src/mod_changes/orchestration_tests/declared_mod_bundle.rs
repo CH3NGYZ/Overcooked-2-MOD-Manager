@@ -361,7 +361,9 @@ fn release_refuses_to_overwrite_a_shared_physical_member() {
     session.payloads.insert(NODE.into(), payload);
     planning::resolve(&f.state, &mut session).unwrap();
     assert_atomic_action(&session.plan, ActionKind::Upgrade);
-    let err = preparation::finish(&f.state, &mut session).unwrap_err();
+    let err = preparation::finish(&f.state, &mut session)
+        .unwrap_err()
+        .message;
     assert_eq!(
         err,
         format!("modChanges.installTargetAliasesOrLink?path={HELPER_DLL}")

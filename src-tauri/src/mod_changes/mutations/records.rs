@@ -1,4 +1,5 @@
 use super::*;
+use crate::file_metadata::FileIdentity;
 use sha2::{Digest, Sha256};
 use std::io::ErrorKind;
 
@@ -9,6 +10,12 @@ pub(super) struct InstallRecord {
     pub manifest: archive::InstallManifest,
     pub owner: String,
     digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub(super) struct RecordStamp {
+    pub fingerprint: Fingerprint,
+    pub identity: FileIdentity,
 }
 
 #[derive(Default)]
@@ -22,8 +29,9 @@ pub(super) fn install_record_path(repository_id: &str) -> TransactionPath {
 }
 
 impl InstallRecords {
-    pub fn read(root: &Path, session: &PlanSession) -> Result<Self, String> {
+    pub fn read(roots: &TransactionRoots, session: &PlanSession) -> Result<Self, String> {
         let mut result = Self::default();
+        let root = &roots.data_root;
         let unreadable = |relative: &str, error: std::io::Error| {
             log::warn!(
                 "整链安装清单读取失败 op={}：文件={:?}，类型={:?}，OS码={:?}",
@@ -34,7 +42,7 @@ impl InstallRecords {
             );
             InstallBlock::RecordUnreadable.report("install-record", relative)
         };
-        let directory = root.join("manifests");
+        let directory = data("manifests").resolve(roots)?;
         let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(error) if error.kind() == ErrorKind::NotFound && !directory.is_symlink() => {
@@ -52,10 +60,12 @@ impl InstallRecords {
             {
                 continue;
             }
-            let relative = format!(
-                "manifests/{}",
-                path.file_name().unwrap_or_default().to_string_lossy()
-            );
+            let filename = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or("archive.pathEscape")?;
+            let relative = format!("manifests/{filename}");
+            data(&relative).resolve(roots)?;
             let text = fs::read_to_string(&path).map_err(|error| unreadable(&relative, error))?;
             let manifest = toml::from_str::<archive::InstallManifest>(&text).map_err(|error| {
                 log::warn!(
@@ -132,22 +142,80 @@ impl InstallRecords {
         })
     }
 
-    pub fn unique_record(&self, repository_id: &str) -> Option<&InstallRecord> {
+    pub fn records_for_id<'a>(
+        &'a self,
+        repository_id: &str,
+    ) -> impl Iterator<Item = &'a InstallRecord> {
         let target = install_record_path(repository_id);
         let key = path_key(Path::new(&target.relative));
-        let mut candidates = self.records.iter().filter(|record| {
-            record.manifest.repository_id == repository_id
+        let uuid = uuid::Uuid::parse_str(repository_id).ok();
+        let id_key = path_key(Path::new(repository_id));
+        self.records.iter().filter(move |record| {
+            path_key(Path::new(&record.manifest.repository_id)) == id_key
+                || uuid.is_some_and(|expected| {
+                    uuid::Uuid::parse_str(&record.manifest.repository_id) == Ok(expected)
+                })
                 || path_key(Path::new(&record.relative)) == key
-        });
+        })
+    }
+
+    pub fn unique_record(&self, repository_id: &str) -> Option<&InstallRecord> {
+        let target = install_record_path(repository_id);
+        let mut candidates = self.records_for_id(repository_id);
         let record = candidates.next()?;
         (candidates.next().is_none()
             && record.manifest.repository_id == repository_id
             && inventory::key(&record.relative) == inventory::key(&target.relative))
         .then_some(record)
     }
+
+    pub fn bound_records(
+        &self,
+    ) -> impl Iterator<Item = (&InstallRecord, &crate::models::ModRepositoryBinding)> {
+        self.records
+            .iter()
+            .filter_map(|record| Some((record, record.manifest.repository_binding.as_ref()?)))
+    }
+
+    pub fn exact_orphan<'a>(
+        &'a self,
+        repository_id: &str,
+        session: &PlanSession,
+    ) -> Option<&'a InstallRecord> {
+        let record = self.unique_record(repository_id)?;
+        (record.relative == install_record_path(repository_id).relative
+            && !session.trusted.files.values().any(|files| {
+                files
+                    .manifests
+                    .iter()
+                    .any(|manifest| manifest.repository_id == repository_id)
+            }))
+        .then_some(record)
+    }
 }
 
 impl InstallRecord {
+    pub fn exact_stamp(&self, roots: &TransactionRoots, node: &str) -> Result<RecordStamp, String> {
+        let path = data(&self.relative).resolve(roots)?;
+        let changed = || InstallBlock::VerificationChanged.report(node, &self.relative);
+        let identity = FileIdentity::capture(&path)
+            .ok()
+            .flatten()
+            .ok_or_else(changed)?;
+        let root = fs::canonicalize(&roots.data_root).map_err(|_| changed())?;
+        if !fs::canonicalize(&path).is_ok_and(|actual| actual == root.join(&self.relative)) {
+            return Err(InstallBlock::AliasesOrLink.report(node, &self.relative));
+        }
+        let fingerprint = self.verified_stamp(roots, node)?;
+        if FileIdentity::capture(&path).ok().flatten().as_ref() != Some(&identity) {
+            return Err(changed());
+        }
+        Ok(RecordStamp {
+            fingerprint,
+            identity,
+        })
+    }
+
     pub fn verified_stamp(
         &self,
         roots: &TransactionRoots,

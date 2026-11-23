@@ -68,10 +68,9 @@ pub(crate) fn recover_all(
             } else if journal.created_directory_count > journal.created_directories.len() {
                 Some("parent_count")
             } else if journal.version == JOURNAL_VERSION
-                && journal
-                    .records
-                    .iter()
-                    .any(|record| record.publication.is_some() != record.operation.creates_file())
+                && journal.records.iter().any(|record| {
+                    record.publication.is_some() != record.operation.tracks_publication()
+                })
             {
                 Some("file_publication")
             } else {
@@ -158,6 +157,7 @@ impl PreparedTransaction {
         }
         self.journal.state = JournalState::RecoveryRequired;
         self.persist()?;
+        let mut blocked = None;
         for index in (0..self.journal.records.len()).rev() {
             if matches!(
                 self.journal.records[index].phase,
@@ -184,6 +184,10 @@ impl PreparedTransaction {
                     "rollback_record",
                     &error,
                 );
+                if self.journal.records[index].operation.guards_original() {
+                    blocked.get_or_insert(error);
+                    continue;
+                }
                 self.journal.error = Some(error.clone());
                 let _ = self.persist();
                 return Err(error);
@@ -224,29 +228,73 @@ impl PreparedTransaction {
                 }
             }
         }
+        if let Some(error) = blocked {
+            self.journal.error = Some(error.clone());
+            self.persist()?;
+            return Err(error);
+        }
         self.journal.state = JournalState::Cleaned;
         self.persist()?;
         self.cleanup()
     }
 
     fn revert_record(&mut self, index: usize) -> Result<(), String> {
-        let record = &self.journal.records[index];
-        if record.operation.creates_file() {
+        if self.journal.records[index].operation.creates_file() {
             return self.revert_new_file(index);
         }
+        let guarded = self.journal.records[index].operation.guards_original();
+        let unpublished = guarded && self.discard_unpublished_file(index)?;
+        let record = self.journal.records[index].clone();
         match &record.operation {
             RecordedMutation::File {
                 target,
                 before,
+                original_identity,
                 after,
                 backup,
                 temporary,
                 require_single_link,
                 ..
             } => {
+                if unpublished {
+                    return super::publication::restore_unpublished_permissions(
+                        target,
+                        before,
+                        original_identity.as_ref().ok_or(paths::INVALID)?,
+                        &self.journal.roots,
+                    );
+                }
                 let target = check::resolve(target, &self.journal.roots, check::TARGET)?;
                 let temporary = check::resolve(temporary, &self.journal.roots, check::STAGED)?;
                 let actual = check::capture(&target, check::TARGET)?;
+                let published_identity = match (original_identity, &record.publication) {
+                    (Some(_), _) if actual == *before => {
+                        return check::expect(&temporary, check::STAGED, &Fingerprint::Missing);
+                    }
+                    (Some(original), _)
+                        if engine::matches_writable(&actual, before)
+                            && super::publication::capture_identity(&target, check::TARGET)?
+                                .as_ref()
+                                == Some(original) =>
+                    {
+                        None
+                    }
+                    (
+                        Some(_),
+                        Some(
+                            FilePublication::Staged(identity)
+                            | FilePublication::Restoring {
+                                published: identity,
+                                ..
+                            },
+                        ),
+                    ) => {
+                        super::publication::expect_identity(&target, check::TARGET, identity)?;
+                        Some(identity)
+                    }
+                    (Some(_), _) => return Err(paths::INVALID.into()),
+                    _ => None,
+                };
                 if !engine::matches_writable(&actual, before)
                     && !engine::matches_writable(&actual, after)
                 {
@@ -254,7 +302,11 @@ impl PreparedTransaction {
                 }
                 // A write-ahead record exclusively owns this UUID temporary. Partial copies
                 // are removable, while live targets always require an exact fingerprint.
-                remove_temporary(&temporary)?;
+                if guarded {
+                    check::expect(&temporary, check::STAGED, &Fingerprint::Missing)?;
+                } else {
+                    remove_temporary(&temporary)?;
+                }
                 if *require_single_link {
                     // A newly linked file can be left alone if this record never changed it.
                     if actual == *before {
@@ -264,7 +316,10 @@ impl PreparedTransaction {
                         paths::guard_single_link(&target)?;
                     }
                 }
-                if engine::matches_writable(&actual, before) {
+                if published_identity.is_none() && engine::matches_writable(&actual, before) {
+                    if let Some(identity) = original_identity {
+                        super::publication::expect_identity(&target, check::TARGET, identity)?;
+                    }
                     if let Some(permissions) = before.permissions() {
                         permissions
                             .restore(&target)
@@ -282,16 +337,28 @@ impl PreparedTransaction {
                         &stored,
                         check::BACKUP,
                         check::WRITE,
-                        |_| Ok(()),
+                        |file| {
+                            if published_identity.is_some() {
+                                self.record_temporary(index, &temporary, file, published_identity)?;
+                            }
+                            Ok(())
+                        },
                     )?;
-                    before
-                        .permissions()
-                        .ok_or(paths::INVALID)?
-                        .restore(&temporary)
-                        .map_err(|error| check::writing(&temporary, &error))?;
+                    let restoring = match &self.journal.records[index].publication {
+                        Some(FilePublication::Restoring { temporary, .. }) => Some(temporary),
+                        _ => None,
+                    };
+                    super::publication::prepare_file(&temporary, before, restoring)?;
                     check::expect(&target, check::TARGET, &actual)?;
                     if *require_single_link && actual != Fingerprint::Missing {
                         paths::guard_single_link(&target)?;
+                    }
+                    if let Some(identity) = published_identity {
+                        super::publication::expect_identity(&target, check::TARGET, identity)?;
+                    }
+                    if let Some(identity) = restoring {
+                        super::publication::expect_identity(&temporary, check::STAGED, identity)?;
+                        paths::guard_single_link(&temporary)?;
                     }
                     if actual != Fingerprint::Missing {
                         let mut permissions = actual.permissions().ok_or(paths::INVALID)?.clone();
@@ -303,6 +370,9 @@ impl PreparedTransaction {
                         permissions
                             .restore(&target)
                             .map_err(|error| check::writing(&target, &error))?;
+                    }
+                    if let Some(identity) = published_identity {
+                        super::publication::expect_identity(&target, check::TARGET, identity)?;
                     }
                     durable::rename(&temporary, &target, actual != Fingerprint::Missing)?;
                 } else {

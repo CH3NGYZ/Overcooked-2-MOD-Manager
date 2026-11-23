@@ -1,5 +1,6 @@
 import type { LevelPreview, LevelPreviewDetail } from '../types'
 import type { ChangeRequest, ChangePlan, ChangePreparationOutcome, ChangePreparationProgress, EvaluationSnapshot, EvaluationSubject, ChangeExecutionOutcome, ChangeExecutionProgress } from '../modChanges/types'
+import { ChangePreparationError } from '../modChanges/types'
 import type { LocalModSnapshot, ChefEditorOpen, ChefEditorSnapshot, ChefDraft, ChefValidation, ChefFilesChanged } from '../diychef/types'
 import type { ChefPreviewScene } from '../diychef/preview/types'
 import type { PublishProvider } from '../types'
@@ -91,7 +92,7 @@ export const api = {
       // Channel JSON may use an asynchronous fetch. Publish the authoritative
       // final snapshot before the workflow leaves preparation or shows an error.
       onProgress?.(outcome.progress)
-      if (outcome.error) throw new Error(outcome.error)
+      if (outcome.error) throw new ChangePreparationError(outcome.error, outcome.manifestOverwrite)
       if (!outcome.plan) throw new Error('modChanges.notPrepared')
       return outcome.plan
     }

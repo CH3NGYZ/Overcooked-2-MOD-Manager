@@ -148,6 +148,13 @@ fn commit_inner(
     if let Some(batch) = &session.map_payload {
         batch.verify_claims(&roots, session)?;
     }
+    session.release_target_claims.verify_orphan_game_writes(
+        &roots,
+        session
+            .mutations
+            .as_deref()
+            .ok_or("modChanges.notPrepared")?,
+    )?;
     *step = "game_run_guard";
     let touches_mods = live_game::touches_mods(
         session,
@@ -209,6 +216,7 @@ fn commit_inner(
             &roots,
             changes,
             Some(op),
+            session.release_target_claims.orphan_original_files(),
         )?;
         let transaction_id = transaction.id().to_owned();
         log::info!(

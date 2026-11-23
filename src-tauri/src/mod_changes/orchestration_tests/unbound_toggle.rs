@@ -429,7 +429,9 @@ fn unbound_map_without_diy_level_destination_cannot_write() {
     let plan = planning::create(&f.state, toggle(&f, MAP, None, true)).unwrap();
     let mut session = take(&f, &plan);
     assert_eq!(
-        preparation::finish(&f.state, &mut session).unwrap_err(),
+        preparation::finish(&f.state, &mut session)
+            .unwrap_err()
+            .message,
         "framework.diyLevelMissing"
     );
     assert!(inactive.join("info").is_file());

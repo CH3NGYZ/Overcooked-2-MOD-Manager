@@ -26,13 +26,16 @@ pub(super) fn verify_before(record: &Record, roots: &TransactionRoots) -> Result
         RecordedMutation::File {
             target,
             before,
+            original_identity,
             require_single_link,
             ..
-        } => verify_file_before(
-            &check::resolve(target, roots, check::TARGET)?,
-            before,
-            *require_single_link,
-        )?,
+        } => {
+            let target = check::resolve(target, roots, check::TARGET)?;
+            verify_file_before(&target, before, *require_single_link)?;
+            if let Some(identity) = original_identity {
+                publication::expect_identity(&target, check::TARGET, identity)?;
+            }
+        }
         RecordedMutation::Tree {
             target,
             before,
@@ -88,6 +91,9 @@ fn check_after(
         check::compare(&path, check::RESULT, &observed, expected, false)?;
         if let Some(FilePublication::Staged(identity)) = &record.publication {
             publication::expect_identity(&path, check::RESULT, identity)?;
+        }
+        if record.operation.guards_original() {
+            paths::guard_single_link(&path)?;
         }
         Ok(())
     };
@@ -281,6 +287,21 @@ impl PreparedTransaction {
         if cancelled() {
             return Err("download.cancelled".into());
         }
+        for (index, record) in self.journal.records.iter().enumerate() {
+            if record.operation.guards_original() {
+                let _step = diagnostics::step(index, "verify_guarded_publication");
+                verify_after(record, &self.journal.roots).inspect_err(|error| {
+                    diagnostics::record(
+                        &self.journal,
+                        &self.directory,
+                        index,
+                        "verify_guarded_publication",
+                        error,
+                    );
+                    observe(RecordProgress::Failed(index));
+                })?;
+            }
+        }
         self.journal.state = JournalState::Committed;
         self.persist()?;
         Ok(committed)
@@ -375,8 +396,8 @@ impl PreparedTransaction {
                     let payload = durable::private_path(&self.directory, payload, check::STAGED)?;
                     let payload_fingerprint = check::capture(&payload, check::STAGED)?;
                     check::compare(&payload, check::STAGED, &payload_fingerprint, after, true)?;
-                    if record.operation.creates_file() {
-                        self.publish_new_file(
+                    if record.operation.tracks_publication() {
+                        self.publish_file(
                             index,
                             &payload,
                             &temporary,
@@ -392,7 +413,7 @@ impl PreparedTransaction {
                             check::WRITE,
                             |_| Ok(()),
                         )?;
-                        publication::prepare_file(&temporary, after)?;
+                        publication::prepare_file(&temporary, after, None)?;
                         verify_file_before(&target, before, *require_single_link)?;
                         make_writable(&target, before)
                             .map_err(|error| check::writing(&target, &error))?;
@@ -421,7 +442,7 @@ impl PreparedTransaction {
     }
 }
 
-fn make_writable(path: &Path, expected: &Fingerprint) -> Result<(), String> {
+pub(super) fn make_writable(path: &Path, expected: &Fingerprint) -> Result<(), String> {
     if expected == &Fingerprint::Missing {
         return Ok(());
     }

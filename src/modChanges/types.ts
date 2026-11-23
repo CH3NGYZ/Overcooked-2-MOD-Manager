@@ -3,7 +3,9 @@ import type { DownloadProgress, MapInstallOrigin, RepositoryRelation } from '../
 /** Rust mod_changes/model.rs is the authority for relation and action semantics. */
 export interface RootIntent { node_id: string; candidate_id?: string; enabled: boolean; member_key?: string; asset_name?: string }
 export type DependencyRepairTarget = Pick<RootIntent, 'node_id' | 'candidate_id'>
-export type ChangeRequest = {
+export interface ManifestOverwriteIntent { repositoryId: string; fingerprint: string }
+export interface ManifestOverwriteOffer extends ManifestOverwriteIntent { manifestPath: string; recordedPaths: string[] }
+export type ChangeRequest = { manifestOverwrite?: ManifestOverwriteIntent } & ({
   roots: RootIntent[]
   repair_dependencies_of?: never
   map_import?: { zip_path: string; selected: string[]; origin?: MapInstallOrigin | null; download_id?: string }
@@ -16,7 +18,7 @@ export type ChangeRequest = {
   map_import?: never
   toggle_scope?: never
   bulk_toggle?: never
-}
+})
 export type ChangeActionKind = 'install' | 'upgrade' | 'downgrade' | 'replace' | 'enable' | 'disable'
 /** These actions stage installation payloads, even when their files are already local. */
 export const isPackageAction = ({ kind }: Pick<ChangeAction, 'kind'>) => kind !== 'enable' && kind !== 'disable'
@@ -155,6 +157,15 @@ export interface ChangePreparationOutcome {
   plan: ChangePlan | null
   error: string | null
   progress: ChangePreparationProgress
+  manifestOverwrite?: ManifestOverwriteOffer
+}
+export class ChangePreparationError extends Error {
+  readonly manifestOverwrite?: ManifestOverwriteOffer
+
+  constructor(message: string, manifestOverwrite?: ManifestOverwriteOffer) {
+    super(message)
+    this.manifestOverwrite = manifestOverwrite
+  }
 }
 export interface ChangeBackend {
   plan(request: ChangeRequest): Promise<ChangePlan>

@@ -118,15 +118,18 @@ pub(super) fn validate_relative(relative: &str) -> Result<(), String> {
 
 impl TransactionPath {
     pub(crate) fn resolve(&self, roots: &TransactionRoots) -> Result<PathBuf, String> {
+        let path = self.joined(roots)?;
+        validate_absolute(&path)?;
+        Ok(path)
+    }
+
+    fn joined(&self, roots: &TransactionRoots) -> Result<PathBuf, String> {
         validate_relative(&self.relative)?;
         let root = match self.root {
             RootKind::Game => &roots.game_root,
             RootKind::Data => &roots.data_root,
         };
-        validate_absolute(root)?;
-        let path = root.join(&self.relative);
-        validate_absolute(&path)?;
-        Ok(path)
+        Ok(root.join(&self.relative))
     }
 }
 
@@ -191,13 +194,29 @@ pub(super) fn validate_records(
         match &record.operation {
             RecordedMutation::File {
                 target,
+                before,
+                original_identity,
                 temporary,
                 backup,
                 payload,
+                after,
+                require_single_link,
                 ..
             } => {
-                let target = target.resolve(roots)?;
-                let temporary = temporary.resolve(roots)?;
+                if original_identity.is_some()
+                    && (!matches!(before, super::types::Fingerprint::File { .. })
+                        || !matches!(after, super::types::Fingerprint::File { .. })
+                        || payload.is_none()
+                        || backup.is_none()
+                        || !require_single_link)
+                {
+                    return Err(INVALID.into());
+                }
+                let (target, temporary) = if original_identity.is_some() {
+                    (target.joined(roots)?, temporary.joined(roots)?)
+                } else {
+                    (target.resolve(roots)?, temporary.resolve(roots)?)
+                };
                 if target.parent() != temporary.parent()
                     || !temporary
                         .file_name()

@@ -5,6 +5,8 @@ use std::path::PathBuf;
 
 #[path = "missing_dll/relocated.rs"]
 mod relocated;
+#[path = "missing_dll/stale_installed.rs"]
+mod stale_installed;
 
 const ASSET: &str = "Selected.zip";
 const OLD_TAG: &str = "v1.0.0";

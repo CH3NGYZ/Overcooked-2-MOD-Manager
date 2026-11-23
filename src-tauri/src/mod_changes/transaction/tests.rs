@@ -99,7 +99,8 @@ fn rejected_transaction_preparation_still_correlates_operation_and_failure() {
             &invalid_root,
             &workspace.roots,
             Vec::new(),
-            Some(&operation)
+            Some(&operation),
+            Vec::new(),
         )
         .is_err()
     );

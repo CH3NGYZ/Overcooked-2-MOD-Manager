@@ -1,6 +1,7 @@
 //! Download the complete chosen chain, verify its real DLLs, then solve again.
 use super::progress::{
-    ChangePreparationProgress, PreparationOutcome, PreparationReporter, PreparationStage,
+    ChangePreparationProgress, PreparationError, PreparationOutcome, PreparationReporter,
+    PreparationStage,
 };
 use super::{
     guard, inventory, live_game, model::*, mutations, planning, session::*, transaction::*,
@@ -26,7 +27,7 @@ async fn prepare_inner(
     state: AppState,
     id: String,
     progress: &PreparationReporter,
-) -> Result<ChangePlan, String> {
+) -> Result<ChangePlan, PreparationError> {
     let mut lease = SessionLease::take(&state, &id)?;
     let op = lease
         .session
@@ -39,7 +40,7 @@ async fn prepare_inner(
     let mut step = "validate_plan";
     let outcome = prepare_session(&state, &mut lease, progress, &trace, &mut step).await;
     if let Err(error) = &outcome {
-        trace.failure(step, error);
+        trace.failure(step, &error.message);
     }
     outcome
 }
@@ -50,7 +51,7 @@ async fn prepare_session(
     progress: &PreparationReporter,
     trace: &OperationTrace<'_>,
     step: &mut &'static str,
-) -> Result<ChangePlan, String> {
+) -> Result<ChangePlan, PreparationError> {
     let session = lease.session.as_mut().ok_or("modChanges.planExpired")?;
     if session.plan.prepared {
         log::info!(
@@ -393,7 +394,7 @@ pub(super) fn select_payloads(session: &mut PlanSession) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), String> {
+pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), PreparationError> {
     ensure_fresh(state, &session.trusted.revision)?;
     verify_fingerprints(&session.payload_fingerprints)?;
     if let Some(solved) = &session.solved {
@@ -428,6 +429,9 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
     if live_game::touches_mods(session, &roots, &changes)? {
         guard::ensure_game_stopped(state, &roots.game_root)?;
     }
+    session
+        .release_target_claims
+        .check_orphan_replacements(session, &roots, &changes)?;
     session.plan.untracked_overwrites = session.release_target_claims.overwrites();
     if let Some(batch) = &session.map_payload {
         session.plan.untracked_overwrites.extend(batch.overwrites());

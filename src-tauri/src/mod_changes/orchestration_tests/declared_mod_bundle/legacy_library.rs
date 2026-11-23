@@ -127,7 +127,9 @@ fn replacing_a_declared_stub_without_release_proof_reports_the_failed_check() {
     inject_release(&f, &mut session, &preview).unwrap();
     planning::resolve(&f.state, &mut session).unwrap();
     assert_eq!(
-        preparation::finish(&f.state, &mut session).unwrap_err(),
+        preparation::finish(&f.state, &mut session)
+            .unwrap_err()
+            .message,
         format!("modChanges.installTargetNeedsVerifiedRelease?path={STUB_PATH}")
     );
     assert_eq!(Fingerprint::capture(&f.game).unwrap(), before);

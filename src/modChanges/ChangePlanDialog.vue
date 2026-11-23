@@ -27,6 +27,7 @@ const working = computed(() => ['planning', 'preparing', 'executing'].includes(s
 const completedPreparation = computed(() => state.value?.phase === 'prepared')
 const canCancel = computed(() => !isChangePlanLocked(state.value?.phase))
 const applyReview = computed(() => state.value?.applyReview)
+const manifestOverwrite = computed(() => state.value?.manifestOverwrite)
 const overwriteGroups = computed(() => {
   const verified = plan.value
   if (state.value?.phase !== 'reconfirming' || !applyReview.value || verified?.status !== 'ready' || !verified.prepared) return []
@@ -136,7 +137,18 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
         <p v-if="diagnostics.hasPaths" class="diagnostic-note">{{ t('modChanges.diagnostic.note') }}</p>
         <p v-if="diagnostics.truncated" class="diagnostic-note">{{ t('modChanges.diagnostic.truncated') }}</p>
       </NAlert>
-      <NAlert v-if="error" type="error" :bordered="false"><span class="plan-error plan-message">{{ error }}</span></NAlert>
+      <NAlert v-if="error && !manifestOverwrite" type="error" :bordered="false"><span class="plan-error plan-message">{{ error }}</span></NAlert>
+      <NAlert v-if="manifestOverwrite" type="warning" :bordered="false" data-manifest-overwrite
+        :title="t(state?.phase === 'failed' ? 'modChanges.manifestOverwrite.conflict' : 'modChanges.manifestOverwrite.title')">
+        <p class="manifest-path"><code>{{ manifestOverwrite.manifestPath }}</code></p>
+        <p class="manifest-copy plan-message">{{ t('modChanges.manifestOverwrite.description') }}</p>
+        <template v-if="manifestOverwrite.recordedPaths.length">
+          <div>{{ t('modChanges.manifestOverwrite.paths') }}</div>
+          <ul class="overwrite-paths">
+            <li v-for="path in manifestOverwrite.recordedPaths" :key="path"><code>{{ path }}</code></li>
+          </ul>
+        </template>
+      </NAlert>
       <ul v-if="diagnostics.notes.length" class="plan-notes">
         <li v-for="(blocker, index) in diagnostics.notes" :key="index">
           <span class="plan-message">{{ changeReasonText(blocker.message || blocker.code) }}</span>
@@ -166,6 +178,8 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
           <NButton v-if="state?.phase === 'failed'" data-plan-action="retry" type="primary" @click="changes.retry">{{ t('modChanges.retry') }}</NButton>
           <NButton v-else data-plan-action="confirm" type="primary" :loading="working" :disabled="working || completedPreparation || plan?.status !== 'ready'"
             @click="changes.confirm">{{ t(confirmLabel) }}</NButton>
+          <NButton v-if="state?.phase === 'failed' && manifestOverwrite" data-plan-action="overwrite-manifest"
+            type="warning" @click="changes.forceOverwriteManifest">{{ t('modChanges.manifestOverwrite.action') }}</NButton>
         </div>
       </div>
     </template>
@@ -186,7 +200,9 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
 .plan-message { white-space: pre-wrap; overflow-wrap: anywhere; }
 .overwrite-groups { margin: 8px 0 0; padding: 0; list-style: none; overflow-wrap: anywhere; }
 .overwrite-groups > li + li { margin-block-start: 8px; }
-.overwrite-paths { margin: 2px 0 0; padding-inline-start: 20px; }
+.manifest-path { margin: 0; overflow-wrap: anywhere; }
+.manifest-copy { margin: 4px 0 6px; }
+.overwrite-paths { margin: 2px 0 0; padding-inline-start: 20px; overflow-wrap: anywhere; }
 .overwrite-paths code { display: block; white-space: pre-wrap; }
 .diagnostic-note { margin: 3px 0 0; font-size: 12px; overflow-wrap: anywhere; }
 </style>

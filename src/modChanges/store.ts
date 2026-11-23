@@ -199,5 +199,6 @@ export function useModChanges() {
     evaluation: readonly(evaluation), evaluating: readonly(evaluating), appliedRevision: readonly(appliedRevision),
     busy: computed(() => state.value !== null),
     run: workflow.run, refresh, invalidate, clearEvaluation, setEvaluationPaused, confirm, cancel: workflow.cancel, retry: workflow.retry,
+    forceOverwriteManifest: workflow.forceOverwriteManifest,
   }
 }

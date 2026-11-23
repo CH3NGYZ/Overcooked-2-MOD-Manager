@@ -1,4 +1,4 @@
-import { isPackageAction, type ChangeBackend, type ChangePlan, type ChangeRequest, type ChangeExecutionResult } from './types.ts'
+import { ChangePreparationError, isPackageAction, type ChangeBackend, type ChangePlan, type ChangeRequest, type ChangeExecutionResult, type ManifestOverwriteOffer } from './types.ts'
 
 export type ChangePhase = 'planning' | 'confirming' | 'preparing' | 'prepared' | 'reconfirming' | 'executing' | 'failed'
 export interface ChangeWorkflowState {
@@ -7,6 +7,7 @@ export interface ChangeWorkflowState {
   error: unknown
   silent?: boolean
   applyReview?: 'prepared' | 'changed'
+  manifestOverwrite?: ManifestOverwriteOffer
 }
 
 export function isChangePlanLocked(phase?: ChangePhase) {
@@ -68,7 +69,8 @@ export function createChangeWorkflow(backend: ChangeBackend, publish: (state: Ch
     return result
   }
 
-  async function apply(plan: ChangePlan, directRequest?: ChangeRequest, applyReview?: ChangeWorkflowState['applyReview']) {
+  async function apply(plan: ChangePlan, directRequest?: ChangeRequest, applyReview?: ChangeWorkflowState['applyReview'],
+    manifestOverwrite?: ManifestOverwriteOffer) {
     if (plan.status !== 'ready') return
     const mine = generation
     const silent = !!directRequest
@@ -86,13 +88,13 @@ export function createChangeWorkflow(backend: ChangeBackend, publish: (state: Ch
       if (!prepared.prepared) throw new Error('modChanges.notPrepared')
       const changed = prepared.plan_id !== plan.plan_id || !!(directRequest && !canApplyDirectly(directRequest, prepared))
       const hasPackages = prepared.actions.some(isPackageAction)
-      if (!applyReview && (changed || hasPackages || prepared.untracked_overwrites?.length)) {
+      if (!applyReview && (manifestOverwrite || changed || hasPackages || prepared.untracked_overwrites?.length)) {
         if (hasPackages) {
           update({ phase: 'prepared', plan: prepared, error: null })
           await backend.presentPrepared?.()
           if (mine !== generation) return
         }
-        update({ phase: 'reconfirming', plan: prepared, error: null, applyReview: changed ? 'changed' : 'prepared' })
+        update({ phase: 'reconfirming', plan: prepared, error: null, applyReview: changed ? 'changed' : 'prepared', manifestOverwrite })
         return
       }
       plan = prepared
@@ -102,7 +104,8 @@ export function createChangeWorkflow(backend: ChangeBackend, publish: (state: Ch
       if (!result.ok) { update({ phase: 'failed', plan, error: result.message, applyReview }); return }
       finish(result)
     } catch (error) {
-      if (mine === generation) update({ phase: 'failed', plan, error, applyReview })
+      if (mine === generation) update({ phase: 'failed', plan, error, applyReview,
+        manifestOverwrite: error instanceof ChangePreparationError ? error.manifestOverwrite : undefined })
     }
   }
 
@@ -120,10 +123,13 @@ export function createChangeWorkflow(backend: ChangeBackend, publish: (state: Ch
   }
 
   /** A failure is replanned and reviewed; it never blindly retries a commit. */
-  async function retry() {
+  async function retry(force: boolean) {
     if (current?.phase !== 'failed' || !originalRequest) return
     const previous = current.plan
-    const request = originalRequest
+    const offer = force ? current.manifestOverwrite : undefined
+    if (force && !offer) return
+    const request = offer ? { ...originalRequest, manifestOverwrite: { repositoryId: offer.repositoryId, fingerprint: offer.fingerprint } }
+      : originalRequest
     const mine = ++generation
     update({ phase: 'planning', plan: null, error: null })
     if (previous) await backend.cancel(previous.plan_id).catch(() => undefined)
@@ -131,11 +137,12 @@ export function createChangeWorkflow(backend: ChangeBackend, publish: (state: Ch
     try {
       const plan = await backend.plan(request)
       if (mine !== generation) { await backend.cancel(plan.plan_id).catch(() => undefined); return }
-      update({ phase: 'confirming', plan, error: null })
+      if (offer && plan.status === 'ready') await apply(plan, undefined, undefined, offer)
+      else update({ phase: 'confirming', plan, error: null })
     } catch (error) {
       if (mine === generation) update({ phase: 'failed', plan: null, error })
     }
   }
 
-  return { run, confirm, cancel, retry }
+  return { run, confirm, cancel, retry: () => retry(false), forceOverwriteManifest: () => retry(true) }
 }

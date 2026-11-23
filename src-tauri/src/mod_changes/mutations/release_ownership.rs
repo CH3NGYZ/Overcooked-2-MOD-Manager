@@ -95,6 +95,7 @@ use std::io::ErrorKind;
 mod claims;
 mod endpoints;
 mod loose_files;
+mod manifest_replacement;
 mod missing_install;
 mod search;
 pub(in crate::mod_changes) use claims::ReleaseTargetClaims;
@@ -287,7 +288,10 @@ impl Builder<'_> {
         Ok(())
     }
 
-    fn release_core<'a>(&self, payload: &'a Payload) -> Result<ReleaseCore<'_, 'a>, InstallBlock> {
+    fn release_repository<'a>(
+        &self,
+        payload: &'a Payload,
+    ) -> Result<(&ModRepositoryConfig, &'a ModRepositoryBinding), InstallBlock> {
         let unknown = InstallBlock::Unverified;
         let manifest = payload.manifest.as_ref().ok_or(unknown)?;
         let binding = manifest.repository_binding.as_ref().ok_or(unknown)?;
@@ -299,12 +303,21 @@ impl Builder<'_> {
             .iter()
             .find(|repo| Some(&repo.id) == payload.candidate.source_id.as_ref())
             .ok_or(unknown)?;
-        let guid = repo.plugin_guid.trim();
-        if guid.is_empty()
+        if manifest.repository_id != repo.id
             || !binding.is_valid()
             || !binding.matches_repository(repo)
             || Some(&binding.tag) != payload.candidate.tag.as_ref()
         {
+            return Err(unknown);
+        }
+        Ok((repo, binding))
+    }
+
+    fn release_core<'a>(&self, payload: &'a Payload) -> Result<ReleaseCore<'_, 'a>, InstallBlock> {
+        let unknown = InstallBlock::Unverified;
+        let (repo, binding) = self.release_repository(payload)?;
+        let guid = repo.plugin_guid.trim();
+        if guid.is_empty() {
             return Err(unknown);
         }
         let mut incoming = payload

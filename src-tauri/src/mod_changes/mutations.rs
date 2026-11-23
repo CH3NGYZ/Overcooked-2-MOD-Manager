@@ -170,7 +170,7 @@ impl Builder<'_> {
         roots: TransactionRoots,
         protected_maps: Vec<String>,
     ) -> Result<Builder<'a>, String> {
-        let records = InstallRecords::read(&roots.data_root, session)?;
+        let records = InstallRecords::read(&roots, session)?;
         let mut builder = Builder {
             roots,
             session,
@@ -648,21 +648,29 @@ impl Builder<'_> {
             final_files.push(destination);
         }
         manifest.files = final_files;
-        let (manifest_target, expected) = match reinstall {
-            Some(record) => (data(&record.relative), record.expected.clone()),
-            None => {
+        let orphan = self.session.release_target_claims.orphan_record(&node.id);
+        let (manifest_target, expected) = match (reinstall, orphan) {
+            (Some(record), _) => (data(&record.relative), record.expected.clone()),
+            (None, Some(record)) => (data(&record.relative), record.stamp.fingerprint.clone()),
+            (None, None) => {
                 let target = install_record_path(&manifest.repository_id);
                 let expected = Fingerprint::capture(&target.resolve(&self.roots)?)?;
                 (target, expected)
             }
         };
-        if expected != Fingerprint::Missing
-            && reinstall.is_none()
+        if reinstall.is_none()
+            && orphan.is_none()
             && !old_files.is_some_and(|old| {
                 old.manifests
                     .iter()
                     .any(|old| old.repository_id == manifest.repository_id)
             })
+            && (expected != Fingerprint::Missing
+                || self
+                    .records
+                    .records_for_id(&manifest.repository_id)
+                    .next()
+                    .is_some())
         {
             let reason = if matches!(expected, Fingerprint::Directory { .. }) {
                 InstallBlock::Directory
@@ -692,7 +700,7 @@ impl Builder<'_> {
                 target: manifest_target,
                 source: Some(StagedFile::capture(staged)?),
                 expected,
-                require_single_link: reinstall.is_some(),
+                require_single_link: orphan.is_some() || reinstall.is_some(),
             },
         )
     }

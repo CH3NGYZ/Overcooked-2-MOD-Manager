@@ -412,7 +412,9 @@ fn staged_bytes_and_configuration_are_bound_to_plan() {
     )
     .unwrap();
     assert_eq!(
-        preparation::finish(&f.state, &mut session).unwrap_err(),
+        preparation::finish(&f.state, &mut session)
+            .unwrap_err()
+            .message,
         "modChanges.payloadChanged"
     );
     assert!(!f.game.join("BepInEx/plugins/one/one.dll").exists());
@@ -571,7 +573,9 @@ fn missing_loader_blocks_online_local_prepare_and_commit_but_allows_disabling() 
     verify_selected(&f, &mut session);
     fs::remove_file(&loader).unwrap();
     assert_eq!(
-        preparation::finish(&f.state, &mut session).unwrap_err(),
+        preparation::finish(&f.state, &mut session)
+            .unwrap_err()
+            .message,
         expected
     );
     write(&loader, b"fixture loader");

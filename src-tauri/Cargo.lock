@@ -107,6 +107,7 @@ dependencies = [
  "globset",
  "http",
  "http-body",
+ "icu_normalizer",
  "image",
  "libc",
  "log",

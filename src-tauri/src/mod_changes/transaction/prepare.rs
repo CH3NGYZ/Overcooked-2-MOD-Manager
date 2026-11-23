@@ -2,7 +2,7 @@ use super::durable::{copy_verified, private_path, write_journal};
 use super::paths::{UNSAFE, validate_mutations, validate_roots};
 use super::types::*;
 use super::{PreparedTransaction, check, diagnostics};
-use crate::file_check;
+use crate::{file_check, file_metadata::FileIdentity};
 use std::{collections::HashSet, fs, path::Path};
 use uuid::Uuid;
 
@@ -13,6 +13,7 @@ pub(crate) fn prepare_for_operation(
     roots: &TransactionRoots,
     mutations: Vec<Mutation>,
     operation: Option<&str>,
+    mut original_files: Vec<(TransactionPath, FileIdentity)>,
 ) -> Result<PreparedTransaction, String> {
     let id = Uuid::new_v4().to_string();
     let _scope = diagnostics::enter(&id);
@@ -61,6 +62,21 @@ pub(crate) fn prepare_for_operation(
                     if matches!(change.expected, Fingerprint::Directory { .. }) {
                         return Err(file_check::report(check::TARGET, &target, file_check::TYPE));
                     }
+                    let original_identity = if let Some(index) = original_files
+                        .iter()
+                        .position(|(path, _)| path == &change.target)
+                    {
+                        if !matches!(change.expected, Fingerprint::File { .. })
+                            || change.source.is_none()
+                        {
+                            return Err(super::paths::INVALID.into());
+                        }
+                        let (_, identity) = original_files.swap_remove(index);
+                        super::publication::expect_identity(&target, check::TARGET, &identity)?;
+                        Some(identity)
+                    } else {
+                        None
+                    };
                     let backup = if change.expected == Fingerprint::Missing {
                         None
                     } else {
@@ -133,6 +149,7 @@ pub(crate) fn prepare_for_operation(
                     RecordedMutation::File {
                         target: change.target,
                         before: change.expected,
+                        original_identity,
                         after,
                         backup,
                         payload,
@@ -226,11 +243,14 @@ pub(crate) fn prepare_for_operation(
             };
             records.push(Record {
                 publication: operation
-                    .creates_file()
+                    .tracks_publication()
                     .then_some(FilePublication::NotStaged),
                 operation,
                 phase: RecordPhase::Pending,
             });
+        }
+        if !original_files.is_empty() {
+            return Err(super::paths::INVALID.into());
         }
         // Detect a changing scene across the preparation window before publishing a journal.
         for (index, record) in records.iter().enumerate() {
@@ -271,7 +291,7 @@ pub(crate) fn prepare(
     roots: &TransactionRoots,
     mutations: Vec<Mutation>,
 ) -> Result<PreparedTransaction, String> {
-    prepare_for_operation(transaction_root, roots, mutations, None)
+    prepare_for_operation(transaction_root, roots, mutations, None, Vec::new())
 }
 
 fn create_dir(path: &Path, stage: &str) -> Result<(), String> {

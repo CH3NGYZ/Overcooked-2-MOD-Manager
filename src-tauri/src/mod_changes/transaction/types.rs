@@ -125,6 +125,10 @@ pub(super) enum FilePublication {
     NotStaged,
     Staged(FileIdentity),
     Unpublished(FileIdentity),
+    Restoring {
+        published: FileIdentity,
+        temporary: FileIdentity,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,6 +148,8 @@ pub(super) enum RecordedMutation {
     File {
         target: TransactionPath,
         before: Fingerprint,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        original_identity: Option<FileIdentity>,
         after: Fingerprint,
         backup: Option<String>,
         payload: Option<String>,
@@ -167,6 +173,20 @@ pub(super) enum RecordedMutation {
 }
 
 impl RecordedMutation {
+    pub(super) fn guards_original(&self) -> bool {
+        matches!(
+            self,
+            Self::File {
+                original_identity: Some(_),
+                ..
+            }
+        )
+    }
+
+    pub(super) fn tracks_publication(&self) -> bool {
+        self.creates_file() || self.guards_original()
+    }
+
     pub(super) fn creates_file(&self) -> bool {
         matches!(
             self,

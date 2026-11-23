@@ -56,7 +56,39 @@ pub(crate) struct ChangePreparationProgress {
 pub(crate) struct PreparationOutcome {
     pub plan: Option<ChangePlan>,
     pub error: Option<String>,
+    #[serde(rename = "manifestOverwrite", skip_serializing_if = "Option::is_none")]
+    pub manifest_overwrite: Option<Box<ManifestOverwriteOffer>>,
     pub progress: ChangePreparationProgress,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ManifestOverwriteOffer {
+    pub repository_id: String,
+    pub manifest_path: String,
+    pub recorded_paths: Vec<String>,
+    pub fingerprint: String,
+}
+
+#[derive(Debug)]
+pub(super) struct PreparationError {
+    pub message: String,
+    pub manifest_overwrite: Option<Box<ManifestOverwriteOffer>>,
+}
+
+impl From<String> for PreparationError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            manifest_overwrite: None,
+        }
+    }
+}
+
+impl From<&str> for PreparationError {
+    fn from(message: &str) -> Self {
+        message.to_owned().into()
+    }
 }
 
 #[derive(Clone)]
@@ -210,22 +242,26 @@ impl PreparationReporter {
         });
     }
 
-    pub(super) fn finish(&self, outcome: Result<ChangePlan, String>) -> PreparationOutcome {
-        let (plan, error) = match outcome {
+    pub(super) fn finish(
+        &self,
+        outcome: Result<ChangePlan, PreparationError>,
+    ) -> PreparationOutcome {
+        let (plan, error, manifest_overwrite) = match outcome {
             Ok(plan) => {
                 if plan.prepared {
                     self.stage(PreparationStage::Ready, None);
                 }
-                (Some(plan), None)
+                (Some(plan), None, None)
             }
             Err(error) => {
-                self.failed(&error);
-                (None, Some(error))
+                self.failed(&error.message);
+                (None, Some(error.message), error.manifest_overwrite)
             }
         };
         PreparationOutcome {
             plan,
             error,
+            manifest_overwrite,
             progress: self
                 .snapshot
                 .lock()

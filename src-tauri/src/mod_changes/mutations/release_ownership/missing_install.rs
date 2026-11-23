@@ -59,7 +59,7 @@ impl MissingInstallRecord {
     }
 }
 
-fn endpoints(canonical: &str) -> impl Iterator<Item = String> {
+pub(super) fn endpoints(canonical: &str) -> impl Iterator<Item = String> {
     std::iter::once(canonical.into()).chain(
         mods::file_state::is_mod_file(Path::new(canonical))
             .then(|| mods::disabled_dll_file(canonical)),

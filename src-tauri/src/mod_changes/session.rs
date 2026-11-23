@@ -18,6 +18,15 @@ pub(crate) struct PlanRequest {
     pub toggle_scope: Option<ToggleScope>,
     #[serde(default)]
     pub bulk_toggle: bool,
+    #[serde(rename = "manifestOverwrite")]
+    pub manifest_overwrite: Option<ManifestOverwriteIntent>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ManifestOverwriteIntent {
+    pub repository_id: String,
+    pub fingerprint: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

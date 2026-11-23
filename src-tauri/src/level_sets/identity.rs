@@ -119,6 +119,24 @@ pub(super) fn sanitize_dir_name(name: &str) -> Option<String> {
 /// 正常集名远低于这个值，这里只拦病态长名。
 pub(super) const MAX_DIR_NAME_CHARS: usize = 48;
 
+fn is_windows_device_name(name: &str) -> bool {
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
+    matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || stem
+        .strip_prefix("COM")
+        .or_else(|| stem.strip_prefix("LPT"))
+        .is_some_and(|number| {
+            matches!(number.as_bytes(), [b'1'..=b'9']) || matches!(number, "¹" | "²" | "³")
+        })
+}
+
 /// 给关卡集挑一个在本批里不重名的目录名。
 ///
 /// 只用英文集名不够：不同地图可能共用同一个集名（实测「胡闹糕中」与
@@ -141,11 +159,12 @@ pub(crate) fn allocate_dir_name(
     let shorten = |value: &str| -> Option<String> {
         let cleaned = sanitize_dir_name(value)?;
         let shortened: String = cleaned.chars().take(MAX_DIR_NAME_CHARS).collect();
-        let shortened = shortened.trim_matches(['.', ' ']).to_string();
-        if shortened.is_empty() {
-            None
+        let shortened = shortened.trim_end_matches(['.', ' ']);
+        if is_windows_device_name(shortened) {
+            let stem: String = shortened.chars().take(MAX_DIR_NAME_CHARS - 1).collect();
+            Some(format!("_{}", stem.trim_end_matches(['.', ' '])))
         } else {
-            Some(shortened)
+            Some(shortened.to_owned())
         }
     };
 
@@ -161,7 +180,7 @@ pub(crate) fn allocate_dir_name(
         candidates.push(format!("{base}_{author}"));
     }
     let uid: String = metadata.uid.chars().take(8).collect();
-    if !uid.trim().is_empty() {
+    if let Some(uid) = shorten(&uid) {
         candidates.push(format!("{base}_{uid}"));
     }
 

@@ -74,6 +74,7 @@ pub async fn analyze_mod_source(
             &path,
             fingerprint,
             Source::ModUrl,
+            &preview.file_name,
         )?;
     }
     log::info!(

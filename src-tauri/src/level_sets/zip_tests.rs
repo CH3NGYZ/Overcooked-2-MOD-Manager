@@ -33,8 +33,7 @@ fn inspects_the_published_rw_zip() {
     assert_eq!(set.metadata.author, "RW");
     assert_eq!(set.metadata.version, "0.73");
     assert_eq!(set.metadata.levels.len(), 10);
-    // 目录名来自集名而不是 ZIP 结构
-    assert_eq!(set.dir_name, "RW_LevelSet");
+    assert_eq!(set.dir_name, "rw");
     // 文件数 = info + 10 个关卡
     assert_eq!(set.files.len(), 11);
     // info 在 ZIP 里叫 info_rw，落盘时要变成固定名 `info`
@@ -55,16 +54,11 @@ fn installs_the_zip_into_levels_with_fixed_info_name() {
     let root = std::env::temp_dir().join(format!("oc2-lv-zip-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join(DIYLEVEL_DIR)).unwrap();
 
-    let installed = install_from_zip(
-        &zip,
-        &root,
-        &root.join("manifests"),
-        &["RW_LevelSet".to_string()],
-    )
-    .expect("应能安装");
-    assert_eq!(installed, vec!["RW_LevelSet".to_string()]);
+    let installed = install_from_zip(&zip, &root, &root.join("manifests"), &["rw".to_string()])
+        .expect("应能安装");
+    assert_eq!(installed, vec!["rw"]);
 
-    let destination = root.join(DIYLEVEL_DIR).join(LEVELS_DIR).join("RW_LevelSet");
+    let destination = root.join(DIYLEVEL_DIR).join(LEVELS_DIR).join("rw");
     // DLL 只认固定名 `info`，不能保留 ZIP 里的 `info_rw`
     assert!(destination.join("info").is_file(), "info 应落成固定名");
     assert!(
@@ -93,16 +87,11 @@ fn refuses_to_install_over_an_existing_set() {
         return;
     };
     let root = std::env::temp_dir().join(format!("oc2-lv-dup-{}", uuid::Uuid::new_v4()));
-    let existing = root.join(DIYLEVEL_DIR).join(LEVELS_DIR).join("RW_LevelSet");
+    let existing = root.join(DIYLEVEL_DIR).join(LEVELS_DIR).join("rw");
     std::fs::create_dir_all(&existing).unwrap();
 
     // 覆盖会静默丢掉用户已有的关卡集（可能是自己改过的版本）
-    let result = install_from_zip(
-        &zip,
-        &root,
-        &root.join("manifests"),
-        &["RW_LevelSet".to_string()],
-    );
+    let result = install_from_zip(&zip, &root, &root.join("manifests"), &["rw".to_string()]);
     assert!(result.is_err(), "目标已存在时应拒绝安装");
     std::fs::remove_dir_all(&root).unwrap();
 }
@@ -220,6 +209,21 @@ fn allocate_dir_name_keeps_names_usable_as_directories() {
 }
 
 #[test]
+fn allocate_dir_name_handles_empty_stems_and_windows_device_names() {
+    let mut taken = std::collections::HashSet::new();
+    let info = metadata("InternalMap", None, "Author", "");
+    for (stem, expected) in [
+        ("...", "LevelSet"),
+        ("CON", "_CON"),
+        ("NUL.v1", "_NUL.v1"),
+        ("lpt² .v2", "_lpt² .v2"),
+        ("COM10.v3", "COM10.v3"),
+    ] {
+        assert_eq!(allocate_dir_name(stem, &info, &mut taken, true), expected);
+    }
+}
+
+#[test]
 fn collects_existing_directory_names_for_collision_checks() {
     let root = std::env::temp_dir().join(format!("oc2-lv-names-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join("GAODA")).unwrap();
@@ -279,7 +283,7 @@ fn reports_progress_for_every_info_candidate() {
         ],
     );
     let seen = std::sync::Mutex::new(Vec::<(usize, usize, String)>::new());
-    let error = inspect_zip_with_progress(&zip_path, 2, 2, &|done, total, current| {
+    let error = inspect_zip_with_progress(&zip_path, None, 2, 2, &|done, total, current| {
         seen.lock()
             .unwrap()
             .push((done, total, current.to_string()));
@@ -318,7 +322,8 @@ fn picks_the_parsable_info_when_a_directory_has_several() {
         eprintln!("跳过：没有 .tmp/rw.zip");
         return;
     };
-    let zip_path = std::env::temp_dir().join(format!("oc2-lv-multi-{}.zip", uuid::Uuid::new_v4()));
+    let root = tempfile::tempdir().unwrap();
+    let zip_path = root.path().join("我的地图.v2.ZIP");
     // 坏 info 故意排在后面：旧实现取最后一个，正好会踩到这个
     write_zip(
         &zip_path,
@@ -332,10 +337,8 @@ fn picks_the_parsable_info_when_a_directory_has_several() {
     let sets = inspect_zip(&zip_path).expect("同目录多个 info 时应取能解析的那个，而不是整包失败");
     assert_eq!(sets.len(), 1);
     assert_eq!(sets[0].metadata.name, "RW_LevelSet");
-    assert_eq!(sets[0].dir_name, "RW_LevelSet");
+    assert_eq!(sets[0].dir_name, "我的地图.v2");
     assert_eq!(sets[0].files.len(), 3, "同目录的文件都要归到这个关卡集");
-
-    std::fs::remove_file(&zip_path).unwrap();
 }
 
 #[test]

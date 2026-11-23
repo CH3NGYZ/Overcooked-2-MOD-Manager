@@ -30,7 +30,7 @@ pub async fn stage_map_source(
     log::info!("开始暂存地图来源 stage={stage} kind={:?}", source.kind);
     let result = async {
         let config = state.config.load_or_default();
-        let (path, downloaded) = match &source.kind {
+        let (path, downloaded_file_name) = match &source.kind {
             crate::mod_preview::ModSourceKind::Local => {
                 let path = PathBuf::from(source.value.trim());
                 if !path.is_file() {
@@ -42,10 +42,10 @@ pub async fn stage_map_source(
                 {
                     return Err("modPreview.unsupportedType".into());
                 }
-                (path, false)
+                (path, None)
             }
             crate::mod_preview::ModSourceKind::Url => {
-                let (temp, _) = crate::direct_mod::download_remote_to_temp(
+                let (temp, file_name) = crate::direct_mod::download_remote_to_temp(
                     &app,
                     &state,
                     &source.value,
@@ -54,10 +54,19 @@ pub async fn stage_map_source(
                     crate::direct_mod::RemoteValidation::Zip,
                 )
                 .await?;
-                (temp, true)
+                (temp, Some(file_name))
             }
         };
-        inspect_staged_zip(&app, state.inner(), config, path, downloaded, None, stage).await
+        inspect_staged_zip(
+            &app,
+            state.inner(),
+            config,
+            path,
+            downloaded_file_name,
+            None,
+            stage,
+        )
+        .await
     }
     .await;
     if let Err(error) = &result {
@@ -75,10 +84,11 @@ async fn inspect_staged_zip(
     state: &AppState,
     config: AppConfig,
     path: PathBuf,
-    downloaded: bool,
+    downloaded_file_name: Option<String>,
     release: Option<(MapRepositoryConfig, String)>,
     stage: uuid::Uuid,
 ) -> Result<StagedMapSource, String> {
+    let downloaded = downloaded_file_name.is_some();
     let zip = redact_text(&format!("{:?}", path.file_name()));
     log::info!("开始识别地图 ZIP stage={stage} zip={zip} downloaded={downloaded}");
     let parse_app = app.clone();
@@ -88,7 +98,12 @@ async fn inspect_staged_zip(
         let downloaded_fingerprint = downloaded
             .then(|| Fingerprint::capture(&parse_path))
             .transpose()?;
-        let sets = zip_level_sets(&parse_app, &config, &parse_path)?;
+        let sets = zip_level_sets(
+            &parse_app,
+            &config,
+            &parse_path,
+            downloaded_file_name.as_deref(),
+        )?;
         let origin = if let Some((map, tag)) = release {
             let primary = validate_map_release_sets(&sets, &map)?;
             Some(MapInstallOrigin {
@@ -101,7 +116,7 @@ async fn inspect_staged_zip(
         } else {
             None
         };
-        if let Some(fingerprint) = downloaded_fingerprint {
+        if let Some((fingerprint, file_name)) = downloaded_fingerprint.zip(downloaded_file_name) {
             if Fingerprint::capture(&parse_path)? != fingerprint {
                 return Err("modChanges.payloadChanged".into());
             }
@@ -110,6 +125,7 @@ async fn inspect_staged_zip(
                 &parse_path,
                 fingerprint,
                 Source::Map(origin.clone()),
+                &file_name,
             )?;
         }
         Ok::<_, String>((sets, origin))
@@ -286,8 +302,18 @@ pub async fn stage_map_release(
         .await?
         .into_path();
 
+        let file_name = asset.name.clone();
         let source = Some((map.clone(), release.tag_name.clone()));
-        inspect_staged_zip(&app, state.inner(), config, temp, true, source, stage).await
+        inspect_staged_zip(
+            &app,
+            state.inner(),
+            config,
+            temp,
+            Some(file_name),
+            source,
+            stage,
+        )
+        .await
     })
     .await;
     if let Err(error) = &result {

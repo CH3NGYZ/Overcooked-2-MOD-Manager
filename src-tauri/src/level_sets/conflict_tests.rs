@@ -47,7 +47,7 @@ fn existing_level_set_metadata_reads_the_disabled_root_too() {
 /// 只在 `BepInEx/cache/modmanager_disabled_maps/` 里有同名目录、且身份不同时，必须换名并存而不是拒绝。
 ///
 /// 用真实 RW 包（ZIP 里的身份来自真 `info`），停用根那份的身份用
-/// `inject_info_cache` 伪造 —— 这是本修复最关键的一条端到端回归。
+/// `seed_info_metadata` 在安装器读取的规范路径下预置。
 #[test]
 #[ignore = "需要 .tmp/rw.zip，用 --ignored 单独跑"]
 fn a_same_named_set_in_disabled_with_another_identity_is_renamed() {
@@ -60,7 +60,8 @@ fn a_same_named_set_in_disabled_with_another_identity_is_renamed() {
     let game = root.join("game");
     std::fs::create_dir_all(levels_root(&crate::level_sets::paths::test_roots(&game)).unwrap())
         .unwrap();
-    let stale = disabled_root(&game).join("RW_LevelSet");
+    let game = game.canonicalize().unwrap();
+    let stale = disabled_root(&game).join("rw");
     std::fs::create_dir_all(&stale).unwrap();
     let info = stale.join("info");
     std::fs::write(&info, b"not-a-real-bundle").unwrap();
@@ -69,17 +70,12 @@ fn a_same_named_set_in_disabled_with_another_identity_is_renamed() {
         metadata("AnotherMap", Some("另一张图"), "Someone", "2.0"),
     );
 
-    let installed = install_from_zip(
-        &zip,
-        &game,
-        &game.join("manifests"),
-        &["RW_LevelSet".to_string()],
-    )
-    .unwrap();
+    let installed = install_from_zip(&zip, &game, &game.join("manifests"), &["rw".into()]).unwrap();
     assert_eq!(installed.len(), 1);
-    assert_ne!(
-        installed[0], "RW_LevelSet",
-        "同名不同身份应换名并存，而不是 levelSet.targetExists"
+    assert!(
+        installed[0].starts_with("rw_"),
+        "同名不同身份应在 ZIP 名后消歧：{}",
+        installed[0]
     );
     assert!(
         levels_root(&crate::level_sets::paths::test_roots(&game))
@@ -87,7 +83,7 @@ fn a_same_named_set_in_disabled_with_another_identity_is_renamed() {
             .join(&installed[0])
             .is_dir()
     );
-    assert!(stale.is_dir(), "停用根里的用户数据不能被改动");
+    assert_eq!(std::fs::read(info).unwrap(), b"not-a-real-bundle");
 
     std::fs::remove_dir_all(&root).unwrap();
 }

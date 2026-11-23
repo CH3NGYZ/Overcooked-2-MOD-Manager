@@ -283,6 +283,8 @@ async fn real_local_zip_updates_older_map_without_binding_a_mirror() {
     let old = fixture
         .game
         .join("BepInEx/plugins/DIYLevel/levels/KeepOldDirectory");
+    let new_directory = old.with_file_name(&set.dir_name);
+    assert_ne!(old, new_directory);
     write(
         &old.join("info"),
         &live_game_info::bundle_with_chinese_name(
@@ -327,6 +329,7 @@ async fn real_local_zip_updates_older_map_without_binding_a_mirror() {
     assert_eq!(snapshot(&fixture), before);
     execution::commit(&fixture.state, &mut take(&fixture, &prepared), |_| {}).unwrap();
     assert!(!old.join("old_scene").exists());
+    assert!(!new_directory.exists());
     assert_eq!(
         fs::read_to_string(old.join("requires.txt")).unwrap().trim(),
         "3.8.8"

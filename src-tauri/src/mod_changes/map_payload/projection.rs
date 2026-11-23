@@ -228,7 +228,11 @@ pub(super) fn merge(
                 old.summary.enabled,
             )
         } else {
-            let name = level_sets::allocate_dir_name(original_name, &metadata, &mut taken, true);
+            let name = if taken.insert(original_name.to_lowercase()) {
+                original_name.to_owned()
+            } else {
+                level_sets::allocate_dir_name(original_name, &metadata, &mut taken, false)
+            };
             let mut id = format!("map:{name}");
             if session.trusted.files.contains_key(&id) {
                 id = format!("map-import:{}:{name}", session.plan.plan_id);

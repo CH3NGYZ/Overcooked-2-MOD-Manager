@@ -12,6 +12,7 @@ const MOD_GUID: &str = "fixture.explicit-mod";
 const HELPER: &str = "Helper";
 const HELPER_GUID: &str = "fixture-helper";
 const MAP: &str = "FixtureMap";
+const MAP_ARCHIVE_STEM: &str = "fixture-map-package";
 const AUTHOR: &str = "FixtureAuthor";
 const PE: &[u8] = include_bytes!("duplicate_release_target/fastinit_version.pe");
 
@@ -46,7 +47,11 @@ fn sources(server: &Server, downloads: &[Vec<u8>]) -> Vec<ModRepositoryConfig> {
 }
 
 fn map_request(fixture: &Fixture, online: bool) -> PlanRequest {
-    let path = fixture.game.parent().unwrap().join("map.zip");
+    let path = fixture
+        .game
+        .parent()
+        .unwrap()
+        .join(format!("{MAP_ARCHIVE_STEM}.zip"));
     let mut zip = zip::ZipWriter::new(fs::File::create(&path).unwrap());
     for (name, bytes) in [
         ("info", live_game_info::bundle(MAP, AUTHOR, "2.24")),
@@ -65,7 +70,7 @@ fn map_request(fixture: &Fixture, online: bool) -> PlanRequest {
         map_import: Some(MapImport {
             zip_path: path.to_string_lossy().into_owned(),
             download_id: None,
-            selected: vec![MAP.into()],
+            selected: vec![MAP_ARCHIVE_STEM.into()],
             origin: online.then(|| MapInstallOrigin {
                 repository_id: Some("fixture-map-source".into()),
                 level_set_name: MAP.into(),
@@ -288,6 +293,7 @@ async fn local_and_online_map_and_mod_installs_keep_the_old_web_chain() {
         })
         .await;
         assert_eq!(fs::read(old_map.join("scene")).unwrap(), b"new map");
+        assert!(!maps.join(MAP_ARCHIVE_STEM).exists());
         assert_eq!(fs::read(&diy).unwrap(), diy_before);
         assert_eq!(fs::read(&web).unwrap(), web_before);
         assert_eq!(server.request_count(), 0);
@@ -368,6 +374,7 @@ async fn disabled_map_update_does_not_require_diy_level_or_move_the_map() {
 
         assert_eq!(fs::read(map.join("scene")).unwrap(), b"new map");
         assert!(!map.join("old-scene").exists());
+        assert!(!map.with_file_name(MAP_ARCHIVE_STEM).exists());
         assert!(!fixture.game.join(crate::framework::DIYLEVEL_DIR).exists());
 
         let enable = planning::create(

@@ -3,7 +3,6 @@
 use super::bepinex_layer::inspect_bepinex_layer;
 use super::bepinex_layer::is_bepinex_layer_zip;
 use super::identity::allocate_dir_name;
-use super::identity::sanitize_dir_name;
 use super::plugin_assignment::assign_plugins;
 use super::zip_info::InfoDirectory;
 use super::zip_info::is_info_file;
@@ -203,6 +202,10 @@ pub use test_support::inspect_zip;
 
 /// 带进度的 ZIP 识别：`info` 按目录并行解析，其余流程与串行版一致。
 ///
+/// 下载包的物理路径是缓存文件，`downloaded_file_name` 才是普通地图包的命名来源。
+/// 本地包直接用 `zip_path` 的文件名，BepInEx 表层包保留包内路径。
+/// 合集按 ZIP 名加后缀分配独立目录，游戏只扫描 `levels` 的直接子目录。
+///
 /// `progress(done, total, current)` 在**每份候选 `info` 开始解析前**回调：
 /// `done` 是已解析完的目录数（同一目录有多个候选 `info` 时它会停着不动），
 /// `total` 是待解析的目录数，`current` 是这一份的 ZIP 内条目名。
@@ -213,6 +216,7 @@ pub use test_support::inspect_zip;
 /// 所以这里按「目录」分工，每个线程各自打开一份 `ZipArchive`。
 pub fn inspect_zip_with_progress(
     zip_path: &Path,
+    downloaded_file_name: Option<&str>,
     info_workers: usize,
     plugin_workers: usize,
     progress: &(dyn Fn(usize, usize, &str) + Sync),
@@ -300,13 +304,17 @@ pub fn inspect_zip_with_progress(
         return Err("levelSet.zipWithoutInfo".into());
     }
 
-    /*
-     * 分两阶段：先并行解析出每个目录的元数据与「基础目录名」，再统一分配目录名。
-     *
-     * 不能边解析边分配：同一批里共用同一个集名的几张图，谁先谁后决定谁拿到
-     * 不带后缀的名字，而顺序又由 ZIP 条目与 BTreeMap 键序决定 —— 同样的包
-     * 两次导入可能得到不同目录名。
-     */
+    let archive_name = match downloaded_file_name {
+        Some(file_name) => {
+            crate::archive::validate_asset_file_name(file_name)?;
+            Path::new(file_name)
+        }
+        None => zip_path,
+    };
+    let base_name = archive_name
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
     let info_tasks: Vec<InfoDirectory> = info_candidates
         .into_iter()
         .map(|(directory, candidates)| InfoDirectory {
@@ -317,27 +325,16 @@ pub fn inspect_zip_with_progress(
     let parsed_metadata =
         parse_zip_info_directories(zip_path, &info_tasks, info_workers, true, progress)?;
 
-    let mut parsed_sets: Vec<(String, LevelSetMetadata, String)> =
-        Vec::with_capacity(parsed_metadata.len());
-    for (directory, metadata) in parsed_metadata {
-        /*
-         * 关卡集目录名：用 info 里的英文集名，而不是 ZIP 里的目录名。
-         *
-         * 后者常是作者的临时命名（`新建文件夹`、`levels`、甚至根目录为空串），
-         * 而集名是作者在编辑器里真正填的名字，落到磁盘后还能和元数据对上。
-         * 清理掉不能做目录名的字符。
-         */
-        let base_name = sanitize_dir_name(&metadata.name)
-            .or_else(|| sanitize_dir_name(&directory.rsplit('/').next().unwrap_or("")))
-            .ok_or_else(|| "levelSet.invalidName".to_string())?;
-        parsed_sets.push((directory, metadata, base_name));
-    }
-
-    // 同一批里共用同一个基础名的有几张：大于 1 时它们**全部**带消歧后缀
-    let mut base_counts: BTreeMap<String, usize> = BTreeMap::new();
-    for (_, _, base_name) in &parsed_sets {
-        *base_counts.entry(base_name.to_lowercase()).or_default() += 1;
-    }
+    let allow_base = parsed_metadata.len() == 1;
+    let mut taken_dir_names = std::collections::HashSet::new();
+    let parsed_sets = parsed_metadata
+        .into_iter()
+        .map(|(directory, metadata)| {
+            let dir_name =
+                allocate_dir_name(base_name, &metadata, &mut taken_dir_names, allow_base);
+            (directory, metadata, dir_name)
+        })
+        .collect::<Vec<_>>();
 
     /*
      * 插件归属先算一次再落盘：同一批里的集名还要做消歧，但归属看的是 ZIP 里
@@ -398,15 +395,7 @@ pub fn inspect_zip_with_progress(
     let outcomes = crate::metadata_read::read_metadata_batch(&requests, plugin_workers, &|_, _| {});
 
     let mut imported = Vec::with_capacity(parsed_sets.len());
-    let mut taken_dir_names = std::collections::HashSet::new();
-    for (directory, metadata, base_name) in parsed_sets {
-        let allow_base = base_counts
-            .get(&base_name.to_lowercase())
-            .copied()
-            .unwrap_or(0)
-            < 2;
-        let dir_name = allocate_dir_name(&base_name, &metadata, &mut taken_dir_names, allow_base);
-
+    for (directory, metadata, dir_name) in parsed_sets {
         let prefix = if directory.is_empty() {
             String::new()
         } else {
@@ -466,14 +455,6 @@ pub fn inspect_zip_with_progress(
         let _ = fs::remove_dir_all(dir);
     }
 
-    /*
-     * 目录名互不相同由 `allocate_dir_name` 保证：集名撞车时它会追加中文名、
-     * 作者或 uid 后缀，而不是像早期那样整包拒绝。
-     *
-     * 实测「05_无前置地图合集」里 `gaoda`（胡闹糕中）与 `daxue`（胡闹达学）
-     * 的英文集名与作者都写成 GAODA，只靠集名无法区分；中文名是唯一能把
-     * 它们分开、又不随版本变化的字段。
-     */
     log::info!(
         "ZIP 关卡集识别完成：文件={}，关卡集={}，随包插件={}",
         zip_path.display(),

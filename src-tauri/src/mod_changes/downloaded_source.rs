@@ -19,6 +19,7 @@ struct Receipt {
     path: PathBuf,
     fingerprint: Fingerprint,
     source: Source,
+    file_name: String,
     issued: Instant,
 }
 
@@ -32,6 +33,7 @@ impl Downloads {
         path: &Path,
         fingerprint: Fingerprint,
         source: Source,
+        file_name: &str,
     ) -> Result<(), String> {
         if !matches!(fingerprint, Fingerprint::File { .. }) {
             return Err("modChanges.payloadChanged".into());
@@ -45,6 +47,7 @@ impl Downloads {
                 path,
                 fingerprint,
                 source,
+                file_name: file_name.to_owned(),
                 issued: Instant::now(),
             },
         );
@@ -58,13 +61,13 @@ impl Downloads {
         fingerprint: &Fingerprint,
         source: &Source,
         required: bool,
-    ) -> Result<bool, String> {
+    ) -> Result<Option<String>, String> {
         let receipts = self.0.lock().map_err(|_| "lock.poisoned")?;
         let Some(receipt) = receipts.get(&id) else {
             return if required {
                 Err("modChanges.targetChanged".into())
             } else {
-                Ok(false)
+                Ok(None)
             };
         };
         if expired(receipt)
@@ -74,7 +77,7 @@ impl Downloads {
         {
             return Err("modChanges.payloadChanged".into());
         }
-        Ok(true)
+        Ok(Some(receipt.file_name.clone()))
     }
 
     pub(crate) fn forget_path(&self, path: &Path) {

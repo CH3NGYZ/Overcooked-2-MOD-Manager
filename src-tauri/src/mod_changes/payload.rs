@@ -173,13 +173,16 @@ fn stage_asset(
     let source_fingerprint = Fingerprint::capture(source)?;
     let downloaded = if let SourceOrigin::Manual(preview) = &origin {
         use super::downloaded_source::Source;
-        state.downloaded_sources.verify(
-            uuid::Uuid::parse_str(preview).map_err(|_| "modPreview.invalidId")?,
-            source,
-            &source_fingerprint,
-            &Source::ModUrl,
-            false,
-        )?
+        state
+            .downloaded_sources
+            .verify(
+                uuid::Uuid::parse_str(preview).map_err(|_| "modPreview.invalidId")?,
+                source,
+                &source_fingerprint,
+                &Source::ModUrl,
+                false,
+            )?
+            .is_some()
     } else {
         downloaded
     };

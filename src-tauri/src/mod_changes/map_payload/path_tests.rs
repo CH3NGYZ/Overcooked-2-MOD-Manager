@@ -41,12 +41,34 @@ fn map_sandbox_refuses_a_reparse_point_in_its_parent_chain() {
     assert_eq!(fs::read_dir(other).unwrap().count(), 0);
 }
 
-#[test]
-#[ignore = "需要本地 .tmp/rw.zip；单独运行，以便隔离地图解析缓存"]
-fn real_zip_update_accepts_normal_windows_data_path() {
+fn isolated_map_replay(test: &str) -> bool {
+    const CASE: &str = "OC2_REAL_MAP_REPLAY_CASE";
+    let (_, module) = module_path!().split_once("::").unwrap();
+    let name = format!("{module}::{test}");
+    if std::env::var(CASE).as_deref() == Ok(name.as_str()) {
+        return true;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--ignored", "--exact", &name, "--nocapture"])
+        .env(CASE, &name)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed; 0 failed"),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    false
+}
+
+fn rw_zip() -> PathBuf {
     let zip = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.tmp/rw.zip");
     assert!(zip.is_file(), "需要本地真实地图 ZIP：{}", zip.display());
-    let zip = fs::canonicalize(zip).unwrap();
+    fs::canonicalize(zip).unwrap()
+}
+
+fn rw_fixture() -> (tempfile::TempDir, AppState, PathBuf) {
     let temp = tempfile::tempdir().unwrap();
     let data = temp.path().join("OC2ModManager");
     assert_ne!(
@@ -55,17 +77,6 @@ fn real_zip_update_accepts_normal_windows_data_path() {
     );
     let game = fs::canonicalize(temp.path()).unwrap().join("game");
     let package = game.join(crate::framework::DIYLEVEL_DIR);
-    let stage = level_sets::inspect_zip_with_progress(&zip, 1, 1, &|_, _, _| {}).unwrap();
-    let [selected] = stage.as_slice() else {
-        panic!("测试包中应只有一张地图");
-    };
-    let map = package.join("levels").join(&selected.dir_name);
-    let mut previous = selected.metadata.clone();
-    previous.version = "0.72".into();
-    assert_ne!(previous.version, selected.metadata.version);
-    write(&map, "info", b"previous bundle");
-    write(&map, "keep-until-commit", b"previous map bytes");
-    level_sets::seed_info_metadata(&map.join("info"), previous);
     write(&game, "BepInEx/core/BepInEx.dll", b"fixture loader");
     write(
         &package,
@@ -73,11 +84,9 @@ fn real_zip_update_accepts_normal_windows_data_path() {
         &mods::plugin_blob(mods::plugin_target::DIYLEVEL_GUID, "DIYLevel", "0.11.1"),
     );
 
-    // The real scanner uses the process root for its content cache. This one
-    // ignored test runs in an isolated process; never write the user's cache.
     fs::create_dir(&data).unwrap();
     crate::user_paths::freeze_root(&data).unwrap();
-    let state = AppState::with_config(ConfigService::for_test(data.clone()));
+    let state = AppState::with_config(ConfigService::for_test(data));
     archive::write_manifest(
         &state.config.manifests_dir(),
         &archive::new_manifest(
@@ -93,6 +102,29 @@ fn real_zip_update_accepts_normal_windows_data_path() {
     let mut config = crate::config::default_config();
     config.game.path = game.to_string_lossy().into_owned();
     state.config.save(&config).unwrap();
+    (temp, state, package.join("levels"))
+}
+
+#[test]
+#[ignore = "需要本地 .tmp/rw.zip"]
+fn real_zip_update_accepts_normal_windows_data_path() {
+    if !isolated_map_replay("real_zip_update_accepts_normal_windows_data_path") {
+        return;
+    }
+    let zip = rw_zip();
+    let (_temp, state, levels) = rw_fixture();
+    let stage = level_sets::inspect_zip_with_progress(&zip, None, 1, 1, &|_, _, _| {}).unwrap();
+    let [selected] = stage.as_slice() else {
+        panic!("测试包中应只有一张地图");
+    };
+    let map = levels.join("rw-legacy-install");
+    let mut previous = selected.metadata.clone();
+    previous.version = "0.72".into();
+    assert_ne!(previous.version, selected.metadata.version);
+    write(&map, "info", b"previous bundle");
+    write(&map, "keep-until-commit", b"previous map bytes");
+    level_sets::seed_info_metadata(&map.join("info"), previous);
+
     let request = PlanRequest {
         map_import: Some(MapImport {
             zip_path: zip.to_string_lossy().into_owned(),
@@ -106,6 +138,7 @@ fn real_zip_update_accepts_normal_windows_data_path() {
     assert_eq!(plan.result.status, SolveStatus::Ready, "{:?}", plan.result);
     assert_eq!(plan.result.actions.len(), 1);
     assert_eq!(plan.result.actions[0].kind, ActionKind::Upgrade);
+    assert_eq!(plan.result.actions[0].node_id, "map:rw-legacy-install");
     let mut session = state
         .mod_changes
         .lock()
@@ -118,15 +151,93 @@ fn real_zip_update_accepts_normal_windows_data_path() {
     session.plan.prepared = true;
     execution::commit(&state, &mut session, |_| {}).unwrap();
     assert!(!map.join("keep-until-commit").exists());
+    assert!(!levels.join("rw").exists());
     assert_eq!(
         level_sets::read_info_metadata(&map.join("info")).unwrap(),
         selected.metadata
     );
 }
 
+#[test]
+#[ignore = "需要本地 .tmp/rw.zip"]
+fn real_downloaded_zip_installs_under_its_recorded_asset_name() {
+    if !isolated_map_replay("real_downloaded_zip_installs_under_its_recorded_asset_name") {
+        return;
+    }
+    let (_temp, state, levels) = rw_fixture();
+    let asset_name = "RW official.v0.73.ZIP";
+    let receipt = uuid::Uuid::new_v4();
+    let zip = state.config.cache_dir().join(format!("{receipt}.download"));
+    fs::create_dir_all(zip.parent().unwrap()).unwrap();
+    fs::copy(rw_zip(), &zip).unwrap();
+    let sets =
+        level_sets::inspect_zip_with_progress(&zip, Some(asset_name), 1, 1, &|_, _, _| {}).unwrap();
+    let [selected] = sets.as_slice() else {
+        panic!("测试包中应只有一张地图");
+    };
+    let scene = "s_rw_1";
+    let mut scene_bytes = Vec::new();
+    zip::ZipArchive::new(fs::File::open(&zip).unwrap())
+        .unwrap()
+        .by_name(scene)
+        .unwrap()
+        .read_to_end(&mut scene_bytes)
+        .unwrap();
+    state
+        .downloaded_sources
+        .record(
+            receipt,
+            &zip,
+            Fingerprint::capture(&zip).unwrap(),
+            crate::mod_changes::downloaded_source::Source::Map(None),
+            asset_name,
+        )
+        .unwrap();
+    let request = PlanRequest {
+        map_import: Some(MapImport {
+            zip_path: zip.to_string_lossy().into_owned(),
+            download_id: Some(receipt),
+            selected: vec![selected.dir_name.clone()],
+            origin: None,
+        }),
+        ..Default::default()
+    };
+    let plan = planning::create(&state, request).unwrap();
+    assert_eq!(plan.result.status, SolveStatus::Ready, "{:?}", plan.result);
+    assert_eq!(plan.result.actions.len(), 1);
+    assert_eq!(plan.result.actions[0].kind, ActionKind::Install);
+    let mut session = state
+        .mod_changes
+        .lock()
+        .unwrap()
+        .plans
+        .remove(&plan.plan_id)
+        .unwrap();
+    preparation::finish(&state, &mut session).unwrap();
+    let target = levels.join("RW official.v0.73");
+    assert!(!target.exists());
+    session.plan.prepared = true;
+    execution::commit(&state, &mut session, |_| {}).unwrap();
+    assert_eq!(
+        level_sets::read_info_metadata(&target.join("info")).unwrap(),
+        selected.metadata
+    );
+    assert_eq!(fs::read(target.join(scene)).unwrap(), scene_bytes);
+    let installed = fs::read_dir(&levels)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(installed, ["RW official.v0.73"]);
+}
+
 #[tokio::test]
-#[ignore = "需要本地 .tmp/plugin-zips/young.zip；单独运行，以便隔离地图解析缓存"]
+#[ignore = "需要本地 .tmp/plugin-zips/young.zip"]
 async fn real_young_info_requires_download_approval_to_adopt_disabled_standalone_dll() {
+    if !isolated_map_replay(
+        "real_young_info_requires_download_approval_to_adopt_disabled_standalone_dll",
+    ) {
+        return;
+    }
     let sample = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.tmp/plugin-zips/young.zip");
     let mut archive = zip::ZipArchive::new(fs::File::open(sample).unwrap()).unwrap();
     let info = (0..archive.len())
@@ -183,7 +294,7 @@ async fn real_young_info_requires_download_approval_to_adopt_disabled_standalone
     let mut config = crate::config::default_config();
     config.game.path = game.to_string_lossy().into_owned();
     state.config.save(&config).unwrap();
-    let sets = level_sets::inspect_zip_with_progress(&zip, 1, 1, &|_, _, _| {}).unwrap();
+    let sets = level_sets::inspect_zip_with_progress(&zip, None, 1, 1, &|_, _, _| {}).unwrap();
     let [selected] = sets.as_slice() else {
         panic!("测试包中应只有一张地图");
     };
@@ -232,6 +343,7 @@ async fn real_young_info_requires_download_approval_to_adopt_disabled_standalone
             &zip,
             Fingerprint::capture(&zip).unwrap(),
             crate::mod_changes::downloaded_source::Source::Map(None),
+            "young-update.zip",
         )
         .unwrap();
     for phase in ["cancel", "modified", "rollback", "counterpart", "commit"] {

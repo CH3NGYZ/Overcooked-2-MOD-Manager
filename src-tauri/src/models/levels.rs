@@ -197,7 +197,7 @@ pub struct LevelSetPlugin {
 /// ZIP 里识别出的一个关卡集（导入前给用户确认用）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZipLevelSet {
-    /// 导入后使用的目录名（由集名推导，已清理非法字符）。
+    /// 预览时的目标目录名：普通包按文件名派生，表层包沿用包内目录。
     pub dir_name: String,
     /// 落盘形态：`flattened`（历史）或 `bepinex`（表层包原样解压）。
     #[serde(default)]

@@ -10,12 +10,14 @@ pub(crate) fn zip_level_sets(
     app: &AppHandle,
     config: &AppConfig,
     path: &Path,
+    downloaded_file_name: Option<&str>,
 ) -> Result<Vec<ZipLevelSet>, String> {
     crate::level_sets::require_map_only_zip(path)?;
     // `info` 是地图线、随包插件是 DLL（MOD 线），两条线各有自己的并行度设置。
     let progress_app = app.clone();
     let sets = crate::level_sets::inspect_zip_with_progress(
         path,
+        downloaded_file_name,
         crate::concurrency::workers_from(config.map_info_concurrency),
         crate::concurrency::workers_from(config.mod_metadata_concurrency),
         &move |done, total, current| {

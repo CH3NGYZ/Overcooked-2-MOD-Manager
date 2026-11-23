@@ -163,7 +163,7 @@ pub(crate) fn attach(state: &AppState, session: &mut PlanSession) -> Result<(), 
         crate::http_diagnostics::redact_text(&format!("{:?}", request.origin)),
     );
     let source_fingerprint = Fingerprint::capture(&source)?;
-    let downloaded = if let Some(id) = request.download_id {
+    let downloaded_file_name = if let Some(id) = request.download_id {
         state.downloaded_sources.verify(
             id,
             &source,
@@ -172,8 +172,9 @@ pub(crate) fn attach(state: &AppState, session: &mut PlanSession) -> Result<(), 
             true,
         )?
     } else {
-        false
+        None
     };
+    let downloaded = downloaded_file_name.is_some();
     match &source_fingerprint {
         Fingerprint::Missing => return Err("mods.fileMissing".into()),
         Fingerprint::Directory { .. } => return Err("modPreview.unsupportedType".into()),
@@ -187,6 +188,7 @@ pub(crate) fn attach(state: &AppState, session: &mut PlanSession) -> Result<(), 
     let config = &session.trusted.config;
     let sets = level_sets::inspect_zip_with_progress(
         &source,
+        downloaded_file_name.as_deref(),
         crate::concurrency::workers_from(config.map_info_concurrency),
         crate::concurrency::workers_from(config.mod_metadata_concurrency),
         &|_, _, _| {},

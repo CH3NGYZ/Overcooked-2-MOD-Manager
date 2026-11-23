@@ -121,6 +121,7 @@ async fn downloaded_mod_preview_freezes_a_same_path_dll_for_final_approval() {
             &path,
             Fingerprint::capture(&path).unwrap(),
             crate::mod_changes::downloaded_source::Source::ModUrl,
+            NAME,
         )
         .unwrap();
     let plan = planning::create(&fixture.state, manual_request(preview)).unwrap();

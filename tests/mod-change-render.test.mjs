@@ -163,12 +163,14 @@ test('a completed cache or local payload paints a check, and the new apply dialo
   assert.match(text(find(root, n => n.tag === 'footer')[0]), /确认并应用/)
 })
 
-test('the apply review alone lists untracked replacements with localized names and exact text paths', async t => {
+test('only the apply review groups replacements by package and shows every distinct full path', async t => {
   const root = mounted(t)
-  const paths = ['BepInEx/plugins/Existing DLL.dll', 'BepInEx/plugins/Details<local>.ini']
+  const paths = ['BepInEx/plugins/Existing DLL.dll', 'BepInEx/plugins/Details<local>.ini',
+    'BepInEx/plugins/Assets/official-all.txt', 'BepInEx/plugins/Assets/readme.txt']
   const verified = { ...plan, prepared: true,
     nodes: [{ ...plan.nodes[0], name_i18n: { 'zh-CN': '本地化前置', en: 'Localized prerequisite' } }],
-    untracked_overwrites: [{ node_id: 'web', path: paths[0] }, { node_id: 'unlabelled', path: paths[1] }] }
+    untracked_overwrites: [{ node_id: 'web', path: paths[0] }, { node_id: 'unlabelled', path: paths[1] },
+      { node_id: 'web', path: paths[2] }, { node_id: 'unlabelled', path: paths[3] }, { node_id: 'web', path: paths[0] }] }
   const notice = () => find(root, n => n.props && Object.hasOwn(n.props, 'data-untracked-overwrites'))[0]
   for (const state of [
     { phase: 'confirming', plan: verified },
@@ -184,9 +186,11 @@ test('the apply review alone lists untracked replacements with localized names a
   await nextTick()
   assert.equal(notice().props.type, 'warning')
   assert.equal(notice().props.title, '将覆盖的现有文件')
-  assert.match(text(notice()), /这些文件没有安装记录。本次应用会用所选版本的文件替换它们。/)
-  assert.deepEqual(find(notice(), n => n.tag === 'li').map(row => find(row, n => n.tag === 'strong' || n.tag === 'code').map(text)),
-    [['本地化前置', paths[0]], ['未命名项目', paths[1]]])
+  assert.match(text(notice()), /确认后，所选版本会替换下面列出的文件。/)
+  assert.deepEqual(find(notice(), n => n.tag === 'strong').map(text), ['本地化前置', '未命名项目'])
+  const [groups] = find(notice(), n => n.tag === 'ul')
+  assert.deepEqual(groups.children.filter(group => group.tag === 'li')
+    .map(group => find(group, n => n.tag === 'code').map(text)), [[paths[0], paths[2]], [paths[1], paths[3]]])
   fixture.locale.value = 'en'
   await nextTick()
   assert.equal(notice().props.title, 'Existing files to overwrite')

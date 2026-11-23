@@ -27,8 +27,17 @@ const working = computed(() => ['planning', 'preparing', 'executing'].includes(s
 const completedPreparation = computed(() => state.value?.phase === 'prepared')
 const canCancel = computed(() => !isChangePlanLocked(state.value?.phase))
 const applyReview = computed(() => state.value?.applyReview)
-const untrackedOverwrites = computed(() => state.value?.phase === 'reconfirming' && applyReview.value
-  && plan.value?.status === 'ready' && plan.value.prepared ? plan.value.untracked_overwrites : undefined)
+const overwriteGroups = computed(() => {
+  const verified = plan.value
+  if (state.value?.phase !== 'reconfirming' || !applyReview.value || verified?.status !== 'ready' || !verified.prepared) return []
+  const groups = new Map<string, Set<string>>()
+  for (const { node_id: nodeId, path } of verified.untracked_overwrites ?? []) {
+    const paths = groups.get(nodeId) ?? new Set<string>()
+    paths.add(path)
+    groups.set(nodeId, paths)
+  }
+  return [...groups]
+})
 const needsPreparation = computed(() => !applyReview.value && plan.value?.actions.some(isPackageAction))
 const confirmLabel = computed(() => applyReview.value === 'changed' && plan.value?.prepared ? 'modChanges.reconfirm'
   : needsPreparation.value ? 'modChanges.confirmPreparation' : 'modChanges.confirm')
@@ -110,13 +119,15 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
       <NAlert v-if="state?.phase === 'reconfirming' && applyReview === 'changed' && plan?.status === 'ready'" type="warning" :bordered="false">
         {{ t('modChanges.changed') }}
       </NAlert>
-      <NAlert v-if="untrackedOverwrites?.length" type="warning" :bordered="false"
+      <NAlert v-if="overwriteGroups.length" type="warning" :bordered="false"
         :title="t('modChanges.overwrite.title')" data-untracked-overwrites>
         {{ t('modChanges.overwrite.description') }}
-        <ul class="overwrite-paths">
-          <li v-for="item in untrackedOverwrites" :key="JSON.stringify([item.node_id, item.path])">
-            <strong>{{ names?.nodes.get(item.node_id) ?? t('modChanges.unnamedItem') }}</strong>
-            <code>{{ item.path }}</code>
+        <ul class="overwrite-groups" role="list">
+          <li v-for="[nodeId, paths] in overwriteGroups" :key="nodeId">
+            <strong>{{ names?.nodes.get(nodeId) ?? t('modChanges.unnamedItem') }}</strong>
+            <ul class="overwrite-paths">
+              <li v-for="path in paths" :key="path"><code>{{ path }}</code></li>
+            </ul>
           </li>
         </ul>
       </NAlert>
@@ -173,8 +184,9 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
 .plan-notes { margin: 0; padding-left: 20px; overflow-wrap: anywhere; }
 .plan-error { display: block; }
 .plan-message { white-space: pre-wrap; overflow-wrap: anywhere; }
-.overwrite-paths { margin: 8px 0 0; padding-inline-start: 20px; overflow-wrap: anywhere; }
-.overwrite-paths li + li { margin-block-start: 4px; }
+.overwrite-groups { margin: 8px 0 0; padding: 0; list-style: none; overflow-wrap: anywhere; }
+.overwrite-groups > li + li { margin-block-start: 8px; }
+.overwrite-paths { margin: 2px 0 0; padding-inline-start: 20px; }
 .overwrite-paths code { display: block; white-space: pre-wrap; }
 .diagnostic-note { margin: 3px 0 0; font-size: 12px; overflow-wrap: anywhere; }
 </style>

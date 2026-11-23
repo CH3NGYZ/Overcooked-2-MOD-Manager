@@ -1,0 +1,95 @@
+name: Microsoft Store pricing preflight
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  pricing:
+    if: github.repository == 'CH3NGYZ/Overcooked-2-MOD-Manager' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Read last published pricing and pending submission state
+        shell: bash
+        env:
+          PARTNER_CENTER_TENANT_ID: ${{ secrets.PARTNER_CENTER_TENANT_ID }}
+          PARTNER_CENTER_CLIENT_ID: ${{ secrets.PARTNER_CENTER_CLIENT_ID }}
+          PARTNER_CENTER_CLIENT_SECRET: ${{ secrets.PARTNER_CENTER_CLIENT_SECRET }}
+          MS_STORE_PRODUCT_ID: ${{ secrets.MS_STORE_PRODUCT_ID }}
+        run: |
+          [[ "$GITHUB_REF" == 'refs/heads/main' ]] || exit 1
+          node <<'NODE'
+          const storeOrigin = 'https://manage.devcenter.microsoft.com';
+          const guid = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
+          const isSubmissionId = (value) => typeof value === 'string' && /^[0-9]+$/.test(value);
+
+          class PreflightError extends Error {}
+
+          async function readJson(stage, url, options) {
+            let response;
+            try {
+              response = await fetch(url, { ...options, redirect: 'error', signal: AbortSignal.timeout(15000) });
+            } catch {
+              throw new PreflightError(`${stage}: request failed`);
+            }
+            if (!response.ok) throw new PreflightError(`${stage}: HTTP ${response.status}`);
+            try {
+              return await response.json();
+            } catch {
+              throw new PreflightError(`${stage}: invalid JSON`);
+            }
+          }
+
+          async function preflight() {
+            const tenantId = process.env.PARTNER_CENTER_TENANT_ID?.trim() ?? '';
+            const clientId = process.env.PARTNER_CENTER_CLIENT_ID?.trim() ?? '';
+            const clientSecret = process.env.PARTNER_CENTER_CLIENT_SECRET;
+            const productId = process.env.MS_STORE_PRODUCT_ID?.trim().toUpperCase() ?? '';
+            if (!guid.test(tenantId) || !guid.test(clientId) || !clientSecret?.trim() || !/^[A-Z0-9]{12}$/.test(productId)) {
+              throw new PreflightError('Missing or invalid Actions secrets');
+            }
+
+            const token = await readJson('Entra token', `https://login.microsoftonline.com/${tenantId}/oauth2/token`, {
+              method: 'POST',
+              body: new URLSearchParams({
+                grant_type: 'client_credentials', client_id: clientId, client_secret: clientSecret, resource: storeOrigin,
+              }),
+            });
+            if (typeof token?.access_token !== 'string' || !token.access_token.trim()) {
+              throw new PreflightError('Entra token: missing access token');
+            }
+
+            const appUrl = `${storeOrigin}/v1.0/my/applications/${productId}`;
+            const get = { method: 'GET', headers: { Authorization: `Bearer ${token.access_token}` } };
+            const app = await readJson('Store application', appUrl, get);
+            if (typeof app?.id !== 'string' || app.id.toUpperCase() !== productId) {
+              throw new PreflightError('Store application: unexpected product');
+            }
+            const publishedId = app.lastPublishedApplicationSubmission?.id;
+            const pending = app.pendingApplicationSubmission;
+            if (!isSubmissionId(publishedId)) throw new PreflightError('No verifiable last published submission');
+            if (pending != null && !isSubmissionId(pending.id)) throw new PreflightError('Unrecognized pending submission reference');
+
+            const submission = await readJson('Last published submission', `${appUrl}/submissions/${publishedId}`, get);
+            if (submission?.id !== publishedId || submission.status !== 'Published') {
+              throw new PreflightError('Unable to verify last published submission');
+            }
+            const priceId = submission.pricing?.priceId;
+            let pricing = 'unknown';
+            if (priceId === 'Base') pricing = 'base-not-round-trippable';
+            else if (priceId === 'Free') pricing = 'free';
+            else if (priceId === 'NotAvailable') pricing = 'not-available';
+            else if (typeof priceId === 'string' && /^Tier[1-9][0-9]*$/.test(priceId)) pricing = 'tier-reported';
+
+            console.log(`pricing=${pricing}\npending=${pending == null ? 'no' : 'yes'}`);
+            if (pricing === 'unknown') process.exitCode = 1;
+          }
+
+          preflight().catch((error) => {
+            const message = error instanceof PreflightError ? error.message : 'unexpected failure';
+            console.error(`::error::Microsoft Store preflight: ${message}`);
+            process.exitCode = 1;
+          });
+          NODE

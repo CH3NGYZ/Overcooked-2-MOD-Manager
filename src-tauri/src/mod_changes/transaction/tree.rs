@@ -46,6 +46,7 @@ fn copy_directory(source: &Path, target: &Path) -> Result<(), String> {
                     &fingerprint,
                     check::STAGED,
                     check::WRITE,
+                    |_| Ok(()),
                 )?;
                 fingerprint
                     .permissions()

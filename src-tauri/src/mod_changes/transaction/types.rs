@@ -1,5 +1,8 @@
+use crate::file_metadata::FileIdentity;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+pub(super) const JOURNAL_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -112,6 +115,16 @@ pub(super) struct Journal {
 pub(super) struct Record {
     pub operation: RecordedMutation,
     pub phase: RecordPhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publication: Option<FilePublication>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum FilePublication {
+    NotStaged,
+    Staged(FileIdentity),
+    Unpublished(FileIdentity),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,6 +164,19 @@ pub(super) enum RecordedMutation {
         backup: TransactionPath,
         temporary: TransactionPath,
     },
+}
+
+impl RecordedMutation {
+    pub(super) fn creates_file(&self) -> bool {
+        matches!(
+            self,
+            Self::File {
+                before: Fingerprint::Missing,
+                after: Fingerprint::File { .. },
+                ..
+            }
+        )
+    }
 }
 
 #[derive(Debug, Default)]

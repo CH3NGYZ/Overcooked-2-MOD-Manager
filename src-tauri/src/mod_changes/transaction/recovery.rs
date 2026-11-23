@@ -59,7 +59,7 @@ pub(crate) fn recover_all(
         let result = (|| {
             let _scope = diagnostics::enter(&id);
             let journal = durable::read_journal(&directory)?;
-            let invalid_field = if journal.version != 1 {
+            let invalid_field = if !matches!(journal.version, 1 | JOURNAL_VERSION) {
                 Some("schema_version")
             } else if journal.id != id || Uuid::parse_str(&id).is_err() {
                 Some("transaction_id")
@@ -67,13 +67,20 @@ pub(crate) fn recover_all(
                 Some("roots")
             } else if journal.created_directory_count > journal.created_directories.len() {
                 Some("parent_count")
+            } else if journal.version == JOURNAL_VERSION
+                && journal
+                    .records
+                    .iter()
+                    .any(|record| record.publication.is_some() != record.operation.creates_file())
+            {
+                Some("file_publication")
             } else {
                 None
             };
             if let Some(field) = invalid_field {
                 log::warn!(
                     target: diagnostics::TARGET,
-                    "整链恢复记录校验失败：{}路径={:?}，字段={field}，实际版本={}，预期版本=1，ID与目录一致={}，父目录已建={}，计划父目录={}",
+                    "整链恢复记录校验失败：{}路径={:?}，字段={field}，实际版本={}，支持版本=1/{JOURNAL_VERSION}，ID与目录一致={}，父目录已建={}，计划父目录={}",
                     diagnostics::Location, diagnostics::path(&journal_path), journal.version,
                     journal.id == id, journal.created_directory_count, journal.created_directories.len(),
                 );
@@ -222,8 +229,12 @@ impl PreparedTransaction {
         self.cleanup()
     }
 
-    fn revert_record(&self, index: usize) -> Result<(), String> {
-        match &self.journal.records[index].operation {
+    fn revert_record(&mut self, index: usize) -> Result<(), String> {
+        let record = &self.journal.records[index];
+        if record.operation.creates_file() {
+            return self.revert_new_file(index);
+        }
+        match &record.operation {
             RecordedMutation::File {
                 target,
                 before,
@@ -271,6 +282,7 @@ impl PreparedTransaction {
                         &stored,
                         check::BACKUP,
                         check::WRITE,
+                        |_| Ok(()),
                     )?;
                     before
                         .permissions()
@@ -292,7 +304,7 @@ impl PreparedTransaction {
                             .restore(&target)
                             .map_err(|error| check::writing(&target, &error))?;
                     }
-                    durable::rename(&temporary, &target, true)?;
+                    durable::rename(&temporary, &target, actual != Fingerprint::Missing)?;
                 } else {
                     durable::remove_file_checked(&target, &actual, *require_single_link)?;
                 }

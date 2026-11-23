@@ -1,5 +1,34 @@
 //! Native identity and change time; length/last-write alone miss restored mtimes.
+use serde::{Deserialize, Serialize};
 use std::{fs, io, path::Path};
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct FileIdentity {
+    #[cfg(windows)]
+    volume: u64,
+    #[cfg(windows)]
+    file: [u8; 16],
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(unix)]
+    created: std::time::SystemTime,
+}
+
+impl FileIdentity {
+    pub(crate) fn capture(path: &Path) -> io::Result<Option<Self>> {
+        match Stamp::capture(path)? {
+            Stamp::Missing => Ok(None),
+            Stamp::Present(stamp) if stamp.is_file() => stamp.identity().map(Some),
+            Stamp::Present(_) => Err(io::Error::from(io::ErrorKind::InvalidInput)),
+        }
+    }
+
+    pub(crate) fn from_file(file: &fs::File) -> io::Result<Self> {
+        stamp_file(file)?.identity()
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Stamp {
@@ -28,6 +57,7 @@ impl Stamp {
 pub(crate) struct NativeStamp {
     device: u64,
     inode: u64,
+    created: Option<std::time::SystemTime>,
     changed: (i64, i64),
     modified: (i64, i64),
     size: u64,
@@ -40,21 +70,39 @@ impl NativeStamp {
     fn is_file(&self) -> bool {
         self.regular_file
     }
+
+    fn identity(&self) -> io::Result<FileIdentity> {
+        Ok(FileIdentity {
+            device: self.device,
+            inode: self.inode,
+            created: self.created.ok_or(io::ErrorKind::Unsupported)?,
+        })
+    }
 }
 
 #[cfg(unix)]
 fn native_stamp(path: &Path) -> io::Result<NativeStamp> {
+    Ok(stamp_metadata(fs::symlink_metadata(path)?))
+}
+
+#[cfg(unix)]
+fn stamp_file(file: &fs::File) -> io::Result<NativeStamp> {
+    Ok(stamp_metadata(file.metadata()?))
+}
+
+#[cfg(unix)]
+fn stamp_metadata(meta: fs::Metadata) -> NativeStamp {
     use std::os::unix::fs::MetadataExt;
-    let meta = fs::symlink_metadata(path)?;
-    Ok(NativeStamp {
+    NativeStamp {
         device: meta.dev(),
         inode: meta.ino(),
+        created: meta.created().ok(),
         changed: (meta.ctime(), meta.ctime_nsec()),
         modified: (meta.mtime(), meta.mtime_nsec()),
         size: meta.size(),
         mode: meta.mode(),
         regular_file: meta.is_file(),
-    })
+    }
 }
 
 #[cfg(windows)]
@@ -73,29 +121,40 @@ impl NativeStamp {
         use winapi::um::winnt::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT};
         self.attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT) == 0
     }
+
+    fn identity(&self) -> io::Result<FileIdentity> {
+        if self.file == [0; 16] {
+            return Err(io::Error::from(io::ErrorKind::Unsupported));
+        }
+        Ok(FileIdentity {
+            volume: self.volume,
+            file: self.file,
+        })
+    }
 }
 
 #[cfg(windows)]
 fn native_stamp(path: &Path) -> io::Result<NativeStamp> {
-    use std::{
-        mem::{MaybeUninit, size_of},
-        os::windows::{fs::OpenOptionsExt, io::AsRawHandle},
-    };
-    use winapi::um::{
-        fileapi::{FILE_BASIC_INFO, FILE_ID_INFO},
-        minwinbase::{FileBasicInfo, FileIdInfo},
-        winbase::{
-            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, GetFileInformationByHandleEx,
-        },
-        winnt::FILE_READ_ATTRIBUTES,
-    };
+    use std::os::windows::fs::OpenOptionsExt;
+    use winapi::um::winbase::{FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT};
+    use winapi::um::winnt::FILE_READ_ATTRIBUTES;
     // The handle doesn't follow a replacement reparse point and can inspect a
     // directory without reading any of the assets in it.
     let entry = fs::OpenOptions::new()
         .access_mode(FILE_READ_ATTRIBUTES)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)?;
-    let handle = entry.as_raw_handle().cast();
+    stamp_file(&entry)
+}
+
+#[cfg(windows)]
+fn stamp_file(file: &fs::File) -> io::Result<NativeStamp> {
+    use std::mem::{MaybeUninit, size_of};
+    use std::os::windows::io::AsRawHandle;
+    use winapi::um::fileapi::{FILE_BASIC_INFO, FILE_ID_INFO};
+    use winapi::um::minwinbase::{FileBasicInfo, FileIdInfo};
+    use winapi::um::winbase::GetFileInformationByHandleEx;
+    let handle = file.as_raw_handle().cast();
     let mut basic = MaybeUninit::<FILE_BASIC_INFO>::uninit();
     let mut identity = MaybeUninit::<FILE_ID_INFO>::uninit();
     // The handle remains live and both buffers exactly match the selected info class.

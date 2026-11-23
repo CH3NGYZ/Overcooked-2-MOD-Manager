@@ -1,4 +1,4 @@
-use super::{PreparedTransaction, check, diagnostics, durable, paths, types::*};
+use super::{PreparedTransaction, check, diagnostics, durable, paths, publication, types::*};
 use crate::{directory_watch::CommittedPaths, file_check, file_metadata::Stamp};
 use std::{fs, path::Path};
 
@@ -85,7 +85,11 @@ fn check_after(
         let path = check::resolve(target, roots, check::RESULT)?;
         let observed = capture(&path, target.root, tree)
             .map_err(|error| check::context(check::RESULT, &path, &error))?;
-        check::compare(&path, check::RESULT, &observed, expected, false)
+        check::compare(&path, check::RESULT, &observed, expected, false)?;
+        if let Some(FilePublication::Staged(identity)) = &record.publication {
+            publication::expect_identity(&path, check::RESULT, identity)?;
+        }
+        Ok(())
     };
     match &record.operation {
         RecordedMutation::File { target, after, .. } => verify(target, false, after),
@@ -274,6 +278,9 @@ impl PreparedTransaction {
             })?;
         }
         before_commit()?;
+        if cancelled() {
+            return Err("download.cancelled".into());
+        }
         self.journal.state = JournalState::Committed;
         self.persist()?;
         Ok(committed)
@@ -368,23 +375,29 @@ impl PreparedTransaction {
                     let payload = durable::private_path(&self.directory, payload, check::STAGED)?;
                     let payload_fingerprint = check::capture(&payload, check::STAGED)?;
                     check::compare(&payload, check::STAGED, &payload_fingerprint, after, true)?;
-                    durable::copy_verified(
-                        &payload,
-                        &temporary,
-                        &payload_fingerprint,
-                        check::STAGED,
-                        check::WRITE,
-                    )?;
-                    after
-                        .permissions()
-                        .ok_or(paths::INVALID)?
-                        .restore(&temporary)
-                        .map_err(|error| check::writing(&temporary, &error))?;
-                    check::expect(&temporary, check::STAGED, after)?;
-                    verify_file_before(&target, before, *require_single_link)?;
-                    make_writable(&target, before)
-                        .map_err(|error| check::writing(&target, &error))?;
-                    durable::rename_checked(&temporary, &target, true, check::WRITE)?;
+                    if record.operation.creates_file() {
+                        self.publish_new_file(
+                            index,
+                            &payload,
+                            &temporary,
+                            &target,
+                            &payload_fingerprint,
+                        )?;
+                    } else {
+                        durable::copy_verified(
+                            &payload,
+                            &temporary,
+                            &payload_fingerprint,
+                            check::STAGED,
+                            check::WRITE,
+                            |_| Ok(()),
+                        )?;
+                        publication::prepare_file(&temporary, after)?;
+                        verify_file_before(&target, before, *require_single_link)?;
+                        make_writable(&target, before)
+                            .map_err(|error| check::writing(&target, &error))?;
+                        durable::rename_checked(&temporary, &target, true, check::WRITE)?;
+                    }
                 } else {
                     durable::remove_file_checked(&target, before, *require_single_link)?;
                 }
@@ -402,7 +415,7 @@ impl PreparedTransaction {
                 super::tree::apply(&self.directory, operation, &self.journal.roots)?
             }
         }
-        verify_after(record, &self.journal.roots)?;
+        verify_after(&self.journal.records[index], &self.journal.roots)?;
         self.journal.records[index].phase = RecordPhase::Applied;
         self.persist()
     }

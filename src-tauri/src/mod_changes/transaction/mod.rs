@@ -8,6 +8,7 @@ mod fingerprint;
 mod paths;
 mod permissions;
 mod prepare;
+mod publication;
 mod recovery;
 mod tree;
 mod types;
@@ -37,6 +38,8 @@ pub(crate) struct PreparedTransaction {
 
 #[cfg(test)]
 mod application_progress_tests;
+#[cfg(test)]
+mod publication_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

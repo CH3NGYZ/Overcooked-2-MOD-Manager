@@ -71,6 +71,7 @@ pub(crate) fn prepare_for_operation(
                             &change.expected,
                             check::TARGET,
                             check::WRITE_BACKUP,
+                            |_| Ok(()),
                         )?;
                         Some(relative)
                     };
@@ -91,6 +92,7 @@ pub(crate) fn prepare_for_operation(
                             &source.fingerprint,
                             check::STAGED,
                             check::WRITE,
+                            |_| Ok(()),
                         )?;
                         // Replacement retains the destination's permissions, including its DACL.
                         let permissions = change
@@ -223,6 +225,9 @@ pub(crate) fn prepare_for_operation(
                 }
             };
             records.push(Record {
+                publication: operation
+                    .creates_file()
+                    .then_some(FilePublication::NotStaged),
                 operation,
                 phase: RecordPhase::Pending,
             });
@@ -234,7 +239,7 @@ pub(crate) fn prepare_for_operation(
         }
         super::paths::validate_records(&records, transaction_root, roots)?;
         let journal = Journal {
-            version: 1,
+            version: JOURNAL_VERSION,
             id: id.clone(),
             roots: roots.clone(),
             state: JournalState::Prepared,

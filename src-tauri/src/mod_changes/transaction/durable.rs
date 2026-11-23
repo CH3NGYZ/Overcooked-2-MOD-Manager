@@ -32,15 +32,38 @@ pub(super) fn rename_checked(
     replace: bool,
     stage: &str,
 ) -> Result<(), String> {
-    validate_absolute(source).map_err(|error| check::context(stage, source, &error))?;
-    validate_absolute(target).map_err(|error| check::context(stage, target, &error))?;
+    rename_durable(source, target, replace, stage).map_err(|failure| match failure {
+        RenameFailure::Unchanged(error) | RenameFailure::Sync(error) => error,
+    })
+}
+
+pub(super) enum RenameFailure {
+    Unchanged(String),
+    Sync(String),
+}
+
+pub(super) fn rename_durable(
+    source: &Path,
+    target: &Path,
+    replace: bool,
+    stage: &str,
+) -> Result<(), RenameFailure> {
+    for path in [source, target] {
+        validate_absolute(path)
+            .map_err(|error| RenameFailure::Unchanged(check::context(stage, path, &error)))?;
+    }
     let write_error = |error: std::io::Error| {
         log::warn!(
             target: diagnostics::TARGET,
             "整链事务改名失败：{}步骤={stage}，源={:?}，目标={:?}，允许替换={replace}，OS码={:?}，分类={:?}",
             diagnostics::Location, diagnostics::path(source), diagnostics::path(target), error.raw_os_error(), error.kind()
         );
-        file_check::report_io(stage, target, error, file_check::WRITE)
+        RenameFailure::Unchanged(file_check::report_io(
+            stage,
+            target,
+            error,
+            file_check::WRITE,
+        ))
     };
     #[cfg(windows)]
     {
@@ -60,10 +83,11 @@ pub(super) fn rename_checked(
     }
     #[cfg(not(windows))]
     {
-        if !replace && target.try_exists().map_err(write_error)? {
-            return Err(file_check::report(stage, target, file_check::EXISTS));
+        if replace {
+            fs::rename(source, target).map_err(write_error)?;
+        } else {
+            rename_exclusive(source, target).map_err(write_error)?;
         }
-        fs::rename(source, target).map_err(write_error)?;
     }
     let sync = |path| {
         sync_parent(path).map_err(|error| {
@@ -72,11 +96,27 @@ pub(super) fn rename_checked(
                 "整链事务已改名但未能确认刷盘：{}步骤={stage}，源={:?}，目标={:?}，失败位置={:?}",
                 diagnostics::Location, diagnostics::path(source), diagnostics::path(target), diagnostics::path(path)
             );
-            check::context(stage, path, &error)
+            RenameFailure::Sync(check::context(stage, path, &error))
         })
     };
     sync(source)?;
     sync(target)
+}
+
+#[cfg(target_os = "macos")]
+fn rename_exclusive(source: &Path, target: &Path) -> std::io::Result<()> {
+    use std::{ffi::CString, io, os::unix::ffi::OsStrExt};
+    let source = CString::new(source.as_os_str().as_bytes())?;
+    let target = CString::new(target.as_os_str().as_bytes())?;
+    if unsafe { libc::renamex_np(source.as_ptr(), target.as_ptr(), libc::RENAME_EXCL) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn rename_exclusive(_: &Path, _: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
 }
 
 pub(super) fn write_journal(directory: &Path, journal: &Journal) -> Result<(), String> {
@@ -144,8 +184,9 @@ pub(super) fn copy_verified(
     expected: &Fingerprint,
     source_stage: &str,
     write_stage: &str,
+    created: impl FnOnce(&File) -> Result<(), String>,
 ) -> Result<Fingerprint, String> {
-    copy_file(source, target, expected, source_stage, write_stage).inspect_err(|error| {
+    copy_file(source, target, expected, source_stage, write_stage, created).inspect_err(|error| {
         log::warn!(
             target: diagnostics::TARGET,
             "整链事务复制失败：{}源={:?}，目标={:?}，源步骤={source_stage}，写步骤={write_stage}，期望={}，错误={:?}",
@@ -161,6 +202,7 @@ fn copy_file(
     expected: &Fingerprint,
     source_stage: &str,
     write_stage: &str,
+    created: impl FnOnce(&File) -> Result<(), String>,
 ) -> Result<Fingerprint, String> {
     check::expect(source, source_stage, expected)?;
     validate_absolute(target).map_err(|error| check::context(write_stage, target, &error))?;
@@ -172,6 +214,7 @@ fn copy_file(
         .create_new(true)
         .open(target)
         .map_err(write_error)?;
+    created(&output)?;
     std::io::copy(&mut input, &mut output)
         .map_err(|error| diagnostic_io(write_stage, target, error, file_check::COPY))?;
     output.sync_all().map_err(write_error)?;

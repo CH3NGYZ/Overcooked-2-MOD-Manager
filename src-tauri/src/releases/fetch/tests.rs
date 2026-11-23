@@ -107,27 +107,32 @@ async fn gitee_official_403_skips_token_and_proxy_success_stops_fallback() {
 }
 
 #[tokio::test]
-async fn gitee_proxy_403_ends_the_refresh_immediately() {
+async fn gitee_proxy_403_skips_that_proxy_and_tries_the_next_one() {
     let official = ApiTestServer::new(vec![("403 Forbidden", "")]);
     let proxy = ApiTestServer::new(vec![("403 Forbidden", "")]);
-    let remaining = ApiTestServer::new(vec![("200 OK", "[]")]);
+    let remaining = ApiTestServer::new(vec![("200 OK", r#"[{"tag_name":"v1.0.0"}]"#)]);
     let targets = vec![
         (official.url.clone(), None),
         (proxy.url.clone(), None),
         (remaining.url.clone(), None),
     ];
-    let error = fetch_releases_from_targets(
+    let (releases, received) = fetch_releases_from_targets(
         &api_test_client(),
         &api_test_repository(),
         &official.url,
         targets,
     )
     .await
-    .unwrap_err();
-    assert!(error.is_forbidden());
+    .unwrap();
+    assert_eq!(received, 1);
+    assert_eq!(releases[0].tag_name, "v1.0.0");
     assert_eq!(official.requests().len(), 1);
     assert_eq!(proxy.requests().len(), 1);
-    assert!(remaining.requests().is_empty());
+    assert_eq!(remaining.requests().len(), 1);
+    for request in proxy.requests().into_iter().chain(remaining.requests()) {
+        assert!(!request.to_ascii_lowercase().contains("authorization:"));
+        assert!(request.contains(crate::releases::APP_USER_AGENT));
+    }
 }
 
 #[tokio::test]

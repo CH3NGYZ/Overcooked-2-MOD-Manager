@@ -168,16 +168,9 @@ async fn fetch_releases_from_targets(
                     target_kind,
                     release_error_kind(&error)
                 );
-                if repo.provider == Provider::Gitee && error.is_forbidden() {
-                    if url != official {
-                        log::warn!(
-                            "Gitee API 代理返回 403，结束刷新: repository_id={}",
-                            repo.id
-                        );
-                        return Err(error);
-                    }
+                if repo.provider == Provider::Gitee && url == official && error.is_forbidden() {
                     log::debug!(
-                        "Gitee 官方 API 返回 403，跳过官方 Token 目标并转 API 代理: repository_id={}",
+                        "Gitee 官方 API 返回 403，跳过剩余官方目标并转 API 代理: repository_id={}",
                         repo.id
                     );
                     skip_gitee_official = true;
@@ -247,10 +240,7 @@ pub async fn fetch_repository_default_branch(
         match fetched {
             Ok(branch) => return Ok(branch),
             Err(error) => {
-                if repo.provider == Provider::Gitee && error.is_forbidden() {
-                    if url != official {
-                        return Err(error);
-                    }
+                if repo.provider == Provider::Gitee && url == official && error.is_forbidden() {
                     skip_official = true;
                 }
                 last_error = Some(error);

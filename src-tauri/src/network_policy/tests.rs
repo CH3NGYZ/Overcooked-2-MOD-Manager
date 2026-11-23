@@ -97,24 +97,24 @@ fn bundled_typed_registry_and_plans_form_one_closed_snapshot() {
     let snapshot = NetworkPolicy::bundled().unwrap();
     assert_eq!(snapshot.plans.len(), 5);
     let groups = snapshot.bundled_proxy_groups().unwrap();
-    let release_source =
-        crate::repository_sources::SourceLocation::parse("proxies/proxies-release.toml").unwrap();
-    let release = parse::<ProxyDocument>(release_source.bundled_text().unwrap()).unwrap();
-    assert!(!groups.release_proxies.is_empty());
-    assert_eq!(
-        groups
-            .release_proxies
-            .iter()
-            .map(|proxy| &proxy.id)
-            .collect::<Vec<_>>(),
-        release
-            .proxies
-            .iter()
-            .filter(|proxy| proxy.enabled)
-            .map(|proxy| &proxy.id)
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(groups.raw_proxies.len(), 8);
+    for (path, entries) in [
+        ("proxies/proxies-release.toml", &groups.release_proxies),
+        ("proxies/proxies-raw.toml", &groups.raw_proxies),
+    ] {
+        let source = crate::repository_sources::SourceLocation::parse(path).unwrap();
+        let manifest = parse::<ProxyDocument>(source.bundled_text().unwrap()).unwrap();
+        assert!(!entries.is_empty(), "{path}");
+        assert_eq!(
+            entries.iter().map(|proxy| &proxy.id).collect::<Vec<_>>(),
+            manifest
+                .proxies
+                .iter()
+                .filter(|proxy| proxy.enabled)
+                .map(|proxy| &proxy.id)
+                .collect::<Vec<_>>(),
+            "{path}"
+        );
+    }
     assert_eq!(groups.avatar_proxies[0].id, "cors-isteed-avatar");
     assert!(
         !groups
@@ -122,18 +122,27 @@ fn bundled_typed_registry_and_plans_form_one_closed_snapshot() {
             .iter()
             .any(|proxy| proxy.id == "oc2gh-release")
     );
-    for provider in [Provider::Github, Provider::Gitee, Provider::Gitcode] {
-        let name = match provider {
-            Provider::Github => "github",
-            Provider::Gitee => "gitee",
-            Provider::Gitcode => "gitcode",
-        };
-        let plan = snapshot
-            .plan(&format!("{name}-public-mod"), &provider)
-            .unwrap();
-        assert_eq!(plan.api.route[0], Step::Official);
-        assert_eq!(plan.release.max_parallelism, 1);
-        assert!(!plan.release.race);
+    for (plan_id, provider, bridge) in [
+        ("github-public-mod", Provider::Github, "oc2ghapi"),
+        ("github-mainland-mod", Provider::Github, "oc2ghapi"),
+        ("gitee-public-mod", Provider::Gitee, "oc2gtapi"),
+        ("gitcode-public-mod", Provider::Gitcode, "oc2gcapi"),
+    ] {
+        let plan = snapshot.plan(plan_id, &provider).unwrap();
+        assert_eq!(
+            plan.api.route,
+            [
+                Step::Official,
+                Step::Proxy { id: bridge.into() },
+                Step::Proxy {
+                    id: format!("{bridge}-edgeone")
+                },
+            ]
+        );
+        if plan_id != "github-mainland-mod" {
+            assert_eq!(plan.release.max_parallelism, 1);
+            assert!(!plan.release.race);
+        }
     }
     assert!(snapshot.plan("github-public", &Provider::Gitee).is_err());
     let mainland = snapshot.plan("github-mainland", &Provider::Github).unwrap();

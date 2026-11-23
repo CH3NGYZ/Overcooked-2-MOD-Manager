@@ -36,14 +36,20 @@ fn explicit_empty_manifests_are_valid_but_missing_or_misspelled_fields_are_not()
 fn gitcode_api_proxy_keeps_api_path_and_pagination_in_its_own_group() {
     let bundled = bundled_defaults();
     let proxies = &bundled.gitcode_api_proxies;
-    assert_eq!(proxies.len(), 1);
-    assert_eq!(proxies[0].id, "oc2gcapi");
+    assert_eq!(
+        proxies
+            .iter()
+            .map(|proxy| proxy.id.as_str())
+            .collect::<Vec<_>>(),
+        ["oc2gcapi", "oc2gcapi-edgeone"]
+    );
     let official =
         "https://api.atomgit.com/api/v5/repos/CH3NGY2/OC2-Map-Bundle/releases?per_page=50&page=2";
     assert_eq!(
         proxy_urls(proxies, official, false, None),
         [
-            "https://oc2gcapi.ch3ng.top/api/v5/repos/CH3NGY2/OC2-Map-Bundle/releases?per_page=50&page=2"
+            "https://oc2gcapi.ch3ng.top/api/v5/repos/CH3NGY2/OC2-Map-Bundle/releases?per_page=50&page=2",
+            "https://oc2gcapi.5882778.xyz/api/v5/repos/CH3NGY2/OC2-Map-Bundle/releases?per_page=50&page=2"
         ]
     );
     let mut config = crate::config::default_config();
@@ -286,11 +292,20 @@ fn bundled_url_path_proxies_render_one_slash_and_request_each_target_once() {
             true,
             "https://oc2gh.ch3ng.top/acme/tool/raw/refs/heads/main/bin/tool.dll",
         ),
+        (
+            "oc2gh-release-edgeone",
+            "https://github.com/acme/tool/releases/download/v1/tool.zip",
+            false,
+            "https://oc2gh.5882778.xyz/acme/tool/releases/download/v1/tool.zip",
+        ),
+        (
+            "oc2gh-raw-edgeone",
+            "https://raw.githubusercontent.com/acme/tool/refs/heads/main/bin/tool.dll?download=1",
+            true,
+            "https://oc2gh.5882778.xyz/acme/tool/raw/refs/heads/main/bin/tool.dll?download=1",
+        ),
     ] {
-        // The Release bridge now belongs to the map-only registry group,
-        // while Raw remains a normal route. Both still use the same expander.
         let source = bundled.proxies[id].legacy_entry();
-        assert_eq!(source.template, "https://oc2gh.ch3ng.top/{url_path}");
         let duplicate = GitHubProxy {
             id: "other-id".into(),
             template: source.template.replace("/{url_path}", "{url_path}"),

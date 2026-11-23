@@ -74,11 +74,7 @@ impl Context {
                         }
                         icon
                     })
-                    .unwrap_or(MenuIcon {
-                        source: String::new(),
-                        name: String::new(),
-                        data_url: None,
-                    })
+                    .unwrap_or_default()
             })
             .collect()
     }
@@ -132,6 +128,66 @@ impl Context {
             .ok()?;
         Some(self.menu_icon(target))
     }
+    fn custom_step(&mut self, recipe: Ref, order: &Map) -> Option<MenuIcon> {
+        let (direct, pseudo) = match custom_kind(order) {
+            2 => ("cookingStepIcon", "cookingStepIconSO"),
+            3 => ("mixingIcon", "mixingIconSO"),
+            _ => return None,
+        };
+        let mut icon = self
+            .named_icon(recipe, order, direct, pseudo)
+            .unwrap_or_default();
+        normalize_step(&mut icon);
+        Some(icon)
+    }
+    fn native_mixed_tile(&mut self, recipe: Ref, order: &Map) -> Option<MenuTile> {
+        if !order.contains_key("m_composition") {
+            return None;
+        }
+        let script = self.resolve(recipe, order.get("m_Script")?).ok()?;
+        if string_of(&self.object(script).ok()?, "m_ClassName") != "MixedCompositeOrderNode" {
+            return None;
+        }
+        let pictures = array(order, "m_composition")
+            .iter()
+            .take(64)
+            .map(|reference| {
+                self.resolve(recipe, reference)
+                    .and_then(|ingredient| {
+                        let properties = self.object(ingredient)?;
+                        self.resolve(
+                            ingredient,
+                            properties.get("m_iconSprite").ok_or_else(failure)?,
+                        )
+                    })
+                    .map(|sprite| self.menu_icon(sprite))
+                    .unwrap_or_default()
+            })
+            .collect();
+        let (bundle, path) =
+            if has_reference(order, "m_platingStep") || has_reference(order, "m_platingPrefab") {
+                (
+                    "bundle158",
+                    "assets/data/recipedata/cookingstepdata/icons/blender.png",
+                )
+            } else {
+                (
+                    "bundle18",
+                    "assets/data/recipedata/cookingstepdata/icons/mixer.png",
+                )
+            };
+        let mut step = self
+            .game_asset(bundle, path)
+            .map(|sprite| self.menu_icon(sprite))
+            .unwrap_or_default();
+        normalize_step(&mut step);
+        Some(MenuTile {
+            pictures,
+            modifiers: vec![step],
+            children: vec![],
+            large: false,
+        })
+    }
     // Same flatten/split rule as DIYLevel RecipeHelper.GetTileDefinition.
     fn ingredient_tile(&mut self, r: Ref, depth: usize) -> MenuTile {
         let mut tile = self.ingredient_tile_inner(r, depth);
@@ -141,9 +197,8 @@ impl Context {
                 .map(|m| string_of(&m, "prefabName"))
                 .unwrap_or_default();
             tile.pictures.push(MenuIcon {
-                source: String::new(),
                 name,
-                data_url: None,
+                ..MenuIcon::default()
             });
         }
         tile
@@ -178,6 +233,9 @@ impl Context {
         if !tiles.is_empty() {
             return declared_ingredient_tile(tiles);
         }
+        if let Some(tile) = self.native_mixed_tile(r, &m) {
+            return tile;
+        }
         let composition = array(&m, "compositionSOs");
         if !composition.is_empty() {
             for v in composition.iter().take(64) {
@@ -187,26 +245,14 @@ impl Context {
                     empty.modifiers.append(&mut tile.modifiers);
                 }
             }
-            let kind = custom_kind(&m);
-            let step = match kind {
-                2 => self.named_icon(r, &m, "cookingStepIcon", "cookingStepIconSO"),
-                3 => self.named_icon(r, &m, "mixingIcon", "mixingIconSO"),
-                _ => None,
-            };
-            if matches!(kind, 2 | 3) {
-                let mut step = step.unwrap_or(MenuIcon {
-                    source: String::new(),
-                    name: String::new(),
-                    data_url: None,
-                });
-                normalize_step(&mut step);
-                empty.modifiers.push(step);
-            }
         } else if let Some(icon) = self
             .named_icon(r, &m, "m_iconSprite", "iconSO")
             .or_else(|| self.named_icon(r, &m, "icon", "iconSO"))
         {
-            empty.pictures.push(icon)
+            empty.pictures.push(icon);
+        }
+        if m.contains_key("compositionSOs") {
+            empty.modifiers.extend(self.custom_step(r, &m));
         }
         empty
     }
@@ -265,21 +311,12 @@ impl Context {
                     .map(|m| string_of(&m, "m_Name"))
                     .unwrap_or_default();
                 out[index].pictures.push(MenuIcon {
-                    source: String::new(),
                     name,
-                    data_url: None,
+                    ..MenuIcon::default()
                 });
             }
         }
-        let step = match custom_kind(&m) {
-            2 => self.named_icon(r, &m, "cookingStepIcon", "cookingStepIconSO"),
-            3 => self.named_icon(r, &m, "mixingIcon", "mixingIconSO"),
-            _ => None,
-        };
-        if let Some(mut step) = step {
-            normalize_step(&mut step);
-            out[index].modifiers.push(step);
-        }
+        out[index].modifiers.extend(self.custom_step(r, &m));
         // A single processing chain can share the same tile while keeping steps below.
         if out[index].pictures.is_empty() && out[index].children.len() == 1 {
             let child = out[index].children[0];
@@ -373,12 +410,19 @@ fn custom_kind(m: &Map) -> i32 {
     let kind = int_of(m, "type");
     if kind != 0 {
         kind
-    } else if matches!(m.get("cookingStepSO"),Some(V::PPtr{path_id,..}) if *path_id!=0) {
+    } else if has_reference(m, "cookingStepSO") {
         2
     } else {
         1
     }
 }
+
+fn has_reference(order: &Map, field: &str) -> bool {
+    matches!(order.get(field), Some(V::PPtr { path_id, .. }) if *path_id != 0)
+}
+
+#[cfg(test)]
+mod preparation_tests;
 
 #[cfg(test)]
 mod tests {

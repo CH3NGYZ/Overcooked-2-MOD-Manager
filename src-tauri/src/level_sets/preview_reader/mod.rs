@@ -23,7 +23,7 @@ pub struct Level {
     pub recipe_count: usize,
     pub active_recipe_count: usize,
 }
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct MenuIcon {
     #[serde(default)]
     pub source: String,

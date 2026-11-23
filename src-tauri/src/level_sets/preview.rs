@@ -31,7 +31,7 @@ fn fingerprint(roots: &LevelSetRoots, local: &Path, info: &[u8]) -> String {
             .map(|path| path.display().to_string())
             .unwrap_or_default(),
         local.display().to_string(),
-        "preview-v11".into(),
+        "preview-v12".into(),
     ];
     let mut directories = vec![
         local.to_path_buf(),

@@ -8,6 +8,8 @@ import { useModChanges } from './store'
 import { useModChangesLifecycle } from './useModChangesLifecycle'
 import { changeReasonText } from './messages'
 import ChangePlanDetails from './ChangePlanDetails.vue'
+import ChangeEvidenceList from './ChangeEvidenceList.vue'
+import { changeErrorEvidence, providerEvidenceAdvice, providerRows } from './evidence'
 import ModInstallNoteDialog from './ModInstallNoteDialog.vue'
 import { changePlanLabels, preparationCompletion } from './presentation'
 import { activeDownloadProgress } from '../downloadTask'
@@ -46,7 +48,11 @@ const names = computed(() => plan.value && changePlanLabels(plan.value, currentP
 const diagnostics = computed(() => {
   const blockers = plan.value?.blockers ?? []
   const notes = blockers.filter(blocker => plan.value?.status === 'ready' || !blocker.traces?.some(path => path.length))
-  return { notes, hasPaths: notes.length !== blockers.length, truncated: blockers.some(blocker => blocker.traces_truncated) }
+  return {
+    notes: notes.map(blocker => ({ blocker, evidence: changeErrorEvidence(blocker.message) })),
+    hasPaths: notes.length !== blockers.length,
+    truncated: blockers.some(blocker => blocker.traces_truncated),
+  }
 })
 const notices = computed(() => [...new Set(plan.value?.notices ?? [])])
 const error = computed(() => {
@@ -54,6 +60,8 @@ const error = computed(() => {
   const reason = state.value.error
   return (reason == null ? '' : backendMessageOf(reason).trim()) || t('modChanges.failureWithoutDetails')
 })
+const failureEvidence = computed(() => changeErrorEvidence(state.value?.phase === 'failed' ? state.value.error : undefined))
+const nextStep = computed(() => providerEvidenceAdvice(failureEvidence.value.providers))
 const phase = computed(() => {
   if (state.value?.phase === 'preparing' && preparation.value) return t(`modChanges.preparation.${preparation.value.stage}`)
   if (plan.value && plan.value.status !== 'ready') return t('modChanges.phase.failed')
@@ -105,7 +113,7 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
     :notes="installNotes" :apply-on-read="!!state?.noteOnlyReview"
     @continue="changes.acceptInstallNotes" @cancel="changes.cancel" />
   <AppModal v-else :key="applyReview ? 'apply-review' : 'prepare-review'"
-    :show="!!state && !state.silent" :title="t(applyReview ? 'modChanges.applyTitle' : 'modChanges.title')" :z-index="2599" max-width="90%" max-height="90%"
+    :show="!!state && !state.silent" :title="t(applyReview ? 'modChanges.applyTitle' : 'modChanges.title')" :z-index="2599" max-width="90%" max-height="90%" fill
     :closable="canCancel" :mask-closable="false" :auto-focus="!applyReview" card-class="mod-changes-modal"
     @update:show="(show: boolean) => { if (!show) void changes.cancel() }">
     <template #header-extra>
@@ -127,9 +135,7 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
         <ul class="overwrite-groups" role="list">
           <li v-for="[nodeId, paths] in overwriteGroups" :key="nodeId">
             <strong>{{ names?.nodes.get(nodeId) ?? t('modChanges.unnamedItem') }}</strong>
-            <ul class="overwrite-paths">
-              <li v-for="path in paths" :key="path"><code>{{ path }}</code></li>
-            </ul>
+            <ChangeEvidenceList :rows="Array.from(paths, path => ({ path }))" />
           </li>
         </ul>
       </NAlert>
@@ -138,27 +144,38 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
         <p v-if="diagnostics.hasPaths" class="diagnostic-note">{{ t('modChanges.diagnostic.note') }}</p>
         <p v-if="diagnostics.truncated" class="diagnostic-note">{{ t('modChanges.diagnostic.truncated') }}</p>
       </NAlert>
-      <NAlert v-if="error && !manifestOverwrite" type="error" :bordered="false"><span class="plan-error plan-message">{{ error }}</span></NAlert>
+      <NAlert v-if="error && !manifestOverwrite" type="error" :bordered="false">
+        <span class="plan-error plan-message">{{ error }}</span>
+        <p v-if="nextStep" class="diagnostic-note">{{ t(nextStep) }}</p>
+        <ChangeEvidenceList :rows="failureEvidence.rows" :guid="failureEvidence.providers?.guid"
+          :truncated="failureEvidence.providers?.truncated" :names="names?.nodes" />
+      </NAlert>
       <NAlert v-if="manifestOverwrite" type="warning" :bordered="false" data-manifest-overwrite
         :title="t(state?.phase === 'failed' ? 'modChanges.manifestOverwrite.conflict' : 'modChanges.manifestOverwrite.title')">
-        <p class="manifest-path"><code>{{ manifestOverwrite.manifestPath }}</code></p>
+        <ChangeEvidenceList :rows="[{ path: manifestOverwrite.manifestPath }]" />
         <p class="manifest-copy plan-message">{{ t('modChanges.manifestOverwrite.description') }}</p>
         <template v-if="manifestOverwrite.recordedPaths.length">
           <div>{{ t('modChanges.manifestOverwrite.paths') }}</div>
-          <ul class="overwrite-paths">
-            <li v-for="path in manifestOverwrite.recordedPaths" :key="path"><code>{{ path }}</code></li>
-          </ul>
+          <ChangeEvidenceList :rows="manifestOverwrite.recordedPaths.map(path => ({ path }))" />
         </template>
       </NAlert>
       <ul v-if="diagnostics.notes.length" class="plan-notes">
-        <li v-for="(blocker, index) in diagnostics.notes" :key="index">
+        <li v-for="({ blocker, evidence }, index) in diagnostics.notes" :key="index">
           <span class="plan-message">{{ changeReasonText(blocker.message || blocker.code) }}</span>
           <span v-if="blocker.owner_id && names?.nodes.get(blocker.owner_id)"> · {{ names.nodes.get(blocker.owner_id) }}</span>
           <span v-if="blocker.target_guid"> · {{ names?.dependency(blocker.target_guid) }}</span>
+          <ChangeEvidenceList :rows="evidence.rows" :guid="evidence.providers?.guid"
+            :truncated="evidence.providers?.truncated" :names="names?.nodes" />
         </li>
       </ul>
       <ChangePlanDetails v-if="plan && names" :plan="plan" :progress="currentProgress" :execution="changes.execution" :names="names"
         :preparation-complete="completedPreparation" />
+      <details v-if="plan?.provider_choices?.length" class="provider-choices" :open="plan.status !== 'ready'" data-provider-choices>
+        <summary>{{ t('modChanges.evidence.compare') }}</summary>
+        <p v-if="plan.status !== 'ready'" class="diagnostic-note">{{ t('modChanges.evidence.checkPlanned') }}</p>
+        <ChangeEvidenceList v-for="group in plan.provider_choices" :key="group.guid" :rows="providerRows(group)"
+          :guid="group.guid" :truncated="group.truncated" :names="names?.nodes" />
+      </details>
     </div>
     <template #footer>
       <div class="plan-bottom">
@@ -201,9 +218,8 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
 .plan-message { white-space: pre-wrap; overflow-wrap: anywhere; }
 .overwrite-groups { margin: 8px 0 0; padding: 0; list-style: none; overflow-wrap: anywhere; }
 .overwrite-groups > li + li { margin-block-start: 8px; }
-.manifest-path { margin: 0; overflow-wrap: anywhere; }
 .manifest-copy { margin: 4px 0 6px; }
-.overwrite-paths { margin: 2px 0 0; padding-inline-start: 20px; overflow-wrap: anywhere; }
-.overwrite-paths code { display: block; white-space: pre-wrap; }
+.provider-choices { min-width: 0; }
+.provider-choices summary { cursor: pointer; }
 .diagnostic-note { margin: 3px 0 0; font-size: 12px; overflow-wrap: anywhere; }
 </style>

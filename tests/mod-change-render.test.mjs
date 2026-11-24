@@ -25,8 +25,10 @@ registerHooks({
     const fake = source => ({ format: 'module', shortCircuit: true, source })
     if (url === 'change-render:naive') return fake(`import{h}from'vue';
       const leaf=tag=>({props:['percentage','showIndicator','processing','disabled','type'],setup:(p,{slots})=>()=>h(tag,{...p},slots.default?.())});
-      export const NButton=leaf('button'),NProgress=leaf('progress'),NTag=leaf('tag'),NAlert=leaf('alert'),NSpin=leaf('spin'),NIcon=leaf('i')`)
-    if (/\/modChanges\/[^/]+\.vue$|\/components\/MarkdownBody\.vue$/.test(url)) {
+      export const NButton=leaf('button'),NProgress=leaf('progress'),NTag=leaf('tag'),NAlert=leaf('alert'),NSpin=leaf('spin'),NIcon=leaf('i');
+      export const NTooltip=(_, { slots }) => slots.trigger?.()`)
+    if (url.endsWith('/src/useNotify.ts')) return fake('export const useNotify=()=>({success(){},error(){}})')
+    if (/\/modChanges\/[^/]+\.vue$|\/components\/(?:MarkdownBody|HeaderIconAction)\.vue$/.test(url)) {
       const { descriptor } = parse(readFileSync(new URL(url), 'utf8'))
       return { format: 'module-typescript', shortCircuit: true,
         source: compileScript(descriptor, { id: 'change-render', inlineTemplate: true }).content }
@@ -38,7 +40,6 @@ registerHooks({
     if (url.endsWith('/src/modChanges/useModChangesLifecycle.ts')) return fake('export const useModChangesLifecycle=()=>{}')
     if (url.endsWith('/src/components/AppModal.vue')) return fake(`import{h}from'vue';export default{props:['show','cardClass','maxWidth','maxHeight','fill'],setup:(p,{slots})=>()=>p.show?h('modal',{class:p.cardClass,maxWidth:p.maxWidth,maxHeight:p.maxHeight,fill:p.fill},[h('header',{},slots['header-extra']?.()),slots.default?.(),h('footer',{},slots.footer?.())]):null}`)
     if (url.endsWith('/src/markdown.ts')) return fake('export const renderReadme=String;export const renderMermaidBlocks=async()=>{}')
-    if (url.endsWith('/src/locale/backend.ts')) return fake('export const backendMessageOf=String;export const translateBackendMessage=String')
     if (url.endsWith('/src/i18n.ts')) return fake(`export const locale=globalThis.__changeRender.locale;
       export const pickI18n=(values,fallback)=>values?.[locale.value]??fallback;
       export const t=(key,args={})=>{const [domain,...path]=key.split('.');let text=globalThis.__changeRender.messages[domain]?.[path.join('.')]?.[locale.value]??key;for(const[k,v]of Object.entries(args))text=text.replaceAll('{'+k+'}',String(v));return text}`)

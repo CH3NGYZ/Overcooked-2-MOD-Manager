@@ -104,8 +104,19 @@ function renderPayload(payload: BackendErrorPayload, depth: number): string {
   return reason && !text.includes(String(reason)) ? `${text}: ${reason}` : text
 }
 
-/** A whole leading tag only. Never search arbitrary words inside a sentence. */
-function translateLeading(value: string, depth: number): string | undefined {
+export function backendPayloadOf(reason: unknown): BackendErrorPayload | undefined {
+  if (reason instanceof Error) return backendPayloadOf(reason.message)
+  if (reason && typeof reason === 'object') {
+    if ('tag' in reason && typeof reason.tag === 'string') {
+      const params = 'params' in reason && reason.params && typeof reason.params === 'object'
+        ? Object.fromEntries(Object.entries(reason.params).filter(([, value]) => typeof value === 'string' || typeof value === 'number'))
+        : undefined
+      return { tag: reason.tag, params }
+    }
+    return 'message' in reason ? backendPayloadOf(reason.message) : undefined
+  }
+  if (typeof reason !== 'string') return undefined
+  const value = reason.trimStart()
   const match = tagPrefix.exec(value)
   if (!match || !registeredTag(match[1]) && !reservedTag(match[1])) return undefined
   const tag = match[1]
@@ -113,7 +124,7 @@ function translateLeading(value: string, depth: number): string | undefined {
   const params = tail.startsWith('?')
     ? parseInlineParams(tail.slice(1))
     : tail ? { reason: tail.slice(1).trimStart() } : undefined
-  return renderPayload({ tag, params }, depth)
+  return { tag, params }
 }
 
 function translateText(value: string, depth: number): string {
@@ -123,8 +134,8 @@ function translateText(value: string, depth: number): string {
   if (missingCommand) {
     return i18n.global.t('error.commandUnavailable', { command: missingCommand[1] })
   }
-  const direct = translateLeading(value, depth)
-  if (direct !== undefined) return direct
+  const direct = backendPayloadOf(value)
+  if (direct !== undefined) return renderPayload(direct, depth)
   // A source name/path/id can itself look like a tag. The catalog's fixed
   // template identifies already-rendered values before context recursion.
   if (isRenderedBackendMessage(value)) return value
@@ -159,10 +170,7 @@ export function backendMessageOf(reason: unknown): string {
   if (reason instanceof Error) return translateBackendMessage(reason.message)
   if (reason && typeof reason === 'object') {
     if ('tag' in reason && typeof reason.tag === 'string') {
-      const params = 'params' in reason && reason.params && typeof reason.params === 'object'
-        ? Object.fromEntries(Object.entries(reason.params).filter(([, value]) => typeof value === 'string' || typeof value === 'number'))
-        : undefined
-      return translateBackendMessage({ tag: reason.tag, params })
+      return translateBackendMessage(backendPayloadOf(reason))
     }
     const message = 'message' in reason ? reason.message : undefined
     if (typeof message === 'string') return translateBackendMessage(message)

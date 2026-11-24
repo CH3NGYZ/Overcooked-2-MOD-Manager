@@ -5,6 +5,8 @@ import { computed, onMounted, provide, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { NCollapse, NCollapseItem, NFloatButton, NTag, useDialog } from 'naive-ui'
 import ContentState from '../components/ContentState.vue'
+import ChangeEvidenceList from '../modChanges/ChangeEvidenceList.vue'
+import { changeErrorEvidence, providerEvidenceAdvice } from '../modChanges/evidence'
 import ModNotInstalled from '../components/ModNotInstalled.vue'
 import { AlbumsOutline, FolderOpenOutline, RefreshOutline } from '@vicons/ionicons5'
 import { matchesLocalSearch, levelSetSearchText } from '../localItemSearch'
@@ -112,6 +114,8 @@ const mods = computed(() => withDemoMods(realMods.value))
 const { progress: scanProgress, scanLevelSets, levelSets: realSets, hasResult,
   error: scanError, scanning } = useLevelSetScan()
 const localReadError = computed(() => scanError.value ? backendMessageOf(scanError.value) : '')
+const localReadEvidence = computed(() => changeErrorEvidence(scanError.value))
+const localReadAdvice = computed(() => providerEvidenceAdvice(localReadEvidence.value.providers))
 // The completed backend scan owns GUID/version selection. Tutorial data has
 // its own presentation and never adopts or changes this real target token.
 const diyLevelAvailable = computed(() => demoActive.value || (modsStatus.value === 'ready' && !!diyLevelTarget.value))
@@ -912,7 +916,13 @@ visibility.reconcileStatuses(computed(() => [...statusSummary.value, ...toggleSu
       <span v-if="scanProgress?.current" class="scan-folder" :title="scanProgress.current">{{ t('levelSet.scanningFolder', { name: scanProgress.current }) }}</span>
     </template>
     <ModNotInstalled v-if="!loading && diyLevelMissing" guid="dev.gua.overcooked.diylevel" name="DIYLevel" data-tutorial="levels-page" />
-    <ContentState v-else-if="!loading && !demoActive && (modsStatus === 'error' || localReadError)" :description="modsError || localReadError" />
+    <ContentState v-else-if="!loading && !demoActive && (modsStatus === 'error' || localReadError)" :description="modsError || localReadError">
+      <template v-if="localReadEvidence.rows.length" #extra>
+        <p v-if="localReadAdvice">{{ t(localReadAdvice) }}</p>
+        <ChangeEvidenceList :rows="localReadEvidence.rows" :guid="localReadEvidence.providers?.guid"
+          :truncated="localReadEvidence.providers?.truncated" />
+      </template>
+    </ContentState>
     <ContentState v-else-if="!loading && showMapList && !visibleSets.length" data-tutorial="levels-page"
       :description="emptyDescription" />
 

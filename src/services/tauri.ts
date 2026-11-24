@@ -367,7 +367,7 @@ export const api = {
   uninstallDiyLevel: () => invoke<OperationResult>('uninstall_diy_level'),
   /** 清除头像磁盘缓存，返回删除的文件数。 */
   clearRepositoryAvatars: () => invoke<number>('clear_repository_avatars'),
-  openModFileLocation: (dllFile: string) => invoke<OperationResult>('open_mod_file_location', { dllFile }),
+  openModFileLocation: (dllFile: string, exact?: boolean) => invoke<OperationResult>('open_mod_file_location', { dllFile, exact }),
   openModLogsDirectory: (dllFile: string) => invoke<OperationResult>('open_mod_logs_directory', { dllFile }),
   openBackupDirectory: (backupPath?: string) => invoke<OperationResult>('open_backup_directory', { backupPath: backupPath ?? null }),
   openUpdateRepository: () => invoke<OperationResult>('open_update_repository'),

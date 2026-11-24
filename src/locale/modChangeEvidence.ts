@@ -1,0 +1,36 @@
+import type { DomainMessages } from './types.ts'
+
+export const modChangeEvidence: DomainMessages = {
+  'evidence.paths': { 'zh-CN': '涉及位置', 'zh-TW': '涉及位置', en: 'Affected locations', ko: '관련 위치', ja: '該当する場所' },
+  'evidence.providers': { 'zh-CN': '同 GUID 的插件', 'zh-TW': '相同 GUID 的外掛', en: 'Plugins with the same GUID', ko: '같은 GUID의 플러그인', ja: '同じ GUID のプラグイン' },
+  'evidence.compare': { 'zh-CN': '查看求解涉及的副本', 'zh-TW': '檢視求解涉及的副本', en: 'View copies involved in this plan', ko: '계획에 관련된 복사본 보기', ja: '計画に関係するコピーを表示' },
+  'evidence.installed': { 'zh-CN': '已安装', 'zh-TW': '已安裝', en: 'Installed', ko: '설치됨', ja: 'インストール済み' },
+  'evidence.planned': { 'zh-CN': '试算候选', 'zh-TW': '試算候選', en: 'Candidate evaluated', ko: '검토한 후보', ja: '検討した候補' },
+  'evidence.selected': { 'zh-CN': '方案选用', 'zh-TW': '方案選用', en: 'Selected by plan', ko: '계획에서 선택됨', ja: '計画で選択' },
+  'evidence.diskState': { 'zh-CN': '磁盘现状：{state}', 'zh-TW': '磁碟現況：{state}', en: 'On disk: {state}', ko: '디스크 상태: {state}', ja: 'ディスク上：{state}' },
+  'evidence.unknownVersion': { 'zh-CN': '版本未确认', 'zh-TW': '版本未確認', en: 'Version unknown', ko: '버전 미확인', ja: 'バージョン不明' },
+  'evidence.copyPath': { 'zh-CN': '复制路径', 'zh-TW': '複製路徑', en: 'Copy path', ko: '경로 복사', ja: 'パスをコピー' },
+  'evidence.reveal': { 'zh-CN': '在文件管理器中定位', 'zh-TW': '在檔案總管中定位', en: 'Show in file manager', ko: '파일 관리자에서 보기', ja: 'ファイルマネージャーで表示' },
+  'evidence.truncated': { 'zh-CN': '还有未显示的副本。', 'zh-TW': '還有未顯示的副本。', en: 'Additional copies are not shown.', ko: '표시되지 않은 복사본이 더 있습니다.', ja: '表示されていないコピーがあります。' },
+  'evidence.checkCopies': {
+    'zh-CN': '关闭游戏，核对下列副本的版本、来源和位置。备份后将不需要的副本移出插件目录，再刷新并重试。管理器不会替你删除文件。',
+    'zh-TW': '關閉遊戲，核對下列副本的版本、來源與位置。備份後將不需要的副本移出外掛目錄，再重新整理並重試。管理器不會替你刪除檔案。',
+    en: 'Close the game and compare the versions, sources and locations below. Back up first, then move unwanted copies out of the plugins folder, refresh and retry. The manager will not delete them for you.',
+    ko: '게임을 종료하고 아래 복사본의 버전, 출처, 위치를 비교하세요. 먼저 백업한 뒤 불필요한 복사본을 플러그인 폴더 밖으로 옮기고 새로 고침한 다음 다시 시도하세요. 관리자가 대신 삭제하지 않습니다.',
+    ja: 'ゲームを終了し、以下のコピーのバージョン、配布元、場所を確認してください。バックアップ後、不要なコピーをプラグインフォルダーの外に移し、一覧を更新して再試行してください。マネージャーは自動で削除しません。',
+  },
+  'evidence.checkFramework': {
+    'zh-CN': '先备份各副本旁的地图和设置，再将不需要的 DIYLevel 副本移出插件目录。仅停用 DLL 不能解除此处的地图目录歧义。',
+    'zh-TW': '先備份各副本旁的地圖與設定，再將不需要的 DIYLevel 副本移出外掛目錄。僅停用 DLL 無法消除這裡的地圖目錄歧義。',
+    en: 'Back up the maps and settings next to each copy before moving any unwanted DIYLevel copy out of the plugins folder. Disabling its DLL alone does not resolve this map-folder ambiguity.',
+    ko: '각 복사본 옆의 맵과 설정을 백업한 후 불필요한 DIYLevel 복사본을 플러그인 폴더 밖으로 옮기세요. DLL을 비활성화하는 것만으로는 맵 폴더를 결정할 수 없습니다.',
+    ja: '各コピーのそばにあるマップと設定をバックアップしてから、不要な DIYLevel をプラグインフォルダーの外に移してください。DLL を無効にするだけではマップフォルダーを特定できません。',
+  },
+  'evidence.checkPlanned': {
+    'zh-CN': '下列项目是试算候选，不是要求删除的文件。请调整所选安装包或版本，再重新计算。',
+    'zh-TW': '下列項目是試算候選，不是要求刪除的檔案。請調整選取的安裝套件或版本，再重新計算。',
+    en: 'These are candidates considered by the solver, not files to delete. Change the selected package or version and recalculate.',
+    ko: '아래는 계산에 사용된 후보이며 삭제할 파일이 아닙니다. 선택한 패키지나 버전을 변경하고 다시 계산하세요.',
+    ja: '以下は計算時に検討した候補で、削除するファイルではありません。選択したパッケージやバージョンを変えて再計算してください。',
+  },
+}

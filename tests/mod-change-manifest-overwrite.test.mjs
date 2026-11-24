@@ -120,7 +120,7 @@ test('the dialog displays backend-provided paths and gates the explicit overwrit
   const dialog = read('modChanges/ChangePlanDialog.vue')
   assert.match(dialog, /v-if="manifestOverwrite"[^>]+data-manifest-overwrite/)
   assert.match(dialog, /manifestOverwrite\.manifestPath/)
-  assert.match(dialog, /v-for="path in manifestOverwrite\.recordedPaths"/)
+  assert.match(dialog, /ChangeEvidenceList :rows="manifestOverwrite\.recordedPaths\.map\(path => \(\{ path \}\)\)"/)
   assert.match(dialog, /v-if="state\?\.phase === 'failed' && manifestOverwrite" data-plan-action="overwrite-manifest"[^>]+@click="changes\.forceOverwriteManifest"/)
   assert.match(read('services/tauri.ts'), /new ChangePreparationError\(outcome\.error, outcome\.manifestOverwrite\)/)
 })

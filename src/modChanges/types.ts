@@ -85,6 +85,18 @@ export interface ChangeInstallNote {
   note_i18n: Record<string, string>
 }
 export interface RetiredModCopy { member_key: string; label: string; version: string; dll_file: string }
+export interface ProviderEvidenceRow {
+  node_id?: string
+  candidate_id?: string
+  member_key?: string
+  path?: string
+  version?: string
+  source?: string
+  origin: 'installed' | 'planned' | 'selected'
+  enabled: boolean
+  installed_enabled?: boolean
+}
+export interface ProviderEvidence { guid: string; rows: ProviderEvidenceRow[]; truncated?: boolean }
 export interface BundledDllDisplay {
   parent_node_id: string
   node_id: string
@@ -118,6 +130,7 @@ export interface ChangePlan {
   retired_mod_copies?: Record<string, RetiredModCopy[]>
   /** Existing files that require overwrite approval in the prepared plan. */
   untracked_overwrites?: { node_id: string; path: string }[]
+  provider_choices?: ProviderEvidence[]
   install_notes: ChangeInstallNote[]
   prepared: boolean
 }

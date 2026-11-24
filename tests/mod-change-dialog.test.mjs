@@ -24,6 +24,7 @@ test('blocked and busy plans cannot confirm; failure can only replan; preparatio
 })
 test('the shared plan dialog alternates between the first-install note and plan confirmation',()=>{
  assert.match(dialog,/<ModInstallNoteDialog v-if="installNotes\.length && plan" :key="plan\.plan_id" :plan-id="plan\.plan_id"\s+:notes="installNotes" :apply-on-read="!!state\?\.noteOnlyReview"\s+@continue="changes\.acceptInstallNotes" @cancel="changes\.cancel"\s*\/>\s*<AppModal v-else/)
+ assert.match(dialog,/<AppModal v-else [^>]*max-width="90%" max-height="90%" fill/)
  assert.doesNotMatch(dialog,/v-html|setInterval|readingSeconds/)
 })
 test('map selection and manual preview never pre-uninstall or execute individual rows',()=>{

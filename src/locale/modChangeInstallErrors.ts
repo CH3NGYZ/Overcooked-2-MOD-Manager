@@ -147,7 +147,7 @@ export const modChangeInstallErrors: DomainMessages = {
     ko: '같은 이름의 폴더가 설치 위치를 차지하고 있습니다. 해당 폴더를 백업하고 옮긴 뒤 다시 시도하세요.',
     ja: 'インストール先に同名のフォルダーがあります。そのフォルダーをバックアップして移動し、再試行してください。',
   }),
-  installTargetHasBothStates: withLocation({
+  installTargetHasBothStates: withLocations({
     'zh-CN': '同一插件同时有启用和停用的副本。请先备份，核对要使用的版本，把多余的副本移出插件目录后再试。',
     'zh-TW': '同一外掛同時有啟用和停用的副本。請先備份，確認要用的版本，將多餘的副本移出外掛資料夾後再試。',
     en: 'Both an enabled and a disabled copy of this plugin exist. Back them up, check which version to keep, and move the extra copy out of the plugins folder before retrying.',
@@ -175,6 +175,13 @@ export const modChangeInstallErrors: DomainMessages = {
     ko: '기존 설치 명세에 이 위치가 기록되어 있어 덮어쓸 수 없습니다. MOD 목록을 새로 고친 뒤 다시 시도하세요. 또 실패하면 파일과 설치 명세를 보관하고 로그를 공유해 주세요.',
     ja: '既存のインストール記録にこの場所が登録されているため、上書きできません。MOD 一覧を更新して再試行してください。再度失敗する場合はファイルとインストール記録を残し、ログを共有してください。',
   }),
+  installTargetClaimedWithManifests: {
+    'zh-CN': '已有安装清单登记了这个位置（{path}）。具体占用清单：\n{manifests}',
+    'zh-TW': '已有安裝清單登記了這個位置（{path}）。具體占用清單：\n{manifests}',
+    en: 'An existing installation manifest claims this location ({path}). Conflicting manifests:\n{manifests}',
+    ko: '기존 설치 명세가 이 위치({path})를 사용 중입니다. 충돌하는 설치 명세:\n{manifests}',
+    ja: '既存のインストール記録がこの場所（{path}）を使用中です。競合する記録：\n{manifests}',
+  },
   installTargetOwned: withLocation({
     'zh-CN': '这个位置已被其他项目或本次方案中的另一项变更占用。请刷新列表，或分开安装后再试。',
     'zh-TW': '這個位置已被其他項目或本次方案中的另一項變更占用。請重新整理清單，或分開安裝後再試。',

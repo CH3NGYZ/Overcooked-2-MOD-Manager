@@ -1,5 +1,6 @@
 import { levelPreview } from './levelPreview.ts'
 import { modChanges } from './modChanges.ts'
+import { modChangeEvidence } from './modChangeEvidence.ts'
 import { mapVersion } from './mapVersion.ts'
 import { diychef } from './diychef/index.ts'
 import { startup } from './startup.ts'
@@ -110,6 +111,7 @@ interface DomainTable {
 
 export const TABLES: DomainTable[] = [
   { domain: 'modChanges', messages: modChanges },
+  { domain: 'modChanges', messages: modChangeEvidence },
   { domain: 'diychef', messages: diychef },
   { domain: 'levelPreview', messages: levelPreview },
   { domain: 'mapVersion', messages: mapVersion },

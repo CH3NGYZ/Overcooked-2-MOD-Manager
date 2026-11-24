@@ -18,6 +18,7 @@ async fn retained_sources(count: usize) {
             .map(|i| DownloadCandidate {
                 route: DownloadRoute::Proxy,
                 url: format!("https://source{i}.example/file"),
+                identity: None,
             })
             .collect(),
         || false,
@@ -77,6 +78,7 @@ async fn four_candidates_replace_only_one_laggard_and_keep_the_final_three() {
             .map(|id| DownloadCandidate {
                 route: DownloadRoute::Proxy,
                 url: format!("https://source{id}.example/file"),
+                identity: None,
             })
             .collect(),
         || false,

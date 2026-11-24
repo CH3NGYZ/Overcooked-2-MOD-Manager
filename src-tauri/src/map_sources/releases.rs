@@ -7,34 +7,22 @@ use crate::models::ReleaseInfo;
 
 /// 刷新一个地图仓库的 Release 列表（tag 模式下返回合成的版本列表）。
 ///
-/// 与仓库侧同一条路径：`fetch_releases`。区别只有两处 —— 请求按仓库收敛
-/// （同一批里同一个仓库只打一次 API），以及 tag 模式下不「取最新那一条」，
-/// 而是把那个 tag 的资产逐个拆成版本。
+/// 与 MOD 共用缓存，缓存按仓库和 API 路线收敛。tag 模式下把该 tag 的资产逐个拆成版本。
 pub(crate) async fn fetch_map_release_data(
     ctx: &MapSourceContext<'_>,
     map: &MapRepositoryConfig,
 ) -> Result<MapRepositoryConfig, String> {
     let probe = crate::releases::RepositoryRequest::from(map);
-    let key =
-        crate::releases::repository_cache_key(map.provider.clone(), &map.username, &map.repository);
-    let token = ctx.token(&map.provider).map(str::to_string);
-    let official_api_only = ctx.config.auth.official_api_only;
-    let api_proxies = ctx.api_proxies(&map.provider).to_vec();
-    let releases = ctx
-        .cache
-        .list(key, ctx.pass_id, ctx.force, || async move {
-            crate::releases::fetch_releases(
-                ctx.client,
-                &probe,
-                &ctx.config.region,
-                token.as_deref(),
-                official_api_only,
-                &api_proxies,
-            )
-            .await
-            .map_err(|error| error.to_string())
-        })
-        .await?;
+    let releases = crate::releases::cached_releases(
+        ctx.cache,
+        ctx.client,
+        &probe,
+        &ctx.config.region,
+        ctx.token(&probe.provider),
+        ctx.pass_id,
+        ctx.force,
+    )
+    .await?;
     if map.release_derived {
         let declaration = serde_json::from_value(serde_json::json!({
             "id": map.source_id.as_deref().unwrap_or_default(),

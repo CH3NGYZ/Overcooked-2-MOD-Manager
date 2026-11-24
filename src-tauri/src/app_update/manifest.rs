@@ -2,16 +2,17 @@ use crate::app_update::channels::INSTALLER_GITEE_OWNER;
 use crate::app_update::channels::INSTALLER_GITEE_REPO;
 use crate::app_update::channels::INSTALLER_GITHUB_OWNER;
 use crate::app_update::channels::INSTALLER_GITHUB_REPO;
+use crate::app_update::channels::INSTALLER_PROVIDERS;
 use crate::app_update::channels::InstallerChannel;
+use crate::app_update::channels::InstallerRegion;
 use crate::app_update::channels::emit_installer_channel_status;
 use crate::app_update::channels::emit_installer_phase;
 use crate::app_update::channels::installer_candidate;
 use crate::app_update::channels::installer_channel_status;
-use crate::app_update::channels::installer_manifest_sources;
-use crate::app_update::channels::installer_region;
 use crate::app_update::channels::{INSTALLER_GITCODE_OWNER, INSTALLER_GITCODE_REPO};
 use crate::archive;
-use crate::download::try_download_candidates as try_asset_download_candidates;
+use crate::download::DownloadContext;
+use crate::download::try_download_candidates_with_progress;
 use crate::http_diagnostics::HttpRequestExt;
 use crate::models::{
     AppConfig, AppUpdateChannelStatus, AppUpdateCheckResult, AppUpdateInfo, Provider,
@@ -131,7 +132,6 @@ pub(super) async fn fetch_installer_manifest(
     let request = async {
         let response = client
             .get(&channel.endpoint)
-            .header("User-Agent", releases::APP_USER_AGENT)
             .header("Cache-Control", "no-cache, no-store")
             .header("Pragma", "no-cache")
             .send_logged_metadata()
@@ -211,6 +211,7 @@ pub(crate) async fn race_installer_channels<T, F, Fut>(
     is_cancelled: impl Fn() -> bool,
     mut fetch: F,
     network: &crate::models::NetworkConfig,
+    context: Option<DownloadContext<'_>>,
 ) -> Result<T, String>
 where
     T: crate::download::DownloadOutput,
@@ -220,15 +221,17 @@ where
     if is_cancelled() {
         return Err("download.cancelled".into());
     }
-    // Gitee and GitCode use a single direct request.
-    if channels.len() == 1 && matches!(channels[0].provider, Provider::Gitee | Provider::Gitcode) {
-        return fetch(
-            channels[0].clone(),
-            std::sync::Arc::new(archive::DownloadReporter::new("")),
-        )
-        .await;
-    }
-    try_asset_download_candidates(
+    let execution = channels.first().ok_or("proxy.noGlobalProxy")?.execution;
+    let report_progress = context.is_some();
+    let mut context = context.unwrap_or(DownloadContext {
+        execution: None,
+        label: "",
+        file_name: None,
+        expected_size: None,
+        race_session: None,
+    });
+    context.execution = Some(execution);
+    try_download_candidates_with_progress(
         channels.iter().map(installer_candidate).collect(),
         is_cancelled,
         |candidate, reporter| {
@@ -239,7 +242,12 @@ where
             fetch(channel.clone(), reporter)
         },
         network,
-        None,
+        Some(context),
+        |progress| {
+            if report_progress {
+                archive::publish_download_progress(progress);
+            }
+        },
     )
     .await
 }
@@ -259,7 +267,7 @@ where
     Fut: std::future::Future<Output = Result<T, String>>,
 {
     let on_status = Mutex::new(on_status);
-    let providers = [Provider::Gitee, Provider::Gitcode, Provider::Github];
+    let providers = INSTALLER_PROVIDERS;
     for (index, provider) in providers.iter().enumerate() {
         if is_cancelled() {
             return Err("download.cancelled".into());
@@ -317,6 +325,7 @@ where
                 }
             },
             network,
+            None,
         )
         .await;
         // The coordinator has dropped losers before their final UI state.
@@ -369,8 +378,9 @@ where
 pub(crate) async fn discover_installer_update(
     config: &AppConfig,
     app: &AppHandle,
+    region: InstallerRegion,
+    channels: &[InstallerChannel],
 ) -> Result<AppUpdateCheckResult, String> {
-    let region = installer_region(&config.region);
     emit_installer_phase(app, region, "manifest", None, None);
     let client = releases::build_client(config.network.api_timeout()).map_err(|e| e.to_string())?;
     let target = crate::app_update::UpdateTarget::current()?;
@@ -383,7 +393,7 @@ pub(crate) async fn discover_installer_update(
     let mut statuses: Vec<AppUpdateChannelStatus> = Vec::new();
     let result = run_installer_manifest_routes(
         &client,
-        &installer_manifest_sources(&config.github_proxies, region),
+        channels,
         target,
         &current_version,
         || false,

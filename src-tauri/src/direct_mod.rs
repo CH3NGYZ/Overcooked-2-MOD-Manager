@@ -1,12 +1,15 @@
 use crate::app_state::AppState;
 use crate::archive::{self, DownloadRoute};
 use crate::download::planning::{
-    RemoteUrlKind, classify_remote_url, plan_remote_download_candidates, provider_for_remote_url,
+    RemoteUrlKind, classify_remote_url, generic_download_threads, plan_pasted_file,
+    provider_for_remote_url,
 };
 use crate::download::{DownloadCandidate, DownloadContext, try_download_candidates};
 use crate::http_diagnostics::HttpRequestExt;
+use crate::models::RepositoryKind;
+use crate::network_policy::NetworkPolicy;
 use crate::releases;
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -91,10 +94,14 @@ fn download_filename(url: &Url, disposition: Option<&str>) -> Result<String, Str
         .ok_or_else(|| "mods.unsupportedFileType".into())
 }
 
-fn validate_mod_file(path: &Path, filename: &str) -> Result<(), String> {
+fn validate_mod_file(
+    path: &Path,
+    filename: &str,
+    cancelled: impl Fn() -> bool,
+) -> Result<(), String> {
     archive::validate_download_file(path, None, None)?;
     if filename.to_ascii_lowercase().ends_with(".zip") {
-        return archive::validate_zip(path);
+        return archive::validate_zip_with_cancel(path, cancelled);
     }
     // Reject HTML, renamed executables, and truncated files before installing a DLL.
     let invalid = || "direct.notDll".to_string();
@@ -129,7 +136,7 @@ async fn probe_remote_filename(
     let response = tokio::select! {
         result = client.get(parsed.clone()).timeout(first_byte_timeout).header(reqwest::header::RANGE, "bytes=0-0")
             .header(reqwest::header::ACCEPT_ENCODING, "identity")
-            .header(reqwest::header::USER_AGENT, releases::APP_USER_AGENT).send_logged() => {
+            .send_logged() => {
             result.map_err(|_| "direct.infoFailed")?.error_for_status().map_err(|_| "direct.infoFailed")?
         }
         _ = async {
@@ -155,17 +162,10 @@ async fn probe_remote_filename(
 
 /// 把一个远程 URL 下载到缓存目录的临时文件，返回（临时路径，文件名）。
 ///
-/// 这是「直链 / Release 资产 / 仓库 raw 文件」唯一的下载入口，候选与线程
-/// 策略按 [`classify_remote_url`] 统一决定：
-/// - Release 资产：GitHub 用 `release_proxies` 竞速，Gitee 只直连；
-/// - Raw 文件：GitHub 用 `raw_proxies` 竞速，Gitee 只直连；
-/// - 其它直链：单一直连候选，固定 [`DIRECT_DOWNLOAD_THREADS`] 线程。
-///
-/// 竞速时每个源只用 1 个分片连接；非竞速时用 `configured_threads`。
+/// Release 和 Raw 使用平台与地区的文件下载计划，其它链接沿用直连策略。
 /// 取消标记在这里重置 —— 调用方若在等待元数据后再进来，用户已点的取消
 /// 会被清掉，所以带元数据等待的命令必须先自己 `archive::start_download`。
 pub(crate) async fn download_remote_to_temp(
-    app: &AppHandle,
     state: &AppState,
     url: &str,
     label: &str,
@@ -183,26 +183,40 @@ pub(crate) async fn download_remote_to_temp(
     }
     let config = state.config.load_or_default();
     let kind = classify_remote_url(parsed.as_str());
-    let candidates = match kind {
-        RemoteUrlKind::Other => vec![DownloadCandidate {
-            route: DownloadRoute::Direct,
-            url: parsed.to_string(),
-        }],
-        _ => plan_remote_download_candidates(
-            &config,
-            &provider_for_remote_url(parsed.as_str()).ok_or("direct.invalidUrl")?,
-            kind,
-            parsed.as_str(),
-            &config.region,
-        )?,
+    let (candidates, threads, execution) = match kind {
+        RemoteUrlKind::Other => (
+            vec![DownloadCandidate {
+                route: DownloadRoute::Direct,
+                url: parsed.to_string(),
+                identity: None,
+            }],
+            generic_download_threads(
+                provider_for_remote_url(parsed.as_str()).as_ref(),
+                &config.region,
+                configured_threads,
+            ),
+            None,
+        ),
+        _ => {
+            let policy = config
+                .network_policy
+                .clone()
+                .map(Ok)
+                .unwrap_or_else(NetworkPolicy::active)?;
+            let repository_kind = match validation {
+                RemoteValidation::ModFile => RepositoryKind::Mod,
+                RemoteValidation::Zip => RepositoryKind::Map,
+            };
+            let planned = NetworkPolicy::with_snapshot(policy, || {
+                plan_pasted_file(&parsed, kind, repository_kind, &config.region)
+            })?;
+            (
+                planned.candidates,
+                planned.download_threads,
+                Some(planned.execution),
+            )
+        }
     };
-    let racing = candidates.len() > 1;
-    let threads = crate::download::planning::file_download_threads(
-        provider_for_remote_url(parsed.as_str()).as_ref(),
-        &config.region,
-        configured_threads,
-        racing,
-    );
     let client = releases::build_download_client(config.network.first_byte_timeout())
         .map_err(|_| "direct.clientFailed")?;
     /*
@@ -214,6 +228,10 @@ pub(crate) async fn download_remote_to_temp(
      */
     let probe_direct = candidates.len() == 1 && candidates[0].route == DownloadRoute::Direct;
     let filename = if probe_direct {
+        let mut connecting = archive::DownloadProgress::connecting(label);
+        connecting.route = Some(DownloadRoute::Direct);
+        connecting.source = parsed.host_str().map(str::to_owned);
+        archive::publish_download_progress(connecting);
         probe_remote_filename(&client, &parsed, config.network.first_byte_timeout()).await?
     } else {
         download_filename(&parsed, None)?
@@ -228,6 +246,10 @@ pub(crate) async fn download_remote_to_temp(
         filename
     );
     let first_byte_timeout = config.network.first_byte_timeout();
+    let session = state.download_history.session();
+    let race_session = execution
+        .is_some_and(|execution| execution.race && candidates.len() > 1)
+        .then_some(&session);
     let temp = try_download_candidates(
         candidates,
         archive::is_download_cancelled,
@@ -246,30 +268,26 @@ pub(crate) async fn download_remote_to_temp(
                     Some(first_byte_timeout),
                 )
                 .await?;
-                let checked = match validation {
-                    RemoteValidation::ModFile => validate_mod_file(&path, &filename),
-                    RemoteValidation::Zip => archive::validate_zip(&path),
-                };
-                if let Err(error) = checked {
-                    let _ = fs::remove_file(&path);
-                    return Err(error);
-                }
-                Ok(path)
+                archive::verify_temp_download(path, &reporter, move |path, cancelled| {
+                    match validation {
+                        RemoteValidation::ModFile => validate_mod_file(path, &filename, cancelled),
+                        RemoteValidation::Zip => archive::validate_zip_with_cancel(path, cancelled),
+                    }
+                })
+                .await
             }
         },
         &config.network,
         Some(DownloadContext {
-            execution: None,
-            // 传入 app：直链、Release 资产与仓库资产共用同一套下载进度事件；
-            // 路径是临时文件、没有 Release 元数据，所以 expected_size 留空，
-            // 大小由下载源自己上报（有 Content-Length 时显示确定进度）。
-            app: Some(app),
+            execution,
+            race_session,
             label,
             file_name: Some(&filename),
             expected_size: None,
         }),
     )
     .await?;
+    session.commit();
     Ok((temp, filename))
 }
 
@@ -279,12 +297,10 @@ pub(crate) async fn download_remote_to_temp(
 /// 避免「预览下载一次、安装再下载一次」。调用方负责删除返回的临时文件
 /// （`analyze_mod_source` 会把它搬到预览暂存目录）。
 pub(crate) async fn download_for_preview(
-    app: &tauri::AppHandle,
     state: &AppState,
     url: &str,
 ) -> Result<(PathBuf, String), String> {
     let (temp, filename) = download_remote_to_temp(
-        app,
         state,
         url,
         "direct.onlineFile",

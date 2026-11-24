@@ -55,12 +55,15 @@ pub fn is_source_archive(
     tag: &str,
     asset_name: &str,
 ) -> bool {
-    *provider == Provider::Gitee
-        && source_id == Some(GITEE_SOURCE_ID)
+    filters_source_archives(provider, source_id)
         && !tag.trim().is_empty()
         && asset_name
             .trim()
             .eq_ignore_ascii_case(&format!("{}.zip", tag.trim()))
+}
+
+pub(crate) fn filters_source_archives(provider: &Provider, source_id: Option<&str>) -> bool {
+    *provider == Provider::Gitee && source_id == Some(GITEE_SOURCE_ID)
 }
 
 pub fn source(provider: &Provider) -> RepositorySource {

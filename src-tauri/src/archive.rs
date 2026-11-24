@@ -10,6 +10,7 @@ mod progress;
 pub(crate) mod release_download;
 mod split_zip;
 mod transfer;
+mod verify_download;
 mod zip_layout;
 
 #[cfg(test)]
@@ -29,7 +30,7 @@ pub(crate) use install::{
 pub(crate) use integrity::sha256_reader;
 pub(crate) use integrity::{
     validate_download_bytes, validate_download_digest, validate_download_file,
-    validate_download_size, validate_zip,
+    validate_download_size, validate_zip, validate_zip_with_cancel,
 };
 pub(crate) use manifests::{
     InstallManifest, new_manifest, package_display_name, primary_translation, read_manifest,
@@ -38,10 +39,12 @@ pub(crate) use manifests::{
 pub(crate) use map_snapshots::{read_map_relation_snapshots, write_map_relation_snapshots};
 pub(crate) use paths::{clear_readonly, prune_empty_parent_dirs, validate_asset_file_name};
 pub(crate) use progress::{
-    DownloadPhase, DownloadProgress, DownloadReporter, DownloadRoute, emit_progress,
-    emit_progress_event, observe_download_progress,
+    DownloadPhase, DownloadProgress, DownloadRaceProgress, DownloadReporter, DownloadRoute,
+    DownloadSourcePhase, DownloadSourceProgress, channel_download_progress, emit_progress,
+    interactive_download_progress, observe_download_progress, publish_download_progress,
 };
 pub(crate) use transfer::{
     download_to_temp_with_threads_and_first_byte_timeout, first_nonempty_chunk,
     send_before_first_byte_deadline,
 };
+pub(crate) use verify_download::verify_temp_download;

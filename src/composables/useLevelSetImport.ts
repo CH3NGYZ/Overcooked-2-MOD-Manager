@@ -22,7 +22,7 @@ import { useNotify } from '../useNotify'
 import { useModChanges } from '../modChanges/store'
 import { backendMessageOf } from '../locale/backend'
 import { cachedInstallRelease } from '../repositoryAssets'
-import { beginDownloadTask, endDownloadTask, failDownloadTask } from '../downloadTask'
+import { beginDownloadTask, endDownloadTask, failDownloadTask, updateDownloadProgress } from '../downloadTask'
 import { useMapSources } from './useMapSources'
 import { useDropRouting, type InstallSourceEntry } from './useDropRouting'
 import type { InstallSource, LevelSetZipProgress, StagedMapSource } from '../types'
@@ -128,7 +128,8 @@ export function useLevelSetImport() {
       if (entry !== 'picker') sourceOpen.value = true
       // 上一轮可能留下旧进度：暂存一开始先清空，避免显示上次的条目
       zipProgress.value = null
-      const staged = await api.stageMapSource(source.kind, source.value)
+      const staged = await api.stageMapSource(source.kind, source.value,
+        token === null ? undefined : progress => updateDownloadProgress(progress, token))
       if (token !== null) endDownloadTask(token)
       // 识别结束，接下来是确认弹窗：不能把「正在读取」留在界面上
       zipProgress.value = null
@@ -188,7 +189,7 @@ export function useLevelSetImport() {
     })
     try {
       zipProgress.value = null
-      const staged = await api.stageMapRelease(mapId, targetTag, assetName)
+      const staged = await api.stageMapRelease(mapId, targetTag, assetName, progress => updateDownloadProgress(progress, token))
       endDownloadTask(token)
       // 下载 + 识别结束：确认弹窗才是接下来的主角
       zipProgress.value = null

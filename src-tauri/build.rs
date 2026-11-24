@@ -20,8 +20,8 @@ fn embed_download_defaults() {
         serde_json::from_str(&json).expect("parse shared download defaults");
     let mut generated = String::new();
     for key in [
-        "race_min_speed_kbps",
-        "race_window_seconds",
+        "timeout_min_seconds",
+        "timeout_max_seconds",
         "api_timeout_seconds",
         "first_byte_timeout_seconds",
     ] {

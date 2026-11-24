@@ -3,7 +3,7 @@ import test from 'node:test'
 import { dataProviderShortLabel, ownerHomepage, providerLabel, repositoryHomepage, repositoryRawUrl } from '../src/providers.ts'
 
 test('data source badges share short names and localize only the bundled source', () => {
-  for (const [provider, label] of Object.entries({ gitcode: 'GitCode', gitee: 'Gitee', github: 'Github', cloudflare: 'Cloudflare' })) {
+  for (const [provider, label] of Object.entries({ gitcode: 'GitCode', gitee: 'Gitee', github: 'Github', cloudflare: 'Cloudflare', edgeone: 'EdgeOne' })) {
     assert.equal(dataProviderShortLabel(provider, '内置源'), label)
     assert.equal(dataProviderShortLabel(provider, 'Bundled'), label)
   }

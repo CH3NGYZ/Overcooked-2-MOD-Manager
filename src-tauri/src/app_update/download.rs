@@ -1,8 +1,8 @@
 use crate::app_state::AppState;
+use crate::app_update::channels::InstallerChannel;
 use crate::app_update::channels::emit_installer_channel_status;
 use crate::app_update::channels::emit_installer_phase;
 use crate::app_update::channels::installer_channel_status;
-use crate::app_update::channels::installer_download_candidates;
 use crate::app_update::channels::installer_manifest_sources;
 use crate::app_update::channels::installer_sources_for_url;
 use crate::app_update::channels::{InstallerRegion, installer_region};
@@ -11,10 +11,10 @@ use crate::app_update::manifest::race_installer_channels;
 use crate::app_update::manifest::run_installer_manifest_routes;
 use crate::archive;
 use crate::archive::DownloadRoute as AssetDownloadRoute;
-use crate::download::DownloadCandidate as AssetDownloadCandidate;
 use crate::download::DownloadContext;
-use crate::download::try_download_candidates as try_asset_download_candidates;
-use crate::models::{AppUpdateChannelStatus, AppUpdateInfo, GitHubProxyConfig};
+use crate::download::history::RaceSession;
+use crate::models::AppUpdateInfo;
+use crate::network_policy::NetworkPolicy;
 use crate::releases;
 use futures_util::StreamExt;
 use tauri::AppHandle;
@@ -54,15 +54,10 @@ async fn read_installer(
 ) -> Result<Vec<u8>, String> {
     log::debug!("开始下载安装器文件：标签={}", label);
     let deadline = Some(tokio::time::Instant::now() + network.first_byte_timeout());
-    let response = archive::send_before_first_byte_deadline(
-        client
-            .get(url)
-            .header("User-Agent", releases::APP_USER_AGENT),
-        deadline,
-    )
-    .await?
-    .error_for_status()
-    .map_err(|error| error.without_url().to_string())?;
+    let response = archive::send_before_first_byte_deadline(client.get(url), deadline)
+        .await?
+        .error_for_status()
+        .map_err(|error| error.without_url().to_string())?;
     let total = response.content_length();
     let started = std::time::Instant::now();
     let mut downloaded = 0_u64;
@@ -92,92 +87,80 @@ async fn read_installer(
 pub(crate) async fn download_verified_installer(
     client: &reqwest::Client,
     info: &AppUpdateInfo,
-    proxies: &GitHubProxyConfig,
-    candidates: Vec<AssetDownloadCandidate>,
+    channels: &[InstallerChannel],
     app: Option<&AppHandle>,
     region: InstallerRegion,
-    verify: impl Fn(&[u8]) -> Result<(), String>,
+    verify: impl Fn(&[u8]) -> Result<(), String> + Send + Sync + 'static,
     network: &crate::models::NetworkConfig,
     is_cancelled: impl Copy + Fn() -> bool,
+    race_session: Option<&RaceSession>,
 ) -> Result<Vec<u8>, String> {
-    let proxy_count = candidates
+    let proxy_count = channels
         .iter()
         .filter(|candidate| candidate.route == AssetDownloadRoute::Proxy)
         .count();
     log::info!(
         "安装器下载候选准备完成：平台={:?}，直连={}，Release代理={}，总候选={}",
         info.provider,
-        candidates.len() - proxy_count,
+        channels.len() - proxy_count,
         proxy_count,
-        candidates.len()
+        channels.len()
     );
-    try_asset_download_candidates(
-        candidates,
+    let verify = std::sync::Arc::new(verify);
+    race_installer_channels(
+        channels,
         is_cancelled,
-        |candidate, reporter| {
-            let verify = &verify;
+        |channel, reporter| {
+            let verify = verify.clone();
             async move {
-                let mode = if candidate.route == AssetDownloadRoute::Proxy {
-                    "proxy"
-                } else {
-                    "direct"
-                };
-                let channel = info.provider.as_ref().and_then(|provider| {
-                    installer_sources_for_url(
-                        proxies,
-                        provider,
-                        info.installer_url.as_deref().unwrap_or_default(),
-                    )
-                    .into_iter()
-                    .find(|channel| channel.endpoint == candidate.url)
-                });
-                if let (Some(app), Some(channel)) = (app, &channel) {
+                if let Some(app) = app {
                     emit_installer_channel_status(
                         app,
                         region,
-                        AppUpdateChannelStatus {
-                            mode: mode.into(),
-                            ..installer_channel_status(channel, "downloading", None)
-                        },
+                        installer_channel_status(&channel, "downloading", None),
                     );
                 }
                 let result = download_installer(
                     client,
-                    &candidate.url,
+                    &channel.endpoint,
                     &reporter,
                     "update.downloadingInstaller",
                     network,
                     is_cancelled,
                 )
-                .await
-                .and_then(|bytes| {
-                    if is_cancelled() {
-                        return Err("download.cancelled".into());
+                .await;
+                let result = match result {
+                    Ok(bytes) if !is_cancelled() => {
+                        reporter.verifying();
+                        let size = info.download_size.filter(|size| *size > 0);
+                        match tauri::async_runtime::spawn_blocking(move || {
+                            archive::validate_download_bytes(&bytes, size, None)?;
+                            verify(&bytes)?;
+                            Ok(bytes)
+                        })
+                        .await
+                        {
+                            _ if is_cancelled() => Err("download.cancelled".into()),
+                            Ok(result) => result,
+                            Err(_) => Err("update.stageFailed".into()),
+                        }
                     }
-                    archive::validate_download_bytes(
-                        &bytes,
-                        info.download_size.filter(|size| *size > 0),
-                        None,
-                    )?;
-                    verify(&bytes)?;
-                    Ok(bytes)
-                });
-                if let (Some(app), Some(channel)) = (app, &channel) {
+                    Ok(_) => Err("download.cancelled".into()),
+                    Err(error) => Err(error),
+                };
+                if let Some(app) = app {
                     emit_installer_channel_status(
                         app,
                         region,
-                        AppUpdateChannelStatus {
-                            mode: mode.into(),
-                            ..installer_channel_status(
-                                channel,
-                                match &result {
-                                    Ok(_) => "downloaded",
-                                    Err(error) if error == "download.cancelled" => "cancelled",
-                                    Err(_) => "failed",
-                                },
-                                result.as_ref().err().cloned(),
-                            )
-                        },
+                        installer_channel_status(
+                            &channel,
+                            match &result {
+                                Ok(_) => "downloaded",
+                                Err(error) if error == "download.cancelled" => "cancelled",
+                                Err(_) => "failed",
+                            },
+                            result.as_ref().err().cloned(),
+                        ),
                     );
                 }
                 result
@@ -186,10 +169,10 @@ pub(crate) async fn download_verified_installer(
         network,
         Some(DownloadContext {
             execution: None,
-            app: None,
             label: "update.downloadingInstaller",
             file_name: Some(&info.installer_name),
             expected_size: info.download_size,
+            race_session,
         }),
     )
     .await
@@ -198,32 +181,33 @@ pub(crate) async fn download_verified_installer(
 async fn resolve_app_update(
     app: &AppHandle,
     info: &AppUpdateInfo,
-    proxies: &GitHubProxyConfig,
+    channels: &[InstallerChannel],
     network: &crate::models::NetworkConfig,
     is_cancelled: impl Copy + Fn() -> bool,
 ) -> Result<tauri_plugin_updater::Update, String> {
     // Package hosting can differ from the manifest mirror. Re-read the selected
     // manifest's provider, then require identical version, URL and signature.
-    let mut channels = installer_manifest_sources(
-        proxies,
-        crate::app_update::channels::InstallerRegion::MainlandChina,
-    );
     let provider = channels
         .iter()
         .find(|channel| {
             channel.endpoint == info.manifest_url
                 && Some(channel.id.as_str()) == info.source_channel.as_deref()
         })
-        .map(|channel| channel.provider.clone())
+        .map(|channel| &channel.provider)
         .ok_or("update.manifestUrlInvalid")?;
-    channels.retain(|channel| channel.provider == provider);
+    let group: Vec<_> = channels
+        .iter()
+        .filter(|channel| &channel.provider == provider)
+        .cloned()
+        .collect();
     race_installer_channels(
-        &channels,
+        &group,
         is_cancelled,
         |channel, _| async move {
             resolve_app_update_at(app, info, &channel.endpoint, network, is_cancelled).await
         },
         network,
+        None,
     )
     .await
 }
@@ -250,8 +234,6 @@ async fn resolve_app_update_at(
         .updater_builder()
         .target(target.manifest_key())
         .timeout(network.api_timeout())
-        .header("User-Agent", releases::APP_USER_AGENT)
-        .map_err(|e| e.to_string())?
         .header("Cache-Control", "no-cache, no-store")
         .map_err(|e| e.to_string())?
         .header("Pragma", "no-cache")
@@ -306,24 +288,38 @@ async fn prepare_and_download_installer(
     client: &reqwest::Client,
     info: &AppUpdateInfo,
     app: &AppHandle,
-    proxies: &GitHubProxyConfig,
+    policy: &NetworkPolicy,
+    manifest_channels: &[InstallerChannel],
     region: InstallerRegion,
     network: &crate::models::NetworkConfig,
     is_cancelled: impl Copy + Fn() -> bool,
+    race_session: &RaceSession,
 ) -> Result<VerifiedInstallerDownload, String> {
-    let update = resolve_app_update(app, info, proxies, network, is_cancelled).await?;
+    let provider = info
+        .provider
+        .as_ref()
+        .ok_or("update.manifestPlatformMismatch")?;
+    let url = info
+        .installer_url
+        .as_deref()
+        .ok_or("update.manifestPlatformMismatch")?;
+    let package_channels = installer_sources_for_url(policy, region, provider, url)?;
+    let update = resolve_app_update(app, info, manifest_channels, network, is_cancelled).await?;
+    let signature = update.signature.clone();
+    let version = info.version.clone();
     let bytes = download_verified_installer(
         client,
         info,
-        proxies,
-        installer_download_candidates(proxies, info),
+        &package_channels,
         Some(app),
         region,
-        |bytes| crate::app_update::verify_download(bytes, &update.signature, &info.version),
+        move |bytes| crate::app_update::verify_download(bytes, &signature, &version),
         network,
         is_cancelled,
+        Some(race_session),
     )
     .await?;
+    race_session.commit();
     Ok(VerifiedInstallerDownload {
         bytes,
         #[cfg(target_os = "macos")]
@@ -352,7 +348,14 @@ pub(crate) async fn discover_and_download_installer_update(
         return Err("download.cancelled".into());
     }
     let config = state.config.load_or_default();
+    let race_session = state.download_history.session();
     let region = installer_region(&config.region);
+    let policy = config
+        .network_policy
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(NetworkPolicy::active)?;
+    let manifest_channels = installer_manifest_sources(&policy, region);
     log::info!("开始执行安装器更新流程：地区={}", region.as_str());
     let client =
         releases::build_client(config.network.api_timeout()).map_err(|error| error.to_string())?;
@@ -376,10 +379,12 @@ pub(crate) async fn discover_and_download_installer_update(
             &download_client,
             &info,
             app,
-            &config.github_proxies,
+            &policy,
+            &manifest_channels,
             region,
             &config.network,
             is_cancelled,
+            &race_session,
         )
         .await
         {
@@ -395,7 +400,7 @@ pub(crate) async fn discover_and_download_installer_update(
     }
     let result = run_installer_manifest_routes(
         &client,
-        &installer_manifest_sources(&config.github_proxies, region),
+        &manifest_channels,
         target,
         &current_version,
         is_cancelled,
@@ -407,18 +412,22 @@ pub(crate) async fn discover_and_download_installer_update(
         },
         |info| {
             let download_client = &download_client;
-            let proxies = &config.github_proxies;
+            let policy = &policy;
+            let manifest_channels = &manifest_channels;
             let network = &config.network;
+            let race_session = &race_session;
             async move {
                 emit_installer_phase(app, region, "download", None, Some(info.clone()));
                 let download = prepare_and_download_installer(
                     download_client,
                     &info,
                     app,
-                    proxies,
+                    policy,
+                    manifest_channels,
                     region,
                     network,
                     is_cancelled,
+                    race_session,
                 )
                 .await?;
                 Ok((info, download))

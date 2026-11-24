@@ -133,28 +133,33 @@ url = "mods/child.toml"
 }
 
 #[test]
-fn cloudflare_raw_retains_branch_context_after_redirect_and_rejects_escaping_paths() {
-    let requested = Url::parse(
-        "https://oc2gh.ch3ng.top/owner/repo/raw/refs/heads/main/nested/index.toml?raw=true",
-    )
-    .unwrap();
-    let origin = remote_document_location(
-        &requested,
-        Url::parse("https://cdn.example.com/files/index.toml").unwrap(),
-    )
-    .unwrap();
-    assert_eq!(origin.address(), requested.as_str());
-    assert_eq!(
-        SourceLocation::resolve("mods/child.toml", Some(&origin))
-            .unwrap()
-            .address(),
-        "https://oc2gh.ch3ng.top/owner/repo/raw/refs/heads/main/mods/child.toml"
-    );
-    for path in ["../../outside.toml", "%2e%2e/outside.toml"] {
-        assert!(
-            SourceLocation::resolve(path, Some(&origin)).is_err(),
-            "{path}"
-        );
+fn official_cdn_raw_retains_branch_context_after_redirect_and_rejects_escaping_paths() {
+    for host in ["oc2gh.ch3ng.top", "oc2gh.5882778.xyz"] {
+        let base = format!("https://{host}/owner/repo/raw/refs/heads/main/");
+        let requested = Url::parse(&format!("{base}nested/index.toml?raw=true")).unwrap();
+        let origin = remote_document_location(
+            &requested,
+            Url::parse("https://cdn.example.com/files/index.toml").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(origin.address(), requested.as_str());
+        for (path, expected) in [
+            ("mods/child.toml", "mods/child.toml"),
+            ("./child.toml", "nested/child.toml"),
+        ] {
+            assert_eq!(
+                SourceLocation::resolve(path, Some(&origin))
+                    .unwrap()
+                    .address(),
+                format!("{base}{expected}")
+            );
+        }
+        for path in ["../../outside.toml", "%2e%2e/outside.toml"] {
+            assert!(
+                SourceLocation::resolve(path, Some(&origin)).is_err(),
+                "{path}"
+            );
+        }
     }
 }
 

@@ -4,91 +4,159 @@ use super::transport::api_target_kind;
 use super::transport::fetch_api_with_retries;
 use super::transport::fetch_release_api_with_retries;
 use super::transport::repository_api_targets;
-use crate::models::GitHubProxy;
+use super::transport::{ApiTargets, RepositoryApiRoute};
 use crate::models::Provider;
 use crate::models::ReleaseInfo;
 use crate::providers::repository_file_url;
 use crate::providers::repository_release_api_url;
 use crate::providers::repository_release_api_url_page;
+use crate::release_cache::RepoReleaseCache;
 use crate::releases::RepositoryRequest;
 use reqwest::Client;
 use serde_json::Value;
+use std::sync::Arc;
 use url::Url;
 
+pub(crate) async fn cached_releases(
+    cache: &RepoReleaseCache,
+    client: &Client,
+    repo: &RepositoryRequest,
+    region: &str,
+    token: Option<&str>,
+    pass_id: Option<&str>,
+    force: bool,
+) -> Result<Arc<Vec<ReleaseInfo>>, String> {
+    let ResolvedReleaseRoute { route, first, key } =
+        resolve_release_route(repo, region, token).map_err(|error| error.to_string())?;
+    cache
+        .list(key, pass_id, force, || async {
+            fetch_releases_on_route(client, repo, &route, first, token)
+                .await
+                .map_err(|error| error.to_string())
+        })
+        .await
+}
+
+#[cfg(test)]
 pub async fn fetch_releases(
     client: &Client,
     repo: &RepositoryRequest,
     region: &str,
     token: Option<&str>,
-    official_api_only: bool,
-    api_proxies: &[GitHubProxy],
 ) -> Result<Vec<ReleaseInfo>, ReleaseError> {
+    let result = resolve_release_route(repo, region, token)?;
+    fetch_releases_on_route(client, repo, &result.route, result.first, token).await
+}
+
+struct ResolvedReleaseRoute<'a> {
+    route: RepositoryApiRoute,
+    first: (String, ApiTargets<'a>),
+    key: String,
+}
+
+fn resolve_release_route<'a>(
+    repo: &RepositoryRequest,
+    region: &str,
+    token: Option<&'a str>,
+) -> Result<ResolvedReleaseRoute<'a>, ReleaseError> {
+    let official = release_page_url(repo, 1)?;
+    let route = RepositoryApiRoute::resolve(repo, region)?;
+    let targets = route.targets(&official, token)?;
+    let cache_url = repository_release_api_url_page(
+        &repo.provider,
+        &repo.username.to_lowercase(),
+        &repo.repository.to_lowercase(),
+        Some(1),
+    )?;
+    let key = if cache_url == official {
+        release_route_cache_key(repo, &official, &targets)
+    } else {
+        release_route_cache_key(repo, &cache_url, &route.targets(&cache_url, token)?)
+    };
+    Ok(ResolvedReleaseRoute {
+        route,
+        first: (official, targets),
+        key,
+    })
+}
+
+fn release_route_cache_key(
+    repo: &RepositoryRequest,
+    official: &str,
+    targets: &ApiTargets<'_>,
+) -> String {
+    use sha2::{Digest, Sha256};
+    use std::sync::OnceLock;
+
+    static CACHE_SECRET: OnceLock<uuid::Uuid> = OnceLock::new();
+    let mut hash = Sha256::new();
+    hash.update(CACHE_SECRET.get_or_init(uuid::Uuid::new_v4).as_bytes());
+    hash.update([u8::from(crate::community::filters_source_archives(
+        &repo.provider,
+        repo.source_id.as_deref(),
+    ))]);
+    for (url, token) in targets {
+        hash.update([u8::from(url == official), u8::from(token.is_some())]);
+        hash.update((url.len() as u64).to_le_bytes());
+        hash.update(url);
+        if let Some(token) = token {
+            hash.update((token.len() as u64).to_le_bytes());
+            hash.update(token);
+        }
+    }
+    let repo = super::repository_cache_key(repo.provider.clone(), &repo.username, &repo.repository);
+    format!("{repo}:{:x}", hash.finalize())
+}
+
+#[cfg(test)]
+pub(crate) fn release_cache_key_for_test(
+    repo: &RepositoryRequest,
+    region: &str,
+    token: Option<&str>,
+) -> String {
+    resolve_release_route(repo, region, token).unwrap().key
+}
+
+async fn fetch_releases_on_route(
+    client: &Client,
+    repo: &RepositoryRequest,
+    route: &RepositoryApiRoute,
+    first: (String, ApiTargets<'_>),
+    token: Option<&str>,
+) -> Result<Vec<ReleaseInfo>, ReleaseError> {
+    let mut first = Some(first);
     super::pagination::collect_release_pages(|page| {
-        fetch_releases_page(
-            client,
-            repo,
-            region,
-            page,
-            token,
-            official_api_only,
-            api_proxies,
-        )
+        let target = first.take().map(Ok).unwrap_or_else(|| {
+            let official = release_page_url(repo, page)?;
+            let targets = route.targets(&official, token)?;
+            Ok((official, targets))
+        });
+        async move {
+            let (official, request_targets) = target?;
+            log::debug!(
+                "开始获取 Release: repository_id={} provider={:?} per_page={} page={} token_configured={} api_target_count={}",
+                repo.id,
+                repo.provider,
+                super::pagination::RELEASE_PAGE_SIZE,
+                page,
+                token.is_some(),
+                request_targets.len()
+            );
+            fetch_releases_from_targets(client, repo, &official, request_targets).await
+        }
     })
     .await
 }
 
-async fn fetch_releases_page(
-    client: &Client,
-    repo: &RepositoryRequest,
-    region: &str,
-    page: u32,
-    token: Option<&str>,
-    official_api_only: bool,
-    api_proxies: &[GitHubProxy],
-) -> Result<(Vec<ReleaseInfo>, usize), ReleaseError> {
-    let official = match repository_release_api_url_page(
-        &repo.provider,
-        &repo.username,
-        &repo.repository,
-        Some(page),
-    ) {
-        Ok(url) => url,
-        Err(error) => {
-            log::warn!(
-                "Release API 仓库地址校验失败: repository_id={} provider={:?} error_kind={}",
-                repo.id,
-                repo.provider,
-                release_error_kind(&error)
-            );
-            return Err(error);
-        }
-    };
-    let request_targets = repository_api_targets(
-        repo,
-        region,
-        &official,
-        token,
-        official_api_only,
-        api_proxies,
-    )?;
-    log::debug!(
-        "开始获取 Release: repository_id={} provider={:?} per_page={} page={} token_configured={} official_api_only={} api_target_count={}",
-        repo.id,
-        repo.provider,
-        super::pagination::RELEASE_PAGE_SIZE,
-        page,
-        token.is_some(),
-        official_api_only,
-        request_targets.len()
-    );
-    fetch_releases_from_targets(client, repo, &official, request_targets).await
+fn release_page_url(repo: &RepositoryRequest, page: u32) -> Result<String, ReleaseError> {
+    repository_release_api_url_page(&repo.provider, &repo.username, &repo.repository, Some(page))
 }
 
 async fn fetch_releases_from_targets(
     client: &Client,
     repo: &RepositoryRequest,
     official: &str,
-    request_targets: Vec<(String, Option<&str>)>,
+    request_targets: ApiTargets<'_>,
 ) -> Result<(Vec<ReleaseInfo>, usize), ReleaseError> {
     let mut last_error = None;
     let mut skip_gitee_official = false;
@@ -194,7 +262,6 @@ pub async fn fetch_repository_default_branch(
     repo: &RepositoryRequest,
     region: &str,
     token: Option<&str>,
-    api_proxies: &[GitHubProxy],
 ) -> Result<String, ReleaseError> {
     let mut url = Url::parse(&repository_release_api_url(
         &repo.provider,
@@ -209,9 +276,7 @@ pub async fn fetch_repository_default_branch(
     let official = url.to_string();
     let mut last_error = None;
     let mut skip_official = false;
-    for (url, request_token) in
-        repository_api_targets(repo, region, &official, token, false, api_proxies)?
-    {
+    for (url, request_token) in repository_api_targets(repo, region, &official, token)? {
         if skip_official && url == official {
             continue;
         }

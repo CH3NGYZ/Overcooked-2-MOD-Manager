@@ -1,9 +1,13 @@
 use super::*;
+use crate::archive::{DownloadPhase, DownloadSourcePhase};
+use futures_util::future::AbortHandle;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use tokio::time::Instant;
 
 mod adaptive;
 
@@ -11,6 +15,7 @@ fn candidate(id: usize) -> DownloadCandidate {
     DownloadCandidate {
         route: DownloadRoute::Proxy,
         url: format!("https://source{id}.example/file"),
+        identity: None,
     }
 }
 
@@ -35,8 +40,28 @@ fn policy() -> RacePolicy {
         window: Duration::from_millis(40),
         reference_speed: 1024,
         tick: Duration::from_millis(2),
-        terminal_error: None,
+        ..RacePolicy::default()
     }
+}
+
+fn primary_id(progress: &DownloadProgress) -> Option<usize> {
+    progress.race.as_ref().and_then(|race| race.primary_id)
+}
+
+fn in_flight(progress: &DownloadProgress) -> usize {
+    progress.race.as_ref().map_or(0, |race| {
+        race.sources
+            .iter()
+            .filter(|row| {
+                matches!(
+                    row.phase,
+                    DownloadSourcePhase::Connecting
+                        | DownloadSourcePhase::Downloading
+                        | DownloadSourcePhase::Verifying
+                )
+            })
+            .count()
+    })
 }
 
 #[test]
@@ -65,19 +90,15 @@ fn default_policy_uses_network_defaults() {
 }
 
 #[test]
-fn configured_policy_converts_every_speed_choice_to_bytes_per_second() {
-    for speed in [32, 64, 128, 256, 512, 1024, 2048] {
-        for window in [5, 10, 20] {
-            let network = NetworkConfig {
-                race_min_speed_kbps: speed,
-                race_window_seconds: window,
-                ..NetworkConfig::default()
-            };
-            let policy = RacePolicy::from_network(&network);
-            assert_eq!(policy.reference_speed, speed * 1024);
-            assert_eq!(policy.window, Duration::from_secs(window));
-            assert_eq!(policy.parallelism, 3);
-        }
+fn backup_start_is_half_the_first_byte_deadline_capped_at_ten_seconds() {
+    for (seconds, expected_ms) in [(5, 2500), (17, 8500), (20, 10000), (30, 10000)] {
+        let network = NetworkConfig {
+            first_byte_timeout_seconds: seconds,
+            api_timeout_seconds: 5,
+            ..NetworkConfig::default()
+        };
+        let policy = RacePolicy::from_network(&network);
+        assert_eq!(policy.soft_start, Duration::from_millis(expected_ms));
     }
 }
 
@@ -85,11 +106,10 @@ fn configured_policy_converts_every_speed_choice_to_bytes_per_second() {
 fn configured_window_excludes_first_byte_wait_and_gives_new_sources_a_full_warmup() {
     let now = Instant::now();
     for window in [5, 10, 20] {
-        let network = NetworkConfig {
-            race_window_seconds: window,
-            ..NetworkConfig::default()
+        let policy = RacePolicy {
+            window: Duration::from_secs(window),
+            ..policy()
         };
-        let policy = RacePolicy::from_network(&network);
         let mut speed = SourceSpeed::default();
         let received = now + Duration::from_secs(100);
         speed.sample(now, 0, policy.window);
@@ -111,11 +131,10 @@ fn configured_window_excludes_first_byte_wait_and_gives_new_sources_a_full_warmu
 fn speed_uses_the_configured_rolling_window() {
     let now = Instant::now();
     for window in [5, 10, 20] {
-        let network = NetworkConfig {
-            race_window_seconds: window,
-            ..NetworkConfig::default()
+        let policy = RacePolicy {
+            window: Duration::from_secs(window),
+            ..policy()
         };
-        let policy = RacePolicy::from_network(&network);
         let mut speed = SourceSpeed::default();
         let early = 1 + policy.reference_speed * window / 2;
         let late = early + 10 * 1024 * 1024;
@@ -143,12 +162,11 @@ fn relative_speed_does_not_override_the_configured_reference() {
     let now = Instant::now();
     for speed in [32, 64, 128, 256, 512, 1024, 2048] {
         for window in [5, 10, 20] {
-            let network = NetworkConfig {
-                race_min_speed_kbps: speed,
-                race_window_seconds: window,
-                ..NetworkConfig::default()
+            let policy = RacePolicy {
+                reference_speed: speed * 1024,
+                window: Duration::from_secs(window),
+                ..policy()
             };
-            let policy = RacePolicy::from_network(&network);
             let fastest = policy.reference_speed * 4;
             for (actual, replace) in [
                 (policy.reference_speed - 1, true),
@@ -173,39 +191,8 @@ fn relative_speed_does_not_override_the_configured_reference() {
     }
 }
 
-#[test]
-fn unknown_or_zero_size_stays_unknown_until_a_source_reports_a_positive_size() {
-    let context = DownloadContext {
-        execution: None,
-        app: None,
-        label: "test",
-        file_name: None,
-        expected_size: None,
-    };
-    let first = source(50);
-    let mut known_total = None;
-    let mut snapshot = first.reporter.snapshot();
-    snapshot.total = Some(0);
-    first.reporter.update(snapshot.clone());
-    let progress = source_progress(&context, &first, 0, 3, &mut known_total);
-    assert_eq!(progress.total, None);
-    assert_eq!(progress.phase, DownloadPhase::Downloading);
-    snapshot.total = Some(200);
-    first.reporter.update(snapshot);
-    assert_eq!(
-        source_progress(&context, &first, 0, 3, &mut known_total).total,
-        Some(200)
-    );
-    let next = source(100);
-    let progress = source_progress(&context, &next, 1, 3, &mut known_total);
-    assert_eq!(progress.total, Some(200));
-    assert_eq!(progress.downloaded, 100);
-    assert_eq!(progress.phase, DownloadPhase::Downloading);
-    assert!(!progress.finished);
-}
-
 #[tokio::test]
-async fn repeated_proxy_failures_preserve_api_or_learned_size_until_validated_completion() {
+async fn repeated_proxy_failures_keep_the_api_size_but_not_another_routes_reported_size() {
     for expected_size in [Some(1000), None] {
         let observed = AtomicUsize::new(0);
         let complete_bytes_observed = AtomicBool::new(false);
@@ -263,10 +250,10 @@ async fn repeated_proxy_failures_preserve_api_or_learned_size_until_validated_co
             },
             Some(DownloadContext {
                 execution: None,
-                app: None,
                 label: "test",
                 file_name: None,
                 expected_size,
+                race_session: None,
             }),
             RacePolicy {
                 window: Duration::from_secs(5),
@@ -274,7 +261,7 @@ async fn repeated_proxy_failures_preserve_api_or_learned_size_until_validated_co
             },
             |progress| {
                 if progress.downloaded > 0 {
-                    observed.fetch_or(1 << (progress.attempt.unwrap() - 1), Ordering::SeqCst);
+                    observed.fetch_or(1 << (primary_id(&progress).unwrap() - 1), Ordering::SeqCst);
                 }
                 if progress.downloaded == 1000 && !progress.finished {
                     complete_bytes_observed.store(true, Ordering::SeqCst);
@@ -293,20 +280,19 @@ async fn repeated_proxy_failures_preserve_api_or_learned_size_until_validated_co
             .filter(|event| event.downloaded > 0 && !event.finished)
             .collect::<Vec<_>>();
         assert!(!transferring.is_empty());
-        assert!(transferring.iter().all(
-            |event| event.total == Some(1000) && event.phase == DownloadPhase::Downloading
-        ));
-        assert!(
-            events
-                .iter()
-                .all(|event| event.parallel_sources.unwrap() <= 3)
-        );
+        assert!(transferring.iter().all(|event| event.total
+            == expected_size.or_else(|| (primary_id(event) == Some(1)).then_some(1000))
+            && matches!(
+                event.phase,
+                DownloadPhase::Downloading | DownloadPhase::Verifying
+            )));
+        assert!(events.iter().all(|event| in_flight(event) <= 3));
         assert_eq!(events.iter().filter(|event| event.finished).count(), 1);
         let finished = events.last().unwrap();
         assert_eq!(finished.phase, DownloadPhase::Finished);
         assert_eq!(finished.downloaded, 1000);
-        assert_eq!(finished.total, Some(1000));
-        assert_eq!(finished.attempt, Some(7));
+        assert_eq!(finished.total, expected_size);
+        assert_eq!(primary_id(finished), Some(7));
     }
 }
 
@@ -444,10 +430,10 @@ async fn slow_proxy_rotation_preserves_total_size_and_reports_the_actual_leading
         },
         Some(DownloadContext {
             execution: None,
-            app: None,
             label: "test",
             file_name: None,
             expected_size: Some(size),
+            race_session: None,
         }),
         RacePolicy {
             reference_speed: RacePolicy::default().reference_speed,
@@ -466,25 +452,33 @@ async fn slow_proxy_rotation_preserves_total_size_and_reports_the_actual_leading
         .iter()
         .filter(|event| event.downloaded > 0 && !event.finished)
         .collect::<Vec<_>>();
-    assert!(transferring.iter().any(|event| event.attempt == Some(1)));
-    assert!(transferring.iter().any(|event| event.attempt == Some(5)));
+    assert!(
+        transferring
+            .iter()
+            .any(|event| primary_id(event) == Some(1))
+    );
+    assert!(
+        transferring
+            .iter()
+            .any(|event| primary_id(event) == Some(5))
+    );
     for event in transferring {
         assert_eq!(event.phase, DownloadPhase::Downloading);
         assert_eq!(event.total, Some(size));
         assert_eq!(
             event.downloaded
-                % if event.attempt == Some(1) {
+                % if primary_id(event) == Some(1) {
                     1024
                 } else {
                     size / 5
                 },
             0
         );
-        assert!(event.parallel_sources.unwrap() <= 3);
+        assert!(in_flight(event) <= 3);
     }
     assert_eq!(events.iter().filter(|event| event.finished).count(), 1);
     assert_eq!(events.last().unwrap().downloaded, size);
-    assert_eq!(events.last().unwrap().attempt, Some(5));
+    assert_eq!(primary_id(events.last().unwrap()), Some(5));
     assert!(started.len() >= 5, "both test replacements must start");
     assert!(
         started
@@ -607,6 +601,7 @@ impl TestServer {
             .map(|id| DownloadCandidate {
                 route: DownloadRoute::Proxy,
                 url: format!("http://{}/{id}", self.address),
+                identity: None,
             })
             .collect()
     }
@@ -711,10 +706,10 @@ async fn chunked_proxy_without_content_length_publishes_real_percentages_from_me
         },
         Some(DownloadContext {
             execution: None,
-            app: None,
             label: "test",
             file_name: None,
             expected_size: Some(size),
+            race_session: None,
         }),
         RacePolicy {
             tick: Duration::from_millis(2),
@@ -738,7 +733,10 @@ async fn chunked_proxy_without_content_length_publishes_real_percentages_from_me
         events
             .iter()
             .filter(|event| event.downloaded > 0 && !event.finished)
-            .all(|event| event.phase == DownloadPhase::Downloading)
+            .all(|event| matches!(
+                event.phase,
+                DownloadPhase::Downloading | DownloadPhase::Verifying
+            ))
     );
     assert_eq!(events.iter().filter(|event| event.finished).count(), 1);
     assert_eq!(events.last().unwrap().downloaded, size);
@@ -833,10 +831,10 @@ async fn configured_sequence_attempts_only_one_candidate_and_stops_after_success
         },
         &NetworkConfig::default(),
         Some(DownloadContext {
-            app: None,
             label: "sequence",
             file_name: None,
             expected_size: None,
+            race_session: None,
             execution: Some(DownloadExecution {
                 max_parallelism: 1,
                 race: false,
@@ -874,10 +872,10 @@ async fn configured_race_honors_two_candidate_limit() {
         },
         &NetworkConfig::default(),
         Some(DownloadContext {
-            app: None,
             label: "race",
             file_name: None,
             expected_size: None,
+            race_session: None,
             execution: Some(DownloadExecution {
                 max_parallelism: 2,
                 race: true,

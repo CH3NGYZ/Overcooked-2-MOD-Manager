@@ -20,15 +20,12 @@ const saving = shallowRef(false)
 const disabled = computed(() => saving.value || props.disabled || !props.config || demoActive.value)
 let disposed = false
 
-const speedValues = [32, 64, 128, 256, 512, 1024, 2048]
-const speedOptions = speedValues.map(value => ({ value, label: `${value} KB/s` }))
-const secondOptions = computed(() => Array.from({ length: 16 }, (_, index) => {
-  const value = index + 5
+const { timeout_min_seconds: min, timeout_max_seconds: max } = downloadDefaults
+const secondOptions = computed(() => Array.from({ length: max - min + 1 }, (_, index) => {
+  const value = index + min
   return { value, label: t('settings.downloadSeconds', { seconds: value }) }
 }))
 const rows = [
-  { key: 'race_min_speed_kbps', title: 'settings.downloadMinSpeed', hint: 'settings.downloadMinSpeedHint' },
-  { key: 'race_window_seconds', title: 'settings.downloadRaceWindow', hint: 'settings.downloadRaceWindowHint' },
   { key: 'api_timeout_seconds', title: 'settings.downloadApiTimeout', hint: 'settings.downloadApiTimeoutHint' },
   { key: 'first_byte_timeout_seconds', title: 'settings.downloadFirstByteTimeout', hint: 'settings.downloadFirstByteTimeoutHint' },
 ] as const
@@ -43,7 +40,7 @@ function currentValue(key: DownloadSetting) {
 
 async function save(key: DownloadSetting, value: number) {
   if (disposed || disabled.value || currentValue(key) === value) return
-  if (!Number.isInteger(value) || (key === 'race_min_speed_kbps' ? !speedValues.includes(value) : value < 5 || value > 20)) return
+  if (!Number.isInteger(value) || value < min || value > max) return
   const originalValue = props.config?.network[key]
   saving.value = true
   emit('saving', true)
@@ -74,7 +71,7 @@ onBeforeUnmount(() => { disposed = true; emit('saving', false) })
   <SettingsGroup :title="t('settings.downloadSettings')" data-testid="download-settings">
     <SettingsRow v-for="row in localizedRows" :key="row.key" :title="row.title" :description="row.hint" :description-title="row.hint">
       <template #right>
-        <n-select :value="currentValue(row.key)" :options="row.key === 'race_min_speed_kbps' ? speedOptions : secondOptions"
+        <n-select :value="currentValue(row.key)" :options="secondOptions"
           style="width: 304px; max-width: 100%" :loading="saving" :disabled="disabled"
           :aria-label="row.title" :data-testid="`download-${row.key}`"
           @update:value="(value: number) => save(row.key, value)" />

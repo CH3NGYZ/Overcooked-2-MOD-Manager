@@ -12,9 +12,9 @@ use uuid::Uuid;
 
 #[tauri::command]
 pub async fn analyze_mod_source(
-    app: tauri::AppHandle,
     state: State<'_, AppState>,
     source: ModSource,
+    on_update: tauri::ipc::Channel<crate::archive::DownloadProgress>,
 ) -> Result<ModPreview, String> {
     cleanup_stale_previews(&state);
     let (local_path, file_name) = match source.kind {
@@ -31,8 +31,12 @@ pub async fn analyze_mod_source(
             (path, name)
         }
         ModSourceKind::Url => {
-            let (path, name) =
-                crate::direct_mod::download_for_preview(&app, &state, &source.value).await?;
+            let (path, name) = crate::archive::channel_download_progress(
+                true,
+                on_update,
+                crate::direct_mod::download_for_preview(&state, &source.value),
+            )
+            .await?;
             (path, name)
         }
     };

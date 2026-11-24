@@ -3,17 +3,17 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { createStartupPreflight } from '../src/startupPreflight.ts'
 
-test('startup diagnostics shares the selected official snapshot instead of a separate Raw request', () => {
+test('startup diagnostics awaits the selected official snapshot and supports cancellation', () => {
   const source = readFileSync('src-tauri/src/repository_sources/preflight.rs', 'utf8')
   const production = source.slice(0, source.indexOf('struct ActiveGuard'))
   const command = readFileSync('src-tauri/src/commands/system.rs', 'utf8')
-  assert.ok(production.includes('config.official_root(false)'))
+  assert.match(production, /result = config\.official_root\(false\)\s*=>/)
   assert.match(command, /pub async fn probe_startup_source\(\s*state: State<'_, AppState>,?\s*\) -> Result<crate::repository_sources::StartupProbe, String>/, 'Tauri async State commands must return Result')
   assert.match(command, /let config = state\.config\.clone\(\);\s*Ok\(crate::repository_sources::probe_startup_source\(&config\)\.await\)/)
   assert.ok(!production.includes('DataProvider::Github'))
   assert.ok(!production.includes('SourceLocation::parse'))
-  assert.ok(production.includes('Duration::from_secs(10)'))
-  assert.ok(production.includes('cancelled.changed()'))
+  assert.doesNotMatch(production, /\btimeout(?:_at)?\s*\(/)
+  assert.match(production, /_ = cancelled\.changed\(\)\s*=> StartupProbe::failed\("cancelled"\)/)
 })
 
 const deferred = () => {

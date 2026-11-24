@@ -149,7 +149,8 @@ async fn installed_priority_changes_execution_but_not_map_or_progress_order() {
     let targets = register_sources(&observer, "release-tags");
     let previous: Vec<_> = targets.iter().map(map_for).collect();
     let cache = crate::release_cache::RepoReleaseCache::default();
-    for target in &targets {
+    let config = crate::config::default_config();
+    for (target, map) in targets.iter().zip(&previous) {
         let id = &target.label.id;
         let json = serde_json::json!([{
             "tag_name": "z-map",
@@ -164,10 +165,10 @@ async fn installed_priority_changes_execution_but_not_map_or_progress_order() {
         }]);
         cache
             .list(
-                crate::releases::repository_cache_key(
-                    crate::models::Provider::Github,
-                    "map-source-order-test",
-                    id,
+                crate::releases::release_cache_key_for_test(
+                    &crate::releases::RepositoryRequest::from(map),
+                    &config.region,
+                    None,
                 ),
                 None,
                 false,
@@ -180,7 +181,6 @@ async fn installed_priority_changes_execution_but_not_map_or_progress_order() {
             .unwrap();
     }
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let config = crate::config::default_config();
     let ctx = MapSourceContext {
         observer: Some(&observer),
         cache: &cache,

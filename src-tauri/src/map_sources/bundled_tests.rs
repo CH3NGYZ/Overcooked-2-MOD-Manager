@@ -95,10 +95,9 @@ async fn real_gitcode_bundle_loads_release_declarations() {
     let client = crate::releases::build_client(std::time::Duration::from_secs(30)).unwrap();
     let source = declaration("maps-oc2-map-bundle");
     let probe = super::release_tags::declaration_request(&source);
-    let releases =
-        crate::releases::fetch_releases(&client, &probe, &config.region, None, true, &[])
-            .await
-            .unwrap_or_else(|error| panic!("real public Release API failed: {error}"));
+    let releases = crate::releases::fetch_releases(&client, &probe, &config.region, None)
+        .await
+        .unwrap_or_else(|error| panic!("real public Release API failed: {error}"));
     println!("public API returned {} releases", releases.len());
     let cache = crate::release_cache::RepoReleaseCache::default();
     let context = super::context::MapSourceContext {

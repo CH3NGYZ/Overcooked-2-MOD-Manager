@@ -1,47 +1,79 @@
-use super::planning::plan_asset_download_candidates;
+use super::planning::plan_repository_download;
 use super::{
-    DownloadCandidate as AssetDownloadCandidate, candidate_progress as asset_candidate_progress,
+    DownloadCandidate as AssetDownloadCandidate,
     try_download_candidates as try_asset_download_candidates,
 };
 use crate::archive::{self, DownloadRoute as AssetDownloadRoute};
-use crate::models::{NetworkConfig, ProxyMode};
+use crate::models::{NetworkConfig, NetworkPlanSelection, Provider, RepositoryKind};
 use std::path::PathBuf;
 
 const DIRECT: &str = "https://github.com/example/mod/releases/download/v1/mod.zip";
 
-#[test]
-fn connection_progress_identifies_route_without_leaking_asset_or_secrets() {
+fn release_race(limit: usize) -> Vec<AssetDownloadCandidate> {
+    let mut candidates = plan_repository_download(
+        &Provider::Github,
+        RepositoryKind::Mod,
+        &NetworkPlanSelection::default(),
+        "cn",
+        DIRECT,
+        None,
+        None,
+        None,
+    )
+    .unwrap()
+    .candidates;
+    candidates.truncate(limit);
+    candidates
+}
+
+#[tokio::test]
+async fn connection_progress_identifies_route_without_leaking_asset_or_secrets() {
     let candidate = AssetDownloadCandidate {
         route: AssetDownloadRoute::Proxy,
         url: "https://private-user:private-pass@proxy.example:8443/https://github.com/owner/repo/asset.zip?token=private-token#secret".into(),
+        identity: None,
     };
-    let progress = asset_candidate_progress("示例 MOD", &candidate, 1, 3);
+    let mut progress = None;
+    let result = super::try_download_candidates_with_progress(
+        vec![
+            candidate,
+            AssetDownloadCandidate {
+                route: AssetDownloadRoute::Direct,
+                url: DIRECT.into(),
+                identity: None,
+            },
+        ],
+        || false,
+        |_, _| std::future::ready(Ok(vec![42])),
+        &NetworkConfig::default(),
+        Some(super::DownloadContext {
+            execution: None,
+            label: "示例 MOD",
+            file_name: None,
+            expected_size: None,
+            race_session: None,
+        }),
+        |event| {
+            progress.get_or_insert(event);
+        },
+    )
+    .await;
+    assert_eq!(result.unwrap(), vec![42]);
+    let progress = progress.unwrap();
     let event = serde_json::to_value(&progress).unwrap();
     assert_eq!(event["phase"], "connecting");
     assert_eq!(event["route"], "proxy");
     assert_eq!(event["source"], "proxy.example:8443");
-    assert_eq!(event["attempt"], 1);
-    assert_eq!(event["attempt_total"], 3);
+    let race = progress.race.as_ref().unwrap();
+    assert_eq!(race.primary_id, Some(1));
+    assert_eq!(race.sources.len(), 2);
+    assert_eq!(race.sources[1].source.as_deref(), Some("github.com"));
     assert_eq!(progress.downloaded, 0);
     assert_eq!(progress.total, None);
     assert!(!progress.finished);
     for secret in ["private-user", "private-pass", "private-token", "asset.zip"] {
         assert!(!event.to_string().contains(secret));
     }
-
-    let fallback = asset_candidate_progress(
-        "示例 MOD",
-        &AssetDownloadCandidate {
-            route: AssetDownloadRoute::Direct,
-            url: DIRECT.into(),
-        },
-        3,
-        3,
-    );
-    assert_eq!(fallback.phase, archive::DownloadPhase::Switching);
-    assert_eq!(fallback.route, Some(archive::DownloadRoute::Direct));
-    assert_eq!(fallback.source.as_deref(), Some("github.com"));
-    assert_eq!(fallback.downloaded, 0);
 }
 
 #[tokio::test]
@@ -49,6 +81,7 @@ async fn download_candidate_failure_logs_partial_bytes_and_hides_query_and_url()
     let candidate = AssetDownloadCandidate {
         route: AssetDownloadRoute::Proxy,
         url: "https://private-download-fixture.example/private-file?token=fixture-secret".into(),
+        identity: None,
     };
     let capture = crate::http_diagnostics::capture_test_logs(
         "app_lib::download",
@@ -64,10 +97,10 @@ async fn download_candidate_failure_logs_partial_bytes_and_hides_query_and_url()
         &NetworkConfig::default(),
         Some(super::DownloadContext {
             execution: None,
-            app: None,
             label: "fixture-download-log",
             file_name: None,
             expected_size: Some(20),
+            race_session: None,
         }),
     )
     .await;
@@ -88,25 +121,13 @@ async fn download_candidate_failure_logs_partial_bytes_and_hides_query_and_url()
 
 #[tokio::test]
 async fn every_fallback_candidate_can_announce_context_before_waiting() {
-    let candidates = plan_asset_download_candidates(
-        ProxyMode::AutoProxy,
-        DIRECT,
-        vec![
-            "https://first.example/asset".into(),
-            "https://second.example/asset".into(),
-        ],
-    )
-    .unwrap();
-    let total = candidates.len();
+    let candidates = release_race(3);
     let mut events = Vec::new();
-    let result: Result<PathBuf, String> = try_asset_download_candidates(
+    let result: Result<PathBuf, String> = super::try_download_candidates_with_progress(
         candidates,
         || false,
         |candidate, _reporter| {
-            let progress =
-                asset_candidate_progress("示例 MOD", &candidate, events.len() + 1, total);
             let route = candidate.route;
-            events.push(progress);
             async move {
                 // Simulate a request which has yielded without response
                 // bytes. The endpoint announcement already exists.
@@ -119,35 +140,39 @@ async fn every_fallback_candidate_can_announce_context_before_waiting() {
             }
         },
         &NetworkConfig::default(),
-        None,
+        Some(super::DownloadContext {
+            execution: None,
+            label: "示例 MOD",
+            file_name: None,
+            expected_size: None,
+            race_session: None,
+        }),
+        |event| events.push(event),
     )
     .await;
     assert!(result.is_ok());
-    assert_eq!(events.len(), 3);
-    assert_eq!(events[0].phase, archive::DownloadPhase::Connecting);
-    assert_eq!(events[1].phase, archive::DownloadPhase::Switching);
-    assert_eq!(events[0].route, Some(archive::DownloadRoute::Direct));
+    let rows = &events[0].race.as_ref().unwrap().sources;
+    assert_eq!(rows.len(), 3);
+    assert!(
+        rows.iter()
+            .all(|row| row.phase == archive::DownloadSourcePhase::Connecting)
+    );
+    assert_eq!(rows[0].route, archive::DownloadRoute::Direct);
     assert_eq!(
-        events
-            .iter()
+        rows.iter()
             .map(|event| event.source.as_deref())
             .collect::<Vec<_>>(),
         [
             Some("github.com"),
-            Some("first.example"),
-            Some("second.example")
+            Some("git.yylx.win"),
+            Some("cdn.gh-proxy.org")
         ]
     );
 }
 
 #[tokio::test]
 async fn pool_stops_on_success_and_cancel() {
-    let candidates = plan_asset_download_candidates(
-        ProxyMode::AutoProxy,
-        DIRECT,
-        vec!["https://proxy.example/asset".into()],
-    )
-    .unwrap();
+    let candidates = release_race(2);
     let mut tried = Vec::new();
     let result: Result<PathBuf, String> = try_asset_download_candidates(
         candidates,
@@ -170,12 +195,7 @@ async fn pool_stops_on_success_and_cancel() {
         [AssetDownloadRoute::Direct, AssetDownloadRoute::Proxy]
     );
 
-    let candidates = plan_asset_download_candidates(
-        ProxyMode::AutoDirect,
-        DIRECT,
-        vec!["https://proxy.example/asset".into()],
-    )
-    .unwrap();
+    let candidates = release_race(2);
     let mut attempted = 0;
     let result: Result<PathBuf, String> = try_asset_download_candidates(
         candidates,
@@ -193,12 +213,7 @@ async fn pool_stops_on_success_and_cancel() {
     // result is received. No later candidate may start after cancellation.
     assert_eq!(attempted, 2);
 
-    let candidates = plan_asset_download_candidates(
-        ProxyMode::AutoProxy,
-        DIRECT,
-        vec!["https://proxy.example/asset".into()],
-    )
-    .unwrap();
+    let candidates = release_race(2);
     let cancellation = std::cell::Cell::new(false);
     let mut attempted = 0;
     let result: Result<PathBuf, String> = try_asset_download_candidates(

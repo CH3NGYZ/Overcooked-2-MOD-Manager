@@ -225,8 +225,10 @@ fn repository_bundle_export_follows_editor_order_and_roundtrips() {
     release.group = "测试分组".into();
     release.version_regex = r"^1\.\d+\.\d+$".into();
     release.download_threads = 16;
-    release.network_plan =
-        toml::from_str("international = { release = { download_threads = 4 } }").unwrap();
+    release.network_plan = toml::from_str(
+        "international = { release = { download_threads = 4, race = false, max_parallelism = 1 } }",
+    )
+    .unwrap();
     let mut raw = release.clone();
     raw.name = "Raw MOD".into();
     raw.name_i18n.insert("zh-CN".into(), "Raw MOD".into());

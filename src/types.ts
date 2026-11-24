@@ -202,7 +202,7 @@ export interface PublicConfig {
   /** 已经看过的教程步骤 id；启动时只播不在里面的步骤。 */
   tutorial_watched_steps?: string[]
   game: { path: string; runtime: GameRuntime }
-  network: { timeout_seconds: number; download_threads: number; max_retry_count: number; race_min_speed_kbps: number; race_window_seconds: number; api_timeout_seconds: number; first_byte_timeout_seconds: number }
+  network: { timeout_seconds: number; download_threads: number; max_retry_count: number; api_timeout_seconds: number; first_byte_timeout_seconds: number }
   launch: { ask_user_to_start_from_steam: boolean; auto_restore_winhttp: boolean }
   official_api_only: boolean
   github_token_set: boolean
@@ -662,20 +662,38 @@ export interface PermissionStatus {
 export interface ModRepositoryInstallOutcome extends OperationResult {
   preview?: ModPreview
 }
+export interface DownloadRaceSource {
+  id: number
+  route: 'direct' | 'proxy'
+  source?: string | null
+  downloaded: number
+  total: number | null
+  speed_bytes: number | null
+  phase: 'connecting' | 'downloading' | 'verifying' | 'failed' | 'stopped' | 'finished'
+  history_preferred: boolean
+  error?: string | null
+}
+export interface DownloadRaceProgress {
+  id: string
+  primary_id?: number | null
+  locked_id?: number | null
+  can_lock: boolean
+  waiting: number
+  elapsed_ms: number
+  sources: readonly DownloadRaceSource[]
+}
 export interface DownloadProgress {
   label: string
   /** Actual transfer file name; label remains the display name for the download task. */
   file_name?: string
   downloaded: number
-  total?: number
+  total?: number | null
   speed_bytes: number
   finished: boolean
-  phase?: 'connecting' | 'switching' | 'downloading' | 'merging' | 'finished'
+  phase?: 'connecting' | 'switching' | 'downloading' | 'verifying' | 'locked_failed' | 'merging' | 'finished'
   route?: 'direct' | 'proxy'
-  source?: string
-  attempt?: number
-  attempt_total?: number
-  parallel_sources?: number
+  source?: string | null
+  race?: DownloadRaceProgress
   volumes?: {
     name: string
     state: 'pending' | 'downloading' | 'completed' | 'failed'
@@ -697,9 +715,9 @@ export interface AppUpdateCheckResult {
   distribution?: AppDistribution; update?: AppUpdateInfo; channels: AppUpdateChannelStatus[]; all_failed: boolean; region: string
   recovery_required?: boolean; installation_status?: AppUpdateInstallationStatus | null
 }
-export type DataProvider = 'github' | 'gitee' | 'gitcode' | 'cloudflare' | 'builtin'
+export type DataProvider = 'github' | 'gitee' | 'gitcode' | 'cloudflare' | 'edgeone' | 'builtin'
 export type UserRegion = 'cn' | 'global'
-export interface SettingsPatch { region?: UserRegion; ui_zoom?: number; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; game_path?: string; game_runtime?: GameRuntime; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; race_min_speed_kbps?: number; race_window_seconds?: number; api_timeout_seconds?: number; first_byte_timeout_seconds?: number; data_provider?: DataProvider; mod_metadata_concurrency?: number; map_info_concurrency?: number; map_compression_concurrency?: number; diychef_preview_concurrency?: number; tutorial_watched_steps?: string[] }
+export interface SettingsPatch { region?: UserRegion; ui_zoom?: number; hide_unidentified_mods?: boolean; recycle_deleted_mods?: boolean; game_path?: string; game_runtime?: GameRuntime; official_api_only?: boolean; timeout_seconds?: number; download_threads?: number; api_timeout_seconds?: number; first_byte_timeout_seconds?: number; data_provider?: DataProvider; mod_metadata_concurrency?: number; map_info_concurrency?: number; map_compression_concurrency?: number; diychef_preview_concurrency?: number; tutorial_watched_steps?: string[] }
 export interface TokenPatch { github_token: string; gitee_token: string; gitcode_token?: string; clear?: boolean }
 export interface ModRepositoryPatch {
   id?: string

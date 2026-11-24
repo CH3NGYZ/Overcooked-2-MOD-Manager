@@ -25,6 +25,7 @@ pub async fn stage_map_source(
     app: AppHandle,
     state: State<'_, AppState>,
     source: crate::mod_preview::ModSource,
+    on_update: tauri::ipc::Channel<archive::DownloadProgress>,
 ) -> Result<StagedMapSource, String> {
     let stage = uuid::Uuid::new_v4();
     log::info!("开始暂存地图来源 stage={stage} kind={:?}", source.kind);
@@ -45,13 +46,16 @@ pub async fn stage_map_source(
                 (path, None)
             }
             crate::mod_preview::ModSourceKind::Url => {
-                let (temp, file_name) = crate::direct_mod::download_remote_to_temp(
-                    &app,
-                    &state,
-                    &source.value,
-                    "levelSet.installMap",
-                    crate::direct_mod::DIRECT_DOWNLOAD_THREADS,
-                    crate::direct_mod::RemoteValidation::Zip,
+                let (temp, file_name) = archive::channel_download_progress(
+                    true,
+                    on_update,
+                    crate::direct_mod::download_remote_to_temp(
+                        &state,
+                        &source.value,
+                        "levelSet.installMap",
+                        crate::direct_mod::DIRECT_DOWNLOAD_THREADS,
+                        crate::direct_mod::RemoteValidation::Zip,
+                    ),
                 )
                 .await?;
                 (temp, Some(file_name))
@@ -226,6 +230,7 @@ pub async fn stage_map_release(
     tag: Option<String>,
     asset_name: Option<String>,
     locale: Option<String>,
+    on_update: tauri::ipc::Channel<archive::DownloadProgress>,
 ) -> Result<StagedMapSource, String> {
     let stage = uuid::Uuid::new_v4();
     let id = redact_text(&format!("{map_id:?}"));
@@ -278,26 +283,30 @@ pub async fn stage_map_release(
         let cache_dir = state.config.cache_dir();
         let cache_scope =
             archive::release_download::ReleaseCacheScope::for_map(map, &release.tag_name, asset);
-        let temp = archive::release_download::download(
-            &client,
-            assets,
-            &cache_dir,
-            cache_scope.as_ref(),
-            &display_name,
-            Some(&app),
-            &config.network,
-            |url| {
-                crate::download::planning::plan_repository_download(
-                    &map.provider,
-                    crate::models::RepositoryKind::Map,
-                    &map.network_plan,
-                    &config.region,
-                    url,
-                    None,
-                    None,
-                    None,
-                )
-            },
+        let temp = archive::channel_download_progress(
+            true,
+            on_update,
+            archive::release_download::download(
+                &client,
+                assets,
+                &cache_dir,
+                cache_scope.as_ref(),
+                &display_name,
+                Some(&state.download_history),
+                &config.network,
+                |url| {
+                    crate::download::planning::plan_repository_download(
+                        &map.provider,
+                        crate::models::RepositoryKind::Map,
+                        &map.network_plan,
+                        &config.region,
+                        url,
+                        None,
+                        None,
+                        None,
+                    )
+                },
+            ),
         )
         .await?
         .into_path();

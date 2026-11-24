@@ -26,7 +26,7 @@ import { t } from '../i18n'
 import { tagColorFor } from '../theme'
 import { formatBackupLabel } from '../backupLabel'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
-import { beginDownloadTask, endDownloadTask, failDownloadTask } from '../downloadTask'
+import { beginDownloadTask, endDownloadTask, failDownloadTask, updateDownloadProgress } from '../downloadTask'
 import { markDialogBusy } from '../dialogBusy'
 import { useDashboard } from '../composables/useDashboardStore'
 import { useGameOperationGate } from '../composables/useGameOperationGate'
@@ -118,7 +118,7 @@ async function runInstall(reinstall: boolean) {
     retry: () => { void runInstall(reinstall) },
   })
   try {
-    const result = await api.installBepInEx(reinstall, installProvider.value)
+    const result = await api.installBepInEx(reinstall, installProvider.value, progress => updateDownloadProgress(progress, token))
     endDownloadTask(token)
     await afterInstall(result)
     /*

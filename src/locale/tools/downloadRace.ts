@@ -1,0 +1,28 @@
+import type { DomainMessages } from '../types.ts'
+
+export const toolsUiDownloadRace: DomainMessages = {
+  'downloadRace.heading': { 'zh-CN': '下载线路', 'zh-TW': '下載線路', en: 'Download routes', ko: '다운로드 경로', ja: 'ダウンロード経路' },
+  'downloadRace.active': { 'zh-CN': '{count} 路在试', 'zh-TW': '{count} 路測試中', en: 'Active: {count}', ko: '시도 중: {count}', ja: '試行中：{count}' },
+  'downloadRace.waiting': { 'zh-CN': '{count} 路待试', 'zh-TW': '{count} 路待測試', en: 'Queued: {count}', ko: '대기 중: {count}', ja: '待機中：{count}' },
+  'downloadRace.paused': { 'zh-CN': '{count} 路暂不尝试', 'zh-TW': '{count} 路暫不測試', en: 'On hold: {count}', ko: '보류: {count}', ja: '保留中：{count}' },
+  'downloadRace.preferred': { 'zh-CN': '优选', 'zh-TW': '優選', en: 'Preferred', ko: '우선 경로', ja: '優先経路' },
+  'downloadRace.historyPreferred': { 'zh-CN': '历史优选', 'zh-TW': '歷史優選', en: 'Past favorite', ko: '이전 기록 우선', ja: '実績で優先' },
+  'downloadRace.locked': { 'zh-CN': '已锁定', 'zh-TW': '已鎖定', en: 'Locked', ko: '잠김', ja: '固定中' },
+  'downloadRace.lock': { 'zh-CN': '锁定此线路', 'zh-TW': '鎖定此線路', en: 'Lock this route', ko: '이 경로 잠금', ja: 'この経路に固定' },
+  'downloadRace.unlock': { 'zh-CN': '解锁并自动选择', 'zh-TW': '解鎖並自動選擇', en: 'Unlock and choose automatically', ko: '잠금 해제 후 자동 선택', ja: '固定を解除して自動選択' },
+  'downloadRace.retry': { 'zh-CN': '重试此线路', 'zh-TW': '重試此線路', en: 'Retry this route', ko: '이 경로 재시도', ja: 'この経路で再試行' },
+  'downloadRace.expand': { 'zh-CN': '查看全部 {count} 条线路', 'zh-TW': '查看全部 {count} 條線路', en: 'Show all {count} routes', ko: '전체 경로 {count}개 보기', ja: 'すべての経路（{count}件）を表示' },
+  'downloadRace.collapse': { 'zh-CN': '收起线路', 'zh-TW': '收起線路', en: 'Show fewer routes', ko: '경로 접기', ja: '経路一覧を折りたたむ' },
+  'downloadRace.failedCount': { 'zh-CN': '失败 {count} 路', 'zh-TW': '失敗 {count} 路', en: 'Failed: {count}', ko: '실패: {count}', ja: '失敗：{count}' },
+  'downloadRace.stoppedCount': { 'zh-CN': '已停止 {count} 路', 'zh-TW': '已停止 {count} 路', en: 'Stopped: {count}', ko: '중지: {count}', ja: '停止：{count}' },
+  'downloadRace.expandRetired': { 'zh-CN': '查看失败和已停止的线路', 'zh-TW': '查看失敗和已停止的線路', en: 'Show failed and stopped routes', ko: '실패하거나 중지된 경로 보기', ja: '失敗・停止した経路を表示' },
+  'downloadRace.collapseRetired': { 'zh-CN': '收起失败和已停止的线路', 'zh-TW': '收起失敗和已停止的線路', en: 'Hide failed and stopped routes', ko: '실패하거나 중지된 경로 숨기기', ja: '失敗・停止した経路を隠す' },
+  'downloadRace.measuring': { 'zh-CN': '测速中', 'zh-TW': '測速中', en: 'Measuring speed', ko: '속도 측정 중', ja: '速度計測中' },
+  'downloadRace.connecting': { 'zh-CN': '等待首包', 'zh-TW': '等待首批資料', en: 'Waiting for data', ko: '데이터 대기 중', ja: 'データ待機中' },
+  'downloadRace.verifying': { 'zh-CN': '正在校验', 'zh-TW': '正在驗證', en: 'Verifying', ko: '검증 중', ja: '検証中' },
+  'downloadRace.failed': { 'zh-CN': '失败', 'zh-TW': '失敗', en: 'Failed', ko: '실패', ja: '失敗' },
+  'downloadRace.stopped': { 'zh-CN': '已停止', 'zh-TW': '已停止', en: 'Stopped', ko: '중지됨', ja: '停止' },
+  'downloadRace.finished': { 'zh-CN': '已采用', 'zh-TW': '已採用', en: 'Selected', ko: '선택됨', ja: '採用済み' },
+  'downloadRace.lockedFailed': { 'zh-CN': '锁定的线路失败', 'zh-TW': '鎖定的線路失敗', en: 'Locked route failed', ko: '잠긴 경로 실패', ja: '固定した経路が失敗' },
+  'downloadRace.switching': { 'zh-CN': '正在切换下载线路', 'zh-TW': '正在切換下載線路', en: 'Switching download route', ko: '다운로드 경로 전환 중', ja: 'ダウンロード経路を切り替え中' },
+}

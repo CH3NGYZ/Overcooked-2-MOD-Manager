@@ -1,4 +1,4 @@
-use super::ActiveSource;
+use super::race::ActiveSource;
 use std::cmp::Reverse;
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
@@ -12,6 +12,7 @@ pub(super) struct SourceSpeed {
     samples: VecDeque<(Instant, u64)>,
     has_full_window: bool,
     pub(super) bytes_per_second: u64,
+    last_advance: Option<Instant>,
 }
 
 impl SourceSpeed {
@@ -20,6 +21,13 @@ impl SourceSpeed {
         // waits are handled by the existing deadlines, not by a low speed estimate.
         if self.samples.is_empty() && transferred == 0 {
             return;
+        }
+        if self
+            .samples
+            .back()
+            .is_none_or(|(_, bytes)| transferred > *bytes)
+        {
+            self.last_advance = Some(now);
         }
         self.samples.push_back((now, transferred));
         while self.samples.len() > 1 && now.duration_since(self.samples[1].0) >= window {
@@ -35,6 +43,64 @@ impl SourceSpeed {
     pub(super) fn comparable_speed(&self) -> Option<u64> {
         self.has_full_window.then_some(self.bytes_per_second)
     }
+
+    pub(super) fn display_speed(&self) -> Option<u64> {
+        (self.samples.len() >= 2).then_some(self.bytes_per_second)
+    }
+
+    pub(super) fn stalled(&self, now: Instant, first_byte: Instant) -> bool {
+        now.duration_since(self.last_advance.unwrap_or(first_byte)) >= Duration::from_secs(3)
+    }
+}
+
+pub(super) fn fastest_backup(sources: &HashMap<usize, ActiveSource>) -> Option<usize> {
+    sources
+        .iter()
+        .max_by_key(|(id, source)| {
+            (
+                source.verifying(),
+                source.speed.display_speed().unwrap_or_default(),
+                source.reporter.snapshot().downloaded,
+                Reverse(**id),
+            )
+        })
+        .map(|(id, _)| *id)
+}
+
+pub(super) fn probe_should_stop(
+    primary: &ActiveSource,
+    probe: &ActiveSource,
+    expected: Option<u64>,
+) -> bool {
+    if primary.verifying() {
+        return false;
+    }
+    let primary_progress = primary.reporter.snapshot();
+    let probe_progress = probe.reporter.snapshot();
+    let primary_total = expected.or(primary_progress.total).filter(|size| *size > 0);
+    let probe_total = expected.or(probe_progress.total).filter(|size| *size > 0);
+    let total = primary_total.filter(|size| Some(*size) == probe_total);
+    let sample_bytes = total.map_or(1024 * 1024, |size| {
+        size.min((size / 10).clamp(256 * 1024, 2 * 1024 * 1024))
+    });
+    if probe_progress.downloaded < sample_bytes {
+        return false;
+    }
+    let (Some(primary_speed), Some(probe_speed)) =
+        (primary.speed.display_speed(), probe.speed.display_speed())
+    else {
+        return false;
+    };
+    if primary_speed == 0 {
+        return false;
+    }
+    if let Some(size) = total {
+        let primary_remaining = u128::from(size.saturating_sub(primary_progress.downloaded));
+        let probe_remaining = u128::from(size.saturating_sub(probe_progress.downloaded));
+        return probe_remaining * u128::from(primary_speed)
+            > primary_remaining * u128::from(probe_speed);
+    }
+    probe_speed.saturating_mul(4) < primary_speed.saturating_mul(3)
 }
 
 pub(super) fn switching_candidate(

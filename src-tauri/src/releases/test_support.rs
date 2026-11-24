@@ -1,4 +1,3 @@
-const FIXTURE_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 use crate::releases::RepositoryRequest;
 use reqwest::Client;
 use std::io::{Read, Write};
@@ -7,6 +6,9 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
+use std::time::Duration;
+
+const FIXTURE_IO_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(super) struct ApiTestServer {
     pub(super) url: String,
@@ -17,6 +19,13 @@ pub(super) struct ApiTestServer {
 
 impl ApiTestServer {
     pub(super) fn new(responses: Vec<(&'static str, &'static str)>) -> Self {
+        Self::with_body_delay(responses, Duration::ZERO)
+    }
+
+    pub(super) fn with_body_delay(
+        responses: Vec<(&'static str, &'static str)>,
+        body_delay: Duration,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         listener.set_nonblocking(true).unwrap();
@@ -38,6 +47,7 @@ impl ApiTestServer {
                 // Windows accepted sockets inherit the listener's mode.
                 stream.set_nonblocking(false).unwrap();
                 stream.set_read_timeout(Some(FIXTURE_IO_TIMEOUT)).unwrap();
+                stream.set_write_timeout(Some(FIXTURE_IO_TIMEOUT)).unwrap();
                 let mut request = Vec::new();
                 let mut buffer = [0; 1024];
                 while !request.windows(4).any(|part| part == b"\r\n\r\n") {
@@ -60,10 +70,16 @@ impl ApiTestServer {
                 index += 1;
                 write!(
                     stream,
-                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                     body.len()
                 )
                 .unwrap();
+                if !body_delay.is_zero() {
+                    std::thread::sleep(body_delay);
+                    let _ = stream.write_all(body.as_bytes());
+                } else {
+                    stream.write_all(body.as_bytes()).unwrap();
+                }
             }
         });
         Self {

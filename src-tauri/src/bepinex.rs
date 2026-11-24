@@ -64,6 +64,27 @@ impl Package {
         }
     }
 
+    pub(crate) fn plan_download(
+        self,
+        provider: &Provider,
+        region: &str,
+    ) -> Result<crate::download::planning::RepositoryDownloadPlan, String> {
+        use crate::download::planning::{plan_repository_download, provider_for_remote_url};
+        use crate::models::{NetworkPlanSelection, RepositoryKind};
+        let url = self.url(provider);
+        let asset_provider = provider_for_remote_url(url).ok_or("direct.invalidUrl")?;
+        plan_repository_download(
+            &asset_provider,
+            RepositoryKind::Mod,
+            &NetworkPlanSelection::default(),
+            region,
+            url,
+            None,
+            None,
+            None,
+        )
+    }
+
     pub(crate) fn digest(self) -> &'static str {
         match self {
             Self::Windows => {

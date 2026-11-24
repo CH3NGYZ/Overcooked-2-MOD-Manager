@@ -10,6 +10,7 @@ mod merge;
 mod ownership;
 mod state;
 
+pub(crate) use catalog::filters_source_archives;
 #[cfg(test)]
 pub use catalog::{GITEE_SOURCE_ID, SOURCE_ID, source};
 pub(crate) use catalog::{REQUIRED_TOPICS, SearchResults, repository_from_coordinates};

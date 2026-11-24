@@ -240,6 +240,8 @@ install_target = "BepInEx/plugins"
 enabled = true
 asset_rules = [{type = "exact", value = "mod.dll"}]
 network_plan.mainland.release.download_threads = 4
+network_plan.mainland.release.race = false
+network_plan.mainland.release.max_parallelism = 1
 [[repository_sources]]
 id = "child"
 nickname = "child"
@@ -275,7 +277,10 @@ url = "mods/child.toml"
 
 #[test]
 fn sparse_child_override_is_validated_after_inheriting_the_parent_plan() {
-    let parent = toml::from_str("mainland = 'github-public'").unwrap();
+    let parent = toml::from_str(
+        "mainland = { id = 'github-public', release = { race = false, max_parallelism = 1 } }",
+    )
+    .unwrap();
     let text = r#"type = "mod"
 network_plan.mainland.release.download_threads = 4
 [[repositories]]

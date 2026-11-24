@@ -179,7 +179,7 @@ test('chain preparation feeds the shared race overlay from isolated IPC and a re
  globalThis.__changeStoreApi=async(name,args)=>{calls.push([name,...args]);if(name==='planModChanges')return plan();if(name==='prepareModChanges'){emit=args[1];return prepared.promise}if(name==='executeModChanges')return{ok:true,message:''};return snapshot('done')}
  const store=useModChanges(),pending=store.run({roots:[{node_id:'mod:root',enabled:true}]});await tick()
  assert.equal(store.state.value.phase,'confirming');assert.equal(downloadTaskState.running,null)
- const confirm=store.confirm();assert.equal(store.state.value.phase,'preparing');assert.equal(downloadTaskState.running.progressSource,'caller')
+ const confirm=store.confirm();assert.equal(store.state.value.phase,'preparing');assert.equal(typeof downloadTaskState.running.cancel,'function')
  const progress={plan_id:'initial',stage:'downloading',actions:[],active_node_id:'mod:root',items:[{node_id:'mod:root',candidate_id:'v1',label:'Root',stage:'downloading',download:{label:'asset',downloaded:6,total:10,speed_bytes:50,finished:false}}]}
  emit({...progress,plan_id:'unrelated'});assert.equal(store.preparation.value,null)
  emit(progress);assert.equal(store.preparation.value.items[0].download.downloaded,6)

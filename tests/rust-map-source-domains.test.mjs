@@ -13,8 +13,8 @@ const owners = {
   tree: ['bundled_map_tree', 'load_map_tree', 'load_map_document', 'fill_missing_source_names'],
   community: ['community_map_declaration', 'append_community_map_maps'],
   release_tags: ['load_release_tag_maps', 'note_block_map'],
-  transport: ['load_document', 'verified_document'],
-  context: ['token', 'api_proxies', 'previous_for'],
+  transport: ['load_document', 'release_integrity'],
+  context: ['token', 'previous_for'],
   releases: ['fetch_map_release_data', 'select_map_stage_asset'],
   view: ['map_to_info'],
 }
@@ -41,14 +41,14 @@ test('map loading shares transport and cache while retaining tag assets and runt
   const transport = read('transport.rs')
   assert.match(transport, /crate::repository_sources::load_verified_text_document\(/)
   assert.match(transport, /crate::repository_sources::load_text_document\(/)
-  assert.match(transport, /crate::download::planning::plan_remote_download_candidates\(/)
+  assert.match(transport, /plan_source_document\(\s*&provider,\s*RepositoryKind::Map,\s*inherited,/)
+  assert.doesNotMatch(transport, /plan_remote_download_candidates|legacy_entry/)
   for (const file of ['transport.rs', 'release_tags.rs', 'releases.rs']) {
-    assert.match(read(file), /\.cache\s*\.list\(key, ctx\.pass_id,/)
+    assert.match(read(file), /crate::releases::cached_releases\([\s\S]*?ctx\.pass_id,/)
+    assert.doesNotMatch(read(file), /\.cache\s*\.list\(/)
   }
   const tags = read('release_tags.rs')
-  assert.match(tags, /crate::releases::repository_cache_key/)
   assert.doesNotMatch(tags, /"\{\}::all"/)
-  assert.match(tags, /crate::releases::fetch_releases\(/)
   assert.match(tags, /return Err\(ConfigError::Invalid\(error\)\)/)
   assert.doesNotMatch(tags, /return Ok\(previous\)/)
   assert.match(read('community.rs'), /load_release_tag_maps\(&declaration, &label, false, origin, ctx\)/)

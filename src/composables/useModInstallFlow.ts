@@ -6,7 +6,7 @@ import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import { t } from '../i18n'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
-import { beginDownloadTask, endDownloadTask, failDownloadTask } from '../downloadTask'
+import { beginDownloadTask, endDownloadTask, failDownloadTask, updateDownloadProgress } from '../downloadTask'
 import { useModChanges } from '../modChanges/store'
 import type { InstallSource, ModPreview } from '../types'
 
@@ -45,7 +45,8 @@ export function useModInstallFlow() {
       if (source.kind === 'local' && entry !== 'routed' && !(await acceptDrop(source.value, 'mod'))) return
       if (entry === 'drop' && blockModOperation()) return
       if (entry !== 'picker') sourceOpen.value = true
-      const next = await api.analyzeModSource(source.kind, source.value)
+      const next = await api.analyzeModSource(source.kind, source.value,
+        token === null ? undefined : progress => updateDownloadProgress(progress, token))
       if (token !== null) endDownloadTask(token)
       sourceOpen.value = false
       await openPreview(next)

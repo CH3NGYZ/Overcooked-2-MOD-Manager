@@ -116,7 +116,7 @@ pub fn validate_zip(zip_path: &Path) -> Result<(), String> {
     validate_zip_with_cancel(zip_path, || false)
 }
 
-pub(super) fn validate_zip_with_cancel(
+pub(crate) fn validate_zip_with_cancel(
     zip_path: &Path,
     cancelled: impl Fn() -> bool,
 ) -> Result<(), String> {

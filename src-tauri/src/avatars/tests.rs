@@ -213,6 +213,7 @@ async fn sequential_avatar_fetch_stops_after_valid_image_and_reuses_cache() {
         .map(|path| DownloadCandidate {
             route: DownloadRoute::Direct,
             url: format!("http://{address}/{path}"),
+            identity: None,
         })
         .collect();
     let bytes = fetch_and_store_candidates(
@@ -267,66 +268,23 @@ fn non_image_payloads_are_rejected() {
  */
 #[test]
 fn avatar_candidates_are_not_rewritten_into_raw_paths() {
-    let proxy = |id: &str, template: &str| crate::models::GitHubProxy {
-        id: id.into(),
-        name: id.into(),
-        template: template.into(),
-        regions: Vec::new(),
-        description: String::new(),
-        enabled: true,
-        builtin: true,
-        remote: false,
-    };
-    let proxies = vec![
-        proxy("wrap", "https://wrap.example/{url}"),
-        // 依赖 owner/repo/branch/path 的模板：raw 模式下会被喂进错误的分段
-        proxy(
-            "rawstyle",
-            "https://rawstyle.example/{owner}/{repo}/{branch}/{path}",
-        ),
-    ];
-    let url = direct_url(&Provider::Github, "gua248");
-
-    // 错误的写法：raw 模式会把 .png 当成 owner 并拼出空 repo/分支
-    let raw_mode = crate::download::planning::asset_proxy_urls(
-        &proxies,
-        &url,
-        true,
-        "",
-        "",
-        crate::models::ProxyMode::AutoProxy,
-        None,
+    let candidates =
+        crate::download::planning::plan_avatar_download(&Provider::Github, "cn", "gua248").unwrap();
+    let urls = candidates
+        .into_iter()
+        .map(|candidate| candidate.url)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        urls.first().map(String::as_str),
+        Some("https://github.com/gua248.png")
     );
     assert!(
-        raw_mode
-            .iter()
-            .any(|candidate| candidate.contains("raw.githubusercontent.com")
-                || candidate.contains("//main")),
-        "raw 模式应当能复现畸形地址，否则这条测试没有意义：{raw_mode:?}"
+        urls.iter()
+            .any(|url| url == "https://ghp.keleyaa.com/https://github.com/gua248.png")
     );
-
-    // 正确写法：非 raw 模式，不得出现被改写或空段拼接的地址
-    let avatar_mode = crate::download::planning::asset_proxy_urls(
-        &proxies,
-        &url,
-        false,
-        "",
-        "",
-        crate::models::ProxyMode::AutoProxy,
-        None,
-    );
-    for candidate in &avatar_mode {
-        assert!(
-            !candidate.contains("raw.githubusercontent.com"),
-            "不应被改写成 raw 路径：{candidate}"
-        );
-        assert!(!candidate.contains("//main"), "不应拼出空分支：{candidate}");
-    }
     assert!(
-        avatar_mode
-            .iter()
-            .any(|candidate| candidate == "https://wrap.example/https://github.com/gua248.png"),
-        "纯包装模板必须原样渲染：{avatar_mode:?}"
+        urls.iter()
+            .all(|url| !url.contains("raw.githubusercontent.com") && !url.contains("//main"))
     );
 }
 

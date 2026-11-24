@@ -318,6 +318,7 @@ export const error: DomainMessages = {
     ko: '다운로드가 취소되었습니다',
     ja: 'ダウンロードを中止しました',
   },
+  'download.raceUnavailable': { 'zh-CN': '这条线路已无法操作', 'zh-TW': '這條線路已無法操作', en: 'This route can no longer be changed', ko: '이 경로는 더 이상 변경할 수 없습니다', ja: 'この経路はもう変更できません' },
   'download.empty': {
     'zh-CN': '下载文件为空',
     'zh-TW': '下載檔案為空',

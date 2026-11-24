@@ -2,7 +2,7 @@ import type { DomainMessages } from '../types.ts'
 
 /** 仓库详情、版本选择、刷新状态与下载进度。同一 key 的五语保持集中。 */
 export const toolsUiRepository: DomainMessages = {
-  downloadTotalUnknown: { 'zh-CN': '大小未知', 'zh-TW': '大小未知', en: 'Unknown size', ko: '크기 알 수 없음', ja: 'サイズ不明' },
+  downloadReceived: { 'zh-CN': '已下载 {amount}', 'zh-TW': '已下載 {amount}', en: 'Downloaded {amount}', ko: '{amount} 다운로드됨', ja: '{amount} ダウンロード済み' },
   downloadProgress: { 'zh-CN': '下载进度', 'zh-TW': '下載進度', en: 'Download progress', ko: '다운로드 진행률', ja: 'ダウンロードの進行状況' },
   downloading: { 'zh-CN': '正在下载', 'zh-TW': '正在下載', en: 'Downloading', ko: '다운로드 중', ja: 'ダウンロード中' },
   mergingVolumes: { 'zh-CN': '正在重组并校验分卷', 'zh-TW': '正在重組並校驗分卷', en: 'Reassembling and verifying volumes', ko: '분할 파일 병합 및 검증 중', ja: '分割ファイルの再構築と検証中' },
@@ -236,14 +236,6 @@ export const toolsUiRepository: DomainMessages = {
     ko: '다운로드 소스에 연결 중…',
     ja: 'ダウンロード元に接続中…',
   },
-  // 正在切换更快的源…
-  switchingToAFasterSource: {
-    'zh-CN': '正在切换更快的源…',
-    'zh-TW': '正在切換更快的來源…',
-    en: 'Switching to a faster source…',
-    ko: '더 빠른 소스로 전환 중…',
-    ja: 'より速いソースに切り替え中…',
-  },
   // 已完成
   completed: {
     'zh-CN': '已完成',
@@ -251,22 +243,6 @@ export const toolsUiRepository: DomainMessages = {
     en: 'Completed',
     ko: '완료',
     ja: '完了',
-  },
-  // 竞速进行中
-  sourcesRacing: {
-    'zh-CN': '竞速中',
-    'zh-TW': '競速中',
-    en: 'Racing',
-    ko: '경쟁 중',
-    ja: '競争中',
-  },
-  // 第 {current}/{total} 次尝试
-  attempt: {
-    'zh-CN': '第 {current}/{total} 次尝试',
-    'zh-TW': '第 {current}/{total} 次嘗試',
-    en: 'Attempt {current}/{total}',
-    ko: '{current}/{total}번째 시도',
-    ja: '{current}/{total} 回目の試行',
   },
   // 选择版本
   selectVersion: {

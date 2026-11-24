@@ -43,13 +43,6 @@ export const startup: DomainMessages = {
     'ko': "저장소 소스에 연결할 수 없습니다.",
     'ja': "リポジトリソースに接続できません。",
   },
-  'failure.timeout': {
-    'zh-CN': "检测超过 10 秒，已停止请求。",
-    'zh-TW': "偵測超過 10 秒，已停止請求。",
-    'en': "The check exceeded 10 seconds and was stopped.",
-    'ko': "확인이 10초를 초과하여 요청을 중지했습니다.",
-    'ja': "確認が10秒を超えたため、リクエストを停止しました。",
-  },
   'failure.http': {
     'zh-CN': "服务器未返回成功状态。",
     'zh-TW': "伺服器未傳回成功狀態。",

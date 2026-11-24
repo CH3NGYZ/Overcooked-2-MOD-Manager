@@ -91,34 +91,23 @@ pub async fn refresh_mod_repository(
         let client =
             releases::build_client(config.network.api_timeout()).map_err(|e| e.to_string())?;
         let token = state.config.mod_repository_api_token(&config, &repo);
-        let api_proxies = crate::providers::api_proxies(&config, &repo.provider);
         log::debug!(
-            "请求仓库 Release API：仓库={}，平台={:?}，代理数={}，最大 Release 数={}",
+            "请求仓库 Release API：仓库={}，平台={:?}，最大 Release 数={}",
             repo.name,
             repo.provider,
-            api_proxies.len(),
             repo.max_release_count
         );
-        let key =
-            releases::repository_cache_key(repo.provider.clone(), &repo.username, &repo.repository);
-        let fetched = state
-            .release_cache
-            .list(key, None, force, || async {
-                releases::fetch_releases(
-                    &client,
-                    &crate::releases::RepositoryRequest::from(&repo),
-                    &config.region,
-                    token.as_deref(),
-                    config.auth.official_api_only,
-                    api_proxies,
-                )
-                .await
-                .map_err(|error| error.to_string())
-            })
-            .await
-            .map(|snapshot| {
-                releases::project_mod_releases(snapshot.as_ref().clone(), &repo.channel)
-            });
+        let fetched = releases::cached_releases(
+            &state.release_cache,
+            &client,
+            &releases::RepositoryRequest::from(&repo),
+            &config.region,
+            token.as_deref(),
+            None,
+            force,
+        )
+        .await
+        .map(|snapshot| releases::project_mod_releases(snapshot.as_ref().clone(), &repo.channel));
 
         let _cache_guard = state.repository_cache.lock().await;
         let _operation_guard = state

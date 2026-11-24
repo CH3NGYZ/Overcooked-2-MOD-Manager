@@ -4,8 +4,7 @@ use crate::bepinex::install::BEPINEX_MANIFEST_ID;
 use crate::bepinex::install::framework_manifest_files;
 use crate::bepinex::install::install_framework_archive;
 use crate::download::DownloadContext;
-use crate::download::planning::asset_proxy_urls;
-use crate::download::planning::plan_asset_download_candidates;
+use crate::download::history::HistoryPurpose;
 use crate::download::try_download_candidates as try_asset_download_candidates;
 use crate::framework::BEPINEX_BACKUP;
 use crate::framework::backup_framework;
@@ -13,21 +12,21 @@ use crate::framework::ensure_copy_paths_disjoint;
 use crate::framework::restore_framework_backup;
 use crate::framework::validate_framework_backup_in;
 use crate::game;
-use crate::models::{BepInExInstallResult, GameRuntime, OperationResult, Provider, ProxyMode};
+use crate::models::{BepInExInstallResult, GameRuntime, OperationResult, Provider};
+use crate::network_policy::NetworkPolicy;
 use crate::recycle_bin;
 use crate::releases;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
-use tauri::AppHandle;
 use tauri::State;
 
 #[tauri::command]
 pub async fn install_bepinex(
-    app: AppHandle,
     state: State<'_, AppState>,
     reinstall: bool,
     provider: Provider,
+    on_update: tauri::ipc::Channel<archive::DownloadProgress>,
 ) -> Result<BepInExInstallResult, String> {
     archive::start_download();
     log::info!(
@@ -55,60 +54,62 @@ pub async fn install_bepinex(
         provider,
         download_url
     );
-    let proxy_urls = if provider == Provider::Github {
-        asset_proxy_urls(
-            &config.github_proxies.release_proxies,
-            download_url,
-            false,
-            "",
-            "",
-            ProxyMode::AutoProxy,
-            None,
-        )
-    } else {
-        Vec::new()
-    };
-    let candidates =
-        plan_asset_download_candidates(ProxyMode::AutoDirect, download_url, proxy_urls)?;
+    let policy = config
+        .network_policy
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(NetworkPolicy::active)?;
+    let mut planned =
+        NetworkPolicy::with_snapshot(policy, || package.plan_download(&provider, &config.region))?;
+    for candidate in &mut planned.candidates {
+        candidate.identity = candidate
+            .identity
+            .as_ref()
+            .map(|id| id.with_purpose(HistoryPurpose::Framework));
+    }
+    let threads = planned.download_threads;
     let cache_dir = state.config.cache_dir();
     let first_byte_timeout = config.network.first_byte_timeout();
-    let temp = try_asset_download_candidates(
-        candidates,
-        archive::is_download_cancelled,
-        |candidate, reporter| {
-            let client = &client;
-            let cache_dir = &cache_dir;
-            async move {
-                let temp = archive::download_to_temp_with_threads_and_first_byte_timeout(
-                    client,
-                    &candidate.url,
-                    cache_dir,
-                    "BepInEx",
-                    &reporter,
-                    1,
-                    Some(first_byte_timeout),
-                )
-                .await?;
-                if let Err(error) =
-                    archive::validate_download_file(&temp, None, Some(package.digest()))
-                        .and_then(|_| archive::validate_zip(&temp))
-                {
-                    let _ = fs::remove_file(&temp);
-                    return Err(error);
+    let session = state.download_history.session();
+    let temp = archive::channel_download_progress(
+        true,
+        on_update,
+        try_asset_download_candidates(
+            planned.candidates,
+            archive::is_download_cancelled,
+            |candidate, reporter| {
+                let client = &client;
+                let cache_dir = &cache_dir;
+                async move {
+                    let temp = archive::download_to_temp_with_threads_and_first_byte_timeout(
+                        client,
+                        &candidate.url,
+                        cache_dir,
+                        "BepInEx",
+                        &reporter,
+                        threads,
+                        Some(first_byte_timeout),
+                    )
+                    .await?;
+                    archive::verify_temp_download(temp, &reporter, move |path, cancelled| {
+                        archive::validate_download_file(path, None, Some(package.digest()))?;
+                        archive::validate_zip_with_cancel(path, cancelled)
+                    })
+                    .await
                 }
-                Ok(temp)
-            }
-        },
-        &config.network,
-        Some(DownloadContext {
-            execution: None,
-            app: Some(&app),
-            label: "BepInEx",
-            file_name: download_url.rsplit_once('/').map(|(_, name)| name),
-            expected_size: None,
-        }),
+            },
+            &config.network,
+            Some(DownloadContext {
+                execution: Some(planned.execution),
+                race_session: Some(&session),
+                label: "BepInEx",
+                file_name: download_url.rsplit_once('/').map(|(_, name)| name),
+                expected_size: None,
+            }),
+        ),
     )
     .await?;
+    session.commit();
     let installation = (|| {
         let _guard = state
             .operation

@@ -5,7 +5,6 @@ use crate::models::{OperationResult, ProxyMode};
 use crate::mods::install::mod_repository_install_identity;
 use crate::recycle_bin;
 use std::path::PathBuf;
-use tauri::AppHandle;
 use tauri::State;
 
 use crate::mods::repository_download::{
@@ -14,7 +13,6 @@ use crate::mods::repository_download::{
 
 #[tauri::command]
 pub async fn install_mod_repository(
-    app: AppHandle,
     state: State<'_, AppState>,
     repository_id: String,
     tag: Option<String>,
@@ -25,19 +23,23 @@ pub async fn install_mod_repository(
     // 界面语言（`zh-CN` / `en` / …）。用来在下载进度标签与安装预览标题里
     // 显示仓库的本地化名称；缺省时回退到仓库中文名。
     locale: Option<String>,
+    on_update: tauri::ipc::Channel<archive::DownloadProgress>,
 ) -> Result<ModRepositoryInstallOutcome, String> {
-    run_repository_install(
-        app,
-        state.inner().clone(),
-        RepositoryDownloadRequest {
-            repository_id: &repository_id,
-            tag: tag.as_deref(),
-            asset_name: asset_name.as_deref(),
-            asset_proxy_mode,
-            asset_proxy_id: asset_proxy_id.as_deref(),
-            locale: locale.as_deref(),
-        },
-        preview_only,
+    archive::channel_download_progress(
+        true,
+        on_update,
+        run_repository_install(
+            state.inner().clone(),
+            RepositoryDownloadRequest {
+                repository_id: &repository_id,
+                tag: tag.as_deref(),
+                asset_name: asset_name.as_deref(),
+                asset_proxy_mode,
+                asset_proxy_id: asset_proxy_id.as_deref(),
+                locale: locale.as_deref(),
+            },
+            preview_only,
+        ),
     )
     .await
 }

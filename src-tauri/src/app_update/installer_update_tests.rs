@@ -2,8 +2,9 @@ use super::channels::*;
 use super::download::{download_installer, download_verified_installer};
 use super::manifest::*;
 use crate::archive::{self, DownloadRoute as AssetDownloadRoute};
-use crate::download::DownloadCandidate as AssetDownloadCandidate;
+use crate::download::DownloadExecution;
 use crate::models::*;
+use crate::network_policy::{NetworkPolicy, Step};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::io::{Read, Write};
@@ -18,7 +19,7 @@ mod manifest_mirror_tests;
 
 #[test]
 fn installer_channels_follow_the_configured_region_per_call() {
-    let proxies = GitHubProxyConfig::default();
+    let policy = NetworkPolicy::shared().unwrap();
     for (configured, expected) in [
         ("cn", InstallerRegion::MainlandChina),
         ("global", InstallerRegion::International),
@@ -26,7 +27,7 @@ fn installer_channels_follow_the_configured_region_per_call() {
     ] {
         let region = installer_region(configured);
         assert_eq!(region, expected);
-        let sources = installer_manifest_sources(&proxies, region);
+        let sources = installer_manifest_sources(policy, region);
         assert_eq!(
             sources.first().unwrap().provider,
             if configured == "cn" {
@@ -73,81 +74,74 @@ fn fixture(provider: Provider) -> serde_json::Value {
 
 fn direct(provider: Provider) -> InstallerChannel {
     installer_sources_for_url(
-        &GitHubProxyConfig::default(),
+        NetworkPolicy::shared().unwrap(),
+        InstallerRegion::International,
         &provider,
         &installer_manifest_url(&provider),
     )
+    .unwrap()
     .remove(0)
+}
+
+fn direct_test_policy() -> NetworkPolicy {
+    let mut policy = NetworkPolicy::shared().unwrap().clone();
+    let release = &mut policy.plans.get_mut("github-mainland").unwrap().release;
+    release.route = vec![Step::Direct];
+    release.max_parallelism = 1;
+    release.race = false;
+    policy
 }
 
 #[test]
 fn region_order_uses_all_and_only_the_supplied_snapshot() {
-    let defaults = crate::github_proxies::bundled_defaults();
-    let mainland = installer_manifest_sources(&defaults, InstallerRegion::MainlandChina);
-    let international = installer_manifest_sources(
-        &crate::github_proxies::bundled_defaults(),
-        InstallerRegion::International,
-    );
+    let policy = NetworkPolicy::shared().unwrap();
+    let mainland = installer_manifest_sources(policy, InstallerRegion::MainlandChina);
+    let international = installer_manifest_sources(policy, InstallerRegion::International);
     assert_eq!(mainland[0].id, "gitee-direct");
     assert_eq!(mainland[1].id, "gitcode-direct");
     assert_eq!(mainland[2].id, "github-direct");
-    assert_eq!(international[0].id, "github-direct");
-    assert_eq!(mainland.len(), international.len() + 2);
-    assert!(
+    assert_eq!(
         international
             .iter()
-            .all(|route| route.provider == Provider::Github)
-    );
-    let github_routes = international.as_slice();
-    let urls = crate::github_proxies::proxy_urls(
-        &defaults.release_proxies,
-        &international[0].endpoint,
-        false,
-        None,
-    );
-    assert_eq!(
-        github_routes[1..]
-            .iter()
-            .map(|route| &route.endpoint)
+            .map(|channel| channel.id.as_str())
             .collect::<Vec<_>>(),
-        urls.iter().collect::<Vec<_>>()
+        [
+            "github-direct",
+            "github-proxy:oc2gh-release-cloudflare",
+            "github-proxy:oc2gh-release-edgeone"
+        ]
     );
-    for route in &github_routes[1..] {
-        let proxy = route.proxy.as_ref().unwrap();
-        assert!(defaults.release_proxies.contains(proxy));
-        assert!(route.id.starts_with("github-proxy:"));
-        assert!(!route.endpoint.contains("api.github.com"));
-    }
+    assert!(international.iter().all(|channel| channel.execution.race));
+    assert!(mainland[2..].iter().all(|channel| channel.execution.race));
     assert_eq!(
-        international.len(),
-        international
+        mainland.len(),
+        mainland
             .iter()
             .map(|route| &route.endpoint)
             .collect::<HashSet<_>>()
             .len()
     );
-    // The caller snapshot is authoritative, including an explicitly empty list.
-    let mut saved = defaults;
-    for proxy in &mut saved.release_proxies {
-        proxy.template = "https://custom.example/{url}".into();
-    }
-    assert!(
-        installer_manifest_sources(&saved, InstallerRegion::International)[1]
-            .endpoint
-            .starts_with("https://custom.example/")
-    );
-    let empty = installer_manifest_sources(
-        &GitHubProxyConfig::default(),
-        InstallerRegion::International,
-    );
-    assert_eq!(empty.len(), 1);
-    assert_eq!(empty[0].id, "github-direct");
+    let mut saved = policy.clone();
+    let release = &mut saved.plans.get_mut("github-public").unwrap().release;
+    release.route = vec![Step::Proxy {
+        id: "git-yylx".into(),
+    }];
+    release.max_parallelism = 1;
+    release.race = false;
+    saved.proxies.get_mut("git-yylx").unwrap().template = "https://custom.example/{url}".into();
+    let supplied = installer_manifest_sources(&saved, InstallerRegion::International);
+    assert_eq!(supplied.len(), 1);
+    assert_eq!(supplied[0].id, "github-proxy:git-yylx");
+    assert!(supplied[0].endpoint.starts_with("https://custom.example/"));
+    assert_eq!(supplied[0].route, AssetDownloadRoute::Proxy);
+    assert!(!supplied[0].execution.race);
 }
 
 #[test]
 fn each_released_format_is_selected_from_json_without_api_size_or_digest() {
     for provider in [Provider::Github, Provider::Gitee, Provider::Gitcode] {
         let route = direct(provider.clone());
+        let github = provider == Provider::Github;
         let document = fixture(provider);
         for (os, arch, kind) in [
             ("windows", "x86_64", "exe"),
@@ -172,27 +166,26 @@ fn each_released_format_is_selected_from_json_without_api_size_or_digest() {
             assert_eq!(info.body.as_deref(), Some("Release notes"));
             assert_eq!(info.date.as_deref(), Some("2026-10-13T19:33:14.785Z"));
             assert_eq!(info.download_size, None);
-            let candidates =
-                installer_download_candidates(&crate::github_proxies::bundled_defaults(), &info);
-            assert_eq!(
-                candidates.len(),
-                if route.provider != Provider::Github {
-                    1
-                } else {
-                    installer_manifest_sources(
-                        &crate::github_proxies::bundled_defaults(),
-                        InstallerRegion::International,
-                    )
-                    .iter()
-                    .filter(|channel| channel.provider == Provider::Github)
-                    .count()
-                }
-            );
+            let candidates = package_channels(&info, InstallerRegion::International);
+            assert_eq!(candidates.len(), if github { 3 } else { 1 });
             assert_eq!(candidates[0].route, AssetDownloadRoute::Direct);
             assert_eq!(
-                Some(candidates[0].url.as_str()),
+                Some(candidates[0].endpoint.as_str()),
                 info.installer_url.as_deref()
             );
+            if github {
+                let path = candidates[0]
+                    .endpoint
+                    .strip_prefix("https://github.com")
+                    .unwrap();
+                for (candidate, host) in candidates[1..]
+                    .iter()
+                    .zip(["oc2gh.ch3ng.top", "oc2gh.5882778.xyz"])
+                {
+                    assert_eq!(candidate.route, AssetDownloadRoute::Proxy);
+                    assert_eq!(candidate.endpoint, format!("https://{host}{path}"));
+                }
+            }
         }
     }
 }
@@ -204,15 +197,18 @@ fn manifest_winner_does_not_restrict_the_independent_package_pool() {
     let info = inspect_installer_manifest(&direct(Provider::Github), &document, target(), &current)
         .unwrap()
         .unwrap();
-    let expected = installer_download_candidates(&crate::github_proxies::bundled_defaults(), &info);
+    let region = InstallerRegion::MainlandChina;
+    let expected: Vec<_> = package_channels(&info, region)
+        .iter()
+        .map(installer_candidate)
+        .collect();
     assert!(expected.len() > 1);
     assert_eq!(expected[0].route, AssetDownloadRoute::Direct);
-    for route in installer_manifest_sources(
-        &crate::github_proxies::bundled_defaults(),
-        InstallerRegion::International,
-    )
-    .iter()
-    .skip(1)
+    for route in installer_manifest_sources(NetworkPolicy::shared().unwrap(), region)
+        .iter()
+        .filter(|channel| {
+            channel.provider == Provider::Github && channel.route == AssetDownloadRoute::Proxy
+        })
     {
         let info = inspect_installer_manifest(route, &document, target(), &current)
             .unwrap()
@@ -220,7 +216,10 @@ fn manifest_winner_does_not_restrict_the_independent_package_pool() {
         assert_eq!(info.manifest_url, route.endpoint);
         assert_eq!(
             expected,
-            installer_download_candidates(&crate::github_proxies::bundled_defaults(), &info)
+            package_channels(&info, region)
+                .iter()
+                .map(installer_candidate)
+                .collect::<Vec<_>>()
         );
     }
     let gitee = inspect_installer_manifest(
@@ -231,13 +230,23 @@ fn manifest_winner_does_not_restrict_the_independent_package_pool() {
     )
     .unwrap()
     .unwrap();
+    let package = package_channels(&gitee, region);
+    assert_eq!(package.len(), 1);
+    assert_eq!(package[0].route, AssetDownloadRoute::Direct);
     assert_eq!(
-        installer_download_candidates(&crate::github_proxies::bundled_defaults(), &gitee),
-        [AssetDownloadCandidate {
-            route: AssetDownloadRoute::Direct,
-            url: gitee.installer_url.unwrap()
-        }]
+        Some(package[0].endpoint.as_str()),
+        gitee.installer_url.as_deref()
     );
+}
+
+fn package_channels(info: &AppUpdateInfo, region: InstallerRegion) -> Vec<InstallerChannel> {
+    installer_sources_for_url(
+        NetworkPolicy::shared().unwrap(),
+        region,
+        info.provider.as_ref().unwrap(),
+        info.installer_url.as_deref().unwrap(),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -383,20 +392,15 @@ impl Server {
 
     fn route(&self, path: &str, proxy_host: Option<&str>) -> InstallerChannel {
         let mut route = direct(Provider::Github);
+        route.execution = DownloadExecution {
+            max_parallelism: 3,
+            race: true,
+        };
         route.endpoint = format!("{}{path}", self.base);
         route.id = path.into();
         if let Some(host) = proxy_host {
             route.id = format!("github-proxy:{host}");
-            route.proxy = Some(GitHubProxy {
-                id: host.into(),
-                name: host.into(),
-                template: format!("https://{host}/{{url}}"),
-                regions: Vec::new(),
-                description: String::new(),
-                enabled: true,
-                builtin: true,
-                remote: false,
-            });
+            route.route = AssetDownloadRoute::Proxy;
         }
         route
     }
@@ -545,11 +549,7 @@ async fn gitee_finishes_its_single_manifest_and_package_before_github_can_start(
                         tokio::time::sleep(Duration::from_millis(25)).await;
                         assert_eq!(server.requests.lock().unwrap().len(), 1);
                         assert_eq!(
-                            installer_download_candidates(
-                                &crate::github_proxies::bundled_defaults(),
-                                &info
-                            )
-                            .len(),
+                            package_channels(&info, InstallerRegion::MainlandChina).len(),
                             1
                         );
                         if fail_package {
@@ -833,26 +833,21 @@ async fn package_race_rejects_bad_signatures_and_can_choose_a_different_route() 
     info.source_channel = Some("github-proxy:manifest-winner".into());
     info.installer_signature = signature.into();
     let candidates = [
-        ("/manifest-proxy-package", AssetDownloadRoute::Proxy),
-        ("/direct-package", AssetDownloadRoute::Direct),
-        ("/other-proxy-package", AssetDownloadRoute::Proxy),
-    ]
-    .into_iter()
-    .map(|(path, route)| AssetDownloadCandidate {
-        route,
-        url: format!("{}{path}", server.base),
-    })
-    .collect();
+        server.route("/manifest-proxy-package", Some("manifest-winner")),
+        server.route("/direct-package", None),
+        server.route("/other-proxy-package", Some("other-proxy")),
+    ];
+    let version = info.version.clone();
     let bytes = download_verified_installer(
         &reqwest::Client::new(),
         &info,
-        &GitHubProxyConfig::default(),
-        candidates,
+        &candidates,
         None,
         InstallerRegion::MainlandChina,
-        |bytes| crate::app_update::verify_with_key(bytes, signature, key, &info.version),
+        move |bytes| crate::app_update::verify_with_key(bytes, signature, key, &version),
         &crate::models::NetworkConfig::default(),
         || false,
+        None,
     )
     .await
     .unwrap();
@@ -877,31 +872,32 @@ async fn gitee_package_uses_one_get_without_range_requests() {
     .unwrap()
     .unwrap();
     info.version = "1.2.0".into();
-    let candidates = vec![AssetDownloadCandidate {
-        route: AssetDownloadRoute::Direct,
-        url: format!("{}/package", server.base),
-    }];
+    let mut channel = direct(Provider::Gitee);
+    channel.endpoint = format!("{}/package", server.base);
+    let candidates = [channel];
     let progress = Arc::new(Mutex::new(Vec::new()));
     let captured = progress.clone();
+    let version = info.version.clone();
     let bytes = archive::observe_download_progress(
+        false,
         move |value| captured.lock().unwrap().push(value),
         download_verified_installer(
             &reqwest::Client::new(),
             &info,
-            &GitHubProxyConfig::default(),
-            candidates,
+            &candidates,
             None,
             InstallerRegion::MainlandChina,
-            |bytes| {
+            move |bytes| {
                 crate::app_update::verify_with_key(
                     bytes,
                     crate::app_update::TEST_SIGNATURE,
                     crate::app_update::TEST_KEY,
-                    &info.version,
+                    &version,
                 )
             },
             &crate::models::NetworkConfig::default(),
             || false,
+            None,
         ),
     )
     .await
@@ -912,7 +908,7 @@ async fn gitee_package_uses_one_get_without_range_requests() {
     assert!(finished.finished);
     assert_eq!(finished.route, Some(AssetDownloadRoute::Direct));
     assert_eq!(finished.downloaded, valid.len() as u64);
-    assert_eq!(finished.parallel_sources, Some(1));
+    assert!(finished.race.is_none());
     assert!(seen.iter().all(|p| {
         p.label == "update.downloadingInstaller"
             && p.file_name.as_deref() == Some(info.installer_name.as_str())
@@ -973,6 +969,10 @@ async fn github_pool_has_at_most_three_live_sources_and_drops_losers() {
     let channels = (0..6)
         .map(|index| {
             let mut channel = direct(Provider::Github);
+            channel.execution = DownloadExecution {
+                max_parallelism: 3,
+                race: true,
+            };
             channel.id = index.to_string();
             channel.endpoint = format!("https://source{index}.example/latest.json");
             channel
@@ -996,6 +996,7 @@ async fn github_pool_has_at_most_three_live_sources_and_drops_losers() {
             }
         },
         &crate::models::NetworkConfig::default(),
+        None,
     )
     .await
     .unwrap();

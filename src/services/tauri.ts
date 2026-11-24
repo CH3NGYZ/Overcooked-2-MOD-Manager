@@ -200,7 +200,8 @@ export const api = {
    */
   repositoryAvatars: (owners: { provider: Provider; owner: string }[]) =>
     invoke<Record<string, string>>('get_repository_avatars', { owners }),
-  installBepInEx: (reinstall: boolean, provider: Provider) => invoke<BepInExInstallResult>('install_bepinex', { reinstall, provider }),
+  installBepInEx: (reinstall: boolean, provider: Provider, onProgress: DownloadProgressHandler) =>
+    invokeDownload<BepInExInstallResult>('install_bepinex', { reinstall, provider }, onProgress),
   repairNativeBepInExOverlay: () => invoke<OperationResult>('repair_native_bepinex_overlay'),
   uninstallBepInEx: () => invoke<OperationResult>('uninstall_bepinex'),
   backupBepInEx: () => invoke<OperationResult>('backup_bepinex'),
@@ -274,8 +275,8 @@ export const api = {
    * 可读的 ZIP 上，`inspect` 与「确认导入」因此只有一份实现。直链会下载到
    * cache 并标记 `staged`，导入结束后由 `discardMapSource` 清理。
    */
-  stageMapSource: (kind: 'local' | 'url', value: string) =>
-    invoke<StagedMapSource>('stage_map_source', { source: { kind, value } }),
+  stageMapSource: (kind: 'local' | 'url', value: string, onProgress?: DownloadProgressHandler) =>
+    invokeDownload<StagedMapSource>('stage_map_source', { source: { kind, value } }, onProgress),
   /**
    * 丢弃 `stageMapSource` 暂存的 ZIP（只删 cache 内的文件）。
    *
@@ -346,13 +347,13 @@ export const api = {
    * `assetName` 是详情页下拉里选中的资产；不传时后端按地图源的 `asset_rules`
    * 自动选，与 MOD 安装完全同一条规则。
    * 只使用已检测/刷新出的版本快照，缺少缓存时由用户显式刷新。
-   * `locale` 用于下载进度标签：进度事件在下载过程中持续发出，
+   * `locale` 用于下载进度标签：下载通过本次命令的 Channel 持续上报，
    * 名称必须在开始前按界面语言算好。
    */
-  stageMapRelease: (mapId: string, tag?: string, assetName?: string) =>
-    invoke<StagedMapSource>('stage_map_release', {
+  stageMapRelease: (mapId: string, tag: string, assetName: string | undefined, onProgress: DownloadProgressHandler) =>
+    invokeDownload<StagedMapSource>('stage_map_release', {
       mapId, tag, assetName, locale: locale.value,
-    }),
+    }, onProgress),
   /** 打开 DIYLevel 的地图目录（不自动创建）。 */
   openDiyLevelDirectory: () => invoke<OperationResult>('open_diy_level_directory'),
   /** 备份 DIYLevel 目录（只含 `BepInEx/plugins/OC2DIYLevel`）。 */
@@ -382,6 +383,8 @@ export const api = {
   /** 以管理员身份重启（仅文件访问被拒时由用户主动触发）。 */
   relaunchAsAdmin: () => invoke<OperationResult>('relaunch_as_admin'),
   cancelDownload: () => invoke<OperationResult>('cancel_download'),
+  controlDownloadRace: (id: string, action: 'lock' | 'retry' | 'unlock', source?: number) =>
+    invoke<void>('control_download_race', { id, action, source }),
   /**
    * 安装程序在安装时写入的界面语言（`install-language.txt`）。
    *
@@ -411,12 +414,8 @@ export const api = {
   getPendingAppUpdateRecovery: () => invoke<boolean>('get_pending_app_update_recovery'),
   finishAppUpdateRecovery: (destination: 'website' | 'alternate') =>
     invoke<void>('finish_app_update_recovery', { destination, locale: locale.value }),
-  stageAppUpdate: async (channel: string, onProgress: (progress: DownloadProgress) => void) => {
-    const onUpdate = new Channel<DownloadProgress>()
-    onUpdate.onmessage = onProgress
-    try { return await invoke<AppUpdateInfo | null>('stage_app_update', { channel, onUpdate }) }
-    finally { onUpdate.onmessage = () => undefined }
-  },
+  stageAppUpdate: (channel: string, onProgress: DownloadProgressHandler) =>
+    invokeDownload<AppUpdateInfo | null>('stage_app_update', { channel }, onProgress),
   applyStagedAppUpdate: () => invoke<void>('apply_staged_app_update'),
   chooseGameDirectory: () => open({ multiple: false, directory: true }),
   /** 选择要导入的地图 ZIP。 */
@@ -432,8 +431,8 @@ export const api = {
     filters: [{ name: 'MOD', extensions: ['dll', 'zip'] }],
   }),
   /** 解析安装源（本地文件 / 在线直链），返回预览而不安装。 */
-  analyzeModSource: (kind: ModSourceKind, value: string) =>
-    invoke<ModPreview>('analyze_mod_source', { source: { kind, value } }),
+  analyzeModSource: (kind: ModSourceKind, value: string, onProgress?: DownloadProgressHandler) =>
+    invokeDownload<ModPreview>('analyze_mod_source', { source: { kind, value } }, onProgress),
   /** 取消预览，删除暂存。 */
   cancelModPreview: (previewId: string) => invoke<void>('cancel_mod_preview', { previewId }),
 
@@ -484,8 +483,12 @@ export const api = {
 
 }
 
-export function watchDownloadProgress(callback: (progress: DownloadProgress) => void): Promise<UnlistenFn> {
-  return listen<DownloadProgress>('download-progress', (event) => callback(event.payload))
+type DownloadProgressHandler = (progress: DownloadProgress) => void
+
+async function invokeDownload<T>(command: string, args: Record<string, unknown>, onProgress?: DownloadProgressHandler): Promise<T> {
+  const onUpdate = new Channel<DownloadProgress>(onProgress)
+  try { return await invoke<T>(command, { ...args, onUpdate }) }
+  finally { onUpdate.onmessage = () => undefined }
 }
 
 export function watchGameState(callback: (game: GameInfo) => void): Promise<UnlistenFn> {

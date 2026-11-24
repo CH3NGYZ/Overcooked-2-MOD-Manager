@@ -51,15 +51,9 @@ pub(crate) async fn import_repository_source_into_config(
             && source.builtin
             && source.parent_id.is_none();
         let official_address = official_root
-            && [
-                crate::models::DataProvider::Github,
-                crate::models::DataProvider::Gitee,
-                crate::models::DataProvider::Gitcode,
-                crate::models::DataProvider::Cloudflare,
-                crate::models::DataProvider::Builtin,
-            ]
-            .iter()
-            .any(|provider| provider.document("mods.toml") == source_url);
+            && crate::models::DataProvider::ALL
+                .into_iter()
+                .any(|provider| provider.document("mods.toml") == source_url);
         if !source.url.trim().eq_ignore_ascii_case(source_url.trim()) && !official_address {
             log::warn!("刷新仓库源失败：请求地址与当前配置不一致，源={}", source_id);
             return Err("source.addressMismatch".into());

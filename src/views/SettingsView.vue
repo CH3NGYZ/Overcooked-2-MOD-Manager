@@ -373,6 +373,7 @@ const dataProviderOptions = computed(() => [
   { value: 'gitee', label: t('settings.dataProviderGitee') },
   { value: 'github', label: t('settings.dataProviderGithub') },
   { value: 'cloudflare', label: t('settings.dataProviderCloudflare') },
+  { value: 'edgeone', label: t('settings.dataProviderEdgeOne') },
   { value: 'builtin', label: t('settings.dataProviderBuiltin') },
 ])
 

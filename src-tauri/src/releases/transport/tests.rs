@@ -162,38 +162,36 @@ async fn release_api_403_is_never_retried_even_after_an_ordinary_failure() {
 }
 
 #[test]
-fn api_request_targets_order_direct_token_then_proxy() {
-    let official = "https://api.github.com/repos/a/b/releases";
-    let proxies = vec![GitHubProxy {
-        id: "proxy".into(),
-        name: "Proxy".into(),
-        template: "https://proxy.example/{url}".into(),
-        regions: Vec::new(),
-        description: String::new(),
-        enabled: true,
-        builtin: false,
-        remote: false,
-    }];
+fn default_repository_api_plan_respects_the_snapshot_order_and_registry() {
+    use crate::network_policy::{NetworkPolicy, Step};
 
-    // 配了 Token：直接用官方 + Token，不再先打匿名接口
-    let targets = api_request_targets(official, Some("secret"), true, &proxies);
-    assert_eq!(targets.len(), 2);
-    assert_eq!(targets[0], (official.to_string(), Some("secret")));
-    assert_eq!(
-        targets[1],
-        (
-            "https://proxy.example/https://api.github.com/repos/a/b/releases".to_string(),
-            None,
-        )
-    );
-    // 代理永远不带凭据
-    assert_eq!(targets[1].1, None);
-
-    // 没有 Token：官方匿名 + 代理
-    let targets = api_request_targets(official, None, false, &proxies);
-    assert_eq!(targets.len(), 2);
-    assert_eq!(targets[0], (official.to_string(), None));
-    assert_eq!(targets[1].1, None);
+    let mut repo = crate::releases::test_support::api_test_repository();
+    repo.provider = Provider::Github;
+    let official = "https://api.github.com/repos/a/b/releases?per_page=50&page=2";
+    let mut policy = NetworkPolicy::shared().unwrap().clone();
+    let plan = policy.plans.get_mut("github-public").unwrap();
+    plan.api.route = vec![
+        Step::Proxy {
+            id: "oc2ghapi-edgeone".into(),
+        },
+        Step::Official,
+    ];
+    policy.proxies.get_mut("oc2ghapi-edgeone").unwrap().template =
+        "https://alternate.example/{url_path}".into();
+    NetworkPolicy::with_snapshot(std::sync::Arc::new(policy), || {
+        for token in [Some("test-token"), None] {
+            assert_eq!(
+                repository_api_targets(&repo, "global", official, token).unwrap(),
+                [
+                    (
+                        "https://alternate.example/repos/a/b/releases?per_page=50&page=2".into(),
+                        None,
+                    ),
+                    (official.into(), token),
+                ]
+            );
+        }
+    });
 }
 
 #[test]
@@ -207,15 +205,8 @@ fn repository_api_plan_uses_the_requested_region_for_each_call() {
     .unwrap();
     let official = "https://api.github.com/repos/user/repo/releases?per_page=50&page=2";
     for region in ["cn", "global", "cn"] {
-        let targets = repository_api_targets(
-            &repo,
-            region,
-            official,
-            Some("never-forward-this"),
-            true,
-            &[],
-        )
-        .unwrap();
+        let targets =
+            repository_api_targets(&repo, region, official, Some("never-forward-this")).unwrap();
         assert_eq!(
             targets.iter().any(|(url, _)| url == official),
             region == "global"
@@ -236,18 +227,22 @@ fn repository_api_plan_can_exclude_official_without_forwarding_credentials() {
     )
     .unwrap();
     let official = "https://api.github.com/repos/user/repo/releases?per_page=50&page=2";
-    let targets = repository_api_targets(
-        &repo,
-        "global",
-        official,
-        Some("never-forward-this"),
-        true,
-        &[],
-    )
-    .unwrap();
-    assert_eq!(targets.len(), 1);
-    assert!(targets[0].0.starts_with("https://oc2ghapi.ch3ng.top/"));
-    assert!(targets[0].0.contains("page=2"));
-    assert!(targets[0].1.is_none());
-    assert!(!targets[0].0.contains("never-forward-this"));
+    let targets =
+        repository_api_targets(&repo, "global", official, Some("never-forward-this")).unwrap();
+    assert_eq!(
+        targets
+            .iter()
+            .map(|(url, token)| (url.as_str(), *token))
+            .collect::<Vec<_>>(),
+        [
+            (
+                "https://oc2ghapi.ch3ng.top/repos/user/repo/releases?per_page=50&page=2",
+                None,
+            ),
+            (
+                "https://oc2ghapi.5882778.xyz/repos/user/repo/releases?per_page=50&page=2",
+                None,
+            ),
+        ]
+    );
 }

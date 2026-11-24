@@ -62,7 +62,7 @@ const workflow = createChangeWorkflow({
     const sequence = ++preparationSequence
     preparation.value = null
     const token = beginDownloadTask({ label: 'modChanges.title', retry: () => workflow.retry(),
-      progressSource: 'caller', cancel: cancelPreparationDownload })
+      cancel: cancelPreparationDownload })
     preparationTaskId = token
     let active = true
     try { return await api.prepareModChanges(planId, progress => {

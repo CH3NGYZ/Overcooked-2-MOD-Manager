@@ -17,8 +17,10 @@ pub(crate) use crate::providers::{
     repository_file_url,
 };
 pub(crate) use assets::{select_cached_release, select_install_asset};
-pub(crate) use client::{APP_USER_AGENT, build_client, build_download_client};
-pub(crate) use fetch::{fetch_releases, fetch_repository_default_branch};
+pub(crate) use client::{build_client, build_download_client};
+pub(crate) use fetch::{cached_releases, fetch_repository_default_branch};
+#[cfg(test)]
+pub(crate) use fetch::{fetch_releases, release_cache_key_for_test};
 pub(crate) use projection::filter_channel;
 pub(crate) use projection::project_mod_releases;
 pub(crate) use version::resolve_prerelease;

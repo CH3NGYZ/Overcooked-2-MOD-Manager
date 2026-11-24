@@ -46,28 +46,18 @@ impl NetworkPolicy {
                 if let Some(provider) =
                     crate::download::planning::provider_for_remote_url(url.as_str())
                 {
-                    let candidates = crate::download::planning::plan_repository_download(
+                    let plan = crate::download::planning::plan_source_document(
                         &provider,
                         RepositoryKind::Mod,
                         &Default::default(),
                         region,
                         url.as_str(),
-                        Some(crate::github_proxies::RawProxyContext {
-                            branch: "",
-                            file_path: "",
-                        }),
-                        None,
-                        None,
-                    )?
-                    .candidates;
-                    let verified = crate::repository_sources::VerifiedDocument {
-                        candidates,
-                        expected_size: None,
-                        digest: None,
-                    };
+                        true,
+                    )?;
                     return crate::repository_sources::load_verified_text_document(
                         &location,
-                        &verified,
+                        plan,
+                        &Default::default(),
                         network,
                         |text, _| {
                             let _: toml::Value = toml::from_str(text).map_err(|_| {

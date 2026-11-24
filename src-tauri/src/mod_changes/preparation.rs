@@ -219,9 +219,9 @@ async fn prepare_session(
         let download_node = node_id.clone();
         let download_candidate = candidate.id.clone();
         let download = archive::observe_download_progress(
+            true,
             move |download| reporter.download(&download_node, &download_candidate, download),
             download_repository_asset(
-                None,
                 state,
                 RepositoryDownloadRequest {
                     repository_id,

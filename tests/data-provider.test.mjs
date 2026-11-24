@@ -20,6 +20,8 @@ test('Settings displays the live active provider after fallback and preserves tu
   assert.equal(active.value, 'gitcode')
   dashboard.config.value = { data_provider: 'cloudflare' }
   assert.equal(active.value, 'cloudflare')
+  dashboard.config.value = { data_provider: 'edgeone' }
+  assert.equal(active.value, 'edgeone')
   dashboard.config.value = { data_provider: 'builtin' }
   assert.equal(active.value, 'builtin')
   demoActive.value = true
@@ -95,23 +97,24 @@ test('Settings selection handler skips unchanged values and protects tutorial st
   assert.deepEqual(notices, ['settings.regionChanged', 'settings.dataProviderChanged'])
 })
 
-test('all five source choices have five-language labels in regional fallback order', () => {
-  for (const suffix of ['Github', 'Gitee', 'Gitcode', 'Cloudflare', 'Builtin']) {
+test('all six source choices have five-language labels in regional fallback order', () => {
+  for (const suffix of ['Github', 'Gitee', 'Gitcode', 'Cloudflare', 'EdgeOne', 'Builtin']) {
     for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) assert.ok(settings[`dataProvider${suffix}`][locale])
     assert.ok(view.includes(`t('settings.dataProvider${suffix}')`))
   }
   assert.deepEqual(
-    [...view.matchAll(/\{ value: '(gitcode|gitee|github|cloudflare|builtin)', label: t\('settings\.dataProvider\w+'\) \}/g)].map(match => match[1]),
-    ['gitcode', 'gitee', 'github', 'cloudflare', 'builtin'],
+    [...view.matchAll(/\{ value: '(gitcode|gitee|github|cloudflare|edgeone|builtin)', label: t\('settings\.dataProvider\w+'\) \}/g)].map(match => match[1]),
+    ['gitcode', 'gitee', 'github', 'cloudflare', 'edgeone', 'builtin'],
   )
   assert.equal(settings.dataProviderGitcode['zh-CN'], 'GitCode（中国大陆 - 推荐）')
   assert.equal(settings.dataProviderGitee['zh-CN'], 'Gitee (中国大陆 - 备用)')
   assert.equal(settings.dataProviderGithub['zh-CN'], 'Github (国际)')
   assert.equal(settings.dataProviderCloudflare['zh-CN'], 'Cloudflare (全球)')
+  assert.equal(settings.dataProviderEdgeOne['zh-CN'], 'EdgeOne（全球）')
   assert.equal(settings.dataProviderBuiltin['zh-CN'], '内置数据源 (保底)')
   assert.match(view, /\{ value: 'gitcode', label: t\('settings.dataProviderGitcode'\) \}/)
   for (const label of Object.values(settings.dataProviderBuiltinShort)) assert.ok(label)
-  assert.match(read('src/types.ts'), /DataProvider = 'github' \| 'gitee' \| 'gitcode' \| 'cloudflare' \| 'builtin'/)
+  assert.match(read('src/types.ts'), /DataProvider = 'github' \| 'gitee' \| 'gitcode' \| 'cloudflare' \| 'edgeone' \| 'builtin'/)
 })
 
 test('both installation headers show the backend active provider through one shared reactive badge', () => {
@@ -130,10 +133,10 @@ test('both installation headers show the backend active provider through one sha
 })
 
 test('five-language source hints describe the current regional archive fallback routes', () => {
-  for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
+  for (const [locale, builtin] of Object.entries({ 'zh-CN': '内置', 'zh-TW': '內建', en: 'Bundled', ko: '내장', ja: '内蔵' })) {
     const hint = settings.dataProviderHint[locale]
-    assert.ok(hint.includes('GitCode → Gitee → Cloudflare'), locale)
-    assert.ok(hint.includes('GitHub → Cloudflare'), locale)
+    assert.ok(hint.includes(`GitCode → Gitee → Cloudflare → EdgeOne → ${builtin}`), locale)
+    assert.ok(hint.includes(`GitHub → Cloudflare → EdgeOne → ${builtin}`), locale)
     assert.ok(hint.includes('ZIP'), locale)
   }
 })

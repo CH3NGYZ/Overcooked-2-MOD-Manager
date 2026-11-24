@@ -76,7 +76,9 @@ test('四页搜索共用加宽且输入期间不伸缩的输入框，保留搜�
 test('页头图标有可访问名称，上方气泡复用原文字且保留按钮属性与忙碌态', () => {
   const button = read('src/components/HeaderIconAction.vue')
   assert.match(button, /inheritAttrs: false/)
-  assert.match(button, /<n-button v-bind="\$attrs" size="small" :aria-label="label"/)
+  assert.match(button, /withDefaults\(defineProps<\{[^\n]*size\?: ButtonProps\['size'\][^\n]*>\(\), \{ size: 'small' \}\)/)
+  assert.match(button, /<n-button v-bind="\$attrs" :size="size" :aria-label="label"/)
+  assert.match(button, /:show="!hoverOnly && focused \? true : undefined"/)
   assert.match(button, /<template #icon><slot \/><\/template>/)
   assert.match(button, /@focusin="focused = true" @focusout="focused = false"/)
   for (const path of ['HeaderIconAction.vue', 'HeaderBulkSwitch.vue']) {

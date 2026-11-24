@@ -10,10 +10,21 @@ pub enum DataProvider {
     Gitee,
     Gitcode,
     Cloudflare,
+    #[serde(rename = "edgeone")]
+    EdgeOne,
     Builtin,
 }
 
 impl DataProvider {
+    pub(crate) const ALL: [Self; 6] = [
+        Self::Github,
+        Self::Gitee,
+        Self::Gitcode,
+        Self::Cloudflare,
+        Self::EdgeOne,
+        Self::Builtin,
+    ];
+
     pub(crate) fn for_region(region: &str) -> Self {
         if crate::config::region_matches(Some(crate::config::REGION_CHINESE_MAINLAND), region) {
             Self::Gitcode
@@ -36,6 +47,9 @@ impl DataProvider {
             Self::Cloudflare => {
                 "https://oc2gh.ch3ng.top/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main/"
             }
+            Self::EdgeOne => {
+                "https://oc2gh.5882778.xyz/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main/"
+            }
             Self::Builtin => "",
         };
         format!("{root}{path}")
@@ -54,6 +68,9 @@ impl DataProvider {
             ),
             Self::Cloudflare => Some(
                 "https://oc2gh.ch3ng.top/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/archive/refs/heads/main.zip",
+            ),
+            Self::EdgeOne => Some(
+                "https://oc2gh.5882778.xyz/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/archive/refs/heads/main.zip",
             ),
             Self::Builtin => None,
         }
@@ -76,7 +93,10 @@ impl DataProvider {
         {
             return Some(address[github_raw.len()..].to_owned());
         }
-        for provider in [Self::Github, Self::Gitee, Self::Gitcode, Self::Cloudflare] {
+        for provider in Self::ALL
+            .into_iter()
+            .filter(|entry| *entry != Self::Builtin)
+        {
             let root = provider.document("");
             if address
                 .get(..root.len())
@@ -92,7 +112,8 @@ impl DataProvider {
         match self {
             Self::Gitcode => Some(Self::Gitee),
             Self::Github | Self::Gitee => Some(Self::Cloudflare),
-            Self::Cloudflare => Some(Self::Builtin),
+            Self::Cloudflare => Some(Self::EdgeOne),
+            Self::EdgeOne => Some(Self::Builtin),
             Self::Builtin => None,
         }
     }
@@ -134,6 +155,12 @@ mod tests {
                     "https://oc2gh.ch3ng.top/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main/{path}"
                 )
             );
+            assert_eq!(
+                DataProvider::EdgeOne.document(path),
+                format!(
+                    "https://oc2gh.5882778.xyz/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main/{path}"
+                )
+            );
         }
     }
 
@@ -148,6 +175,7 @@ mod tests {
             ("gitee", DataProvider::Gitee),
             ("gitcode", DataProvider::Gitcode),
             ("cloudflare", DataProvider::Cloudflare),
+            ("edgeone", DataProvider::EdgeOne),
             ("builtin", DataProvider::Builtin),
         ] {
             assert_eq!(serde_json::to_value(provider).unwrap(), value);
@@ -190,6 +218,10 @@ mod tests {
                 DataProvider::Cloudflare,
                 "https://oc2gh.ch3ng.top/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/archive/refs/heads/main.zip",
             ),
+            (
+                DataProvider::EdgeOne,
+                "https://oc2gh.5882778.xyz/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/archive/refs/heads/main.zip",
+            ),
         ] {
             assert_eq!(provider.archive_url(), Some(expected), "{provider:?}");
         }
@@ -205,6 +237,7 @@ mod tests {
                     DataProvider::Gitcode,
                     DataProvider::Gitee,
                     DataProvider::Cloudflare,
+                    DataProvider::EdgeOne,
                     DataProvider::Builtin,
                 ],
             ),
@@ -213,6 +246,7 @@ mod tests {
                 vec![
                     DataProvider::Github,
                     DataProvider::Cloudflare,
+                    DataProvider::EdgeOne,
                     DataProvider::Builtin,
                 ],
             ),
@@ -240,6 +274,7 @@ mod tests {
             DataProvider::Gitee,
             DataProvider::Gitcode,
             DataProvider::Cloudflare,
+            DataProvider::EdgeOne,
         ] {
             assert_eq!(
                 DataProvider::official_document_path(
@@ -259,6 +294,9 @@ mod tests {
             "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main-extra/mods.toml",
             "https://user@gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Repos/raw/main/mods.toml",
             "https://raw.gitcode.com.attacker.test/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main/mods.toml",
+            "https://oc2gh.5882778.xyz/CH3NGYZ/other/raw/refs/heads/main/mods.toml",
+            "https://oc2gh.5882778.xyz/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/dev/mods.toml",
+            "http://oc2gh.5882778.xyz/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/raw/refs/heads/main/mods.toml",
             "http://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager-Repos/raw/main/mods.toml",
             "mods.toml",
         ] {

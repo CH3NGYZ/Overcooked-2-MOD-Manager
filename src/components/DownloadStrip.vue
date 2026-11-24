@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, shallowRef, useTemplateRef, watch } from 'vue'
-import { NButton, NProgress } from 'naive-ui'
-import { AlertCircleOutline, CloseOutline, DownloadOutline, ServerOutline, SpeedometerOutline } from '@vicons/ionicons5'
+import { computed, nextTick, shallowRef, useTemplateRef, watch } from 'vue'
+import { NProgress } from 'naive-ui'
+import { AlertCircleOutline, CloseOutline, DownloadOutline, RefreshOutline, ServerOutline, SpeedometerOutline } from '@vicons/ionicons5'
 import { t } from '../i18n'
-import { api, watchDownloadProgress } from '../services/tauri'
+import { api } from '../services/tauri'
 import { translateBackendMessage } from '../locale/backend'
-import { activeDownloadProgress, downloadTaskState, dismissDownloadFailure, retryDownloadTask, updateDownloadProgress, cancelDownloadTask } from '../downloadTask'
-import { downloadAmount, downloadPercent, downloadRace, downloadRate, downloadRoute } from '../downloadPresentation'
+import { activeDownloadProgress, downloadTaskState, dismissDownloadFailure, retryDownloadTask, cancelDownloadTask } from '../downloadTask'
+import { downloadAmount, downloadPercent, downloadRate, downloadRoute } from '../downloadPresentation'
 import { appUpdateBlocksOperations } from '../appUpdateState'
 import AppModal from './AppModal.vue'
+import DownloadRace from './DownloadRace.vue'
 import DownloadVolumes from './DownloadVolumes.vue'
+import HeaderIconAction from './HeaderIconAction.vue'
 
 const progress = activeDownloadProgress
 const running = computed(() => downloadTaskState.running)
@@ -24,13 +26,14 @@ const title = computed(() => {
   if (failure.value) return t('tools.downloadFailed')
   switch (progress.value?.phase) {
     case 'connecting': return t('tools.connectingToDownloadSource')
-    case 'switching': return t('tools.switchingToAFasterSource')
+    case 'switching': return t('tools.downloadRace.switching')
+    case 'verifying': return t('tools.downloadRace.verifying')
+    case 'locked_failed': return t('tools.downloadRace.lockedFailed')
     case 'merging': return t('tools.mergingVolumes')
     default: return t('tools.downloading')
   }
 })
 const route = computed(() => progress.value ? downloadRoute(progress.value) : '')
-const race = computed(() => progress.value ? downloadRace(progress.value) : '')
 const rate = computed(() => progress.value ? downloadRate(progress.value) : '')
 const volumes = computed(() => downloadTaskState.progress?.volumes)
 const volumeKey = computed(() => `${running.value?.id ?? failure.value?.id}:${fileName.value}`)
@@ -55,14 +58,6 @@ watch(() => failure.value?.id, async id => {
   await nextTick()
   if (id === failure.value?.id) focusActions()
 }, { flush: 'post' })
-
-let unlisten: (() => void) | null = null
-let disposed = false
-// Private callers update this same model with task tokens; App owns the sole event listener.
-void watchDownloadProgress(value => { if (!disposed) updateDownloadProgress(value) })
-  .then(un => { if (disposed) un(); else unlisten = un })
-  .catch(() => undefined)
-onUnmounted(() => { disposed = true; unlisten?.() })
 
 const cancelling = shallowRef<number | null>(null)
 const cancelPending = computed(() => running.value !== null && cancelling.value === running.value.id)
@@ -97,11 +92,11 @@ async function cancel() {
           <span v-if="!failure && progress && fileName" id="download-modal-file" class="dl-file" :title="fileName">{{ fileName }}</span>
         </div>
         <strong v-if="!failure && percentText !== undefined" class="dl-percent" aria-hidden="true">{{ percentText }}<span>%</span></strong>
-        <NButton v-if="!failure && progress" class="dl-cancel" data-download-action="cancel"
-          quaternary circle size="small" :aria-label="cancelLabel" :title="cancelLabel"
+        <HeaderIconAction v-if="!failure && progress" class="dl-cancel" data-download-action="cancel"
+          quaternary circle hover-only :label="cancelLabel"
           :loading="cancelPending" :aria-busy="cancelPending" @click="cancel">
-          <template #icon><CloseOutline width="18" height="18" aria-hidden="true" /></template>
-        </NButton>
+          <CloseOutline width="18" height="18" aria-hidden="true" />
+        </HeaderIconAction>
       </div>
     </template>
 
@@ -116,7 +111,8 @@ async function cancel() {
         :aria-describedby="fileName ? 'download-modal-file' : undefined"
         :aria-valuenow="percentText" aria-valuemin="0" aria-valuemax="100">
         <!-- Naive always exposes a value, including when processing. The wrapper owns accessible progress. -->
-        <NProgress type="line" :percentage="percent ?? 100" :processing="percent === null" :show-indicator="false"
+        <NProgress type="line" :percentage="percent ?? (progress.phase === 'locked_failed' ? 0 : 100)"
+          :processing="percent === null && progress.phase !== 'locked_failed'" :show-indicator="false"
           :height="8" :border-radius="4" aria-hidden="true" class="dl-bar" />
       </div>
       <div class="dl-stats">
@@ -124,19 +120,23 @@ async function cancel() {
           <span class="dl-amount"><ServerOutline width="15" height="15" aria-hidden="true" />{{ downloadAmount(progress) }}</span>
           <span v-if="rate" class="dl-rate"><SpeedometerOutline width="15" height="15" aria-hidden="true" />{{ rate }}</span>
         </div>
-        <div v-if="route || race" class="dl-state-route" :class="{ 'is-transferring': progress.phase === 'downloading' && progress.speed_bytes > 0 }">
+        <div v-if="route && !progress.race" class="dl-state-route" :class="{ 'is-transferring': progress.phase === 'downloading' && progress.speed_bytes > 0 }">
           <span v-if="route" class="dl-route" :title="route">{{ route }}</span>
-          <span v-if="race" class="dl-race">{{ race }}</span>
         </div>
       </div>
     </div>
 
+    <DownloadRace v-if="progress?.race" :key="`${running?.id}:${progress.race.id}`" :race="progress.race" interactive />
     <DownloadVolumes v-if="volumes?.length" :key="volumeKey" :volumes="volumes" />
 
     <template v-if="failure" #footer>
       <div class="dl-actions">
-        <NButton data-download-action="retry" tabindex="0" type="primary" size="small" @click="retryDownloadTask">{{ t('common.action.retry') }}</NButton>
-        <NButton data-download-action="close" tabindex="0" secondary size="small" @click="dismissDownloadFailure">{{ t('nav.close') }}</NButton>
+        <HeaderIconAction data-download-action="retry" type="primary" circle hover-only :label="t('common.action.retry')" @click="retryDownloadTask">
+          <RefreshOutline aria-hidden="true" />
+        </HeaderIconAction>
+        <HeaderIconAction data-download-action="close" secondary circle hover-only :label="t('nav.close')" @click="dismissDownloadFailure">
+          <CloseOutline aria-hidden="true" />
+        </HeaderIconAction>
       </div>
     </template>
   </AppModal>
@@ -171,8 +171,7 @@ async function cancel() {
 .dl-title, .dl-file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dl-title { margin: 0; font-size: 17px; line-height: 1.35; font-weight: 650; color: var(--oc2-text-1); }
 .dl-file { display: block; margin: 2px 0 0; font-size: 13px; line-height: 1.35; font-weight: 500; color: var(--oc2-text-2); }
-.dl-cancel { flex: none; }
-.dl-cancel:focus-visible { outline: 2px solid var(--oc2-accent); outline-offset: -2px; }
+.dl-heading :deep(.dl-cancel:focus-visible), .dl-actions :deep(button:focus-visible) { outline: 2px solid var(--oc2-accent); outline-offset: -2px; }
 .dl-body { display: grid; gap: 8px; min-width: 0; }
 .dl-progress-row, .dl-bar { min-width: 0; }
 .dl-percent {
@@ -184,7 +183,7 @@ async function cancel() {
 .dl-amount-rate, .dl-state-route { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .dl-amount, .dl-rate { display: inline-flex; align-items: center; gap: 6px; }
 .dl-amount svg, .dl-rate svg { flex: none; color: var(--oc2-text-3); }
-.dl-rate, .dl-race { flex: none; margin-inline-start: auto; white-space: nowrap; }
+.dl-rate { flex: none; margin-inline-start: auto; white-space: nowrap; }
 .dl-rate { font-weight: 650; }
 .dl-state-route { border-top: 1px solid var(--oc2-row-line); padding-top: 8px; font-size: 12px; }
 .dl-route { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

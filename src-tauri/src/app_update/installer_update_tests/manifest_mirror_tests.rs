@@ -23,14 +23,13 @@ fn official_mirrors_can_share_a_manifest_and_plan_by_package_provider() {
                 info.manifest_url,
                 installer_manifest_url(&manifest_provider)
             );
-            let candidates =
-                installer_download_candidates(&crate::github_proxies::bundled_defaults(), &info);
+            let candidates = package_channels(&info, InstallerRegion::MainlandChina);
             if package_provider != Provider::Github {
                 assert_eq!(candidates.len(), 1);
             }
             assert_eq!(candidates[0].route, AssetDownloadRoute::Direct);
             assert_eq!(
-                Some(candidates[0].url.as_str()),
+                Some(candidates[0].endpoint.as_str()),
                 info.installer_url.as_deref()
             );
         }
@@ -66,10 +65,8 @@ async fn anonymous_latest_json_follows_mainland_order_and_closes_unused_statuses
                 })
                 .collect(),
         );
-        let mut channels = installer_manifest_sources(
-            &GitHubProxyConfig::default(),
-            InstallerRegion::MainlandChina,
-        );
+        let mut channels =
+            installer_manifest_sources(&direct_test_policy(), InstallerRegion::MainlandChina);
         assert_eq!(
             channels
                 .iter()
@@ -124,4 +121,51 @@ async fn anonymous_latest_json_follows_mainland_order_and_closes_unused_statuses
             );
         }
     }
+}
+
+#[tokio::test]
+async fn sequential_manifest_fallback_starts_with_a_fresh_timeout() {
+    let manifest = serde_json::to_vec(&fixture(Provider::Github)).unwrap();
+    let server = Server::new(HashMap::from([
+        ("/slow".into(), delayed(200, manifest.clone(), 1000)),
+        ("/next".into(), delayed(200, manifest, 100)),
+    ]));
+    let mut channels = [server.route("/slow", None), server.route("/next", None)];
+    for channel in &mut channels {
+        channel.execution = DownloadExecution {
+            max_parallelism: 1,
+            race: false,
+        };
+    }
+    let timeout = Duration::from_millis(500);
+    let started = std::time::Instant::now();
+    let mut statuses = Vec::new();
+    let result = run_installer_manifest_routes(
+        &crate::releases::build_client(timeout).unwrap(),
+        &channels,
+        target(),
+        &semver::Version::new(1, 0, 0),
+        || false,
+        |status| statuses.push(status),
+        |info| std::future::ready(Ok(info)),
+        &NetworkConfig::default(),
+    )
+    .await
+    .unwrap();
+    let InstallerRouteResult::Updated(info) = result else {
+        panic!("no update: {statuses:?}");
+    };
+    assert_eq!(info.source_channel.as_deref(), Some("/next"));
+    assert!(started.elapsed() >= timeout);
+    assert_eq!(
+        statuses
+            .iter()
+            .map(|status| status.status.as_str())
+            .collect::<Vec<_>>(),
+        ["checking", "failed", "checking", "update_available"]
+    );
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].starts_with("GET /slow "));
+    assert!(requests[1].starts_with("GET /next "));
 }

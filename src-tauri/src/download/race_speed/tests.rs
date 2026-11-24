@@ -16,6 +16,7 @@ fn measured(progress: DownloadProgress, rate: u64, now: Instant) -> ActiveSource
         candidate: DownloadCandidate {
             route: DownloadRoute::Proxy,
             url: "https://proxy.example/file".into(),
+            identity: None,
         },
         reporter,
         abort,

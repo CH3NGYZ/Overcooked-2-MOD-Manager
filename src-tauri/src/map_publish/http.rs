@@ -1,7 +1,6 @@
 use crate::api_scheduler::ApiRequestExt;
 use crate::locale_tag::with_params;
 use crate::models::{NetworkConfig, PublishProvider};
-use crate::releases::APP_USER_AGENT;
 use std::time::Duration;
 
 pub(super) const API_ENDPOINT: &str = "https://api.github.com";
@@ -36,7 +35,6 @@ pub(super) fn upload_client(network: &NetworkConfig) -> Result<reqwest::Client, 
         .connect_timeout(network.first_byte_timeout())
         .timeout(UPLOAD_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
-        .user_agent(APP_USER_AGENT)
         .build()
         .map_err(|error| request_error(&error.to_string()))
 }

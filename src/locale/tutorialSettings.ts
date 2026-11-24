@@ -80,11 +80,11 @@ export const tutorialSettings: DomainMessages = {
     ja: 'ダウンロード設定',
   },
   'settings.download.body': {
-    'zh-CN': '竞速会比较实际速度，线路都慢但速度接近时会继续下载。API 超时管查询请求，首字节超时限制等到第一段数据的时间。',
-    'zh-TW': '競速會比較實際速度，線路都慢但速度接近時會繼續下載。API 逾時適用於查詢請求，首位元組逾時限制等待第一段資料的時間。',
-    en: 'Similarly slow routes stay active. API timeout limits lookups, and first-byte timeout limits the wait for data.',
-    ko: '모든 경로가 느려도 속도가 비슷하면 계속 다운로드합니다. API 제한 시간은 조회에, 첫 바이트 제한 시간은 데이터 수신 시작까지 적용됩니다.',
-    ja: '経路の速度が同程度なら、どれも遅くても続けます。API タイムアウトは照会、初回データのタイムアウトは受信開始までに適用します。',
+    'zh-CN': '管理器会记住本机近期下载最快且通过校验的线路，必要时尝试备用线路。API 超时管查询请求，首字节超时管等待第一段下载数据。',
+    'zh-TW': '管理器會記住本機近期下載最快且通過驗證的線路，必要時嘗試備用線路。API 逾時適用於查詢請求，首位元組逾時限制等待第一段下載資料的時間。',
+    en: 'The app remembers the fastest verified route on this device and tries backups when needed. API timeout limits lookups; first-byte timeout limits the wait for download data.',
+    ko: '이 기기에서 최근 검증을 통과한 가장 빠른 경로를 기억하고 필요하면 예비 경로를 시도합니다. API 제한 시간은 조회에, 첫 바이트 제한 시간은 다운로드 데이터 수신 시작까지 적용됩니다.',
+    ja: 'この端末で最近検証に通った最速の経路を記憶し、必要に応じて予備経路を試します。API タイムアウトは照会、初回データのタイムアウトはダウンロードの受信開始までに適用します。',
   },
   'settings.performance.title': {
     'zh-CN': '性能设置',

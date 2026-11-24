@@ -5,6 +5,7 @@ use super::{SourceLocation, load_document};
 use crate::config::ConfigError;
 use crate::config::ConfigService;
 use std::sync::Mutex;
+#[cfg(test)]
 use std::time::Duration;
 
 static ACTIVE: Mutex<Option<tokio::sync::watch::Sender<bool>>> = Mutex::new(None);
@@ -43,12 +44,11 @@ pub(crate) async fn probe_startup_source(config: &ConfigService) -> StartupProbe
     let result = tokio::select! {
         biased;
         _ = cancelled.changed() => StartupProbe::failed("cancelled"),
-        result = tokio::time::timeout(Duration::from_secs(10), config.official_root(false)) => {
+        result = config.official_root(false) => {
             match result {
-                Err(_) => StartupProbe::failed("timeout"),
-                Ok(Ok(_)) => StartupProbe { reachable: true, failure_kind: None },
-                Ok(Err(error)) if error == "source.addressMismatch" => StartupProbe::failed("cancelled"),
-                Ok(Err(_)) => StartupProbe::failed("network"),
+                Ok(_) => StartupProbe { reachable: true, failure_kind: None },
+                Err(error) if error == "source.addressMismatch" => StartupProbe::failed("cancelled"),
+                Err(_) => StartupProbe::failed("network"),
             }
         }
     };

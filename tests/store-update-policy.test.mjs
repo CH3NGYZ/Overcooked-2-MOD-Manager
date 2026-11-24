@@ -20,7 +20,7 @@ test('Store checks and installs stop before standalone cache, network or update 
   const check = commands.slice(commands.indexOf('pub async fn check_app_update('), commands.indexOf('fn failed_app_update_check('))
   assert.match(check, /distribution::current\(\)\? == AppDistribution::MicrosoftStore[^]*?return Ok\(distribution::store_check\(region.as_str\(\)\)\);/)
   const earlyReturn = check.indexOf('return Ok(distribution::store_check(')
-  for (const action of ['app_update_cache_get(', 'tokio::time::timeout(', 'discover_installer_update(']) {
+  for (const action of ['app_update_cache_get(', 'run_update_check(', 'discover_installer_update(']) {
     assert.ok(check.indexOf(action) > earlyReturn, `${action} must follow the Store return`)
   }
   const install = commands.slice(commands.indexOf('pub async fn stage_app_update('))

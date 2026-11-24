@@ -5,7 +5,7 @@ use std::net::{TcpListener, TcpStream};
 
 // A single blocking loopback connection; request and response I/O are bounded.
 fn serve_once(
-    respond: impl FnOnce(&mut TcpStream) + Send + 'static,
+    respond: impl FnOnce(&mut TcpStream, &str) + Send + 'static,
 ) -> (String, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(false).unwrap();
@@ -34,9 +34,58 @@ fn serve_once(
                 "fixture request headers are bounded"
             );
         }
-        respond(&mut socket);
+        respond(&mut socket, std::str::from_utf8(&head).unwrap());
     });
     (url, worker)
+}
+
+#[tokio::test]
+async fn direct_requests_replace_local_user_agents_and_keep_one_header_after_redirect() {
+    use crate::api_scheduler::ApiRequestExt;
+
+    fn assert_ua(request: &str) {
+        let received = request
+            .lines()
+            .take_while(|line| !line.is_empty())
+            .filter_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("User-Agent")
+                    .then(|| value.trim())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(received, [crate::http_user_agent::app_user_agent()]);
+    }
+
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(3))
+        .user_agent("client-default")
+        .build()
+        .unwrap();
+    for path in ["download", "manifest", "api"] {
+        let (final_url, final_worker) = serve_once(|socket, request| {
+            assert_ua(request);
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .unwrap();
+        });
+        let (initial_url, initial_worker) = serve_once(move |socket, request| {
+            assert_ua(request);
+            write!(socket, "HTTP/1.1 302 Found\r\nLocation: {final_url}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        });
+        let request = client
+            .get(initial_url)
+            .header(USER_AGENT, "request-override");
+        let response = match path {
+            "download" => request.send_logged().await,
+            "manifest" => request.send_logged_metadata().await,
+            "api" => request.send_api(crate::models::Provider::Github).await,
+            _ => unreachable!(),
+        };
+        assert_eq!(response.unwrap().status(), StatusCode::OK);
+        initial_worker.join().unwrap();
+        final_worker.join().unwrap();
+    }
 }
 
 #[tokio::test]
@@ -51,7 +100,7 @@ async fn redirect_to_400_retains_final_url_and_logs_only_safe_addresses() {
     );
     let final_url = format!("{final_base}?signature=final-query-secret#final-fragment-secret");
     let location = final_url.clone();
-    let (initial_base, redirect_worker) = serve_once(move |socket| {
+    let (initial_base, redirect_worker) = serve_once(move |socket, _request| {
         write!(socket, "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
         socket.flush().unwrap();
     });
@@ -141,7 +190,7 @@ async fn inspect_preserves_extensions_inserted_before_response_rebuilding() {
 
 #[tokio::test]
 async fn chunked_response_keeps_unknown_length_and_data_before_trailers() {
-    let (url, worker) = serve_once(|socket| {
+    let (url, worker) = serve_once(|socket, _request| {
         socket.write_all(
             b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\nTrailer: X-Checksum\r\nConnection: close\r\n\r\n5\r\nalpha\r\n4\r\nbeta\r\n0\r\nX-Checksum: alpha-beta\r\n\r\n",
         ).unwrap();
@@ -192,7 +241,7 @@ async fn chunked_response_keeps_unknown_length_and_data_before_trailers() {
 #[tokio::test]
 async fn dropping_pending_preview_cancels_connection_and_emits_one_diagnostic() {
     let (closed_sender, closed_receiver) = tokio::sync::oneshot::channel();
-    let (url, worker) = serve_once(move |socket| {
+    let (url, worker) = serve_once(move |socket, _request| {
         socket.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: 1000\r\nConnection: close\r\n\r\n").unwrap();
         socket.flush().unwrap();
         let result = socket.read(&mut [0; 1]).map_err(|error| error.kind());
@@ -259,7 +308,7 @@ async fn refused_loopback_connection_keeps_error_classification_and_safe_log() {
 
 #[tokio::test]
 async fn timeout_before_response_headers_keeps_timeout_error_and_one_log() {
-    let (safe_url, worker) = serve_once(|socket| {
+    let (safe_url, worker) = serve_once(|socket, _request| {
         // Do not send headers. The client's original request deadline closes it.
         let _ = socket.read(&mut [0; 1]);
     });

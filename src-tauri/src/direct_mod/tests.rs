@@ -1,4 +1,5 @@
 use super::*;
+use std::fs;
 
 #[tokio::test]
 async fn direct_download_uses_ranges_and_preserves_bytes() {
@@ -165,16 +166,16 @@ fn direct_filename_validation() {
 fn downloaded_content_validation() {
     let path = std::env::temp_dir().join(format!("direct-mod-{}", uuid::Uuid::new_v4()));
     fs::write(&path, b"<html>not a mod</html>").unwrap();
-    assert!(validate_mod_file(&path, "mod.dll").is_err());
-    assert!(validate_mod_file(&path, "mod.zip").is_err());
+    assert!(validate_mod_file(&path, "mod.dll", || false).is_err());
+    assert!(validate_mod_file(&path, "mod.zip", || false).is_err());
     let mut pe = vec![0u8; 88];
     pe[..2].copy_from_slice(b"MZ");
     pe[60..64].copy_from_slice(&64u32.to_le_bytes());
     pe[64..68].copy_from_slice(b"PE\0\0");
     fs::write(&path, &pe).unwrap();
-    assert!(validate_mod_file(&path, "mod.dll").is_err());
+    assert!(validate_mod_file(&path, "mod.dll", || false).is_err());
     pe[87] = 0x20;
     fs::write(&path, pe).unwrap();
-    assert!(validate_mod_file(&path, "mod.dll").is_ok());
+    assert!(validate_mod_file(&path, "mod.dll", || false).is_ok());
     fs::remove_file(path).unwrap();
 }

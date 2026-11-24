@@ -173,11 +173,7 @@ repository='b'
             Some("2.0")
         );
         assert_eq!(requests.lock().unwrap().len(), 2);
-        cache.expire_for_test(&crate::releases::repository_cache_key(
-            Provider::Gitcode,
-            "u",
-            "b",
-        ));
+        cache.expire_for_test(&fixture_cache_key(&ctx));
         acquire(&ctx, address).await;
         let expired = fetch_map_release_data(&ctx, &maps[0]).await.unwrap();
         assert_eq!(requests.lock().unwrap().len(), 3);
@@ -202,24 +198,32 @@ repository='b'
 // consumers below still execute the real cache, note parser and projections.
 async fn acquire(ctx: &MapSourceContext<'_>, address: std::net::SocketAddr) {
     ctx.cache
-        .list(
-            crate::releases::repository_cache_key(Provider::Gitcode, "u", "b"),
-            ctx.pass_id,
-            ctx.force,
-            || async {
-                let value = ctx
-                    .client
-                    .get(format!("http://{address}/releases"))
-                    .send()
-                    .await
-                    .unwrap()
-                    .json()
-                    .await
-                    .unwrap();
-                crate::releases::parse_release_json(&value, &Provider::Gitcode)
-                    .map_err(|error| error.to_string())
-            },
-        )
+        .list(fixture_cache_key(ctx), ctx.pass_id, ctx.force, || async {
+            let value = ctx
+                .client
+                .get(format!("http://{address}/releases"))
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            crate::releases::parse_release_json(&value, &Provider::Gitcode)
+                .map_err(|error| error.to_string())
+        })
         .await
         .unwrap();
+}
+
+fn fixture_cache_key(ctx: &MapSourceContext<'_>) -> String {
+    let repo = crate::releases::RepositoryRequest {
+        id: "bundle".into(),
+        provider: Provider::Gitcode,
+        username: "u".into(),
+        repository: "b".into(),
+        kind: crate::models::RepositoryKind::Map,
+        network_plan: Default::default(),
+        source_id: None,
+    };
+    crate::releases::release_cache_key_for_test(&repo, &ctx.config.region, None)
 }

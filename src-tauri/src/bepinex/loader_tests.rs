@@ -1,5 +1,48 @@
 use super::*;
 
+#[test]
+fn fixed_framework_release_uses_the_asset_platform_and_region_plan() {
+    use crate::archive::DownloadRoute;
+    for package in [Package::Windows, Package::MacOS] {
+        let github_url = package.url(&Provider::Github);
+        for provider in [Provider::Github, Provider::Gitcode] {
+            let mainland = package.plan_download(&provider, "cn").unwrap();
+            assert_eq!(mainland.candidates[0].url, github_url);
+            assert_eq!(mainland.candidates[0].route, DownloadRoute::Direct);
+            assert_eq!(
+                mainland.candidates[1].url,
+                format!("https://git.yylx.win/{github_url}")
+            );
+            assert_eq!(mainland.execution.max_parallelism, 3);
+            assert_eq!(mainland.download_threads, 1);
+            let international = package.plan_download(&provider, "global").unwrap();
+            assert_eq!(international.candidates[0].url, github_url);
+            assert_eq!(international.candidates[0].route, DownloadRoute::Direct);
+            assert_ne!(
+                international.candidates[0].identity,
+                mainland.candidates[0].identity
+            );
+            assert_eq!(international.candidates.len(), 3);
+            let path = github_url.strip_prefix("https://github.com").unwrap();
+            for (candidate, host) in international.candidates[1..]
+                .iter()
+                .zip(["oc2gh.ch3ng.top", "oc2gh.5882778.xyz"])
+            {
+                assert_eq!(candidate.route, DownloadRoute::Proxy);
+                assert_eq!(candidate.url, format!("https://{host}{path}"));
+            }
+            assert!(international.execution.race);
+            assert_eq!(international.execution.max_parallelism, 3);
+        }
+        for region in ["cn", "global"] {
+            let gitee = package.plan_download(&Provider::Gitee, region).unwrap();
+            assert_eq!(gitee.candidates.len(), 1);
+            assert_eq!(gitee.candidates[0].url, package.url(&Provider::Gitee));
+            assert_eq!(gitee.candidates[0].route, DownloadRoute::Direct);
+        }
+    }
+}
+
 fn winhttp_state(root: &Path) -> WinhttpState {
     crate::bepinex::state(
         root,

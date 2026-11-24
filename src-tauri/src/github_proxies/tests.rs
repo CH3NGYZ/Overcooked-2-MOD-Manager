@@ -39,9 +39,12 @@ fn gitcode_api_proxy_keeps_api_path_and_pagination_in_its_own_group() {
     assert_eq!(
         proxies
             .iter()
-            .map(|proxy| proxy.id.as_str())
+            .map(|proxy| (proxy.id.as_str(), proxy.name.as_str()))
             .collect::<Vec<_>>(),
-        ["oc2gcapi", "oc2gcapi-edgeone"]
+        [
+            ("oc2gcapi-cloudflare", "oc2gcapi-cloudflare"),
+            ("oc2gcapi-edgeone", "oc2gcapi-edgeone"),
+        ]
     );
     let official =
         "https://api.atomgit.com/api/v5/repos/CH3NGY2/OC2-Map-Bundle/releases?per_page=50&page=2";
@@ -56,7 +59,7 @@ fn gitcode_api_proxy_keeps_api_path_and_pagination_in_its_own_group() {
     config.github_proxies = bundled;
     assert_eq!(
         crate::providers::api_proxies(&config, &crate::models::Provider::Gitcode)[0].id,
-        "oc2gcapi"
+        "oc2gcapi-cloudflare"
     );
     let invalid =
         "[[gitcode_api_proxies]]\nid='bad'\nname='Bad'\ntemplate='http://proxy.example/{url}'";
@@ -281,13 +284,13 @@ fn bundled_url_path_proxies_render_one_slash_and_request_each_target_once() {
     let bundled = crate::network_policy::NetworkPolicy::bundled().unwrap();
     for (id, target, is_raw, expected) in [
         (
-            "oc2gh-release",
+            "oc2gh-release-cloudflare",
             "https://github.com/acme/tool/releases/download/v1/tool.zip",
             false,
             "https://oc2gh.ch3ng.top/acme/tool/releases/download/v1/tool.zip",
         ),
         (
-            "oc2gh-raw",
+            "oc2gh-raw-cloudflare",
             "https://github.com/acme/tool/raw/refs/heads/main/bin/tool.dll",
             true,
             "https://oc2gh.ch3ng.top/acme/tool/raw/refs/heads/main/bin/tool.dll",
@@ -306,6 +309,7 @@ fn bundled_url_path_proxies_render_one_slash_and_request_each_target_once() {
         ),
     ] {
         let source = bundled.proxies[id].legacy_entry();
+        assert_eq!(source.name, id);
         let duplicate = GitHubProxy {
             id: "other-id".into(),
             template: source.template.replace("/{url_path}", "{url_path}"),

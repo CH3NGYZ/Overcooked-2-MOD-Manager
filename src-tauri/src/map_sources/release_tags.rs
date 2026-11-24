@@ -39,32 +39,17 @@ pub(super) async fn load_release_tag_maps(
     origin: &SourceLocation,
     ctx: &MapSourceContext<'_>,
 ) -> Result<Vec<MapRepositoryConfig>, ConfigError> {
-    let provider = declaration.provider.clone().unwrap_or(Provider::Github);
     let probe = declaration_request(declaration);
-    // All consumers now fetch complete pages and share the same repository snapshot.
-    let key = crate::releases::repository_cache_key(
-        provider.clone(),
-        &declaration.username,
-        &declaration.repository,
-    );
-    let token = ctx.token(&provider).map(str::to_string);
-    let official_api_only = ctx.config.auth.official_api_only;
-    let api_proxies = ctx.api_proxies(&provider).to_vec();
-    let releases = match ctx
-        .cache
-        .list(key, ctx.pass_id, ctx.force, || async move {
-            crate::releases::fetch_releases(
-                ctx.client,
-                &probe,
-                &ctx.config.region,
-                token.as_deref(),
-                official_api_only,
-                &api_proxies,
-            )
-            .await
-            .map_err(|error| error.to_string())
-        })
-        .await
+    let releases = match crate::releases::cached_releases(
+        ctx.cache,
+        ctx.client,
+        &probe,
+        &ctx.config.region,
+        ctx.token(&probe.provider),
+        ctx.pass_id,
+        ctx.force,
+    )
+    .await
     {
         Ok(releases) => releases,
         Err(error) => {

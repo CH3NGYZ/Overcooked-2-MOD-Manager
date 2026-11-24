@@ -1,11 +1,10 @@
-use super::client::APP_USER_AGENT;
 use super::error::ReleaseError;
 use super::error::release_error_kind;
 use super::projection::parse_release_json;
 use crate::api_scheduler::ApiRequestExt;
-use crate::models::GitHubProxy;
 use crate::models::Provider;
 use crate::models::ReleaseInfo;
+use crate::network_policy::{NetworkPolicy, Step};
 use reqwest::Client;
 use reqwest::StatusCode;
 use serde_json::Value;
@@ -28,77 +27,74 @@ pub(super) fn api_target_kind(
     }
 }
 
-/// Build the ordered API fallback sequence for one provider.
-///
-/// 配了 Token 就直奔官方 + Token：Token 有独立配额，没必要先用匿名额度把
-/// 匿名限流额度耗掉（用户明确要求「有 Token 就别走匿名」）。
-/// 只有没有 Token 时才走官方匿名；两条路径失败后都落到配置的代理端点。
-/// Credentials are never sent to a proxy endpoint.
-pub(super) fn api_request_targets<'a>(
-    official_url: &str,
-    token: Option<&'a str>,
-    _official_api_only: bool,
-    api_proxies: &[GitHubProxy],
-) -> Vec<(String, Option<&'a str>)> {
-    let mut targets = Vec::new();
-    match token {
-        Some(token) => targets.push((official_url.to_string(), Some(token))),
-        None => targets.push((official_url.to_string(), None)),
-    }
-    targets.extend(
-        crate::github_proxies::proxy_urls(api_proxies, official_url, false, None)
-            .into_iter()
-            .map(|url| (url, None)),
-    );
-    targets
-}
-
-/// Repository plans can narrow the global API list, but never authorize
-/// credentials at a proxy origin. Token grants remain a separate capability.
 pub(super) fn repository_api_targets<'a>(
     repo: &crate::releases::RepositoryRequest,
     region: &str,
     official: &str,
     token: Option<&'a str>,
-    official_only: bool,
-    proxies: &[GitHubProxy],
-) -> Result<Vec<(String, Option<&'a str>)>, ReleaseError> {
-    use crate::network_policy::{NetworkPolicy, Step};
-    let policy = NetworkPolicy::active().map_err(ReleaseError::Http)?;
-    let plan = policy
-        .resolve(&repo.provider, repo.kind, region, &repo.network_plan)
-        .map_err(ReleaseError::Http)?;
-    let mut targets = Vec::new();
-    for step in &plan.api.route {
-        match step {
-            Step::Official => targets.push((official.to_string(), token)),
-            Step::Proxy { id } => {
-                let proxy = policy
-                    .proxies
-                    .get(id)
-                    .ok_or_else(|| ReleaseError::Http("proxy.validationFailed".into()))?;
-                // Keep legacy runtime proxy refresh for default plans; explicit
-                // source routes use exactly their trusted registry references.
-                let entries = if repo.network_plan.is_empty() {
-                    proxies.to_vec()
-                } else {
-                    vec![proxy.legacy_entry()]
-                };
-                targets.extend(
-                    api_request_targets(official, None, official_only, &entries)
+) -> Result<ApiTargets<'a>, ReleaseError> {
+    RepositoryApiRoute::resolve(repo, region)?.targets(official, token)
+}
+
+pub(super) type ApiTargets<'a> = Vec<(String, Option<&'a str>)>;
+
+pub(super) struct RepositoryApiRoute {
+    policy: std::sync::Arc<NetworkPolicy>,
+    steps: Vec<Step>,
+}
+
+impl RepositoryApiRoute {
+    pub(super) fn resolve(
+        repo: &crate::releases::RepositoryRequest,
+        region: &str,
+    ) -> Result<Self, ReleaseError> {
+        let policy = NetworkPolicy::active().map_err(ReleaseError::Http)?;
+        let plan = policy
+            .resolve(&repo.provider, repo.kind, region, &repo.network_plan)
+            .map_err(ReleaseError::Http)?;
+        Ok(Self {
+            policy,
+            steps: plan.api.route,
+        })
+    }
+
+    pub(super) fn targets<'a>(
+        &self,
+        official: &str,
+        token: Option<&'a str>,
+    ) -> Result<ApiTargets<'a>, ReleaseError> {
+        let mut targets = Vec::new();
+        for step in &self.steps {
+            match step {
+                Step::Official => targets.push((official.to_string(), token)),
+                Step::Proxy { id } => {
+                    let proxy = self
+                        .policy
+                        .proxies
+                        .get(id)
+                        .ok_or_else(|| ReleaseError::Http("proxy.validationFailed".into()))?;
+                    targets.extend(
+                        crate::github_proxies::proxy_urls(
+                            &[proxy.legacy_entry()],
+                            official,
+                            false,
+                            None,
+                        )
                         .into_iter()
-                        .filter(|(url, _)| url != official),
-                );
+                        .filter(|url| url != official)
+                        .map(|url| (url, None)),
+                    );
+                }
+                _ => return Err(ReleaseError::Http("proxy.validationFailed".into())),
             }
-            _ => return Err(ReleaseError::Http("proxy.validationFailed".into())),
         }
+        let mut seen = std::collections::HashSet::new();
+        targets.retain(|(url, _)| seen.insert(url.clone()));
+        if targets.is_empty() {
+            return Err(ReleaseError::Http("proxy.validationFailed".into()));
+        }
+        Ok(targets)
     }
-    let mut seen = std::collections::HashSet::new();
-    targets.retain(|(url, _)| seen.insert(url.clone()));
-    if targets.is_empty() {
-        return Err(ReleaseError::Http("proxy.validationFailed".into()));
-    }
-    Ok(targets)
 }
 
 pub(super) async fn fetch_release_api_with_retries(
@@ -195,7 +191,6 @@ async fn fetch_api_json(
         token.is_some()
     );
     let request = crate::providers::api_request(client, url, provider, token)?
-        .header("User-Agent", APP_USER_AGENT)
         .header(
             reqwest::header::CACHE_CONTROL,
             "no-cache, no-store, max-age=0",

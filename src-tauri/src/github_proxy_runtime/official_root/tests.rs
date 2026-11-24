@@ -179,21 +179,28 @@ async fn invalid_archives_only_visit_the_authorized_regional_fallback_chain() {
         failures.push((required, Reply::zip(archive(&incomplete))));
     }
     for (name, failure) in failures {
-        for (initial, cloudflare_ok) in [
-            (DataProvider::Github, true),
-            (DataProvider::Github, false),
-            (DataProvider::Cloudflare, false),
+        for (initial, expected) in [
+            (DataProvider::Github, DataProvider::Cloudflare),
+            (DataProvider::Github, DataProvider::EdgeOne),
+            (DataProvider::Github, DataProvider::Builtin),
+            (DataProvider::Cloudflare, DataProvider::EdgeOne),
+            (DataProvider::Cloudflare, DataProvider::Builtin),
+            (DataProvider::EdgeOne, DataProvider::Builtin),
         ] {
             let mut replies = vec![(initial, failure.clone())];
-            if initial != DataProvider::Cloudflare {
-                replies.push((
-                    DataProvider::Cloudflare,
-                    if cloudflare_ok {
-                        Reply::zip(archive(&valid))
-                    } else {
-                        Reply::offline()
-                    },
-                ));
+            for provider in [DataProvider::Cloudflare, DataProvider::EdgeOne] {
+                if provider == initial || initial == DataProvider::EdgeOne {
+                    continue;
+                }
+                let reply = if provider == expected {
+                    Reply::zip(archive(&valid))
+                } else {
+                    Reply::offline()
+                };
+                replies.push((provider, reply));
+                if provider == expected {
+                    break;
+                }
             }
             let expected_paths = replies
                 .iter()
@@ -205,15 +212,10 @@ async fn invalid_archives_only_visit_the_authorized_regional_fallback_chain() {
                 .official_root_from(true, |provider| routes(&base, provider), &network)
                 .await
                 .unwrap();
-            let expected = if cloudflare_ok {
-                DataProvider::Cloudflare
-            } else {
-                DataProvider::Builtin
-            };
             assert_eq!(
                 runtime.provider(),
                 expected,
-                "{name}: {initial:?}, cloudflare={cloudflare_ok}"
+                "{name}: {initial:?} → {expected:?}"
             );
             assert_eq!(root.selection, runtime.selection());
             assert_eq!(
@@ -252,6 +254,7 @@ async fn startup_and_force_consumers_coalesce_but_a_later_force_downloads_again(
         DataProvider::Github,
         DataProvider::Gitcode,
         DataProvider::Cloudflare,
+        DataProvider::EdgeOne,
     ] {
         let reply = Reply::zip(archive(&documents()));
         let (base, server) = serve(vec![
@@ -642,19 +645,33 @@ async fn missing_native_browser_client_skips_gitee_http_and_follows_the_domestic
             Some(Reply::zip(b"<html>verify</html>".to_vec())),
         ),
     ] {
-        for cloudflare_ok in [true, false] {
+        for expected in [
+            DataProvider::Cloudflare,
+            DataProvider::EdgeOne,
+            DataProvider::Builtin,
+        ] {
             let mut replies = Vec::new();
             if let Some(reply) = gitcode_reply.clone() {
                 replies.push((DataProvider::Gitcode, reply));
             }
             replies.push((
                 DataProvider::Cloudflare,
-                if cloudflare_ok {
+                if expected == DataProvider::Cloudflare {
                     Reply::zip(archive(&documents()))
                 } else {
                     Reply::offline()
                 },
             ));
+            if expected != DataProvider::Cloudflare {
+                replies.push((
+                    DataProvider::EdgeOne,
+                    if expected == DataProvider::EdgeOne {
+                        Reply::zip(archive(&documents()))
+                    } else {
+                        Reply::offline()
+                    },
+                ));
+            }
             let expected_paths = replies
                 .iter()
                 .map(|(provider, _)| route(*provider))
@@ -684,10 +701,12 @@ async fn missing_native_browser_client_skips_gitee_http_and_follows_the_domestic
             } else {
                 vec![DataProvider::Gitee, DataProvider::Cloudflare]
             };
-            if !cloudflare_ok {
+            if expected != DataProvider::Cloudflare {
+                expected_chain.push(DataProvider::EdgeOne);
+            }
+            if expected == DataProvider::Builtin {
                 expected_chain.push(DataProvider::Builtin);
             }
-            let expected = *expected_chain.last().unwrap();
             assert_eq!(root.selection, (expected, expected_chain.len() as u64));
             assert_eq!(*resolved.lock().unwrap(), expected_chain);
             assert_eq!(runtime.current.read().unwrap().manual_revision, 0);

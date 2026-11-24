@@ -104,7 +104,6 @@ pub async fn download_to_temp_with_threads_and_first_byte_timeout(
         log::info!("下载策略：尝试分片，线程数={}，任务={}", threads, label);
         let head = client
             .head(url)
-            .header("User-Agent", crate::releases::APP_USER_AGENT)
             .header(reqwest::header::ACCEPT_ENCODING, "identity");
         let head_response = if let Some(timeout) = first_byte_timeout {
             match tokio::time::timeout(timeout, head.send_logged()).await {
@@ -162,7 +161,6 @@ pub async fn download_to_temp_with_threads_and_first_byte_timeout(
             log::info!("分片下载文件大小：{} 字节，任务={}", total, label);
             let range_request = client
                 .get(url)
-                .header("User-Agent", crate::releases::APP_USER_AGENT)
                 .header(reqwest::header::ACCEPT_ENCODING, "identity")
                 .header(reqwest::header::RANGE, "bytes=0-0");
             let range_response = if let Some(timeout) = first_byte_timeout {
@@ -267,7 +265,6 @@ async fn download_stream(
     reporter.update(DownloadProgress::connecting(label));
     let request = client
         .get(url)
-        .header("User-Agent", crate::releases::APP_USER_AGENT)
         .header(reqwest::header::ACCEPT_ENCODING, "identity");
     let deadline = first_byte_timeout.map(|timeout| tokio::time::Instant::now() + timeout);
     let response = send_before_first_byte_deadline(request, deadline).await?;
@@ -396,7 +393,6 @@ async fn download_ranges(
                 }
                 let request = client
                     .get(&url)
-                    .header("User-Agent", crate::releases::APP_USER_AGENT)
                     .header(reqwest::header::ACCEPT_ENCODING, "identity")
                     .header(reqwest::header::RANGE, format!("bytes={start}-{end}"));
                 let deadline =

@@ -1,6 +1,143 @@
 use super::super::test_support::{ApiTestServer, api_test_client, api_test_repository};
 use super::*;
 
+#[test]
+fn release_route_preserves_repository_spelling_on_direct_and_proxy_pages() {
+    let mut repo = api_test_repository();
+    repo.provider = Provider::Github;
+    repo.username = " MixedOwner ".into();
+    repo.repository = "Mixed-Repository".into();
+    repo.network_plan = toml::from_str("mainland = 'github-mainland'").unwrap();
+
+    let resolved = resolve_release_route(&repo, "cn", None).unwrap();
+    let (first, targets) = resolved.first;
+    let second = release_page_url(&repo, 2).unwrap();
+    for (page, official, targets) in [
+        ("1", first, targets),
+        (
+            "2",
+            second.clone(),
+            resolved.route.targets(&second, None).unwrap(),
+        ),
+    ] {
+        let official = Url::parse(&official).unwrap();
+        assert_eq!(official.host_str(), Some("api.github.com"));
+        assert_eq!(
+            official.path(),
+            "/repos/MixedOwner/Mixed-Repository/releases"
+        );
+        assert!(targets.len() > 1, "fixture needs proxy targets");
+        for (target, _) in targets {
+            let target = Url::parse(&target).unwrap();
+            assert_eq!(target.path(), "/repos/MixedOwner/Mixed-Repository/releases");
+            assert!(
+                target
+                    .query_pairs()
+                    .any(|(name, value)| name == "page" && value == page)
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn release_cache_shares_equivalent_routes_and_separates_distinct_routes() {
+    use crate::models::RepositoryKind;
+    use crate::network_policy::NetworkPolicy;
+
+    let cache = RepoReleaseCache::default();
+    let mut mod_repo = api_test_repository();
+    mod_repo.provider = Provider::Github;
+    mod_repo.username = " Owner ".into();
+    mod_repo.repository = "Repo".into();
+    mod_repo.kind = RepositoryKind::Mod;
+    mod_repo.network_plan = toml::from_str("mainland = 'github-public'").unwrap();
+    let mut map_repo = mod_repo.clone();
+    map_repo.username = "owner".into();
+    map_repo.repository = "repo".into();
+    map_repo.kind = RepositoryKind::Map;
+    let authenticated = release_cache_key_for_test(&mod_repo, "cn", Some("fixture-a"));
+    assert_eq!(
+        authenticated,
+        release_cache_key_for_test(&map_repo, "cn", Some("fixture-a"))
+    );
+    assert_ne!(
+        authenticated,
+        release_cache_key_for_test(&map_repo, "cn", None)
+    );
+    assert_ne!(
+        authenticated,
+        release_cache_key_for_test(&map_repo, "cn", Some("fixture-b"))
+    );
+
+    map_repo.network_plan = toml::from_str("mainland = 'qingyuqingxue-map-proxy-only'").unwrap();
+    let proxy_only = release_cache_key_for_test(&map_repo, "cn", Some("fixture-a"));
+    assert_eq!(
+        proxy_only,
+        release_cache_key_for_test(&map_repo, "cn", None)
+    );
+
+    let mut policy = NetworkPolicy::shared().unwrap().clone();
+    policy
+        .proxies
+        .get_mut("oc2ghapi-cloudflare")
+        .unwrap()
+        .template = "https://alternate.example/{url_path}".into();
+    let changed_proxy = NetworkPolicy::with_snapshot(Arc::new(policy), || {
+        release_cache_key_for_test(&map_repo, "cn", None)
+    });
+    assert_ne!(proxy_only, changed_proxy);
+
+    let client = api_test_client();
+    let ordinary = seed_test_snapshot(&cache, authenticated, "v1.0.0").await;
+    map_repo.network_plan = mod_repo.network_plan.clone();
+    let shared = cached_releases(
+        &cache,
+        &client,
+        &map_repo,
+        "cn",
+        Some("fixture-a"),
+        Some("same-pass"),
+        true,
+    )
+    .await
+    .unwrap();
+    assert!(Arc::ptr_eq(&ordinary, &shared));
+
+    let changed = seed_test_snapshot(&cache, proxy_only, "v2.0.0").await;
+    map_repo.network_plan = toml::from_str("mainland = 'qingyuqingxue-map-proxy-only'").unwrap();
+    let shared = cached_releases(
+        &cache,
+        &client,
+        &map_repo,
+        "cn",
+        None,
+        Some("same-pass"),
+        true,
+    )
+    .await
+    .unwrap();
+    assert!(Arc::ptr_eq(&changed, &shared));
+    assert_eq!(ordinary[0].tag_name, "v1.0.0");
+    assert_eq!(changed[0].tag_name, "v2.0.0");
+}
+
+async fn seed_test_snapshot(
+    cache: &RepoReleaseCache,
+    key: String,
+    tag: &str,
+) -> Arc<Vec<ReleaseInfo>> {
+    cache
+        .list(key, Some("same-pass"), true, || async {
+            super::super::projection::parse_release_json(
+                &serde_json::json!([{ "tag_name": tag }]),
+                &Provider::Github,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
 #[ignore = "requires public GitCode API proxy network access"]
 async fn real_gitcode_proxy_reads_complete_release_pages() {
@@ -78,6 +215,42 @@ async fn release_api_success_stops_retries_and_remaining_targets() {
 }
 
 #[tokio::test]
+async fn release_api_fallback_gets_a_fresh_timeout_and_keeps_token_on_official_request() {
+    use std::time::{Duration, Instant};
+
+    let timeout = Duration::from_millis(700);
+    let official = ApiTestServer::with_body_delay(
+        vec![("403 Forbidden", "ordinary denial")],
+        timeout + Duration::from_millis(350),
+    );
+    let proxy = ApiTestServer::with_body_delay(
+        vec![("200 OK", r#"[{"tag_name":"v1.4.0"}]"#)],
+        Duration::from_millis(100),
+    );
+    let targets = vec![
+        (official.url.clone(), Some("local-test-credential")),
+        (proxy.url.clone(), None),
+    ];
+    let client = crate::releases::build_client(timeout).unwrap();
+    let mut repo = api_test_repository();
+    repo.provider = Provider::Github;
+    let started = Instant::now();
+    let (releases, received) = fetch_releases_from_targets(&client, &repo, &official.url, targets)
+        .await
+        .unwrap();
+    assert!(started.elapsed() >= timeout);
+    assert_eq!(received, 1);
+    assert_eq!(releases[0].tag_name, "v1.4.0");
+    let requests = official.requests();
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].contains("authorization: Bearer local-test-credential"));
+    let requests = proxy.requests();
+    assert_eq!(requests.len(), 1);
+    assert!(!requests[0].to_ascii_lowercase().contains("authorization:"));
+    assert!(!requests[0].contains("local-test-credential"));
+}
+
+#[tokio::test]
 async fn gitee_official_403_skips_token_and_proxy_success_stops_fallback() {
     let official = ApiTestServer::new(vec![("403 Forbidden", "")]);
     let proxy = ApiTestServer::new(vec![("500 Internal Server Error", ""), ("200 OK", "[]")]);
@@ -131,7 +304,7 @@ async fn gitee_proxy_403_skips_that_proxy_and_tries_the_next_one() {
     assert_eq!(remaining.requests().len(), 1);
     for request in proxy.requests().into_iter().chain(remaining.requests()) {
         assert!(!request.to_ascii_lowercase().contains("authorization:"));
-        assert!(request.contains(crate::releases::APP_USER_AGENT));
+        assert!(request.contains(crate::http_user_agent::app_user_agent()));
     }
 }
 

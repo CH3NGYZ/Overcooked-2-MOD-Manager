@@ -24,7 +24,6 @@ static MAIN_CLOSED: AtomicBool = AtomicBool::new(false);
 
 pub(crate) struct Request {
     pub url: Url,
-    pub user_agent: String,
     pub max_bytes: usize,
     pub title: String,
     pub timeout: Duration,
@@ -88,12 +87,7 @@ fn normalize_download_path(initial: &Url, path: &str) -> Result<String, String> 
 
 impl Policy {
     fn new(request: &Request) -> Result<Self, String> {
-        if !safe_https(&request.url)
-            || request.max_bytes == 0
-            || request.timeout.is_zero()
-            || request.user_agent.is_empty()
-            || request.user_agent.contains(['\r', '\n'])
-        {
+        if !safe_https(&request.url) || request.max_bytes == 0 || request.timeout.is_zero() {
             return Err(INVALID.into());
         }
         let hosts = request
@@ -377,7 +371,6 @@ pub(crate) async fn download<R: Runtime>(
         WebviewUrl::External(Url::parse("about:blank").map_err(|_| INVALID)?),
     )
     .title(&request.title)
-    .user_agent(&request.user_agent)
     .inner_size(1000.0, 720.0)
     .visible(false)
     .focused(false)

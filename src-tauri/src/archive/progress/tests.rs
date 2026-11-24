@@ -9,7 +9,7 @@ fn waiting_progress_is_visible_before_size_or_bytes_and_omits_connection_context
     assert_eq!(event["downloaded"], 0);
     assert!(event["total"].is_null());
     assert_eq!(event["finished"], false);
-    for key in ["file_name", "route", "source", "attempt", "attempt_total"] {
+    for key in ["file_name", "route", "source", "race"] {
         assert!(!event.as_object().unwrap().contains_key(key));
     }
 }
@@ -18,14 +18,19 @@ fn waiting_progress_is_visible_before_size_or_bytes_and_omits_connection_context
 async fn observers_are_scoped_to_one_future_and_release_after_errors() {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let captured = seen.clone();
-    let result =
-        observe_download_progress(move |value| captured.lock().unwrap().push(value), async {
-            emit_progress_event(None, DownloadProgress::connecting("first"));
+    let result = observe_download_progress(
+        true,
+        move |value| captured.lock().unwrap().push(value),
+        async {
+            assert!(interactive_download_progress());
+            publish_download_progress(DownloadProgress::connecting("first"));
             Err::<(), _>("download.cancelled")
-        })
-        .await;
+        },
+    )
+    .await;
     assert_eq!(result, Err("download.cancelled"));
-    emit_progress_event(None, DownloadProgress::connecting("late"));
+    assert!(!interactive_download_progress());
+    publish_download_progress(DownloadProgress::connecting("late"));
     assert_eq!(seen.lock().unwrap().len(), 1);
     assert_eq!(seen.lock().unwrap()[0].label, "first");
 }
@@ -36,18 +41,25 @@ async fn simultaneous_observers_do_not_share_progress_and_nesting_restores_the_p
     let second = Arc::new(Mutex::new(Vec::new()));
     let (a, b, nested) = (first.clone(), second.clone(), second.clone());
     tokio::join!(
-        observe_download_progress(move |p| a.lock().unwrap().push(p.label), async {
-            emit_progress_event(None, DownloadProgress::connecting("outer-before"));
-            observe_download_progress(move |p| nested.lock().unwrap().push(p.label), async {
-                tokio::task::yield_now().await;
-                emit_progress_event(None, DownloadProgress::connecting("inner"));
-            })
+        observe_download_progress(true, move |p| a.lock().unwrap().push(p.label), async {
+            publish_download_progress(DownloadProgress::connecting("outer-before"));
+            observe_download_progress(
+                false,
+                move |p| nested.lock().unwrap().push(p.label),
+                async {
+                    tokio::task::yield_now().await;
+                    assert!(!interactive_download_progress());
+                    publish_download_progress(DownloadProgress::connecting("inner"));
+                },
+            )
             .await;
-            emit_progress_event(None, DownloadProgress::connecting("outer-after"));
+            assert!(interactive_download_progress());
+            publish_download_progress(DownloadProgress::connecting("outer-after"));
         }),
-        observe_download_progress(move |p| b.lock().unwrap().push(p.label), async {
+        observe_download_progress(false, move |p| b.lock().unwrap().push(p.label), async {
             tokio::task::yield_now().await;
-            emit_progress_event(None, DownloadProgress::connecting("parallel"));
+            assert!(!interactive_download_progress());
+            publish_download_progress(DownloadProgress::connecting("parallel"));
         })
     );
     assert_eq!(*first.lock().unwrap(), ["outer-before", "outer-after"]);

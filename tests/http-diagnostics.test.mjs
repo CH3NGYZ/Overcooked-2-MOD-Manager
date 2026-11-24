@@ -114,6 +114,26 @@ test('production HTTP cannot bypass diagnostics with RequestBuilder.send or Clie
   assert.deepEqual(violations, [], 'only http_diagnostics.rs may send or execute raw HTTP; send(value) channels are excluded')
 })
 
+test('only the direct HTTP sender and updater set the application User-Agent', () => {
+  assert.match(rust.get('http_diagnostics.rs'), /\.insert\(\s*USER_AGENT,\s*HeaderValue::from_static\(crate::http_user_agent::app_user_agent\(\)\),?\s*\)/)
+  const updaterSource = readText(resolve(rustRoot, 'lib.rs'))
+  assert.deepEqual(updaterSource.match(/\.\s*header\s*\(\s*"user-agent"/gi), ['.header("User-Agent"'])
+  assert.match(updaterSource, /\.header\("User-Agent",\s*http_user_agent::app_user_agent\(\)\)/)
+  for (const [path, code] of rust) {
+    assert.doesNotMatch(code, /\.\s*user_agent\s*\(/, path)
+    if (!['http_diagnostics.rs', 'http_user_agent.rs'].includes(path)) {
+      assert.doesNotMatch(code, /\bUSER_AGENT\b/, path)
+    }
+    if (path !== 'lib.rs') {
+      assert.doesNotMatch(readText(resolve(rustRoot, path)), /\.\s*header\s*\(\s*"user-agent"/i, path)
+    }
+  }
+  const config = JSON.parse(readText(resolve(rustRoot, '../tauri.conf.json')))
+  for (const window of config.app.windows) {
+    assert.ok(!Object.hasOwn(window, 'userAgent'), 'the shell uses the native WebView User-Agent')
+  }
+})
+
 test('API scheduler retains rate-limit admission before delegating to shared diagnostics', () => {
   const scheduler = rust.get('api_scheduler.rs')
   assert.match(scheduler, /impl\s+ApiRequestExt\s+for\s+reqwest::RequestBuilder/)
@@ -144,7 +164,7 @@ test('production API request owners keep send_api rather than bypassing provider
 })
 
 const nonApiFiles = [
-  'archive/transfer.rs', 'repository_sources/transport.rs', 'repository_sources/verified.rs',
+  'archive/transfer.rs', 'repository_sources/transport.rs',
   'repository_sources/package/download.rs',
   'repository_readme.rs', 'avatars.rs', 'app_update/manifest.rs', 'app_update/download.rs',
   'direct_mod.rs', 'commands/colorful_name.rs', 'map_publish/assets.rs',
@@ -152,7 +172,7 @@ const nonApiFiles = [
 
 test('all non-API HTTP owners retain shared diagnostics directly or through the first-byte helper', () => {
   const firstByteDelegates = new Set([
-    'repository_sources/transport.rs', 'repository_sources/verified.rs', 'repository_sources/package/download.rs',
+    'repository_sources/package/download.rs',
     'repository_readme.rs', 'avatars.rs', 'app_update/download.rs',
   ])
   const transfer = rust.get('archive/transfer.rs')

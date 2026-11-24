@@ -6,6 +6,7 @@ use super::location::SourceLocation;
 use super::location::remote_document_location;
 use super::package::SourcePackage;
 use crate::config::ConfigError;
+use crate::http_diagnostics::HttpRequestExt;
 use crate::models::NetworkConfig;
 use crate::releases;
 use futures_util::StreamExt;
@@ -20,10 +21,7 @@ pub(crate) fn package_document_path(location: &SourceLocation) -> Option<String>
     }
 }
 
-/// 官方源码 ZIP 与自定义 HTTP 源共用的请求超时。
-/// 完整传输固定 30 秒，连接与首个非空数据另受用户首字节期限约束。
-/// 官方各级 TOML 从已获取的同一包读取，不再逐份等待网络；
-/// 需要人工操作的 WebView 下载由调用方单独设置交互期限。
+/// 官方源码 ZIP 的完整传输上限。文档的预算来自 API 超时设置。
 pub const SOURCE_DOCUMENT_TIMEOUT: u64 = 30;
 
 pub(super) const MAX_SOURCE_BYTES: usize = 1024 * 1024;
@@ -44,54 +42,56 @@ pub(crate) async fn load_text_document<T>(
         log::debug!("读取当前源码包文档：路径={}，字节={}", path, text.len());
         return parse(text, location);
     }
-    let timeout_seconds = SOURCE_DOCUMENT_TIMEOUT;
     let SourceLocation::Remote(url) = location else {
         return Err(ConfigError::Read("source.addressMismatch".into()));
     };
+    let client = document_client(network)?;
+    let (bytes, redirected) =
+        download_document(&client, url.as_str(), network.api_timeout(), None).await?;
+    let origin = remote_document_location(url, redirected)?;
+    parse_remote_document(url.as_str(), bytes, &origin, parse)
+}
+
+pub(super) fn document_client(network: &NetworkConfig) -> Result<reqwest::Client, ConfigError> {
+    releases::build_download_client(network.api_timeout())
+        .map_err(|error| ConfigError::Read(error.to_string()))
+}
+
+pub(super) async fn download_document(
+    client: &reqwest::Client,
+    url: &str,
+    timeout: Duration,
+    reporter: Option<&crate::archive::DownloadReporter>,
+) -> Result<(Vec<u8>, url::Url), ConfigError> {
+    let safe_url = safe_log_address(url);
     let started_at = std::time::Instant::now();
-    let safe_url = safe_log_address(url.as_str());
-    log::info!(
-        "开始加载远程文档：地址={}，超时={}秒",
-        safe_url,
-        timeout_seconds
-    );
-    let first_byte_timeout = network.first_byte_timeout();
-    let client = releases::build_download_client(first_byte_timeout).map_err(|error| {
-        log::error!(
-            "创建文档 HTTP 客户端失败：地址={}，原因={}",
-            safe_url,
-            error
-        );
-        ConfigError::Read(error.to_string())
-    })?;
-    let deadline = tokio::time::Instant::now() + first_byte_timeout;
     let request = client
-        .get(url.clone())
-        .timeout(Duration::from_secs(timeout_seconds))
-        .header("User-Agent", releases::APP_USER_AGENT)
+        .get(url)
+        .timeout(timeout)
         .header(
             reqwest::header::CACHE_CONTROL,
             "no-cache, no-store, max-age=0",
         )
         .header(reqwest::header::PRAGMA, "no-cache");
-    let response = crate::archive::send_before_first_byte_deadline(request, Some(deadline))
+    let response = request
+        .send_logged()
         .await
-        .map_err(|error| {
-            log::error!("请求远程文档失败：地址={}，原因={}", safe_url, error);
-            ConfigError::Read(error)
-        })?;
+        .map_err(|error| ConfigError::Read(error.without_url().to_string()))?;
     let status = response.status();
     if !status.is_success() {
         return Err(ConfigError::Read(format!("HTTP {}", status.as_u16())));
     }
-    // 普通直链以最终地址为相对基准；可识别的 Raw 请求保留原仓库 ref，
-    // 避免 CDN 重定向丢掉分支结构。两条读取入口都交同一实现判定。
-    let resolved = remote_document_location(url, response.url().clone())?;
+    let redirected = response.url().clone();
+    let length = response.content_length();
+    if length.is_some_and(|size| size > MAX_SOURCE_BYTES as u64) {
+        return Err(ConfigError::Invalid("source.tooLarge".into()));
+    }
+    let mut progress = reporter.map(|reporter| {
+        let mut progress = reporter.snapshot();
+        progress.total = length;
+        progress
+    });
     let mut body = response.bytes_stream();
-    let first = crate::archive::first_nonempty_chunk(&mut body, Some(deadline))
-        .await
-        .map_err(ConfigError::Read)?;
-    let mut body = futures_util::stream::iter(first.into_iter().map(Ok)).chain(body);
     let mut bytes = Vec::new();
     while let Some(chunk) = body.next().await.transpose().map_err(|error| {
         log::error!(
@@ -106,36 +106,46 @@ pub(crate) async fn load_text_document<T>(
             return Err(ConfigError::Invalid("source.tooLarge".into()));
         }
         bytes.extend_from_slice(&chunk);
+        if let Some((reporter, progress)) = reporter.zip(progress.as_mut()) {
+            reporter.received(chunk.len() as u64);
+            progress.downloaded = bytes.len() as u64;
+            reporter.update(progress.clone());
+        }
     }
+    log::debug!(
+        "远程文档下载完成：地址={}，状态码={}，字节={}，耗时={}ms",
+        safe_url,
+        status.as_u16(),
+        bytes.len(),
+        started_at.elapsed().as_millis()
+    );
+    Ok((bytes, redirected))
+}
+
+pub(super) fn parse_remote_document<T>(
+    url: &str,
+    bytes: Vec<u8>,
+    location: &SourceLocation,
+    parse: impl FnOnce(&str, &SourceLocation) -> Result<T, ConfigError>,
+) -> Result<T, ConfigError> {
     let byte_count = bytes.len();
-    let text = String::from_utf8(bytes).map_err(|error| {
-        log::error!("远程文档不是有效 UTF-8：地址={}，原因={}", safe_url, error);
-        ConfigError::Parse(error.to_string())
-    })?;
-    let result = parse(&text, &resolved);
-    match &result {
-        Ok(_) => log::info!(
-            "远程文档加载完成：地址={}，状态码={}，字节={}，耗时={}ms",
-            safe_url,
-            status.as_u16(),
-            byte_count,
-            started_at.elapsed().as_millis()
-        ),
-        Err(error) => log::error!(
-            "远程文档解析失败：地址={}，状态码={}，字节={}，错误类别={}",
-            safe_url,
-            status.as_u16(),
+    let result = String::from_utf8(bytes)
+        .map_err(|error| ConfigError::Parse(error.to_string()))
+        .and_then(|text| parse(&text, location));
+    if let Err(error) = &result {
+        log::warn!(
+            "远程文档解析失败：地址={}，字节={}，错误类别={}",
+            safe_log_address(url),
             byte_count,
             error_category(error)
-        ),
+        );
     }
     result
 }
 
 /// 读取一个源文档（远程地址或内置资源）。
 ///
-/// 索引与子源的完整传输上限统一为 30 秒；首字节期限来自本次配置快照，
-/// 不使用较短的 API 总超时限制文档正文传输。
+/// 远程文本使用本次配置快照的 API 预算约束完整响应。
 pub async fn load_document(
     location: &SourceLocation,
     inherited: &crate::models::NetworkPlanSelection,

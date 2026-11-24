@@ -5,6 +5,7 @@ const DATA_PROVIDER_NAMES: Record<Exclude<DataProvider, 'builtin'>, string> = {
   gitee: 'Gitee',
   github: 'Github',
   cloudflare: 'Cloudflare',
+  edgeone: 'EdgeOne',
 }
 
 /** Data source badges use short names; the bundled source follows the UI language. */

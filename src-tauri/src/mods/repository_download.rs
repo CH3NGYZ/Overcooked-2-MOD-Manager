@@ -7,7 +7,6 @@ use crate::{
     releases,
 };
 use std::path::PathBuf;
-use tauri::AppHandle;
 
 /// 仓库安装的结果。
 ///
@@ -42,7 +41,6 @@ pub(crate) struct RepositoryAssetDownload {
 }
 
 pub(crate) async fn run_repository_install(
-    app: AppHandle,
     state: AppState,
     request: RepositoryDownloadRequest<'_>,
     preview_only: Option<bool>,
@@ -51,7 +49,7 @@ pub(crate) async fn run_repository_install(
         return crate::mod_changes::guard::require_shared_plan();
     }
     archive::start_download();
-    let download = download_repository_asset(Some(&app), &state, request).await?;
+    let download = download_repository_asset(&state, request).await?;
     tauri::async_runtime::spawn_blocking(move || {
         let preview = crate::mod_preview::stage_downloaded_file(
             &state,
@@ -81,7 +79,6 @@ pub(crate) async fn run_repository_install(
 /// Select from the current repository snapshot and return the owned artifact.
 /// The caller controls cancellation reset; this never creates a display preview.
 pub(crate) async fn download_repository_asset(
-    app: Option<&AppHandle>,
     state: &AppState,
     request: RepositoryDownloadRequest<'_>,
 ) -> Result<RepositoryAssetDownload, String> {
@@ -219,7 +216,7 @@ pub(crate) async fn download_repository_asset(
             &cache_dir,
             cache_scope.as_ref(),
             &display_name,
-            app,
+            Some(&state.download_history),
             &config.network,
             |url| {
                 crate::download::planning::plan_repository_download(

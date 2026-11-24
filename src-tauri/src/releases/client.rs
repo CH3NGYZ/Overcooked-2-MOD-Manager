@@ -2,19 +2,11 @@ use super::error::ReleaseError;
 use reqwest::Client;
 use std::time::Duration;
 
-/// Stable identifier for Cloudflare rules and access logs. The package
-/// version makes every request identify the exact desktop client release.
-pub const APP_USER_AGENT: &str = concat!(
-    "Overcooked 2 MOD Manager/",
-    env!("CARGO_PKG_VERSION"),
-    " (client=desktop; os=Windows; arch=x64; tauri=2)"
-);
-
 pub fn build_client(timeout: Duration) -> Result<Client, ReleaseError> {
     Client::builder()
         .timeout(timeout)
         .connect_timeout(timeout)
-        .user_agent(APP_USER_AGENT)
+        .referer(false)
         .build()
         .map_err(|e| {
             log::error!(
@@ -32,7 +24,7 @@ pub fn build_download_client(first_byte_timeout: Duration) -> Result<Client, Rel
     Client::builder()
         .connect_timeout(first_byte_timeout)
         .read_timeout(std::time::Duration::from_secs(120))
-        .user_agent(APP_USER_AGENT)
+        .referer(false)
         .build()
         .map_err(|e| {
             log::error!(

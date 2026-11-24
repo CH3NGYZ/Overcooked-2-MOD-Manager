@@ -65,6 +65,7 @@ fn serve(status: &str, body: Vec<u8>, delay: Duration, declared_size: Option<usi
         DownloadCandidate {
             route: DownloadRoute::Direct,
             url,
+            identity: None,
         },
         request,
         thread,
@@ -417,7 +418,9 @@ fn serve_policy(
         .unwrap()
         .bundled_text()
         .unwrap()
-        .replacen("download_threads = 1", "download_threads = 2", 1);
+        .replacen("download_threads = 1", "download_threads = 2", 1)
+        .replacen("race = true", "race = false", 1)
+        .replacen("max_parallelism = 3", "max_parallelism = 1", 1);
     documents.insert(
         "/network-plans.toml".to_owned(),
         if bad_plans {

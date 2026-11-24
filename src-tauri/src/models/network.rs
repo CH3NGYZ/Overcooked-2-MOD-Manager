@@ -89,10 +89,6 @@ pub struct NetworkConfig {
     pub timeout_seconds: u64,
     pub download_threads: u32,
     pub max_retry_count: u32,
-    #[serde(default = "default_race_min_speed_kbps")]
-    pub race_min_speed_kbps: u64,
-    #[serde(default = "default_race_window_seconds")]
-    pub race_window_seconds: u64,
     #[serde(default = "default_api_timeout_seconds")]
     pub api_timeout_seconds: u64,
     #[serde(default = "default_first_byte_timeout_seconds")]
@@ -105,25 +101,15 @@ impl Default for NetworkConfig {
             timeout_seconds: 10,
             download_threads: 32,
             max_retry_count: 3,
-            race_min_speed_kbps: default_race_min_speed_kbps(),
-            race_window_seconds: default_race_window_seconds(),
             api_timeout_seconds: default_api_timeout_seconds(),
             first_byte_timeout_seconds: default_first_byte_timeout_seconds(),
         }
     }
 }
 
-const RACE_SPEED_OPTIONS_KBPS: [u64; 7] = [32, 64, 128, 256, 512, 1024, 2048];
-
 // Built from the same defaults used by the settings UI and tutorial.
 include!(concat!(env!("OUT_DIR"), "/download_defaults.rs"));
 
-const fn default_race_min_speed_kbps() -> u64 {
-    RACE_MIN_SPEED_KBPS
-}
-const fn default_race_window_seconds() -> u64 {
-    RACE_WINDOW_SECONDS
-}
 const fn default_api_timeout_seconds() -> u64 {
     API_TIMEOUT_SECONDS
 }
@@ -135,33 +121,22 @@ impl NetworkConfig {
     /// Used by persisted config, settings patches and runtime snapshots alike.
     pub(crate) fn normalize(&mut self) -> bool {
         let previous = self.clone();
-        self.race_min_speed_kbps = self.race_minimum_speed() / 1024;
-        self.race_window_seconds = self.race_window().as_secs();
         self.api_timeout_seconds = self.api_timeout().as_secs();
         self.first_byte_timeout_seconds = self.first_byte_timeout().as_secs();
         *self != previous
     }
 
-    pub(crate) fn race_minimum_speed(&self) -> u64 {
-        let kbps = if RACE_SPEED_OPTIONS_KBPS.contains(&self.race_min_speed_kbps) {
-            self.race_min_speed_kbps
-        } else {
-            default_race_min_speed_kbps()
-        };
-        kbps * 1024
-    }
-
-    pub(crate) fn race_window(&self) -> std::time::Duration {
-        std::time::Duration::from_secs(self.race_window_seconds.clamp(5, 20))
-    }
-
     pub(crate) fn api_timeout(&self) -> std::time::Duration {
-        std::time::Duration::from_secs(self.api_timeout_seconds.clamp(5, 20))
+        request_timeout(self.api_timeout_seconds)
     }
 
     pub(crate) fn first_byte_timeout(&self) -> std::time::Duration {
-        std::time::Duration::from_secs(self.first_byte_timeout_seconds.clamp(5, 20))
+        request_timeout(self.first_byte_timeout_seconds)
     }
+}
+
+fn request_timeout(seconds: u64) -> std::time::Duration {
+    std::time::Duration::from_secs(seconds.clamp(TIMEOUT_MIN_SECONDS, TIMEOUT_MAX_SECONDS))
 }
 
 #[cfg(test)]

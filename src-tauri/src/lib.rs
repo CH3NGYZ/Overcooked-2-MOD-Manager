@@ -35,6 +35,7 @@ mod gitee_webview;
 mod github_proxies;
 mod github_proxy_runtime;
 mod http_diagnostics;
+mod http_user_agent;
 mod install_guard;
 // 地图（DIYLevel 关卡集）的扫描、开关与 ZIP 导入
 mod level_sets;
@@ -153,7 +154,7 @@ pub fn run() {
         Ok(models::AppDistribution::Standalone) => {
             builder = builder.plugin(
                 tauri_plugin_updater::Builder::new()
-                    .header("User-Agent", releases::APP_USER_AGENT)
+                    .header("User-Agent", http_user_agent::app_user_agent())
                     .expect("valid updater User-Agent")
                     .build(),
             );
@@ -344,6 +345,7 @@ pub fn run() {
             commands::bepinex::delete_bepinex_backup,
             commands::mod_repository_install::install_mod_repository,
             commands::download::cancel_download,
+            commands::download::control_download_race,
             commands::mod_repository_install::uninstall_repository,
             commands::mod_repositories::export_mod_repositories,
             commands::mod_repositories::export_mod_repositories_to_file,

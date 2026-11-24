@@ -2,6 +2,7 @@ use crate::app_state::AppState;
 use crate::app_update::UpdateTarget;
 use crate::app_update::cache::app_update_cache_get;
 use crate::app_update::cache::app_update_cache_store;
+use crate::app_update::channels::InstallerChannel;
 use crate::app_update::channels::InstallerRegion;
 use crate::app_update::channels::emit_installer_channel_status;
 use crate::app_update::channels::installer_channel_status;
@@ -17,8 +18,9 @@ use crate::app_update::staged::{DownloadStart, Recovery, StagedInstaller};
 use crate::archive;
 use crate::models::{
     AppConfig, AppDistribution, AppUpdateCheckResult, AppUpdateInfo, AppUpdateInstallationStatus,
-    GitHubProxyConfig, OperationResult,
+    OperationResult,
 };
+use crate::network_policy::NetworkPolicy;
 use crate::shell_open;
 use tauri::AppHandle;
 use tauri::State;
@@ -132,15 +134,20 @@ async fn run_update_check(
     config: &AppConfig,
     region: InstallerRegion,
 ) -> AppUpdateCheckResult {
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(
-            5 * installer_manifest_sources(&config.github_proxies, region).len() as u64 + 10,
-        ),
-        discover_installer_update(config, app),
-    )
-    .await
-    {
-        Ok(Ok(result)) => {
+    let policy = config
+        .network_policy
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(NetworkPolicy::active);
+    let channels = match policy {
+        Ok(policy) => installer_manifest_sources(&policy, region),
+        Err(error) => {
+            log::error!("安装器更新检查初始化失败: {error}");
+            return failed_app_update_check(app, &[], region, "update.checkInitFailed");
+        }
+    };
+    match discover_installer_update(config, app, region, &channels).await {
+        Ok(result) => {
             log::info!(
                 "安装器更新检查完成：发现更新={}，全部失败={}",
                 result.update.is_some(),
@@ -148,18 +155,9 @@ async fn run_update_check(
             );
             result
         }
-        Ok(Err(error)) => {
+        Err(error) => {
             log::error!("安装器更新检查初始化失败: {error}");
-            failed_app_update_check(
-                app,
-                &config.github_proxies,
-                region,
-                "update.checkInitFailed",
-            )
-        }
-        Err(_) => {
-            log::warn!("安装器更新检查超过总超时，已跳过自动更新");
-            failed_app_update_check(app, &config.github_proxies, region, "update.checkTimeout")
+            failed_app_update_check(app, &channels, region, "update.checkInitFailed")
         }
     }
 }
@@ -167,11 +165,11 @@ async fn run_update_check(
 /// 整次检查失败时的结果：每个通道都标成失败，前端照旧逐条显示原因。
 fn failed_app_update_check(
     app: &AppHandle,
-    proxies: &GitHubProxyConfig,
+    channels: &[InstallerChannel],
     region: InstallerRegion,
     tag: &str,
 ) -> AppUpdateCheckResult {
-    let channels = installer_manifest_sources(proxies, region)
+    let channels = channels
         .iter()
         .map(|channel| {
             let status = installer_channel_status(channel, "failed", Some(tag.into()));
@@ -214,10 +212,9 @@ pub async fn stage_app_update(
         DownloadStart::Ready(info) => return Ok(Some(*info)),
         DownloadStart::Started(guard) => guard,
     };
-    let attempt = archive::observe_download_progress(
-        move |progress| {
-            let _ = on_update.send(progress);
-        },
+    let attempt = archive::channel_download_progress(
+        false,
+        on_update,
         discover_and_download_installer_update(&state, &app, Some(&channel), || guard.cancelled()),
     )
     .await?;

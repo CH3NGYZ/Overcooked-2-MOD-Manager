@@ -4,6 +4,8 @@
 mod archive;
 #[path = "../src/gitee_webview.rs"]
 mod gitee_webview;
+#[path = "../src/main_webview.rs"]
+mod main_webview;
 #[path = "../src/webview_download.rs"]
 mod webview_download;
 
@@ -19,7 +21,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, WebviewWindow, utils::config::FrontendDist};
 use url::Url;
 
 static PRIVILEGED_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -31,7 +33,7 @@ fn privileged_probe() {
 
 struct TopicServer {
     base: String,
-    challenges: Arc<AtomicUsize>,
+    requests: Arc<Mutex<Vec<(String, Vec<String>)>>>,
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -42,9 +44,9 @@ impl TopicServer {
         listener.set_nonblocking(true).unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let stop = Arc::new(AtomicBool::new(false));
-        let challenges = Arc::new(AtomicUsize::new(0));
+        let requests = Arc::new(Mutex::new(Vec::new()));
         let thread_stop = stop.clone();
-        let thread_challenges = challenges.clone();
+        let thread_requests = requests.clone();
         let thread = std::thread::spawn(move || {
             while !thread_stop.load(Ordering::Acquire) {
                 let (mut stream, _) = match listener.accept() {
@@ -76,37 +78,95 @@ impl TopicServer {
                     .next()
                     .and_then(|line| line.split_whitespace().nth(1))
                     .unwrap_or("");
-                let (status, body) = if path.starts_with("/topic") {
+                let user_agents = request
+                    .lines()
+                    .skip(1)
+                    .take_while(|line| !line.is_empty())
+                    .filter_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("User-Agent")
+                            .then(|| value.trim().to_owned())
+                    })
+                    .collect();
+                thread_requests
+                    .lock()
+                    .unwrap()
+                    .push((path.to_owned(), user_agents));
+                let (status, content_type, body) = if path == "/" {
+                    (
+                        200,
+                        "text/html; charset=utf-8",
+                        "<!doctype html><img src='/ua-probe.svg' alt=''>",
+                    )
+                } else if path == "/ua-probe.svg" {
+                    (
+                        200,
+                        "image/svg+xml",
+                        "<svg xmlns='http://www.w3.org/2000/svg' width='1' height='1'/>",
+                    )
+                } else if path.starts_with("/topic") {
+                    let content_type = "text/html; charset=utf-8";
                     if path.contains("page=2") {
-                        (200, "<div class='explore-repo__list'></div>".to_string())
+                        (200, content_type, "<div class='explore-repo__list'></div>")
                     } else if path.contains("verified=1") {
                         (
                             200,
-                            include_str!("../../tests/fixtures/gitee-topic.html").to_string(),
+                            content_type,
+                            include_str!("../../tests/fixtures/gitee-topic.html"),
                         )
                     } else {
-                        thread_challenges.fetch_add(1, Ordering::Relaxed);
-                        (405, "<html><script>setTimeout(() => { const url = new URL(location.href); url.searchParams.set('verified', '1'); location.replace(url.href); }, 80)</script></html>".to_string())
+                        (
+                            405,
+                            content_type,
+                            "<html><script>setTimeout(() => { const url = new URL(location.href); url.searchParams.set('verified', '1'); location.replace(url.href); }, 80)</script></html>",
+                        )
                     }
                 } else {
                     (
                         200,
-                        "<html><p>Waiting for verification</p></html>".to_string(),
+                        "text/html; charset=utf-8",
+                        "<html><p>Waiting for verification</p></html>",
                     )
                 };
                 let _ = write!(
                     stream,
-                    "HTTP/1.1 {status} Test\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{body}",
+                    "HTTP/1.1 {status} Test\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{body}",
                     body.len()
                 );
             }
         });
         Self {
             base,
-            challenges,
+            requests,
             stop,
             thread: Some(thread),
         }
+    }
+
+    fn user_agents(&self, path: &str) -> Vec<Vec<String>> {
+        self.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(request_path, _)| request_path == path)
+            .map(|(_, user_agents)| user_agents.clone())
+            .collect()
+    }
+
+    fn assert_browser_user_agent(&self, path: &str) -> Value {
+        let recorded = self.user_agents(path);
+        assert!(!recorded.is_empty(), "no request received for {path}");
+        for headers in &recorded {
+            assert_eq!(headers.len(), 1, "expected one User-Agent for {path}");
+            let user_agent = &headers[0];
+            assert!(
+                user_agent.starts_with("Mozilla/5.0 ")
+                    && user_agent.contains("Windows")
+                    && !user_agent.contains("Overcooked 2 MOD Manager/"),
+                "expected a native Windows browser User-Agent for {path}, got {user_agent:?}"
+            );
+        }
+        json!({ "requests": recorded.len(), "user_agent": recorded[0][0] })
     }
 }
 
@@ -171,7 +231,9 @@ async fn verify_windows(app: &AppHandle, directory: &Path, live: bool) -> Result
     )?;
     let html = browser.read_page(first, false).await?;
     assert!(html.contains("Overcooked-2-SkipLoading"));
-    assert_eq!(server.challenges.load(Ordering::Relaxed), 1);
+    let challenge = server.assert_browser_user_agent("/topic?page=1");
+    assert_eq!(challenge["requests"], 1);
+    let reload = server.assert_browser_user_agent("/topic?page=1&verified=1");
     let window = discovery_window(app);
     let runtime = evaluate(
         &window,
@@ -208,6 +270,7 @@ async fn verify_windows(app: &AppHandle, directory: &Path, live: bool) -> Result
             .await?
             .contains("Overcooked-2-SkipLoading")
     );
+    let next_page = server.assert_browser_user_agent("/topic?page=2");
     drop(browser);
     assert_closed(app).await;
 
@@ -278,6 +341,7 @@ async fn verify_windows(app: &AppHandle, directory: &Path, live: bool) -> Result
         "pagination": true, "remote_command_denied": true, "privileged_calls": 0,
         "interaction_window": true, "timeout_cleanup": true,
         "close_cancellation": true, "abort_cleanup": true, "live_requested": live,
+        "server_user_agent": { "challenge": challenge, "reload": reload, "next_page": next_page },
     });
     if live {
         let topic = Url::parse("https://gitee.com/explore/topic/overcooked-2?page=1").unwrap();
@@ -363,8 +427,19 @@ fn run_native_validation(archive_download: bool) {
         ));
     std::fs::create_dir_all(&directory).unwrap();
     let live = std::env::var("OC2_GITEE_LIVE_VERIFY").as_deref() == Ok("1");
+    let main_server = TopicServer::start();
+    let main_url = Url::parse(&main_server.base).unwrap();
     let mut context = tauri::generate_context!();
-    context.config_mut().app.windows.clear();
+    context.config_mut().build.dev_url = Some(main_url.clone());
+    context.config_mut().build.frontend_dist = Some(FrontendDist::Url(main_url));
+    let main = context.config_mut().app.windows.first_mut().unwrap();
+    main.visible = false;
+    main.focus = false;
+    main.data_directory = Some(directory.join(if archive_download {
+        "profile"
+    } else {
+        "anchor"
+    }));
     context.config_mut().identifier =
         format!("com.ch3ngyz.oc2.validation.run-{}", uuid::Uuid::new_v4());
     let identifier = context.config().identifier.clone();
@@ -381,21 +456,7 @@ fn run_native_validation(archive_download: bool) {
         })
         .invoke_handler(tauri::generate_handler![privileged_probe])
         .setup(move |app| {
-            WebviewWindowBuilder::new(
-                app,
-                "main",
-                WebviewUrl::External(Url::parse("about:blank").unwrap()),
-            )
-            .title("OC2 独立原生下载验收（隐藏锚点）")
-            .visible(false)
-            .focused(false)
-            // Share only this run's profile so CDP also sees the download window.
-            .data_directory(directory.join(if archive_download {
-                "profile"
-            } else {
-                "anchor"
-            }))
-            .build()?;
+            main_webview::create(app)?;
             assert_eq!(app.path().app_local_data_dir()?, directory.join("profile"));
             assert!(!app.get_webview_window("main").unwrap().is_visible()?);
             let handle = app.handle().clone();
@@ -413,7 +474,18 @@ fn run_native_validation(archive_download: bool) {
                         if archive_download {
                             archive::verify(&handle, &directory).await
                         } else {
-                            verify_windows(&handle, &directory, live).await
+                            for _ in 0..500 {
+                                if !main_server.user_agents("/ua-probe.svg").is_empty() {
+                                    break;
+                                }
+                                tokio::time::sleep(Duration::from_millis(20)).await;
+                            }
+                            let main_page = main_server.assert_browser_user_agent("/");
+                            let main_image = main_server.assert_browser_user_agent("/ua-probe.svg");
+                            let mut report = verify_windows(&handle, &directory, live).await?;
+                            report["server_user_agent"]["main_page"] = main_page;
+                            report["server_user_agent"]["main_image"] = main_image;
+                            Ok(report)
                         }
                     })
                     .catch_unwind(),

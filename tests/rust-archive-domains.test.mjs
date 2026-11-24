@@ -6,7 +6,8 @@ import { readText, sourceFiles } from './helpers/source-scan.mjs'
 const root = resolve('src-tauri/src/archive')
 const owners = {
   control: ['cancel_download', 'start_download', 'begin_app_update', 'app_update_in_progress'],
-  progress: ['emit_progress', 'emit_progress_event'],
+  progress: ['emit_progress', 'publish_download_progress', 'channel_download_progress'],
+  verify_download: ['verify_temp_download'],
   transfer: ['download_to_temp_with_threads_and_first_byte_timeout', 'download_stream', 'download_ranges', 'read_response_bytes'],
   integrity: ['sha256_file', 'verify_digest', 'validate_download_file', 'validate_download_bytes', 'validate_zip'],
   zip_layout: ['local_mod_zip_plan', 'repository_mod_zip_plan', 'inspect_mod_zip', 'online_zip_strip_root'],
@@ -23,7 +24,7 @@ test('archive exports domain implementations without duplicating transport or in
   for (const [module, names] of Object.entries(owners)) {
     assert.match(entry, new RegExp(`mod ${module};`))
     for (const name of names) {
-      const pattern = new RegExp(`\\bfn\\s+${name}\\s*\\(`, 'g')
+      const pattern = new RegExp(`\\bfn\\s+${name}(?:<[^>]+>)?\\s*\\(`, 'g')
       const found = files.flatMap(([path, text]) => [...text.matchAll(pattern)].map(() => path))
       assert.deepEqual(found, [resolve(root, `${module}.rs`)], name)
     }

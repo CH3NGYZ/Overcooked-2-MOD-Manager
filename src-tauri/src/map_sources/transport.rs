@@ -2,97 +2,92 @@ use super::context::MapSourceContext;
 use super::document::MapSourceDocument;
 use super::document::parse_document;
 use crate::config::ConfigError;
+use crate::download::planning::{
+    RemoteUrlKind, classify_remote_url, plan_source_document, provider_for_remote_url,
+};
+use crate::models::{NetworkPlanSelection, RepositoryKind};
 use crate::releases::RepositoryRequest;
-use crate::repository_sources::SourceLocation;
+use crate::repository_sources::{SourceLocation, VerifiedDocument};
 
-/// 读取并解析一个地图源文档（内置资源或远程地址）。
-///
-/// 下载部分直接复用 `repository_sources` 的实现：超时（30 秒）、禁缓存头、
-/// 大小上限、重定向后的相对地址解析、错误分类 —— 这些逐项都踩过坑，复制一份
-/// 只会得到两套会各自漂移的规则。
-///
-/// 唯一的加成是「文档放在 Release 资产里」这一形态：先按资产地址反查仓库与
-/// tag，从 Release API 拿到 size 与 sha256，再带着这两项去竞速下载并校验。
-/// 拿不到校验信息时**退回普通下载**：校验是增强，不该变成新的失败点。
+/// 读取地图源。官方索引来自当前源码包，仓库文档沿用继承的地图请求计划。
 pub(crate) async fn load_document(
     location: &SourceLocation,
     ctx: &MapSourceContext<'_>,
-    inherited: &crate::models::NetworkPlanSelection,
+    inherited: &NetworkPlanSelection,
 ) -> Result<MapSourceDocument, ConfigError> {
-    match verified_document(location, ctx).await {
-        Some(verified) => {
-            crate::repository_sources::load_verified_text_document(
+    let parse = |text: &str, origin: &SourceLocation| parse_document(text, origin, inherited);
+    if crate::repository_sources::package_document_path(location).is_none()
+        && let SourceLocation::Remote(url) = location
+    {
+        let reference = crate::releases::release_asset_reference(url);
+        let provider = reference
+            .as_ref()
+            .map(|reference| reference.provider.clone())
+            .or_else(|| provider_for_remote_url(url.as_str()));
+        if let Some(provider) = provider {
+            let is_raw = reference.is_none()
+                && classify_remote_url(url.as_str()) != RemoteUrlKind::ReleaseAsset;
+            let plan = plan_source_document(
+                &provider,
+                RepositoryKind::Map,
+                inherited,
+                &ctx.config.region,
+                url.as_str(),
+                is_raw,
+            )
+            .map_err(ConfigError::Read)?;
+            let verified = match reference {
+                Some(reference) => release_integrity(url, reference, ctx, inherited)
+                    .await
+                    .unwrap_or_default(),
+                None => VerifiedDocument::default(),
+            };
+            return crate::repository_sources::load_verified_text_document(
                 location,
+                plan,
                 &verified,
                 &ctx.config.network,
-                |text, origin| parse_document(text, origin, inherited),
+                parse,
             )
-            .await
-        }
-        None => {
-            crate::repository_sources::load_text_document(
-                location,
-                &ctx.config.network,
-                |text, origin| parse_document(text, origin, inherited),
-            )
-            .await
+            .await;
         }
     }
+    crate::repository_sources::load_text_document(location, &ctx.config.network, parse).await
 }
 
-/// 文档地址若是 Release 资产，就去 API 取它的 size/sha256 与下载候选。
-///
-/// 返回 `None` 表示「这份文档不需要/拿不到校验信息」，调用方按老路子读。
-/// 这里**不报错**：Release API 挂了不该让整个地图源树加载失败，作者写的
-/// 地址本身仍然可用 —— 只是少了摘要核对。
-async fn verified_document(
-    location: &SourceLocation,
+/// 根据同一资产条目的 API 元数据校验。API 不可用时仍使用同一文档下载计划。
+async fn release_integrity(
+    url: &url::Url,
+    reference: crate::providers::ReleaseAssetReference,
     ctx: &MapSourceContext<'_>,
-) -> Option<crate::repository_sources::VerifiedDocument> {
-    let SourceLocation::Remote(url) = location else {
-        return None;
-    };
-    let reference = crate::releases::release_asset_reference(url)?;
+    inherited: &NetworkPlanSelection,
+) -> Option<VerifiedDocument> {
     let probe = RepositoryRequest {
         id: "release-asset-document".into(),
         provider: reference.provider.clone(),
         username: reference.username.clone(),
         repository: reference.repository.clone(),
-        // Preserve the original default-plan selection for source documents.
-        kind: crate::models::RepositoryKind::Mod,
-        network_plan: Default::default(),
+        kind: RepositoryKind::Map,
+        network_plan: inherited.clone(),
         source_id: None,
     };
-    let key = crate::releases::repository_cache_key(
-        reference.provider.clone(),
-        &reference.username,
-        &reference.repository,
-    );
-    let token = ctx.token(&reference.provider).map(str::to_string);
-    let official_api_only = ctx.config.auth.official_api_only;
-    let api_proxies = ctx.api_proxies(&reference.provider).to_vec();
-    let releases = match ctx
-        .cache
-        .list(key, ctx.pass_id, ctx.force, || async move {
-            crate::releases::fetch_releases(
-                ctx.client,
-                &probe,
-                &ctx.config.region,
-                token.as_deref(),
-                official_api_only,
-                &api_proxies,
-            )
-            .await
-            .map_err(|error| error.to_string())
-        })
-        .await
+    let releases = match crate::releases::cached_releases(
+        ctx.cache,
+        ctx.client,
+        &probe,
+        &ctx.config.region,
+        ctx.token(&probe.provider),
+        ctx.pass_id,
+        ctx.force,
+    )
+    .await
     {
         Ok(releases) => releases,
         Err(error) => {
             log::warn!(
-                "文档校验信息获取失败，退回普通下载：地址={}，原因={}",
+                "文档校验信息获取失败，继续使用文档下载计划：地址={}，原因={}",
                 crate::repository_sources::safe_log_address(url.as_str()),
-                error
+                crate::locale_tag::diagnostic_tag(&error)
             );
             return None;
         }
@@ -102,7 +97,7 @@ async fn verified_document(
         .find(|release| release.tag_name.trim() == reference.tag)
     else {
         log::warn!(
-            "文档所在 Release 不在仓库列表里，退回普通下载：地址={}，tag={}",
+            "文档所在 Release 不在仓库列表里：地址={}，tag={}",
             crate::repository_sources::safe_log_address(url.as_str()),
             reference.tag
         );
@@ -114,32 +109,11 @@ async fn verified_document(
         .find(|asset| asset.name == reference.asset)
     else {
         log::warn!(
-            "文档资产不在 Release 里，退回普通下载：地址={}，资产={}",
+            "文档资产不在 Release 里：地址={}，资产={}",
             crate::repository_sources::safe_log_address(url.as_str()),
             reference.asset
         );
         return None;
-    };
-    /*
-     * 候选走与普通资产下载同一条路由（直连 + 代理竞速），因为这就是一次资产
-     * 下载：只是产物是文本而不是 ZIP。
-     */
-    let candidates = match crate::download::planning::plan_remote_download_candidates(
-        ctx.config,
-        &reference.provider,
-        crate::download::planning::RemoteUrlKind::ReleaseAsset,
-        url.as_str(),
-        &ctx.config.region,
-    ) {
-        Ok(candidates) => candidates,
-        Err(error) => {
-            log::warn!(
-                "文档下载候选规划失败，退回普通下载：地址={}，原因={}",
-                crate::repository_sources::safe_log_address(url.as_str()),
-                error
-            );
-            return None;
-        }
     };
     log::info!(
         "文档带校验信息：地址={}，字节={}，摘要={}",
@@ -147,10 +121,9 @@ async fn verified_document(
         asset.size,
         if asset.digest.is_some() { "有" } else { "无" }
     );
-    Some(crate::repository_sources::VerifiedDocument {
+    Some(VerifiedDocument {
         // API 没给大小时不校验：`0` 会被当成「预期 0 字节」，反而拒掉正常文件
         expected_size: (asset.size > 0).then_some(asset.size),
         digest: asset.digest.clone(),
-        candidates,
     })
 }

@@ -1,11 +1,22 @@
 use super::*;
 use crate::archive::DownloadRoute;
+use crate::download::{DownloadCandidate, DownloadExecution};
+use crate::models::{NetworkPlanSelection, Provider, RepositoryKind};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 
 fn server(
     status: u16,
     delay: Duration,
+    body: Vec<u8>,
+) -> (String, std::thread::JoinHandle<String>) {
+    server_with_body_delay(status, delay, Duration::ZERO, body)
+}
+
+fn server_with_body_delay(
+    status: u16,
+    delay: Duration,
+    body_delay: Duration,
     body: Vec<u8>,
 ) -> (String, std::thread::JoinHandle<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -18,7 +29,7 @@ fn server(
                 break stream;
             }
             assert!(
-                started.elapsed() < Duration::from_secs(5),
+                started.elapsed() < Duration::from_secs(15),
                 "README request did not start"
             );
             std::thread::sleep(Duration::from_millis(2));
@@ -43,14 +54,33 @@ fn server(
             "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             body.len()
         );
-        let _ = stream.write_all(&body);
+        if let Some((first, rest)) = body.split_first() {
+            let _ = stream.write_all(&[*first]);
+            std::thread::sleep(body_delay);
+            let _ = stream.write_all(rest);
+        }
         String::from_utf8(request).unwrap()
     });
     (url, task)
 }
 
 fn candidate(url: String, route: DownloadRoute) -> DownloadCandidate {
-    DownloadCandidate { url, route }
+    DownloadCandidate {
+        url,
+        route,
+        identity: None,
+    }
+}
+
+fn planned(candidates: Vec<DownloadCandidate>, max_parallelism: u32) -> RepositoryDownloadPlan {
+    RepositoryDownloadPlan {
+        candidates,
+        download_threads: 1,
+        execution: DownloadExecution {
+            max_parallelism,
+            race: max_parallelism > 1,
+        },
+    }
 }
 
 async fn finish_server(task: std::thread::JoinHandle<String>) -> String {
@@ -93,27 +123,28 @@ fn gitee_readme_url_uses_its_raw_branch_layout() {
 
 #[tokio::test]
 async fn gitee_readme_makes_one_direct_get_without_ranges_tokens_or_proxy_requests() {
-    let proxy = TcpListener::bind("127.0.0.1:0").unwrap();
-    proxy.set_nonblocking(true).unwrap();
-    let proxies = vec![GitHubProxy {
-        id: "unused-raw-proxy".into(),
-        name: "Unused proxy".into(),
-        template: format!("http://{}/{{url}}", proxy.local_addr().unwrap()),
-        regions: vec![],
-        description: String::new(),
-        enabled: true,
-        builtin: false,
-        remote: false,
-    }];
     let client = Client::builder().no_proxy().build().unwrap();
     for status in [200, 404] {
         let (url, task) = server(status, Duration::ZERO, b"# Gitee README".to_vec());
-        let result = download_repository_readme(
-            &client,
+        let plan = plan_repository_download(
             &Provider::Gitee,
+            RepositoryKind::Mod,
+            &NetworkPlanSelection::default(),
+            "cn",
             &url,
-            "main",
-            &proxies,
+            Some(RawProxyContext {
+                branch: "main",
+                file_path: "README.md",
+            }),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(plan.candidates, [candidate(url, DownloadRoute::Direct)]);
+        assert_eq!(plan.execution.max_parallelism, 1);
+        let result = download_readme(
+            &client,
+            plan,
             &AtomicBool::new(false),
             &NetworkConfig::default(),
         )
@@ -129,24 +160,6 @@ async fn gitee_readme_makes_one_direct_get_without_ranges_tokens_or_proxy_reques
         assert!(!request.contains("authorization:"));
         assert!(request.contains("cache-control: no-cache"));
     }
-    assert_eq!(
-        proxy.accept().unwrap_err().kind(),
-        std::io::ErrorKind::WouldBlock
-    );
-    assert_eq!(
-        download_repository_readme(
-            &client,
-            &Provider::Gitee,
-            "http://127.0.0.1:1/README.md",
-            "main",
-            &proxies,
-            &AtomicBool::new(true),
-            &NetworkConfig::default(),
-        )
-        .await
-        .unwrap_err(),
-        "download.cancelled"
-    );
 }
 
 #[tokio::test]
@@ -158,10 +171,13 @@ async fn any_started_404_stops_the_real_raw_race_without_waiting_for_slow_succes
         let started = Instant::now();
         let result = download_readme(
             &client,
-            vec![
-                candidate(slow, DownloadRoute::Direct),
-                candidate(missing, missing_route),
-            ],
+            planned(
+                vec![
+                    candidate(slow, DownloadRoute::Direct),
+                    candidate(missing, missing_route),
+                ],
+                2,
+            ),
             &AtomicBool::new(false),
             &NetworkConfig::default(),
         )
@@ -187,10 +203,13 @@ async fn ordinary_failures_do_not_abort_the_raw_race_and_utf8_is_required() {
     let client = Client::builder().no_proxy().build().unwrap();
     let content = download_readme(
         &client,
-        vec![
-            candidate(failed, DownloadRoute::Direct),
-            candidate(success, DownloadRoute::Proxy),
-        ],
+        planned(
+            vec![
+                candidate(failed, DownloadRoute::Direct),
+                candidate(success, DownloadRoute::Proxy),
+            ],
+            2,
+        ),
         &AtomicBool::new(false),
         &NetworkConfig::default(),
     )
@@ -215,6 +234,78 @@ async fn ordinary_failures_do_not_abort_the_raw_race_and_utf8_is_required() {
     finish_server(task).await;
 }
 
+#[test]
+fn readme_plan_expands_the_repository_raw_override_with_the_exact_branch() {
+    let selection = toml::from_str(
+        "international = { raw = { route = [{ kind = 'proxy', id = 'oc2gh-raw-edgeone' }] } }",
+    )
+    .unwrap();
+    let url = "https://github.com/acme/mod/raw/refs/heads/release/1.x/README.md";
+    let plan = plan_repository_download(
+        &Provider::Github,
+        RepositoryKind::Mod,
+        &selection,
+        "global",
+        url,
+        Some(RawProxyContext {
+            branch: "release/1.x",
+            file_path: "README.md",
+        }),
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        plan.candidates,
+        [candidate(
+            "https://oc2gh.5882778.xyz/acme/mod/raw/refs/heads/release/1.x/README.md".into(),
+            DownloadRoute::Proxy,
+        )]
+    );
+    assert!(plan.execution.race);
+    assert_eq!(plan.execution.max_parallelism, 3);
+}
+
+#[tokio::test]
+async fn sequential_readme_fallback_gets_a_new_full_body_timeout() {
+    let (stalled, stalled_task) = server_with_body_delay(
+        200,
+        Duration::ZERO,
+        Duration::from_secs(6),
+        b"# Stalled README".to_vec(),
+    );
+    let (backup, backup_task) =
+        server(200, Duration::from_millis(300), b"# Backup README".to_vec());
+    let client = Client::builder().no_proxy().build().unwrap();
+    let started = Instant::now();
+    let content = download_readme(
+        &client,
+        planned(
+            vec![
+                candidate(stalled, DownloadRoute::Direct),
+                candidate(backup, DownloadRoute::Proxy),
+            ],
+            1,
+        ),
+        &AtomicBool::new(false),
+        &NetworkConfig {
+            api_timeout_seconds: 5,
+            first_byte_timeout_seconds: 10,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(content, b"# Backup README");
+    assert!(started.elapsed() >= Duration::from_secs(5));
+    for request in [
+        finish_server(stalled_task).await,
+        finish_server(backup_task).await,
+    ] {
+        assert!(!request.to_ascii_lowercase().contains("authorization:"));
+    }
+}
+
 #[tokio::test]
 async fn raw_readme_size_and_pre_cancelled_downloads_are_bounded() {
     let (large, task) = server(200, Duration::ZERO, vec![b'x'; MAX_README_BYTES + 1]);
@@ -233,10 +324,13 @@ async fn raw_readme_size_and_pre_cancelled_downloads_are_bounded() {
     finish_server(task).await;
     let result = download_readme(
         &client,
-        vec![candidate(
-            "http://127.0.0.1:1".into(),
-            DownloadRoute::Direct,
-        )],
+        planned(
+            vec![candidate(
+                "http://127.0.0.1:1".into(),
+                DownloadRoute::Direct,
+            )],
+            1,
+        ),
         &AtomicBool::new(true),
         &NetworkConfig::default(),
     )

@@ -3,13 +3,15 @@ import test from 'node:test'
 import { registerHooks } from 'node:module'
 import { i18n } from '../src/locale/index.ts'
 import { LOCALE_CODES } from '../src/locale/types.ts'
+import { toolsUiDownloadRace } from '../src/locale/tools/downloadRace.ts'
 
 // Resolve the app's Vite-style locale import without replacing the real message catalog.
 registerHooks({ resolve(specifier, context, next) {
   if (specifier === './locale/state' && context.parentURL?.endsWith('/src/i18n.ts')) return next(`${specifier}.ts`, context)
   return next(specifier, context)
 } })
-const { downloadAmount, downloadPercent, downloadRace, downloadRate, downloadRoute } = await import('../src/downloadPresentation.ts')
+const { downloadAmount, downloadPercent, downloadRate, downloadRoute } = await import('../src/downloadPresentation.ts')
+const { translateBackendMessage } = await import('../src/locale/backend.ts')
 
 test('byte progress distinguishes connecting, known 0%, unknown size and rounded display', () => {
   assert.equal(downloadPercent({ downloaded: 0, total: 10, phase: 'connecting' }), null)
@@ -24,28 +26,39 @@ test('byte progress distinguishes connecting, known 0%, unknown size and rounded
 
 test('statistics carry only reported data, including a known stalled rate', () => {
   assert.equal(downloadRate({ speed_bytes: 0, phase: 'connecting' }), '')
+  assert.equal(downloadRate({ speed_bytes: 2048, phase: 'verifying' }), '')
   assert.equal(downloadRate({ speed_bytes: 0, phase: 'downloading' }), '0 KB/s')
   assert.equal(downloadRate({ speed_bytes: 1024 * 512, phase: 'downloading' }), '512 KB/s')
   assert.equal(downloadRate({ speed_bytes: 1024 * 1024 * 2.5, phase: 'downloading' }), '2.5 MB/s')
   assert.equal(downloadRoute({}), '')
   assert.equal(downloadRoute({ source: 'github.example' }), 'github.example')
-  assert.equal(downloadRace({ parallel_sources: 1, attempt: 1, attempt_total: 1 }), '')
-  assert.equal(downloadRace({ parallel_sources: 0, attempt_total: 8 }), '')
 })
 
-test('unknown totals, route, and race summaries render in all five languages', () => {
+test('unknown totals, source states and lock rejection render in all five languages', () => {
   const original = i18n.global.locale.value
-  const unknown = ['大小未知', '大小未知', 'Unknown size', '크기 알 수 없음', 'サイズ不明']
-  const racing = ['竞速中', '競速中', 'Racing', '경쟁 중', '競争中']
-  const attempt = ['第 5/32 次尝试', '第 5/32 次嘗試', 'Attempt 5/32', '5/32번째 시도', '5/32 回目の試行']
+  const received = ['已下载 {amount}', '已下載 {amount}', 'Downloaded {amount}', '{amount} 다운로드됨', '{amount} ダウンロード済み']
   try {
     for (const [i, language] of LOCALE_CODES.entries()) {
       i18n.global.locale.value = language
-      assert.equal(downloadAmount({ downloaded: 0, total: null }), `0 B / ${unknown[i]}`)
+      assert.equal(downloadAmount({ downloaded: 0, total: null }), received[i].replace('{amount}', '0 B'))
+      assert.equal(downloadAmount({ downloaded: 2 * 1024 * 1024 }), received[i].replace('{amount}', '2.0 MB'))
       assert.equal(downloadRoute({ route: 'proxy', source: 'mirror.example' }), `${i18n.global.t('common.proxy')} · mirror.example`)
-      assert.equal(downloadRace({ parallel_sources: 3, attempt: 5, attempt_total: 32 }), `${racing[i]} · 5/32`)
-      assert.equal(downloadRace({ parallel_sources: 3, attempt: 5 }), racing[i])
-      assert.equal(downloadRace({ parallel_sources: 1, attempt: 5, attempt_total: 32 }), attempt[i])
+      assert.equal(downloadRate({ speed_bytes: null, phase: 'downloading' }), toolsUiDownloadRace['downloadRace.measuring'][language])
+      for (const [key, copy] of Object.entries(toolsUiDownloadRace)) {
+        assert.ok(copy[language], `${key} must include ${language}`)
+        const message = i18n.global.t(`tools.${key}`, { count: 5 })
+        assert.equal(message, copy[language].replace('{count}', '5'))
+      }
+      assert.notEqual(translateBackendMessage('download.raceUnavailable', language), 'download.raceUnavailable')
     }
   } finally { i18n.global.locale.value = original }
+})
+
+test('primary rate is independent of a faster ranked source and zero differs from measuring', () => {
+  const progress = { speed_bytes: 1024, phase: 'downloading', race: { primary_id: 18,
+    sources: [{ id: 1, speed_bytes: 3072 }, { id: 18, speed_bytes: null }],
+  } }
+  assert.equal(downloadRate(progress), i18n.global.t('tools.downloadRace.measuring'))
+  progress.race.sources[1].speed_bytes = 0
+  assert.equal(downloadRate(progress), '0 KB/s')
 })

@@ -2,6 +2,7 @@
 //! ownership across MOD and map staging. No installation writes happen here.
 use super::progress::VolumeProgress;
 use super::{DownloadPhase, DownloadProgress};
+use crate::download::history::DownloadHistory;
 use crate::download::planning::RepositoryDownloadPlan;
 use crate::download::{DownloadContext, try_download_candidates_with_progress};
 use crate::models::{NetworkConfig, ReleaseAsset};
@@ -9,7 +10,6 @@ use futures_util::{StreamExt, TryStreamExt, stream};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use tauri::AppHandle;
 
 mod cache;
 mod reuse;
@@ -153,7 +153,7 @@ pub(crate) async fn download<F>(
     cache: &Path,
     cache_scope: Option<&ReleaseCacheScope>,
     label: &str,
-    app: Option<&AppHandle>,
+    history: Option<&Arc<DownloadHistory>>,
     network: &NetworkConfig,
     plan: F,
 ) -> Result<DownloadedRelease, String>
@@ -194,7 +194,7 @@ where
             if !split {
                 finished.volumes.clear();
             }
-            super::emit_progress_event(app, finished);
+            super::publish_download_progress(finished);
             return Ok(DownloadedRelease {
                 file,
                 split_assets: split.then_some(assets),
@@ -224,9 +224,11 @@ where
             .collect::<Vec<_>>(),
     ));
     let split_assets = split.then(|| assets.clone());
+    let race_session = history.map(DownloadHistory::session);
     let files = stream::iter(assets.into_iter().zip(plans).enumerate().map(
         |(index, (asset, planned))| {
             let volumes = volumes.clone();
+            let race_session = race_session.as_ref();
             async move {
                 let expected_size = expected_size(&asset);
                 for retry in 0..=if split { 3 } else { 0 } {
@@ -237,7 +239,7 @@ where
                         planned.candidates.clone(),
                         super::is_download_cancelled,
                         |candidate, reporter| {
-                            let digest = asset.digest.as_deref();
+                            let digest = asset.digest.clone();
                             let zip = !split && is_zip(&asset);
                             let threads = planned.download_threads;
                             async move {
@@ -252,24 +254,31 @@ where
                                         Some(network.first_byte_timeout()),
                                     )
                                     .await?;
-                                let file = TemporaryFile(Some(path));
-                                super::validate_download_file(file.path(), expected_size, digest)?;
-                                if zip {
-                                    super::integrity::validate_zip_with_cancel(
-                                        file.path(),
-                                        super::is_download_cancelled,
-                                    )?;
-                                }
-                                Ok(file.keep())
+                                super::verify_temp_download(
+                                    path,
+                                    &reporter,
+                                    move |path, cancelled| {
+                                        super::validate_download_file(
+                                            path,
+                                            expected_size,
+                                            digest.as_deref(),
+                                        )?;
+                                        if zip {
+                                            super::validate_zip_with_cancel(path, cancelled)?;
+                                        }
+                                        Ok(())
+                                    },
+                                )
+                                .await
                             }
                         },
                         network,
                         Some(DownloadContext {
                             execution: Some(planned.execution),
-                            app: None,
                             label,
                             file_name: (!split).then_some(asset.name.as_str()),
                             expected_size,
+                            race_session,
                         }),
                         |progress| {
                             if split {
@@ -282,9 +291,9 @@ where
                                 .into();
                                 all[index].retry = retry;
                                 all[index].progress = Box::new(progress);
-                                super::emit_progress_event(app, aggregate(label, &all, false));
+                                super::publish_download_progress(aggregate(label, &all, false));
                             } else {
-                                super::emit_progress_event(app, progress);
+                                super::publish_download_progress(progress);
                             }
                         },
                     )
@@ -298,7 +307,7 @@ where
                                 all[index].retry = retry;
                                 all[index].progress.downloaded = 0;
                                 all[index].progress.speed_bytes = 0;
-                                super::emit_progress_event(app, aggregate(label, &all, false));
+                                super::publish_download_progress(aggregate(label, &all, false));
                             }
                             if error == "download.cancelled" || retry == if split { 3 } else { 0 } {
                                 return Err(error);
@@ -316,6 +325,9 @@ where
     let mut files = files;
     files.sort_by_key(|(index, _)| *index);
     if !split && reuse.is_none() {
+        if let Some(session) = &race_session {
+            session.commit();
+        }
         return Ok(DownloadedRelease {
             file: files.pop().unwrap().1,
             split_assets: None,
@@ -328,7 +340,7 @@ where
             false,
         );
         merging.phase = DownloadPhase::Merging;
-        super::emit_progress_event(app, merging);
+        super::publish_download_progress(merging);
     }
     let cache = cache.to_owned();
     // Reassembly (including CRC) and copying into the persistent cache are
@@ -350,14 +362,14 @@ where
         return Err("download.cancelled".into());
     }
     if split {
-        super::emit_progress_event(
-            app,
-            aggregate(
-                label,
-                &volumes.lock().unwrap_or_else(|e| e.into_inner()),
-                true,
-            ),
-        );
+        super::publish_download_progress(aggregate(
+            label,
+            &volumes.lock().unwrap_or_else(|e| e.into_inner()),
+            true,
+        ));
+    }
+    if let Some(session) = &race_session {
+        session.commit();
     }
     Ok(output)
 }

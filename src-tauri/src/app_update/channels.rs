@@ -1,10 +1,13 @@
 use crate::archive::DownloadRoute as AssetDownloadRoute;
 use crate::download::DownloadCandidate as AssetDownloadCandidate;
+use crate::download::DownloadExecution;
+use crate::download::history::{HistoryPurpose, RouteIdentity};
+use crate::download::planning::materialize_route;
 use crate::models::{
-    AppUpdateChannelEvent, AppUpdateChannelStatus, AppUpdateInfo, AppUpdatePhaseEvent, GitHubProxy,
-    GitHubProxyConfig, Provider,
+    AppUpdateChannelEvent, AppUpdateChannelStatus, AppUpdateInfo, AppUpdatePhaseEvent,
+    NetworkPlanSelection, Provider, RepositoryKind,
 };
-use std::collections::HashSet;
+use crate::network_policy::{Intent, NetworkPolicy};
 use tauri::AppHandle;
 use tauri::Emitter;
 
@@ -18,12 +21,17 @@ pub(crate) const INSTALLER_GITHUB_REPO: &str = "Overcooked-2-MOD-Manager";
 pub(crate) const INSTALLER_GITCODE_OWNER: &str = "CH3NGYZ";
 pub(crate) const INSTALLER_GITCODE_REPO: &str = "Overcooked-2-Manager";
 
+pub(crate) const INSTALLER_PROVIDERS: [Provider; 3] =
+    [Provider::Gitee, Provider::Gitcode, Provider::Github];
+
 #[derive(Debug, Clone)]
 pub(crate) struct InstallerChannel {
     pub(crate) id: String,
     pub(crate) provider: Provider,
     pub(crate) endpoint: String,
-    pub(crate) proxy: Option<GitHubProxy>,
+    pub(crate) route: AssetDownloadRoute,
+    pub(crate) execution: DownloadExecution,
+    pub(crate) identity: Option<RouteIdentity>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,92 +72,81 @@ pub(crate) fn installer_manifest_url(provider: &Provider) -> String {
 }
 
 pub(crate) fn installer_sources_for_url(
-    proxies: &GitHubProxyConfig,
+    policy: &NetworkPolicy,
+    region: InstallerRegion,
     provider: &Provider,
     url: &str,
-) -> Vec<InstallerChannel> {
-    let mut sources = vec![InstallerChannel {
-        id: match provider {
-            Provider::Gitee => "gitee-direct",
-            Provider::Github => "github-direct",
-            Provider::Gitcode => "gitcode-direct",
-        }
-        .into(),
-        provider: provider.clone(),
-        endpoint: url.into(),
-        proxy: None,
-    }];
-    if matches!(provider, Provider::Gitee | Provider::Gitcode) {
-        return sources;
-    }
-    // One snapshot covers manifest discovery, signature checks and package downloads.
-    let mut visited = HashSet::from([url.to_string()]);
-    for proxy in proxies.release_proxies.iter().cloned() {
-        let Some(endpoint) =
-            crate::github_proxies::proxy_urls(std::slice::from_ref(&proxy), url, false, None)
-                .into_iter()
-                .next()
-        else {
-            continue;
-        };
-        if visited.insert(endpoint.clone()) {
-            sources.push(InstallerChannel {
-                id: format!("github-proxy:{}", proxy.id),
-                provider: Provider::Github,
-                endpoint,
-                proxy: Some(proxy),
-            });
-        }
-    }
-    sources
+) -> Result<Vec<InstallerChannel>, String> {
+    let plan = policy.resolve(
+        provider,
+        RepositoryKind::Mod,
+        region.as_str(),
+        &NetworkPlanSelection::default(),
+    )?;
+    let release = plan.route(Intent::Release)?;
+    let name = match provider {
+        Provider::Gitee => "gitee",
+        Provider::Github => "github",
+        Provider::Gitcode => "gitcode",
+    };
+    Ok(
+        materialize_route(policy, release, url, false, None, None, None)?
+            .into_iter()
+            .map(|(candidate, proxy_id)| InstallerChannel {
+                id: match proxy_id {
+                    Some(id) => format!("{name}-proxy:{id}"),
+                    None => format!("{name}-direct"),
+                },
+                provider: provider.clone(),
+                route: candidate.route,
+                identity: release
+                    .race
+                    .then(|| {
+                        RouteIdentity::for_candidate(
+                            region.as_str(),
+                            provider,
+                            HistoryPurpose::Installer,
+                            &candidate.url,
+                            proxy_id.and_then(|id| policy.proxies.get(id)),
+                        )
+                    })
+                    .flatten(),
+                endpoint: candidate.url,
+                execution: DownloadExecution {
+                    max_parallelism: release.max_parallelism,
+                    race: release.race,
+                },
+            })
+            .collect(),
+    )
 }
 
 pub(crate) fn installer_manifest_sources(
-    proxies: &GitHubProxyConfig,
+    policy: &NetworkPolicy,
     region: InstallerRegion,
 ) -> Vec<InstallerChannel> {
     let mut sources = Vec::new();
-    if region == InstallerRegion::MainlandChina {
-        sources.extend(installer_sources_for_url(
-            proxies,
-            &Provider::Gitee,
-            &installer_manifest_url(&Provider::Gitee),
-        ));
-        sources.extend(installer_sources_for_url(
-            proxies,
-            &Provider::Gitcode,
-            &installer_manifest_url(&Provider::Gitcode),
-        ));
+    for provider in &INSTALLER_PROVIDERS {
+        if region == InstallerRegion::International && *provider != Provider::Github {
+            continue;
+        }
+        match installer_sources_for_url(policy, region, provider, &installer_manifest_url(provider))
+        {
+            Ok(group) => sources.extend(group),
+            Err(error) => log::warn!(
+                "更新清单计划无法生成候选：平台={provider:?}，原因={}",
+                crate::locale_tag::diagnostic_tag(&error)
+            ),
+        }
     }
-    sources.extend(installer_sources_for_url(
-        proxies,
-        &Provider::Github,
-        &installer_manifest_url(&Provider::Github),
-    ));
     sources
 }
 
 pub(crate) fn installer_candidate(channel: &InstallerChannel) -> AssetDownloadCandidate {
     AssetDownloadCandidate {
-        route: if channel.proxy.is_some() {
-            AssetDownloadRoute::Proxy
-        } else {
-            AssetDownloadRoute::Direct
-        },
+        route: channel.route,
         url: channel.endpoint.clone(),
-    }
-}
-
-pub(crate) fn installer_download_candidates(
-    proxies: &GitHubProxyConfig,
-    info: &AppUpdateInfo,
-) -> Vec<AssetDownloadCandidate> {
-    match (&info.provider, &info.installer_url) {
-        (Some(provider), Some(url)) => installer_sources_for_url(proxies, provider, url)
-            .iter()
-            .map(installer_candidate)
-            .collect(),
-        _ => Vec::new(),
+        identity: channel.identity.clone(),
     }
 }
 
@@ -161,7 +158,7 @@ pub(crate) fn installer_channel_status(
     AppUpdateChannelStatus {
         id: channel.id.clone(),
         provider: channel.provider.clone(),
-        mode: if channel.proxy.is_some() {
+        mode: if channel.route == AssetDownloadRoute::Proxy {
             "proxy"
         } else {
             "direct"

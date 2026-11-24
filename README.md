@@ -36,10 +36,10 @@ international = "github-public"
 
 ```toml
 network_plan.mainland = "github-mainland"
-network_plan.international = { id = "github-public", release = { download_threads = 4 } }
+network_plan.international = { id = "github-public", release = { race = false, max_parallelism = 1, download_threads = 4 } }
 ```
 
-也可以只写 `network_plan.international.release.download_threads = 4`，继承已有计划并覆盖这一项。未写的地区、策略和字段继续继承；显式写 `id` 则从该计划重新开始，不继承父源的局部覆盖。`route` 数组整体替换。代理只能引用受信清单中的 ID，源不能定义全局代理。
+也可以写 `network_plan.international.release = { race = false, max_parallelism = 1, download_threads = 4 }`，继承当前计划的候选路由并覆盖这三项。原计划已经顺序下载时，可只覆盖 `download_threads`。未写的地区、策略和字段继续继承；显式写 `id` 则从该计划重新开始，不继承父源的局部覆盖。`route` 数组整体替换。代理只能引用受信清单中的 ID，源不能定义全局代理。
 
 源条目不再声明顶层 `download_threads`。计划的 `release.download_threads`、`raw.download_threads` 控制单个候选的分片数（1–32）；`max_parallelism` 控制完整文件候选并发（1–3）。`race = true` 时每候选必须单线程；顺序模式要求 `max_parallelism = 1`，按 route 顺序尝试并在成功后停止。当前所有内置计划默认单线程。未知 ID、provider/type 不匹配、错误代理职责及非法并发组合会被拒绝。旧配置的顶层线程字段只兼容读取，不决定下载行为，也不再导出。
 
@@ -47,7 +47,9 @@ MOD 与地图 Release 支持经典分卷 ZIP：例如 `example_v1.z01`、`exampl
 
 最多两卷同时下载，每卷继承 Release 请求计划的候选、线程及代理设置，候选耗尽后最多额外重试三次；每卷校验已知大小和可用 SHA-256，全部成功后修正 ZIP 磁盘与偏移并校验完整 ZIP，再进入原安装流程。下载浮层分别显示唯一字节总进度、各卷状态、整卷重试及候选尝试，取消或失败会清理本次下载的临时文件。
 
-API 路由同样按所选计划排列；未授权的代理请求保持匿名，源配置不能授予转发 Token 的权限。受信计划闭包既可随应用内置，也可从官方索引同目录刷新；设置中的“仅使用内置下载计划”独立控制计划来源。代理凭据授权仍未开放，修改尚未发布的 Repos 本地文件不会改变客户端。
+API 请求按所选计划排列。官方 API 使用仓库适用的 Token 或匿名访问，代理请求始终匿名。受信计划随应用内置，也可随选中的官方源更新。客户端读取已发布或内置的计划。
+
+粘贴安装时，平台 Release 和 Raw 链接按平台、地区及 MOD/地图选择默认计划。其它直链沿用直接下载。带查询参数的文件链接只使用计划中的直连步骤，保护链接中的访问凭据。BepInEx 固定安装包按实际附件平台和地区选择默认 Release 计划。MOD README 的默认分支使用仓库 API 计划，正文使用同一仓库的 Raw 计划。API、README 和小型地图源文档的每个候选独立使用设置中的 API 超时。大文件使用设置中的首字节超时，收到数据后可继续传输。
 
 ### 头像请求
 
@@ -187,7 +189,7 @@ zh-CN = "G_U_A"
 
 | `url` 写法 | 解析位置 |
 | --- | --- |
-| `mods/child.toml` | GitHub/Gitee raw 或 Cloudflare 官方代理地址所属仓库的当前分支根目录。 |
+| `mods/child.toml` | GitHub/Gitee raw 或 Cloudflare、EdgeOne 官方代理地址所属仓库的当前分支根目录。 |
 | `./child.toml` | 当前源文件所在目录。 |
 | `../shared.toml` | 当前源文件所在目录的上一级，不能越过仓库分支根目录。 |
 | `https://example.com/child.toml` | 指定的完整直链。 |
@@ -648,17 +650,17 @@ prerelease = false     # 排斥正式版
 
 ## 官方数据来源与整包格式
 
-设置页的“数据来源”统一选择 GitHub（国际）、Gitee（中国大陆）、GitCode、Cloudflare（全球）或内置。每次启动按电脑地区选择起点，选择与网络快照仅在本次运行有效；界面实时显示实际来源，也可手动切换。地区可用性仍按电脑地区判断，不由托管平台决定。
+设置页的「数据来源」可选择 GitCode、Gitee、GitHub、Cloudflare、EdgeOne 或内置。管理器每次启动按已保存的地区选择起点。手动选源和网络快照仅在本次运行有效，界面显示当前实际来源。
 
-- 中国大陆：GitCode → Gitee → Cloudflare → 内置。
-- 国际地区：GitHub → Cloudflare → 内置。
+- 中国大陆按 GitCode → Gitee → Cloudflare → EdgeOne → 内置回退。
+- 国际地区按 GitHub → Cloudflare → EdgeOne → 内置回退。
 - 手动选择某来源后，从该来源开始沿后备链尝试；内置直接使用随应用提供的文件。
 
 官方文档不再逐份请求 Raw 地址。管理器获取一份源码 ZIP，在受限的只读文件集合中读取 `mods.toml`、`maps.toml`、`proxies.toml`、`network-plans.toml` 及它们引用的相对子文档。MOD、地图、代理和请求计划共用同一份不可变快照；一次成功获取的 ZIP 供这些入口复用，换来源会取消旧请求，旧请求晚到也不能覆盖新选择。Release API 与资产下载继续使用原有流程，不包含在源码包中。
 
 Gitee 直接使用独立的原生 WebView 窗口处理站点验证。用户在该窗口完成验证并点击下载后，管理器接管原生下载，沿用浏览器中的验证会话接收源码 ZIP；GitCode 如果返回验证网页，也使用同一下载能力。普通 HTTP 下载最多等待 30 秒，网页验证与下载最多等待 120 秒；关闭验证窗口会继续尝试后备来源。原生下载使用独立临时目录，读取完成后清理，不把验证页或 HTML 当作源码包。
 
-GitCode、Gitee、GitHub 的源码包下载统一使用浏览器 UA `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36 Edg/157.0.0.0`，HTTP 请求、重定向及网页验证与原生下载沿用这一值。Cloudflare 单独使用精确短 UA `Overcooked 2 MOD Manager/<版本>`，因为其安全规则只放行管理器。
+管理器直发的源码包请求和其他直发请求使用同一个管理器 UA，包含应用版本、系统、架构和发行渠道（`Store` 或 `Standalone`），不包含设备标识、地区或系统版本。需要网页验证时，WebView 使用系统浏览器引擎自己的 UA。
 
 | 来源 | 官方源码 ZIP |
 |---|---|
@@ -666,6 +668,7 @@ GitCode、Gitee、GitHub 的源码包下载统一使用浏览器 UA `Mozilla/5.0
 | GitHub | `https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/archive/refs/heads/main.zip` |
 | GitCode | `https://raw.gitcode.com/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/archive/refs/heads/main.zip` |
 | Cloudflare | `https://oc2gh.ch3ng.top/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/archive/refs/heads/main.zip` |
+| EdgeOne | `https://oc2gh.5882778.xyz/CH3NGYZ/Overcooked-2-MOD-Manager-Repos/archive/refs/heads/main.zip` |
 
 ZIP 中的统一仓库顶层目录会规范化为包根目录。包根必须提供四份官方入口，并应包含它们引用的全部相对文件：`mods.toml` 可通过 `[[repository_sources]]` 引用 `mods/` 等子文档，`maps.toml` 通过 `[[map_sources]]` 声明地图源，`proxies.toml` 引用各职责代理子清单，`network-plans.toml` 声明地区默认和请求计划。路径继续使用前述源文档解析规则；`./`、`../` 相对当前文档解析，不能逃出包根目录。ZIP 中的路径逃逸、重复文件、链接、超限内容或损坏数据会被拒绝，包内文件不解压到用户目录。
 
@@ -675,7 +678,7 @@ ZIP 中的统一仓库顶层目录会规范化为包根目录。包根必须提�
 
 MOD 官方索引为 `mods.toml`，只声明仓库和子源，不提供全局代理定义。代理注册表由 `proxies.toml` 引用各职责子清单；`network-plans.toml` 定义地区默认和请求计划。这些官方文件及其相对子文档均来自当前整包快照，完整闭包验证成功后一次替换进程网络配置；不持久化远端网络快照，不读取 JS/userscript。旧 `repositories-proxies.toml` 不再是生产读取入口。
 
-Cloudflare 只承载同一官方源码包，不需要新增通用下载或 Release API 请求计划。官方包内文档和普通自定义源继续复用已有源解析规则，避免两套格式。
+Cloudflare、EdgeOne 与其他官方来源使用同一源码包格式。官方包内文档和普通自定义源共用源解析规则。
 
 代理子清单使用 `schema_version = 1` 和 `[[proxies]]`，条目声明 `id`、`name`、`provider`、`intent`、`access`、HTTPS `template`、`token_transport`，可选 `regions`、`description`、`enabled`。`intent` 区分 `api`、`release`、`raw`、`avatar`。请求计划按 provider/type/地区解析并允许仓库局部覆盖；API 有平台 Token 时仅在官方请求携带，当前代理请求仍匿名，声明字段不授予凭据转发权限。
 
@@ -766,7 +769,7 @@ zh-CN = "仅在需要时下载或更新。"
 
 两个安装页只展示当前源的 `note_i18n`；它与地图/MOD 卡片自己的简介互相独立。没有该字段就不显示附属说明，切换界面语言会同步选择翻译。
 
-设置页使用统一的「数据来源」选择 GitHub、Gitee、GitCode、Cloudflare 或内置；MOD、地图、代理和请求计划从实际来源的同一官方源码包读取。地区仍取电脑地区，不由所选托管平台决定。
+设置页使用统一的「数据来源」选择 GitCode、Gitee、GitHub、Cloudflare、EdgeOne 或内置。MOD、地图、代理和请求计划从实际来源的同一官方源码包读取，地区由单独的设置项决定。
 
 ## 发布前检查清单
 

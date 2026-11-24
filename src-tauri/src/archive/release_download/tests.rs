@@ -257,6 +257,7 @@ async fn real_http_downloads_two_volumes_and_cleans_all_parts_after_reassembly()
     let progress = Arc::new(Mutex::new(Vec::new()));
     let captured = progress.clone();
     let path = crate::archive::observe_download_progress(
+        true,
         move |value| captured.lock().unwrap().push(value),
         download(
             &client,
@@ -269,6 +270,7 @@ async fn real_http_downloads_two_volumes_and_cleans_all_parts_after_reassembly()
             |url| {
                 Ok(RepositoryDownloadPlan {
                     candidates: vec![DownloadCandidate {
+                        identity: None,
                         route: DownloadRoute::Direct,
                         url: url.into(),
                     }],
@@ -320,6 +322,7 @@ async fn real_http_download_observer_retains_exact_bytes_and_scope_ends_with_the
     let captured = progress.clone();
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
     let path = crate::archive::observe_download_progress(
+        true,
         move |value| captured.lock().unwrap().push(value),
         download(
             &client,
@@ -338,6 +341,7 @@ async fn real_http_download_observer_retains_exact_bytes_and_scope_ends_with_the
             |url| {
                 Ok(RepositoryDownloadPlan {
                     candidates: vec![DownloadCandidate {
+                        identity: None,
                         route: DownloadRoute::Direct,
                         url: url.into(),
                     }],
@@ -366,7 +370,7 @@ async fn real_http_download_observer_retains_exact_bytes_and_scope_ends_with_the
     assert_eq!(last.label, "actual MOD");
     let count = seen.len();
     drop(seen);
-    crate::archive::emit_progress_event(None, DownloadProgress::connecting("late"));
+    crate::archive::publish_download_progress(DownloadProgress::connecting("late"));
     assert_eq!(progress.lock().unwrap().len(), count);
 }
 
@@ -388,6 +392,7 @@ async fn exhausted_candidates_allow_only_three_outer_retries_and_leave_no_files(
             Ok(RepositoryDownloadPlan {
                 candidates: (0..3)
                     .map(|i| DownloadCandidate {
+                        identity: None,
                         route: DownloadRoute::Proxy,
                         url: format!("{}/0/{i}", server.url),
                     })
@@ -413,7 +418,6 @@ fn aggregate_counts_only_one_candidate_snapshot_per_volume() {
     let mut a = DownloadProgress::connecting("test");
     a.downloaded = 30;
     a.total = Some(100);
-    a.parallel_sources = Some(3);
     let mut b = a.clone();
     b.downloaded = 20;
     let volumes = vec![
@@ -469,6 +473,7 @@ async fn bad_volume_digest_retries_and_cleans_successful_companions() {
         |url| {
             Ok(RepositoryDownloadPlan {
                 candidates: vec![DownloadCandidate {
+                    identity: None,
                     route: DownloadRoute::Direct,
                     url: url.into(),
                 }],
@@ -511,6 +516,7 @@ async fn dropping_download_cleans_completed_and_inflight_volumes() {
             |url| {
                 Ok(RepositoryDownloadPlan {
                     candidates: vec![DownloadCandidate {
+                        identity: None,
                         route: DownloadRoute::Direct,
                         url: url.into(),
                     }],
@@ -545,6 +551,7 @@ async fn ordinary_single_file_keeps_exact_bytes_and_has_no_outer_retry() {
         |_| {
             Ok(RepositoryDownloadPlan {
                 candidates: vec![DownloadCandidate {
+                    identity: None,
                     route: DownloadRoute::Direct,
                     url: format!("{}/0", server.url),
                 }],

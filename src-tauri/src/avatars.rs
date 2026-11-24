@@ -275,15 +275,10 @@ async fn fetch_avatar(
     network: &crate::models::NetworkConfig,
 ) -> Result<Vec<u8>, String> {
     let deadline = Some(tokio::time::Instant::now() + network.first_byte_timeout());
-    let response = crate::archive::send_before_first_byte_deadline(
-        client
-            .get(url)
-            .header("User-Agent", crate::releases::APP_USER_AGENT),
-        deadline,
-    )
-    .await?
-    .error_for_status()
-    .map_err(|error| error.without_url().to_string())?;
+    let response = crate::archive::send_before_first_byte_deadline(client.get(url), deadline)
+        .await?
+        .error_for_status()
+        .map_err(|error| error.without_url().to_string())?;
     let mut stream = response.bytes_stream();
     let mut chunk = crate::archive::first_nonempty_chunk(&mut stream, deadline).await?;
     let mut bytes = Vec::new();

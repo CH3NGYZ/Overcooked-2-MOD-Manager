@@ -81,6 +81,7 @@ const NON_TAG = new Set([
   'oc2.pre', 'oc2.legacy', 'oc2.grouped', 'oc2.oc2diylevelruntimewloader',
   // 社区源的域名
   'oc2gh.ch3ng.top',
+  'git.yylx.win',
   // Tauri Windows 主页面的本地协议域名，不是后端错误 tag。
   'tauri.localhost',
   // BepInEx 的 WinHTTP 开关用的是「禁用后缀」文件名，不是 tag

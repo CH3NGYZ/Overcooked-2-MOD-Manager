@@ -81,8 +81,9 @@ const renderer = createRenderer({
 function findAll(node, tag) {
   return [...(node.tag === tag ? [node] : []), ...(node.children?.flatMap(child => findAll(child, tag)) ?? [])]
 }
-const fields = ['race_min_speed_kbps', 'race_window_seconds', 'api_timeout_seconds', 'first_byte_timeout_seconds']
-const defaultNetwork = { timeout_seconds: 270, download_threads: 4, max_retry_count: 3, ...downloadDefaults }
+const fields = ['api_timeout_seconds', 'first_byte_timeout_seconds']
+const defaultNetwork = { timeout_seconds: 270, download_threads: 4, max_retry_count: 3,
+  api_timeout_seconds: downloadDefaults.api_timeout_seconds, first_byte_timeout_seconds: downloadDefaults.first_byte_timeout_seconds }
 const makeConfig = (network = {}) => ({ region: 'global', data_provider: 'github', network: { ...defaultNetwork, ...network } })
 function mounted(t, initial = makeConfig()) {
   boundary.calls.length = boundary.snapshots.length = boundary.notices.length = 0
@@ -110,7 +111,7 @@ test('download group follows Data sources and precedes Performance with real row
   assert.match(source, /:disabled="switchingDataProvider"[\s\S]*?@saved="config = \$event" @saving="savingDownload = \$event"/)
   const { root, selects } = mounted(t)
   assert.equal(findAll(root, 'section')[0].props['data-testid'], 'download-settings')
-  assert.equal(selects().length, 4)
+  assert.equal(selects().length, 2)
   assert.deepEqual(selects().map(node => node.props['data-testid']), fields.map(key => `download-${key}`))
   for (const select of selects()) {
     assert.equal(select.props.style.width, '304px')
@@ -121,46 +122,45 @@ test('download group follows Data sources and precedes Performance with real row
   }
 })
 
-test('seven speed options and sixteen integer-second options use the bundled defaults', t => {
+test('both timeouts offer all 26 integer seconds from 5 through 30, defaulting to 20', t => {
   const { selects } = mounted(t)
-  assert.deepEqual(selects().map(node => node.props.value), [256, 10, 20, 20])
-  assert.deepEqual(selects()[0].props.options, [32, 64, 128, 256, 512, 1024, 2048].map(value => ({ value, label: `${value} KB/s` })))
-  for (const select of selects().slice(1)) assert.deepEqual(select.props.options.map(option => option.value), Array.from({ length: 16 }, (_, index) => index + 5))
+  assert.deepEqual(selects().map(node => node.props.value), [20, 20])
+  for (const select of selects()) assert.deepEqual(select.props.options.map(option => option.value), Array.from({ length: 26 }, (_, index) => index + 5))
   assert.deepEqual(boundary.calls, [])
 })
 
-test('old frontend fixtures missing individual network fields fall back without reusing legacy timeout_seconds', t => {
+test('missing individual timeout fields use the shared defaults instead of timeout_seconds', t => {
   const config = makeConfig(); config.network = { timeout_seconds: 300, download_threads: 4, max_retry_count: 3 }
   const { selects } = mounted(t, config)
-  assert.deepEqual(selects().map(node => node.props.value), [256, 10, 20, 20])
+  assert.deepEqual(selects().map(node => node.props.value), [20, 20])
 })
 
 test('each select sends only its flat patch and applies the returned normalized config to shared state', async t => {
-  const { selects, props, saved, busy } = mounted(t, makeConfig({ race_min_speed_kbps: 128, race_window_seconds: 7, api_timeout_seconds: 12, first_byte_timeout_seconds: 19 }))
-  assert.deepEqual(selects().map(node => node.props.value), [128, 7, 12, 19])
-  for (const [index, value] of [2048, 5, 20, 5].entries()) { change(selects()[index], value); await flush() }
-  assert.deepEqual(boundary.calls, fields.map((key, index) => ({ [key]: [2048, 5, 20, 5][index] })))
-  assert.deepEqual(busy, [true, false, true, false, true, false, true, false])
-  assert.equal(saved.length, 4)
+  const { selects, props, saved, busy } = mounted(t, makeConfig({ api_timeout_seconds: 12, first_byte_timeout_seconds: 19 }))
+  assert.deepEqual(selects().map(node => node.props.value), [12, 19])
+  for (const [index, value] of [30, 5].entries()) { change(selects()[index], value); await flush() }
+  assert.deepEqual(boundary.calls, fields.map((key, index) => ({ [key]: [30, 5][index] })))
+  assert.deepEqual(busy, [true, false, true, false])
+  assert.equal(saved.length, 2)
   assert.strictEqual(boundary.snapshots.at(-1), props.value.config)
-  assert.deepEqual(selects().map(node => node.props.value), [2048, 5, 20, 5])
+  assert.deepEqual(selects().map(node => node.props.value), [30, 5])
   assert.equal(props.value.config.network.timeout_seconds, 270)
-  assert.equal(boundary.notices.length, 4)
+  assert.equal(boundary.notices.length, 2)
 })
 
-test('a pending save locks all four controls and rejects concurrent writes until the authoritative response', async t => {
+test('a pending save locks both controls and rejects concurrent writes until the authoritative response', async t => {
   const state = mounted(t), request = deferred(), before = state.props.value.config
   boundary.save = () => request.promise
-  change(state.selects()[0], 32); await nextTick()
+  change(state.selects()[0], 30); await nextTick()
   assert.deepEqual(state.busy, [true])
   assert.ok(state.selects().every(node => node.props.disabled && node.props.loading))
-  assert.equal(state.selects()[0].props.value, 256)
-  change(state.selects()[1], 5); change(state.selects()[2], 19)
-  assert.deepEqual(boundary.calls, [{ race_min_speed_kbps: 32 }])
-  const result = { ...before, network: { ...before.network, race_min_speed_kbps: 32 } }
+  assert.equal(state.selects()[0].props.value, 20)
+  change(state.selects()[1], 5); change(state.selects()[0], 19)
+  assert.deepEqual(boundary.calls, [{ api_timeout_seconds: 30 }])
+  const result = { ...before, network: { ...before.network, api_timeout_seconds: 30 } }
   request.resolve(result); await flush()
   assert.deepEqual(state.props.value.config, result)
-  assert.equal(state.selects()[0].props.value, 32)
+  assert.equal(state.selects()[0].props.value, 30)
   assert.ok(state.selects().every(node => !node.props.disabled && !node.props.loading))
   assert.deepEqual(state.busy, [true, false])
 })
@@ -168,15 +168,15 @@ test('a pending save locks all four controls and rejects concurrent writes until
 test('failed saves preserve all values, translate the error, unlock, and allow retry', async t => {
   const { selects, props, saved, busy } = mounted(t), before = props.value.config
   boundary.save = async () => { throw new Error('config.saveFailed') }
-  change(selects()[2], 19); await flush()
+  change(selects()[1], 19); await flush()
   assert.strictEqual(props.value.config, before)
-  assert.deepEqual(selects().map(node => node.props.value), [256, 10, 20, 20])
+  assert.deepEqual(selects().map(node => node.props.value), [20, 20])
   assert.deepEqual(saved, []); assert.deepEqual(boundary.snapshots, [])
   assert.deepEqual(boundary.notices, [['error', 'translated:config.saveFailed']])
   assert.ok(selects().every(node => !node.props.disabled && !node.props.loading))
   boundary.save = async patch => ({ ...before, network: { ...before.network, ...patch } })
-  change(selects()[2], 19); await flush()
-  assert.equal(selects()[2].props.value, 19)
+  change(selects()[1], 19); await flush()
+  assert.equal(selects()[1].props.value, 19)
   assert.deepEqual(busy, [true, false, true, false])
 })
 
@@ -184,38 +184,35 @@ test('tutorial, missing config and an active provider switch disable controls an
   const { selects, props } = mounted(t)
   boundary.demoActive.value = true; await nextTick()
   assert.ok(selects().every(node => node.props.disabled))
-  change(selects()[0], 32)
+  change(selects()[0], 30)
   boundary.demoActive.value = false; props.value = { ...props.value, disabled: true }; await nextTick()
   assert.ok(selects().every(node => node.props.disabled))
   change(selects()[1], 5)
   props.value = { config: null, disabled: false }; await nextTick()
   assert.ok(selects().every(node => node.props.disabled))
-  change(selects()[2], 19)
+  change(selects()[0], 19)
   assert.deepEqual(boundary.calls, [])
 })
 
-test('unchanged values and values outside the seven speeds or 5..20 integers never write', async t => {
+test('unchanged values and values outside 5..30 integers never write', async t => {
   const { selects } = mounted(t)
-  for (const [index, value] of [256, 10, 20, 20].entries()) change(selects()[index], value)
-  for (const value of [0, 63, 65, 4096, NaN, 32.5]) change(selects()[0], value)
-  for (const select of selects().slice(1)) for (const value of [4, 21, 10.5, NaN]) change(select, value)
+  for (const select of selects()) for (const value of [20, 4, 31, 10.5, NaN]) change(select, value)
   await flush()
   assert.deepEqual(boundary.calls, [])
 })
 
 test('the real options and labels update for all five locales and all new keys have every language', async t => {
   const { root, selects } = mounted(t)
-  const keys = ['downloadSettings', 'downloadMinSpeed', 'downloadMinSpeedHint', 'downloadRaceWindow', 'downloadRaceWindowHint',
-    'downloadApiTimeout', 'downloadApiTimeoutHint', 'downloadFirstByteTimeout', 'downloadFirstByteTimeoutHint', 'downloadSeconds']
+  const keys = ['downloadSettings', 'downloadApiTimeout', 'downloadApiTimeoutHint', 'downloadFirstByteTimeout', 'downloadFirstByteTimeoutHint', 'downloadSeconds']
   for (const locale of ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']) {
     boundary.locale.value = locale; await nextTick()
     for (const key of keys) assert.ok(settings[key][locale])
-    assert.equal(selects()[0].props['aria-label'], settings.downloadMinSpeed[locale])
+    assert.equal(selects()[0].props['aria-label'], settings.downloadApiTimeout[locale])
     assert.equal(selects()[1].props.options[0].label, settings.downloadSeconds[locale].replace('{seconds}', '5'))
-    assert.equal(selects()[3].props.options.at(-1).label, settings.downloadSeconds[locale].replace('{seconds}', '20'))
+    assert.equal(selects()[1].props.options.at(-1).label, settings.downloadSeconds[locale].replace('{seconds}', '30'))
     const hints = findAll(root, 'small')
     assert.deepEqual(hints.map(node => node.props.title),
-      ['MinSpeed', 'RaceWindow', 'ApiTimeout', 'FirstByteTimeout'].map((key, index) =>
+      ['ApiTimeout', 'FirstByteTimeout'].map((key, index) =>
         settings[`download${key}Hint`][locale].replace('{value}', String(defaultNetwork[fields[index]]))))
   }
 })
@@ -230,7 +227,7 @@ test('first-byte timeout messages do not hardcode a duration now that the limit 
 test('an old request finishing after navigation cannot overwrite a new region/source snapshot', async t => {
   const state = mounted(t), request = deferred()
   boundary.save = () => request.promise
-  change(state.selects()[3], 5)
+  change(state.selects()[1], 5)
   const staleHandler = state.selects()[0].props['onUpdate:value']
   state.app.unmount()
   const newer = { ...makeConfig(), region: 'cn', data_provider: 'gitcode', repository_sources: [{ id: 'new-source' }] }
@@ -248,7 +245,7 @@ test('an old request finishing after navigation cannot overwrite a new region/so
 test('a mounted delayed save merges only its setting into a newer shared region/source snapshot', async t => {
   const state = mounted(t), request = deferred()
   boundary.save = () => request.promise
-  change(state.selects()[3], 5)
+  change(state.selects()[1], 5)
   const newer = { ...makeConfig({ api_timeout_seconds: 19 }), region: 'cn', data_provider: 'gitcode', repository_sources: [{ id: 'new-source' }] }
   boundary.sharedConfig.value = newer
   request.resolve(makeConfig({ first_byte_timeout_seconds: 5 })); await flush()
@@ -259,10 +256,10 @@ test('a mounted delayed save merges only its setting into a newer shared region/
 test('a later shared change to the same field wins over an older save response', async t => {
   const state = mounted(t), request = deferred()
   boundary.save = () => request.promise
-  change(state.selects()[2], 5)
+  change(state.selects()[0], 5)
   const newer = makeConfig({ api_timeout_seconds: 19 })
   boundary.sharedConfig.value = newer
   request.resolve(makeConfig({ api_timeout_seconds: 5 })); await flush()
   assert.equal(boundary.sharedConfig.value.network.api_timeout_seconds, 19)
-  assert.equal(state.selects()[2].props.value, 19)
+  assert.equal(state.selects()[0].props.value, 19)
 })

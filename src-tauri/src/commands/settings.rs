@@ -101,12 +101,6 @@ pub fn save_settings(
     if let Some(value) = patch.download_threads {
         config.network.download_threads = value.clamp(1, 64);
     }
-    if let Some(value) = patch.race_min_speed_kbps {
-        config.network.race_min_speed_kbps = value;
-    }
-    if let Some(value) = patch.race_window_seconds {
-        config.network.race_window_seconds = value;
-    }
     if let Some(value) = patch.api_timeout_seconds {
         config.network.api_timeout_seconds = value;
     }
@@ -154,13 +148,11 @@ pub fn save_settings(
         || previous_network != config.network
     {
         log::info!(
-            "[config] 网络设置已保存：仅官方API={}，下载并行={}，API超时秒={}，首字节超时秒={}，竞速最低速度KiB/s={}，竞速窗口秒={}",
+            "[config] 网络设置已保存：仅官方API={}，下载并行={}，API超时秒={}，首字节超时秒={}",
             config.auth.official_api_only,
             config.network.download_threads,
             config.network.api_timeout_seconds,
             config.network.first_byte_timeout_seconds,
-            config.network.race_min_speed_kbps,
-            config.network.race_window_seconds
         );
     }
     if patch.ui_zoom.is_some() {

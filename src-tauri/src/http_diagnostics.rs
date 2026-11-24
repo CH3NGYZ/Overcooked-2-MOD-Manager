@@ -6,6 +6,7 @@ pub(crate) use redaction::{redact_field, redact_text};
 use bytes::{Bytes, BytesMut};
 use http_body::{Body, Frame, SizeHint};
 use redaction::Redactor;
+use reqwest::header::{HeaderValue, USER_AGENT};
 use reqwest::{ResponseBuilderExt, StatusCode};
 use std::collections::VecDeque;
 use std::pin::Pin;
@@ -52,9 +53,13 @@ pub(crate) async fn execute(
 
 async fn execute_with(
     client: reqwest::Client,
-    request: reqwest::Request,
+    mut request: reqwest::Request,
     preview_body: bool,
 ) -> Result<reqwest::Response, reqwest::Error> {
+    request.headers_mut().insert(
+        USER_AGENT,
+        HeaderValue::from_static(crate::http_user_agent::app_user_agent()),
+    );
     let method = request.method().clone();
     let address = if preview_body {
         crate::repository_sources::safe_log_address(request.url().as_str())

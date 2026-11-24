@@ -3,7 +3,6 @@ use super::*;
 fn request() -> Request {
     Request {
         url: Url::parse("https://gitee.com/owner/repo/repository/archive/main.zip").unwrap(),
-        user_agent: "Overcooked 2 MOD Manager/2.1.1".into(),
         max_bytes: 32 * 1024 * 1024,
         title: "Download".into(),
         timeout: Duration::from_secs(120),
@@ -172,15 +171,12 @@ fn trusted_suffixes_respect_dns_labels_and_include_apex() {
 }
 
 #[test]
-fn invalid_limits_credentials_and_user_agents_fail_before_window_creation() {
+fn invalid_limits_and_credentials_fail_before_window_creation() {
     let mut value = request();
     value.max_bytes = 0;
     assert!(Policy::new(&value).is_err());
     value = request();
     value.timeout = Duration::ZERO;
-    assert!(Policy::new(&value).is_err());
-    value = request();
-    value.user_agent = "agent\r\nInjected: value".into();
     assert!(Policy::new(&value).is_err());
     value = request();
     value.url = Url::parse("https://user:secret@gitee.com/archive.zip").unwrap();

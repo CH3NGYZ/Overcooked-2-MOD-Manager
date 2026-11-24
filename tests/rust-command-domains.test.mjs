@@ -13,12 +13,13 @@ test('commands root only declares domains; registered IPC points at the real imp
   const handler = read('lib.rs').match(/audited_handler!\s*\[([\s\S]*?)\]/)?.[1]
   assert.ok(handler)
   const paths = [...handler.matchAll(/\bcommands::([a-z_]+)::([a-z_]+)\b/g)]
-  assert.equal(paths.length, 139, '更新 IPC 只以暂存和恢复命令交接')
+  assert.equal(paths.length, 140, '新增竞速线路控制 IPC')
   assert.ok(paths.some(([, domain, name]) => domain === 'logs' && name === 'record_ipc_failure'))
   assert.ok(paths.some(([, domain, name]) => domain === 'logs' && name === 'record_file_drop'))
   assert.ok(paths.some(([, domain, name]) => domain === 'system' && name === 'open_external_page'))
   assert.ok(paths.some(([, domain, name]) => domain === 'system' && name === 'apply_staged_app_update'))
   assert.ok(paths.some(([, domain, name]) => domain === 'update' && name === 'get_app_distribution'))
+  assert.ok(paths.some(([, domain, name]) => domain === 'download' && name === 'control_download_race'))
   for (const name of ['get_pending_app_update_recovery', 'stage_app_update', 'finish_app_update_recovery']) {
     assert.ok(paths.some(([, domain, actual]) => domain === 'update' && actual === name))
   }

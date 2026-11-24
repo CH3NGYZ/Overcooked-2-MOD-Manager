@@ -580,6 +580,8 @@ repository = "r"
 level_set_name = "PlanMap"
 asset_rules = [{type = "exact", value = "map.zip"}]
 network_plan.mainland.release.download_threads = 4
+network_plan.mainland.release.race = false
+network_plan.mainland.release.max_parallelism = 1
 [[map_sources]]
 id = "child"
 nickname = "Child"

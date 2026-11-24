@@ -1,15 +1,13 @@
 use super::DownloadCandidate;
+use super::history::{HistoryPurpose, RouteIdentity};
 use crate::archive::DownloadRoute;
-use crate::models::{AppConfig, GitHubProxy, Provider, ProxyMode};
+use crate::models::{Provider, ProxyMode};
 use std::collections::HashSet;
 use url::Url;
 
 /// 远程 URL 的下载类别。
 ///
-/// 三类走完全不同的路由：Release 资产只认 `release_proxies`，仓库 raw
-/// 文件认 `raw_proxies` 且代理模板要用分支与文件路径展开，其它直链没有
-/// 代理可用、直接单源多线程。判定结果只决定「用哪套代理与线程策略」，
-/// 不决定 URL 是否可信（那由下载入口校验）。
+/// 平台的 Release 和 Raw 文件使用各自的请求计划，其它地址保持单源直连。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RemoteUrlKind {
     ReleaseAsset,
@@ -27,20 +25,28 @@ pub(crate) fn classify_remote_url(url: &str) -> RemoteUrlKind {
         return RemoteUrlKind::Other;
     }
     let host = parsed.host_str().unwrap_or_default();
-    let is_github = host.eq_ignore_ascii_case("github.com");
-    let is_gitee = host.eq_ignore_ascii_case("gitee.com");
-    let is_gitcode = matches!(host, "gitcode.com" | "atomgit.com");
     let path = parsed.path();
-    if (is_github || is_gitee || is_gitcode) && path.contains("/releases/download/") {
+    let github_latest = matches!(host, "github.com" | "www.github.com")
+        && parsed.path_segments().is_some_and(|segments| {
+            let mut tail = segments.skip(2);
+            tail.next() == Some("releases")
+                && tail.next() == Some("latest")
+                && tail.next() == Some("download")
+                && tail.next().is_some_and(|asset| !asset.is_empty())
+        });
+    if crate::providers::release_asset_reference(&parsed).is_some() || github_latest {
         return RemoteUrlKind::ReleaseAsset;
     }
     if matches!(
         host,
-        "raw.githubusercontent.com" | "raw.atomgit.com" | "raw.gitcode.com"
+        "raw.githubusercontent.com"
+            | "raw.giteeusercontent.com"
+            | "raw.atomgit.com"
+            | "raw.gitcode.com"
     ) {
         return RemoteUrlKind::Raw;
     }
-    if (is_github || is_gitee || is_gitcode) && is_repository_raw_path(path) {
+    if crate::providers::provider_for_host(host).is_some() && is_repository_raw_path(path) {
         return RemoteUrlKind::Raw;
     }
     RemoteUrlKind::Other
@@ -63,8 +69,7 @@ pub(crate) fn provider_for_remote_url(url: &str) -> Option<Provider> {
     crate::providers::provider_for_host(parsed.host_str()?)
 }
 
-// Update and MOD downloads share candidate ordering, routing and deduplication.
-// Callers supply the proxy snapshot available at their point in startup.
+#[cfg(test)]
 pub(crate) fn ordered_asset_download_candidates(
     mode: ProxyMode,
     direct_url: &str,
@@ -73,6 +78,7 @@ pub(crate) fn ordered_asset_download_candidates(
     let direct = || DownloadCandidate {
         route: DownloadRoute::Direct,
         url: direct_url.to_string(),
+        identity: None,
     };
     let proxies = proxy_urls
         .into_iter()
@@ -80,6 +86,7 @@ pub(crate) fn ordered_asset_download_candidates(
         .map(|url| DownloadCandidate {
             route: DownloadRoute::Proxy,
             url,
+            identity: None,
         })
         .collect::<Vec<_>>();
     let candidates = match mode {
@@ -96,34 +103,13 @@ pub(crate) fn ordered_asset_download_candidates(
         .collect()
 }
 
-pub(crate) fn selected_asset_proxy_mode(
-    requested: Option<ProxyMode>,
-    provider: &Provider,
-    region: &str,
-) -> ProxyMode {
-    if matches!(provider, Provider::Gitee | Provider::Gitcode) {
-        return ProxyMode::Direct;
-    }
-    requested.unwrap_or_else(|| {
-        if region == crate::config::REGION_INTERNATIONAL {
-            ProxyMode::Direct
-        } else {
-            ProxyMode::AutoDirect
-        }
-    })
-}
-
-/// File concurrency is shared by MOD, map and pasted-URL downloads. A direct
-/// Gitee/GitCode URL must not accidentally inherit the generic 16/32 chunks.
-/// Concurrent complete-file candidates never also open per-source chunks.
-pub(crate) fn file_download_threads(
+/// File concurrency for URLs outside the recognized Release and Raw layouts.
+pub(crate) fn generic_download_threads(
     provider: Option<&Provider>,
     region: &str,
     configured: u32,
-    racing: bool,
 ) -> u32 {
-    if racing
-        || matches!(provider, Some(Provider::Gitee | Provider::Gitcode))
+    if matches!(provider, Some(Provider::Gitee | Provider::Gitcode))
         || (provider == Some(&Provider::Github) && region == crate::config::REGION_INTERNATIONAL)
     {
         1
@@ -132,92 +118,32 @@ pub(crate) fn file_download_threads(
     }
 }
 
-pub(crate) fn asset_proxy_urls(
-    entries: &[GitHubProxy],
-    direct_url: &str,
-    is_raw_file: bool,
-    branch: &str,
-    file_path: &str,
-    mode: ProxyMode,
-    selected_id: Option<&str>,
-) -> Vec<String> {
-    if mode == ProxyMode::Direct {
-        return Vec::new();
-    }
-    let entries = entries
-        .iter()
-        .filter(|proxy| {
-            mode != ProxyMode::Fixed
-                || selected_id.is_some_and(|id| !id.trim().is_empty() && proxy.id == id)
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    crate::github_proxies::proxy_urls(
-        &entries,
-        direct_url,
-        is_raw_file,
-        (is_raw_file && !branch.is_empty())
-            .then_some(crate::github_proxies::RawProxyContext { branch, file_path }),
-    )
-}
-
-/// 按平台与文件类型选代理组。
-///
-/// Gitee 没有代理（只有 API 代理，资产直连）；GitHub 的 Release 资产与
-/// raw 文件各用一组。MOD 仓库安装、地图 Release 安装与通用直链下载共用
-/// 这份选择，避免每个调用点各写一遍「哪些字段是 Release 需要的」。
-pub(crate) fn provider_proxy_entries<'a>(
-    config: &'a AppConfig,
-    provider: &Provider,
-    is_raw_file: bool,
-) -> &'a [GitHubProxy] {
-    if matches!(provider, Provider::Gitee | Provider::Gitcode) {
-        return &[];
-    }
-    if is_raw_file {
-        &config.github_proxies.raw_proxies
-    } else {
-        &config.github_proxies.release_proxies
-    }
-}
-
-/// 为一个远程 URL 规划完整文件下载候选（含代理展开与去重）。
-///
-/// 仓库/地图安装与直链下载共用同一套候选规则；代理模式按平台与地区取
-/// [`selected_asset_proxy_mode`] 的默认值（Gitee 恒直连）。返回值按实际
-/// 启用情况排序，长度 > 1 即表示调用方应当竞速。
-pub(crate) fn plan_remote_download_candidates(
-    config: &AppConfig,
-    provider: &Provider,
-    kind: RemoteUrlKind,
-    url: &str,
-    region: &str,
-) -> Result<Vec<DownloadCandidate>, String> {
-    let mode = selected_asset_proxy_mode(None, provider, region);
-    let is_raw_file = kind == RemoteUrlKind::Raw;
-    let entries = provider_proxy_entries(config, provider, is_raw_file);
-    let proxy_urls = asset_proxy_urls(entries, url, is_raw_file, "", "", mode, None);
-    plan_asset_download_candidates(mode, url, proxy_urls)
-}
-
-pub(crate) fn plan_asset_download_candidates(
-    mode: ProxyMode,
-    direct_url: &str,
-    proxy_urls: Vec<String>,
-) -> Result<Vec<DownloadCandidate>, String> {
-    let candidates = ordered_asset_download_candidates(mode, direct_url, proxy_urls);
-    if mode == ProxyMode::Fixed && candidates.is_empty() {
-        return Err("proxy.noGlobalProxy".into());
-    }
-    Ok(candidates)
-}
-
 /// Materialized file route. The same resolved plan controls both whole-file
 /// concurrency and per-candidate chunks; source fields cannot override it later.
 pub(crate) struct RepositoryDownloadPlan {
     pub candidates: Vec<DownloadCandidate>,
     pub download_threads: u32,
     pub execution: super::DownloadExecution,
+}
+
+pub(crate) fn plan_pasted_file(
+    url: &Url,
+    url_kind: RemoteUrlKind,
+    kind: crate::models::RepositoryKind,
+    region: &str,
+) -> Result<RepositoryDownloadPlan, String> {
+    let provider = provider_for_remote_url(url.as_str()).ok_or("direct.invalidUrl")?;
+    plan_repository_file(
+        &provider,
+        kind,
+        &crate::models::NetworkPlanSelection::default(),
+        region,
+        url.as_str(),
+        url_kind == RemoteUrlKind::Raw,
+        None,
+        None,
+        None,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -231,16 +157,72 @@ pub(crate) fn plan_repository_download(
     requested: Option<ProxyMode>,
     selected_id: Option<&str>,
 ) -> Result<RepositoryDownloadPlan, String> {
+    plan_repository_file(
+        provider,
+        kind,
+        selection,
+        region,
+        url,
+        raw.is_some(),
+        raw,
+        requested,
+        selected_id,
+    )
+}
+
+/// Source documents have an original URL rather than a repository file configuration.
+pub(crate) fn plan_source_document(
+    provider: &Provider,
+    kind: crate::models::RepositoryKind,
+    selection: &crate::models::NetworkPlanSelection,
+    region: &str,
+    url: &str,
+    is_raw: bool,
+) -> Result<RepositoryDownloadPlan, String> {
+    plan_repository_file(
+        provider, kind, selection, region, url, is_raw, None, None, None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn plan_repository_file(
+    provider: &Provider,
+    kind: crate::models::RepositoryKind,
+    selection: &crate::models::NetworkPlanSelection,
+    region: &str,
+    url: &str,
+    is_raw: bool,
+    raw: Option<crate::github_proxies::RawProxyContext<'_>>,
+    requested: Option<ProxyMode>,
+    selected_id: Option<&str>,
+) -> Result<RepositoryDownloadPlan, String> {
     use crate::network_policy::{Intent, NetworkPolicy};
     let policy = NetworkPolicy::active()?;
     let plan = policy.resolve(provider, kind, region, selection)?;
-    let intent = if raw.is_some() {
-        Intent::Raw
+    let intent = if is_raw { Intent::Raw } else { Intent::Release };
+    let purpose = if is_raw {
+        HistoryPurpose::Raw
     } else {
-        Intent::Release
+        HistoryPurpose::Release
     };
     let route = plan.route(intent)?;
-    let candidates = materialize_route(&policy, route, url, raw, requested, selected_id)?;
+    let materialized = materialize_route(&policy, route, url, is_raw, raw, requested, selected_id)?;
+    let learnable = route.race && materialized.len() > 1;
+    let candidates = materialized
+        .into_iter()
+        .map(|(mut candidate, proxy_id)| {
+            if learnable {
+                candidate.identity = RouteIdentity::for_candidate(
+                    region,
+                    provider,
+                    purpose,
+                    &candidate.url,
+                    proxy_id.and_then(|id| policy.proxies.get(id)),
+                );
+            }
+            candidate
+        })
+        .collect();
     Ok(RepositoryDownloadPlan {
         candidates,
         download_threads: route.download_threads,
@@ -286,29 +268,40 @@ pub(crate) fn plan_avatar_download(
         .ok_or("avatar.noSource")?
         .replace("{owner}", &encoded);
     // No raw context: owner PNGs must never be rewritten as repository files.
-    materialize_route(&policy, route, &url, None, None, None)
+    Ok(
+        materialize_route(&policy, route, &url, false, None, None, None)?
+            .into_iter()
+            .map(|(candidate, _)| candidate)
+            .collect(),
+    )
 }
 
-fn materialize_route(
-    policy: &crate::network_policy::NetworkPolicy,
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn materialize_route<'a>(
+    policy: &'a crate::network_policy::NetworkPolicy,
     route: &crate::network_policy::Route,
     url: &str,
+    is_raw: bool,
     raw: Option<crate::github_proxies::RawProxyContext<'_>>,
     requested: Option<ProxyMode>,
     selected_id: Option<&str>,
-) -> Result<Vec<DownloadCandidate>, String> {
+) -> Result<Vec<(DownloadCandidate, Option<&'a str>)>, String> {
     use crate::network_policy::Step;
+    let has_query = Url::parse(url).is_ok_and(|parsed| parsed.query().is_some());
     let mut candidates = Vec::new();
     for step in &route.route {
         match step {
-            Step::Direct if !matches!(requested, Some(ProxyMode::Fixed)) => {
-                candidates.push(DownloadCandidate {
+            Step::Direct if !matches!(requested, Some(ProxyMode::Fixed)) => candidates.push((
+                DownloadCandidate {
                     route: DownloadRoute::Direct,
                     url: url.into(),
-                })
-            }
+                    identity: None,
+                },
+                None,
+            )),
             Step::Proxy { id }
-                if requested != Some(ProxyMode::Direct)
+                if !has_query
+                    && requested != Some(ProxyMode::Direct)
                     && (requested != Some(ProxyMode::Fixed)
                         || selected_id == Some(id.as_str())) =>
             {
@@ -316,23 +309,29 @@ fn materialize_route(
                 let expanded = crate::github_proxies::proxy_urls(
                     &[proxy.legacy_entry()],
                     url,
-                    raw.is_some(),
+                    is_raw,
                     raw.as_ref()
                         .map(|context| crate::github_proxies::RawProxyContext {
                             branch: context.branch,
                             file_path: context.file_path,
                         }),
                 );
-                candidates.extend(expanded.into_iter().map(|url| DownloadCandidate {
-                    route: DownloadRoute::Proxy,
-                    url,
+                candidates.extend(expanded.into_iter().map(|url| {
+                    (
+                        DownloadCandidate {
+                            route: DownloadRoute::Proxy,
+                            url,
+                            identity: None,
+                        },
+                        Some(proxy.id.as_str()),
+                    )
                 }));
             }
             _ => {}
         }
     }
     let mut seen = HashSet::new();
-    candidates.retain(|candidate| seen.insert(candidate.url.clone()));
+    candidates.retain(|(candidate, _)| seen.insert(candidate.url.clone()));
     if candidates.is_empty() {
         return Err("proxy.noGlobalProxy".into());
     }

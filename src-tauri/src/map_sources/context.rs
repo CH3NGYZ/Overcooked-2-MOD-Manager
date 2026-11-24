@@ -32,10 +32,6 @@ impl MapSourceContext<'_> {
         }
     }
 
-    pub(super) fn api_proxies(&self, provider: &Provider) -> &[crate::models::GitHubProxy] {
-        crate::providers::api_proxies(self.config, provider)
-    }
-
     /// 上一次成功生成、属于这个源的条目。
     pub(super) fn previous_for(&self, source_id: &str) -> Vec<MapRepositoryConfig> {
         self.previous

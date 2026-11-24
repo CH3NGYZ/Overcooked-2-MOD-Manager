@@ -15,6 +15,7 @@ pub struct AppState {
     pub(crate) committed_watch_paths: Arc<crate::directory_watch::CommittedWatchPaths>,
     pub(crate) mod_changes: Arc<Mutex<crate::mod_changes::session::ChangeSessions>>,
     pub(crate) downloaded_sources: Arc<crate::mod_changes::downloaded_source::Downloads>,
+    pub(crate) download_history: Arc<crate::download::history::DownloadHistory>,
     pub(crate) diychef_sessions: Arc<Mutex<crate::diychef::session::ChefSessions>>,
     pub(crate) diychef_watch: Arc<crate::diychef::watch::ChefWatcher>,
     pub(crate) recycle_watch: Arc<crate::recycle_bin::watch::RecycleWatcher>,
@@ -79,6 +80,9 @@ impl AppState {
 
     pub(crate) fn with_config(config: ConfigService) -> Self {
         let diychef_watch = Arc::new(crate::diychef::watch::ChefWatcher::new(config.cache_dir()));
+        let download_history = Arc::new(crate::download::history::DownloadHistory::new(
+            config.cache_dir(),
+        ));
         Self {
             config,
             local_mod_snapshot: Arc::default(),
@@ -86,6 +90,7 @@ impl AppState {
             committed_watch_paths: Arc::default(),
             mod_changes: Arc::default(),
             downloaded_sources: Arc::default(),
+            download_history,
             diychef_sessions: Arc::default(),
             diychef_watch,
             recycle_watch: Arc::default(),

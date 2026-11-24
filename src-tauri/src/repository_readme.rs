@@ -1,8 +1,10 @@
 use crate::app_state::AppState;
 use crate::archive::DownloadReporter;
-use crate::download::planning::{asset_proxy_urls, ordered_asset_download_candidates};
-use crate::download::{DownloadCandidate, try_download_candidates_until_error};
-use crate::models::{GitHubProxy, NetworkConfig, Provider, ProxyMode};
+use crate::download::planning::{RepositoryDownloadPlan, plan_repository_download};
+use crate::download::try_download_candidates_until_error;
+use crate::github_proxies::RawProxyContext;
+use crate::models::NetworkConfig;
+use crate::network_policy::NetworkPolicy;
 use crate::releases;
 use futures_util::StreamExt;
 use reqwest::{Client, StatusCode};
@@ -15,7 +17,6 @@ use tauri::State;
 
 const NOT_FOUND: &str = "readme.fileMissing";
 const MAX_README_BYTES: usize = 2 * 1024 * 1024;
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Serialize)]
 pub struct RepositoryReadme {
@@ -117,7 +118,7 @@ async fn fetch_readme(
     let response = crate::archive::send_before_first_byte_deadline(
         client
             .get(url)
-            .timeout(REQUEST_TIMEOUT)
+            .timeout(network.api_timeout())
             .header(
                 reqwest::header::CACHE_CONTROL,
                 "no-cache, no-store, max-age=0",
@@ -173,53 +174,21 @@ async fn fetch_readme(
 
 async fn download_readme(
     client: &Client,
-    candidates: Vec<DownloadCandidate>,
+    planned: RepositoryDownloadPlan,
     cancelled: &AtomicBool,
     network: &NetworkConfig,
 ) -> Result<Vec<u8>, String> {
     try_download_candidates_until_error(
-        candidates,
+        planned.candidates,
         || cancelled.load(Ordering::Acquire),
         |candidate, reporter| async move {
             fetch_readme(client, &candidate.url, &reporter, network).await
         },
         NOT_FOUND,
         network,
+        planned.execution,
     )
     .await
-}
-
-async fn download_repository_readme(
-    client: &Client,
-    provider: &Provider,
-    url: &str,
-    branch: &str,
-    raw_proxies: &[GitHubProxy],
-    cancelled: &AtomicBool,
-    network: &NetworkConfig,
-) -> Result<Vec<u8>, String> {
-    if cancelled.load(Ordering::Acquire) {
-        return Err("download.cancelled".into());
-    }
-    if *provider == Provider::Gitee {
-        // Gitee Raw uses exactly one direct GET, never proxy racing or ranged downloads.
-        return fetch_readme(client, url, &DownloadReporter::new("README"), network).await;
-    }
-    let candidates = ordered_asset_download_candidates(
-        ProxyMode::AutoDirect,
-        url,
-        asset_proxy_urls(
-            raw_proxies,
-            url,
-            true,
-            branch,
-            "README.md",
-            ProxyMode::AutoDirect,
-            None,
-        ),
-    );
-    log::info!("仓库说明 GitHub Raw 竞速：候选数={}", candidates.len());
-    download_readme(client, candidates, cancelled, network).await
 }
 
 #[tauri::command]
@@ -248,18 +217,21 @@ pub async fn get_repository_readme(
     };
     let client =
         releases::build_client(config.network.api_timeout()).map_err(|error| error.to_string())?;
-    let result = async {
+    let policy = config
+        .network_policy
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(NetworkPolicy::active)?;
+    let result = NetworkPolicy::in_snapshot(policy, async {
         let branch = if crate::community::is_repository(repo) && !repo.branch.trim().is_empty() {
             repo.branch.clone()
         } else {
-            let proxies = crate::providers::api_proxies(&config, &repo.provider);
             let token = state.config.mod_repository_api_token(&config, repo);
             releases::fetch_repository_default_branch(
                 &client,
                 &crate::releases::RepositoryRequest::from(repo),
                 &config.region,
                 token.as_deref(),
-                proxies,
             )
             .await
             .map_err(|error| {
@@ -281,19 +253,20 @@ pub async fn get_repository_readme(
             repo.provider,
             crate::repository_sources::safe_log_address(&url)
         );
-        let download_client = releases::build_download_client(config.network.first_byte_timeout())
-            .map_err(|error| error.to_string())?;
-        match download_repository_readme(
-            &download_client,
+        let planned = plan_repository_download(
             &repo.provider,
+            repo.kind,
+            &repo.network_plan,
+            &config.region,
             &url,
-            &branch,
-            &config.github_proxies.raw_proxies,
-            cancelled,
-            &config.network,
-        )
-        .await
-        {
+            Some(RawProxyContext {
+                branch: &branch,
+                file_path: "README.md",
+            }),
+            None,
+            None,
+        )?;
+        match download_readme(&client, planned, cancelled, &config.network).await {
             Ok(bytes) => Ok(RepositoryReadme {
                 content: String::from_utf8(bytes).map_err(|_| "readme.invalidUtf8")?,
                 exists: true,
@@ -306,7 +279,7 @@ pub async fn get_repository_readme(
             }),
             Err(error) => Err(error),
         }
-    };
+    });
     tokio::select! {
         biased;
         _ = async {

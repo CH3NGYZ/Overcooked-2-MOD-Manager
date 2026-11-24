@@ -25,7 +25,7 @@ fn avatars_validate_endpoint_intent_and_sequential_execution() {
             "parallel" => route.max_parallelism = 2,
             "threads" => route.download_threads = 2,
             "raw" => route.route.push(Step::Proxy {
-                id: "oc2gh-raw".into(),
+                id: "oc2gh-raw-cloudflare".into(),
             }),
             "official" => route.route.push(Step::Official),
             "proxy-first" => {
@@ -116,13 +116,24 @@ fn bundled_typed_registry_and_plans_form_one_closed_snapshot() {
         );
     }
     assert_eq!(groups.avatar_proxies[0].id, "cors-isteed-avatar");
-    assert!(
-        !groups
-            .release_proxies
-            .iter()
-            .any(|proxy| proxy.id == "oc2gh-release")
-    );
-    for (plan_id, provider, bridge) in [
+    for platform in ["cloudflare", "edgeone"] {
+        let map_id = format!("oc2gh-release-{platform}");
+        let public_id = format!("oc2gh-release-public-{platform}");
+        let map = &snapshot.proxies[&map_id];
+        let public = &snapshot.proxies[&public_id];
+        assert_eq!(map.access, Access::Private);
+        assert_eq!(public.access, Access::Public);
+        assert_eq!(map.template, public.template);
+        assert_eq!(map.name, map_id);
+        assert_eq!(public.name, public_id);
+        assert!(
+            !groups
+                .release_proxies
+                .iter()
+                .any(|proxy| proxy.id == map_id)
+        );
+    }
+    for (plan_id, provider, prefix) in [
         ("github-public-mod", Provider::Github, "oc2ghapi"),
         ("github-mainland-mod", Provider::Github, "oc2ghapi"),
         ("gitee-public-mod", Provider::Gitee, "oc2gtapi"),
@@ -133,43 +144,76 @@ fn bundled_typed_registry_and_plans_form_one_closed_snapshot() {
             plan.api.route,
             [
                 Step::Official,
-                Step::Proxy { id: bridge.into() },
                 Step::Proxy {
-                    id: format!("{bridge}-edgeone")
+                    id: format!("{prefix}-cloudflare")
+                },
+                Step::Proxy {
+                    id: format!("{prefix}-edgeone")
                 },
             ]
         );
-        if plan_id != "github-mainland-mod" {
+        if provider != Provider::Github {
             assert_eq!(plan.release.max_parallelism, 1);
             assert!(!plan.release.race);
         }
     }
     assert!(snapshot.plan("github-public", &Provider::Gitee).is_err());
+    let international = snapshot.plan("github-public", &Provider::Github).unwrap();
+    for (route, prefix) in [
+        (&international.release, "oc2gh-release"),
+        (&international.raw, "oc2gh-raw"),
+    ] {
+        assert_eq!(
+            route.route,
+            [
+                Step::Direct,
+                Step::Proxy {
+                    id: format!("{prefix}-cloudflare")
+                },
+                Step::Proxy {
+                    id: format!("{prefix}-edgeone")
+                },
+            ]
+        );
+        assert!(route.race);
+        assert_eq!(route.max_parallelism, 3);
+    }
     let mainland = snapshot.plan("github-mainland", &Provider::Github).unwrap();
     assert_eq!(mainland.release.route.first(), Some(&Step::Direct));
     assert!(mainland.release.race);
     assert_eq!(mainland.release.max_parallelism, 3);
-    assert!(!mainland.release.route.contains(&Step::Proxy {
-        id: "oc2gh-release".into()
-    }));
+    assert!(mainland.release.route.ends_with(&[
+        Step::Proxy {
+            id: "oc2gh-release-public-cloudflare".into()
+        },
+        Step::Proxy {
+            id: "oc2gh-release-public-edgeone".into()
+        },
+    ]));
     let hidden = snapshot
         .plan("qingyuqingxue-map-proxy-only", &Provider::Github)
         .unwrap();
+    for (route, prefix) in [
+        (&hidden.api, "oc2ghapi"),
+        (&hidden.release, "oc2gh-release"),
+        (&hidden.raw, "oc2gh-raw"),
+    ] {
+        assert_eq!(
+            route.route,
+            [
+                Step::Proxy {
+                    id: format!("{prefix}-cloudflare")
+                },
+                Step::Proxy {
+                    id: format!("{prefix}-edgeone")
+                },
+            ]
+        );
+        assert_eq!(route.max_parallelism, 1);
+        assert!(!route.race);
+    }
     assert_eq!(
-        hidden.api.route,
-        [Step::Proxy {
-            id: "oc2ghapi".into()
-        }]
-    );
-    assert_eq!(
-        hidden.release.route,
-        [Step::Proxy {
-            id: "oc2gh-release".into()
-        }]
-    );
-    assert_eq!(hidden.release.max_parallelism, 1);
-    assert_eq!(
-        url::Url::parse(&snapshot.proxies["oc2ghapi"].template)
+        url::Url::parse(&snapshot.proxies["oc2ghapi-cloudflare"].template)
             .unwrap()
             .origin()
             .ascii_serialization(),
@@ -337,10 +381,14 @@ fn defaults_are_selected_by_provider_kind_and_region() {
                 assert!(plan.kinds.contains(&kind));
                 assert_eq!(plan.release.download_threads, 1);
                 assert_eq!(plan.raw.download_threads, 1);
-                assert_eq!(
-                    plan.release.race,
-                    provider == Provider::Github && region == "cn"
-                );
+                let expected = match (provider.clone(), region) {
+                    (Provider::Github, "cn") => "github-mainland",
+                    (Provider::Github, _) => "github-public",
+                    (Provider::Gitee, _) => "gitee-public",
+                    (Provider::Gitcode, _) => "gitcode-public",
+                };
+                assert_eq!(plan.id, expected);
+                assert_eq!(plan.release.race, provider == Provider::Github);
             }
         }
     }
@@ -350,14 +398,14 @@ fn defaults_are_selected_by_provider_kind_and_region() {
 fn sparse_overrides_inherit_and_explicit_ids_reset_parent_overrides() {
     let parent: NetworkPlanSelection = toml::from_str(
         r#"
-mainland = { id = "github-public", raw = { download_threads = 8 } }
+mainland = { id = "github-public", raw = { download_threads = 8, race = false, max_parallelism = 1 } }
 international = "github-public"
 "#,
     )
     .unwrap();
     let child: NetworkPlanSelection = toml::from_str(
         r#"
-mainland = { release = { download_threads = 4 } }
+mainland = { release = { download_threads = 4, race = false, max_parallelism = 1 } }
 "#,
     )
     .unwrap();
@@ -411,7 +459,7 @@ fn effective_overrides_reject_wrong_provider_kind_threads_and_proxy_intent() {
         "mainland = { release = { download_threads = 33 } }",
         "mainland = { api = { download_threads = 2 } }",
         "mainland = { release = { route = [] } }",
-        "mainland = { release = { route = [{kind = 'proxy', id = 'oc2ghapi'}] } }",
+        "mainland = { release = { route = [{kind = 'proxy', id = 'oc2ghapi-cloudflare'}] } }",
         "mainland = { release = { race = false } }", // parallelism must also be reset
     ] {
         let selection: NetworkPlanSelection = toml::from_str(text).unwrap();
@@ -539,7 +587,7 @@ fn merged_builtin_plans_keep_legacy_references_without_duplicate_plans() {
         .unwrap();
     assert_eq!(special.kinds, [RepositoryKind::Map]);
     let old_reference: NetworkPlanSelection = toml::from_str(
-        "international = { id = 'github-public-map', release = { download_threads = 8 } }",
+        "international = { id = 'github-public-map', release = { download_threads = 8, race = false, max_parallelism = 1 } }",
     )
     .unwrap();
     let resolved = policy

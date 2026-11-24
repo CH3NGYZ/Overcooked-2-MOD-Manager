@@ -9,9 +9,9 @@ const owners = {
   assets: ['asset_matches', 'select_install_asset'],
   client: ['build_client', 'build_download_client'],
   error: ['release_error_kind'],
-  fetch: ['fetch_releases', 'fetch_releases_page', 'fetch_releases_from_targets', 'fetch_repository_default_branch'],
+  fetch: ['cached_releases', 'resolve_release_route', 'fetch_releases_on_route', 'fetch_releases_from_targets', 'fetch_repository_default_branch'],
   projection: ['parse_release_json', 'filter_channel'],
-  transport: ['api_target_kind', 'api_request_targets', 'fetch_api_with_retries', 'fetch_release_api_with_retries', 'fetch_api_json'],
+  transport: ['api_target_kind', 'repository_api_targets', 'fetch_api_with_retries', 'fetch_release_api_with_retries', 'fetch_api_json'],
   version: ['parse_version', 'compare_release_versions', 'is_strict_semver', 'is_prerelease_version', 'suffix_identifiers', 'split_alpha_numeric', 'compare_prerelease_parts'],
 }
 
@@ -45,11 +45,12 @@ test('Release root exports real domain owners without forwarding or replacement 
 
 test('Release domains keep credential isolation, shared fetch and distinct version projections', () => {
   const transport = read('transport.rs')
-  assert.match(transport, /Some\(token\) => targets\.push\(\(official_url\.to_string\(\), Some\(token\)\)\)/)
-  assert.match(transport, /None => targets\.push\(\(official_url\.to_string\(\), None\)\)/)
-  assert.match(transport, /proxy_urls\(api_proxies, official_url, false, None\)[\s\S]*?\.map\(\|url\| \(url, None\)\)/)
+  assert.match(transport, /Step::Official => targets\.push\(\(official\.to_string\(\), token\)\)/)
+  assert.match(transport, /proxy_urls\(\s*&\[proxy\.legacy_entry\(\)\],\s*official,\s*false,\s*None,?\s*\)[\s\S]*?\.map\(\|url\| \(url, None\)\)/)
+  assert.doesNotMatch(transport, /\bapi_proxies\b|\bofficial_api_only\b/)
   assert.match(transport, /crate::providers::api_request\(client, url, provider, token\)/)
   assert.match(read('../providers/authentication.rs'), /is_official_gitee_api_url\(url\)/)
+  assert.match(read('client.rs'), /\.referer\(false\)/)
   assert.equal([...transport.matchAll(/e\.without_url\(\)\.to_string\(\)/g)].length, 2)
   assert.match(transport, /for attempt in 0\.\.REPOSITORY_API_ATTEMPTS/)
   assert.match(transport, /Err\(error\) if error\.is_forbidden\(\) =>/)
@@ -58,6 +59,8 @@ test('Release domains keep credential isolation, shared fetch and distinct versi
   assert.match(fetch, /gate\.record_forbidden\(&repo\.provider, gate_kind, signal\)/)
   assert.match(fetch, /fetch_releases_from_targets\(client, repo, &official, request_targets\)\.await/)
   assert.match(fetch, /pagination::collect_release_pages/)
+  assert.match(fetch, /release_route_cache_key\(repo, &official, &targets\)/)
+  assert.match(fetch, /release_route_cache_key\(repo, &cache_url, &route\.targets\(&cache_url, token\)\?\)/)
   const pagination = read('pagination.rs')
   assert.match(pagination, /RELEASE_PAGE_SIZE: u32 = 50/)
   assert.match(pagination, /let \(items, received\) = fetch\(page\).await\?/)
@@ -75,8 +78,9 @@ test('Release domains keep credential isolation, shared fetch and distinct versi
   assert.match(projection, /release\.version\.as_deref\(\)\.and_then\(SegmentVersion::parse\)/)
   assert.match(read('version.rs'), /Some\(SegmentVersion::parse\(remote\)\?\.cmp\(&SegmentVersion::parse\(local\)\?\)\)/)
   assert.match(read('../mods/status.rs'), /crate::releases::compare_release_versions\(&release\.tag_name, local\)/)
-  assert.match(read('../map_sources/releases.rs'), /crate::releases::fetch_releases\(/)
-  assert.match(read('../map_sources/release_tags.rs'), /crate::releases::fetch_releases\(/)
+  assert.match(read('../map_sources/releases.rs'), /crate::releases::cached_releases\(/)
+  assert.match(read('../map_sources/release_tags.rs'), /crate::releases::cached_releases\(/)
+  assert.match(read('../commands/mod_repository_releases.rs'), /releases::cached_releases\(/)
   assert.match(read('../repository_readme.rs'), /releases::fetch_repository_default_branch\(/)
 })
 
@@ -123,12 +127,12 @@ test('MOD and map download commands consume cached versions without Release API 
   for (const file of ['../mods/repository_download.rs', '../commands/map_install.rs']) {
     const command = read(file)
     assert.match(command, /releases::select_cached_release\(/)
-    assert.doesNotMatch(command, /fetch_releases|fetch_map_release_data|refresh_(?:map|repository)_releases|\.release_cache\b/)
+    assert.doesNotMatch(command, /fetch_releases|cached_releases\(|fetch_map_release_data|refresh_(?:map|repository)_releases|\.release_cache\b/)
   }
   for (const file of ['../mod_preview/commands.rs', '../mods/install.rs', '../direct_mod.rs']) {
-    assert.doesNotMatch(read(file), /fetch_releases|fetch_map_release_data|refresh_(?:map|repository)_releases/)
+    assert.doesNotMatch(read(file), /fetch_releases|cached_releases\(|fetch_map_release_data|refresh_(?:map|repository)_releases/)
   }
   assert.match(read('../commands/maps.rs'), /fetch_map_release_data\(/)
-  assert.match(read('../commands/mod_repository_releases.rs'), /releases::fetch_releases\(/)
+  assert.match(read('../commands/mod_repository_releases.rs'), /releases::cached_releases\(/)
   assert.match(read('../commands/map_install.rs'), /select_map_stage_asset\(map, release, asset_name\.as_deref\(\)\)/)
 })

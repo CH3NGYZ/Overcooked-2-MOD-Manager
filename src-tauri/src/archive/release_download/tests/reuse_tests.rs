@@ -24,6 +24,7 @@ pub(crate) fn served(server: &Server, index: usize, name: &str, bytes: &[u8]) ->
 pub(crate) fn direct(url: &str) -> Result<RepositoryDownloadPlan, String> {
     Ok(RepositoryDownloadPlan {
         candidates: vec![DownloadCandidate {
+            identity: None,
             route: DownloadRoute::Direct,
             url: url.into(),
         }],

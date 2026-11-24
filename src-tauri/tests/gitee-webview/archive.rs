@@ -17,7 +17,6 @@ const DOWNLOAD_PATHS: [&str; 2] = [
 ];
 const MAX_BYTES: usize = 32 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(120);
-const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36 Edg/157.0.0.0";
 static EVENTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static LOGGER: DownloadLogger = DownloadLogger;
 
@@ -49,7 +48,7 @@ pub(super) fn events() -> Vec<String> {
 
 pub(super) fn inputs() -> Value {
     json!({
-        "url": ADDRESS, "user_agent": USER_AGENT, "max_bytes": MAX_BYTES,
+        "url": ADDRESS, "max_bytes": MAX_BYTES,
         "timeout_seconds": TIMEOUT.as_secs(), "allowed_download_hosts": ["gitee.com"],
         "allowed_download_paths": DOWNLOAD_PATHS,
         "title": "OC2 源码 ZIP 下载验收（独立窗口，仅此一轮）",
@@ -62,7 +61,6 @@ pub(super) async fn verify(app: &AppHandle, directory: &Path) -> Result<Value, S
         app,
         Request {
             url: Url::parse(ADDRESS).unwrap(),
-            user_agent: USER_AGENT.to_owned(),
             max_bytes: MAX_BYTES,
             timeout: TIMEOUT,
             title: "OC2 源码 ZIP 下载验收（独立窗口，仅此一轮）".to_owned(),

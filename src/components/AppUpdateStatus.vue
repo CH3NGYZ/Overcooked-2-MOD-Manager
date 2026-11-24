@@ -11,6 +11,7 @@ import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import TitleBarProgressTable from './TitleBarProgressTable.vue'
 import TitleBarStatusPopover from './TitleBarStatusPopover.vue'
+import DownloadRace from './DownloadRace.vue'
 
 const emit = defineEmits<{ 'apply-update': [] }>()
 const props = defineProps<{ promptOpen: boolean }>()
@@ -37,7 +38,7 @@ const status = computed(() => {
     case 'checking': return t('update.checking')
     case 'current': return t('update.alreadyLatest')
     case 'checkFailed': return t('dialogs.updateCheckFailed')
-    case 'downloading': return t(progress.value?.finished || progress.value?.phase === 'finished'
+    case 'downloading': return t(progress.value?.finished || progress.value?.phase === 'finished' || progress.value?.phase === 'verifying'
       ? 'update.verifyingUpdate' : 'update.downloadingInstaller')
     case 'stageFailed': return t(appUpdateState.error === 'update.installFailedManual'
       ? 'update.applicationFailedTitle' : 'update.downloadFailed')
@@ -87,6 +88,7 @@ function apply() {
     <template #icon><RefreshOutline width="17" height="17" aria-hidden="true" /></template>
     <strong>{{ t('update.managerUpdate') }}</strong>
     <TitleBarProgressTable :label="t('update.managerUpdate')" :rows="rows" :progress="progressBar" />
+    <DownloadRace v-if="downloading && progress?.race && !progress.finished" :key="progress.race.id" :race="progress.race" />
     <p v-if="downloadFailed && appUpdateState.error" class="update-detail" role="alert">{{ translateBackendMessage(appUpdateState.error) }}</p>
     <div v-if="ready || canCheck" class="update-actions">
       <NButton v-if="ready" size="small" type="primary" secondary data-testid="app-update-install" @click="apply">

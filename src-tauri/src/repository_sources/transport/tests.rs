@@ -104,11 +104,8 @@ async fn remote_source_reloads_changed_content_and_rejects_not_modified() {
     server.join().unwrap();
 }
 
-// 完整传输固定 30 秒，首字节使用新设置；旧 timeout_seconds 不再控制请求。
 #[tokio::test]
-async fn source_document_timeout_is_independent_of_user_network_config() {
-    assert_eq!(SOURCE_DOCUMENT_TIMEOUT, 30);
-
+async fn source_document_uses_the_api_budget_instead_of_the_legacy_setting() {
     let body = "[[repositories]]\nname_i18n.zh-CN = \"Slow\"\ngroup_i18n.zh-CN = \"\"\nnote_i18n.zh-CN = \"\"\nprovider = \"github\"\nusername = \"example\"\nrepository = \"mod\"\ninstall_target = \"BepInEx/plugins\"\nenabled = true\nasset_rules = [{ type = \"glob\", value = \"*.dll\" }]\n";
     let (url, server) = serve_delayed_response("/slow.toml", body, 1500);
     let location = SourceLocation::parse(&url).unwrap();
@@ -120,9 +117,62 @@ async fn source_document_timeout_is_independent_of_user_network_config() {
     };
     let document = load_document(&location, &Default::default(), &network)
         .await
-        .expect("1.5 秒延迟应在 30 秒超时内成功");
+        .expect("1.5 秒延迟应在 5 秒 API 超时内成功");
     assert_eq!(document.repositories[0].name, "Slow");
     server.join().unwrap();
+}
+
+#[tokio::test]
+async fn source_document_body_timeout_leaves_the_next_route_a_fresh_budget() {
+    use crate::archive::DownloadRoute;
+    use crate::download::planning::RepositoryDownloadPlan;
+    use crate::download::{DownloadCandidate, DownloadExecution};
+
+    let (slow, slow_server) =
+        serve_staged_document(Duration::ZERO, Duration::ZERO, Duration::from_secs(8)).await;
+    let (fallback, fallback_server) =
+        serve_staged_document(Duration::ZERO, Duration::from_secs(3), Duration::ZERO).await;
+    let candidates = [slow, fallback]
+        .into_iter()
+        .map(|url| DownloadCandidate {
+            route: DownloadRoute::Proxy,
+            url,
+            identity: None,
+        })
+        .collect();
+    let plan = RepositoryDownloadPlan {
+        candidates,
+        download_threads: 1,
+        execution: DownloadExecution {
+            max_parallelism: 1,
+            race: false,
+        },
+    };
+    let location =
+        SourceLocation::parse("https://github.com/example/maps/releases/download/docs/maps.toml")
+            .unwrap();
+    let network = NetworkConfig {
+        api_timeout_seconds: 5,
+        first_byte_timeout_seconds: 20,
+        ..Default::default()
+    };
+    let started = tokio::time::Instant::now();
+    let bytes = crate::repository_sources::load_verified_text_document(
+        &location,
+        plan,
+        &Default::default(),
+        &network,
+        |text, _| Ok(text.to_owned()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(bytes, "ab");
+    assert!(started.elapsed() >= Duration::from_secs(8));
+    slow_server.abort();
+    tokio::time::timeout(Duration::from_secs(2), fallback_server)
+        .await
+        .expect("the second route must be used after the first times out")
+        .unwrap();
 }
 
 async fn serve_staged_document(
@@ -160,7 +210,7 @@ async fn serve_staged_document(
 }
 
 #[tokio::test]
-async fn verified_document_deadline_bounds_headers_and_first_payload_together() {
+async fn document_budget_covers_headers_and_payload_together() {
     let client = releases::build_download_client(Duration::from_secs(5)).unwrap();
     let reporter = crate::archive::DownloadReporter::new("source-first-byte");
     for (header_delay, first_delay) in [(900, 0), (450, 450)] {
@@ -179,18 +229,18 @@ async fn verified_document_deadline_bounds_headers_and_first_payload_together() 
             Duration::from_millis(700),
         )
         .await;
-        assert_eq!(result.unwrap_err(), "download.firstByteTimeout");
+        assert!(result.is_err());
         server.await.unwrap();
     }
 }
 
 #[tokio::test]
-async fn verified_document_body_can_outlast_the_first_payload_deadline() {
+async fn document_budget_includes_the_tail_after_the_first_payload() {
     let client = releases::build_download_client(Duration::from_secs(5)).unwrap();
     let reporter = crate::archive::DownloadReporter::new("source-transfer");
     let (url, server) =
         serve_staged_document(Duration::ZERO, Duration::ZERO, Duration::from_millis(900)).await;
-    let bytes = crate::repository_sources::fetch_document_bytes(
+    let result = crate::repository_sources::fetch_document_bytes(
         &client,
         &url,
         &reporter,
@@ -198,9 +248,8 @@ async fn verified_document_body_can_outlast_the_first_payload_deadline() {
         None,
         Duration::from_millis(700),
     )
-    .await
-    .unwrap();
-    assert_eq!(bytes, b"ab");
+    .await;
+    assert!(result.is_err());
     server.await.unwrap();
 }
 

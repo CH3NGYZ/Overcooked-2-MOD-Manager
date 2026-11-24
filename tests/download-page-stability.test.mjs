@@ -5,7 +5,7 @@ import test from 'node:test'
 import { compileScript, parse } from '@vue/compiler-sfc'
 import { createRenderer, h, nextTick, shallowRef, toRaw } from 'vue'
 
-const boundary = { listener: null, calls: [], unlistens: 0, registration: null }
+const boundary = { calls: [] }
 globalThis.__downloadPageBoundary = boundary
 registerHooks({
   resolve(specifier, context, next) {
@@ -30,13 +30,12 @@ registerHooks({
         NTag=leaf('tag'),NAlert=leaf('alert'),NProgress=leaf('progress'),NSpin=leaf('spin')`)
     if (url.endsWith('/src/services/tauri.ts')) return module(`
       const state=globalThis.__downloadPageBoundary
-      export const watchDownloadProgress=async listener => {state.listener=listener;await state.registration;return () => state.unlistens++}
       export const api={cancelDownload:async () => {state.calls.push('cancelDownload')}}`)
     if (url.endsWith('/src/composables/useDashboardStore.ts')) return module(`
       export const useDashboard=() => ({refresh:async () => globalThis.__downloadPageBoundary.calls.push('refresh')})`)
     if (url.endsWith('/src/i18n.ts')) return module('export const t=key=>key')
     if (url.endsWith('/src/locale/backend.ts')) return module('export const translateBackendMessage=String;export const backendMessageOf=String')
-    if (/\/src\/components\/(DownloadVolumes|AppModal)\.vue$/.test(url)) return module('export default {}')
+    if (/\/src\/components\/(DownloadVolumes|DownloadRace|AppModal|HeaderIconAction)\.vue$/.test(url)) return module('export default {}')
     if (url.endsWith('/src/components/SourceTitle.vue')) return module(`export default {props:['label'],template:'<span>{{label}}</span>'}`)
     return next(url, context)
   },
@@ -78,9 +77,9 @@ test('download progress completion and cancellation never reload local lists bef
     for (const label of ['MOD update', 'Map update', 'Framework install']) {
       const token = beginDownloadTask({ label, retry: () => {} })
       await tick()
-      boundary.listener({ downloaded: 5, total: 10, finished: false })
+      updateDownloadProgress({ label, downloaded: 5, total: 10, finished: false }, token)
       assert.equal(state.progress.downloaded, 5)
-      boundary.listener({ downloaded: 10, total: 10, finished: true })
+      updateDownloadProgress({ label, downloaded: 10, total: 10, finished: true }, token)
       assert.equal(state.progress, null)
       assert.deepEqual(boundary.calls, [], `${label}: asset staging does not mean files were installed`)
       endDownloadTask(token)
@@ -88,10 +87,9 @@ test('download progress completion and cancellation never reload local lists bef
     await state.cancel()
     assert.deepEqual(boundary.calls, [], 'a closed task cannot cancel a later request')
   } finally { app.unmount() }
-  assert.equal(boundary.unlistens, 1)
 })
 
-test('one ordinary progress subscription handles cancellation and does not retain previous bytes', async () => {
+test('ordinary download cancellation discards queued bytes and never affects a new owner', async () => {
   boundary.calls = []
   const root = { children: [] }, app = renderer.createApp(DownloadStrip)
   app.mount(root)
@@ -100,21 +98,21 @@ test('one ordinary progress subscription handles cancellation and does not retai
   try {
     const chain = beginDownloadTask({ label: 'first download', retry() {} })
     assert.equal(state.progress, null, 'preparing begins with indeterminate stage, not previous percentages')
-    boundary.listener({ label: 'package A', downloaded: 25, total: 100, speed_bytes: 2048, finished: false })
+    updateDownloadProgress({ label: 'package A', downloaded: 25, total: 100, speed_bytes: 2048, finished: false, phase: 'downloading' }, chain)
     assert.equal(state.percent, 25)
     assert.equal(state.rate, '2 KB/s')
     assert.equal(state.visible, true)
     await state.cancel()
     assert.deepEqual(boundary.calls, ['cancelDownload'], 'cancel must reach the real IPC boundary')
-    boundary.listener({ label: 'package A', downloaded: 50, total: 100, finished: false })
+    updateDownloadProgress({ label: 'package A', downloaded: 50, total: 100, finished: false }, chain)
     assert.equal(state.progress, null, 'queued bytes do not reopen a cancelled download')
     endDownloadTask(chain)
     assert.equal(state.visible, false)
 
     const ordinary = beginDownloadTask({ label: 'normal', retry() {} })
-    boundary.listener({ label: 'package B', downloaded: 40, total: 100, speed_bytes: 1024, finished: false })
-    boundary.listener({ label: 'package A', downloaded: 100, total: 100, finished: true })
-    assert.equal(state.percent, 40, 'differently labelled old finished event does not erase current bytes')
+    updateDownloadProgress({ label: 'package A', downloaded: 40, total: 100, speed_bytes: 1024, finished: false, phase: 'downloading' }, ordinary)
+    updateDownloadProgress({ label: 'package A', downloaded: 100, total: 100, finished: true }, chain)
+    assert.equal(state.percent, 40, 'a same-name result from the old task does not erase current bytes')
     assert.equal(downloadTaskState.running.id, ordinary)
     // The public transition owns this readonly state; raw reset is fixture cleanup only.
     const { beginAppUpdateCheck, finishAppUpdateCheck, finishBackgroundAppUpdate, beginStagedAppUpdate } = await import('../src/appUpdateState.ts')
@@ -132,29 +130,13 @@ test('one ordinary progress subscription handles cancellation and does not retai
   } finally { toRaw(appUpdateState).stage = 'idle'; app.unmount() }
 })
 
-test('unmount releases a late subscription and ignores events after disposal', async () => {
-  let finishRegistration
-  boundary.registration = new Promise(resolve => { finishRegistration = resolve })
-  const before = boundary.unlistens, app = renderer.createApp(DownloadStrip)
-  app.mount({ children: [] })
-  app.unmount()
-  finishRegistration()
-  await tick()
-  assert.equal(boundary.unlistens, before + 1)
-  const token = beginDownloadTask({ label: 'new owner', retry() {} })
-  boundary.listener({ label: 'disposed', downloaded: 5, finished: false })
-  assert.equal(downloadTaskState.progress, null)
-  endDownloadTask(token)
-  boundary.registration = null
-})
-
 test('the overlay delegates cancellation without hiding a caller-owned download when cancellation fails', async () => {
   boundary.calls = []
   const app = renderer.createApp(DownloadStrip)
   app.mount({ children: [] })
   await tick()
   const state = app._instance.setupState
-  const token = beginDownloadTask({ label: 'chain', retry() {}, progressSource: 'caller', cancel: async () => {
+  const token = beginDownloadTask({ label: 'chain', retry() {}, cancel: async () => {
     boundary.calls.push('cancel-chain')
     throw new Error('update.inProgress')
   } })

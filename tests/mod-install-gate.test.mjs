@@ -49,7 +49,7 @@ for(const entry of ['picker','drop','routed'])test(`manual ${entry} installs one
   assert.deepEqual(f.plans,[{roots:[{node_id:'preview:preview-1',enabled:true}]}])
   assert.deepEqual(f.calls,[
     ...(entry==='routed'?[]:[['acceptDrop','sample.zip','mod']]),
-    ['analyzeModSource','local','sample.zip'],['cancelModPreview','preview-1'],
+    ['analyzeModSource','local','sample.zip',undefined],['cancelModPreview','preview-1'],
   ])
   assert.deepEqual(f.notices,[['success','modChanges.completed']]);assert.equal(flow.sourceBusy.value,false)
 })
@@ -96,6 +96,10 @@ test('source re-entry is blocked until its whole batch finishes',async()=>{
 })
 
 const mapItem={dir_name:'Map-A',name:'Map A',author:'Author',version:'1.0',level_count:1,plugins:[],conflicts:[{handle:'old-map'}]}
+function mapProgressCallbacks(calls) {
+  return calls.map(call => ['stageMapSource','stageMapRelease'].includes(call[0]) && typeof call.at(-1)==='function'
+    ? [...call.slice(0,-1),'progress callback'] : call)
+}
 for(const kind of ['local','url'])test(`running game allows ${kind} maps to reach the shared installation plan`,async t=>{
   const staged=kind==='url'
   const value=staged?'https://example.com/map.zip':'map.zip'
@@ -108,7 +112,7 @@ for(const kind of ['local','url'])test(`running game allows ${kind} maps to reac
   await tick()
   assert.equal(flow.importing.value,true)
   assert.deepEqual(f.plans,[{roots:[],map_import:{zip_path:'map.zip',selected:['Map-A'],origin:null,...download}}])
-  assert.deepEqual(f.calls,staged?[['stageMapSource',kind,value]]:[['acceptDrop',value,'map'],['stageMapSource',kind,value]])
+  assert.deepEqual(mapProgressCallbacks(f.calls),staged?[['stageMapSource',kind,value,'progress callback']]:[['acceptDrop',value,'map'],['stageMapSource',kind,value,undefined]])
   finishPlan({ok:true})
   await pending
   assert.equal(flow.importing.value,false)
@@ -124,7 +128,7 @@ for(const [tag,asset] of [[undefined,undefined],['v1.0','chosen.zip']])test(`run
     staged:{path:'cache-map.zip',staged:true,sets:[mapItem],origin,download_id:'release-download'}})
   const scope=effectScope();const flow=scope.run(()=>useLevelSetImport());t.after(()=>scope.stop())
   assert.equal(await flow.installRelease('online',tag,asset),true)
-  assert.deepEqual(f.calls,[['stageMapRelease','online',targetTag,asset],['discardMapSource','cache-map.zip']])
+  assert.deepEqual(mapProgressCallbacks(f.calls),[['stageMapRelease','online',targetTag,asset,'progress callback'],['discardMapSource','cache-map.zip']])
   assert.deepEqual(f.plans,[{roots:[],map_import:{zip_path:'cache-map.zip',selected:['Map-A'],origin,download_id:'release-download'}}])
 })
 
@@ -148,13 +152,14 @@ for(const staged of [false,true])test(`cancelling the shared map plan ${staged?'
   await tick()
   assert.equal(state?.phase,'reconfirming')
   assert.deepEqual(f.plans,[{roots:[],map_import:{zip_path:path,selected:['Map-A'],origin:null}}])
-  assert.deepEqual(f.calls,[['stageMapSource',kind,value],['prepareModChanges','map-plan']])
+  const stageCall=['stageMapSource',kind,value,staged?'progress callback':undefined]
+  assert.deepEqual(mapProgressCallbacks(f.calls),[stageCall,['prepareModChanges','map-plan']])
   await workflow.cancel()
   await pending
   assert.equal(state,null)
   assert.equal(flow.importing.value,false)
   assert.deepEqual(f.notices,[])
-  assert.deepEqual(f.calls,[['stageMapSource',kind,value],['prepareModChanges','map-plan'],['cancelModChanges','map-plan'],
+  assert.deepEqual(mapProgressCallbacks(f.calls),[stageCall,['prepareModChanges','map-plan'],['cancelModChanges','map-plan'],
     ...(staged?[['discardMapSource',path]]:[])])
 })
 

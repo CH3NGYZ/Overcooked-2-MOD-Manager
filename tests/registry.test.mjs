@@ -10,7 +10,7 @@ const service = ['tauri.ts', 'invoke.ts'].map(file =>
   readFileSync(new URL(`../src/services/${file}`, import.meta.url), 'utf8')).join('\n')
 const lib = readFileSync(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8')
 
-const invoked = new Set([...service.matchAll(/invoke(?:Native)?<[^>]*>\(\s*'([a-z_]+)'/g)].map((m) => m[1]))
+const invoked = new Set([...service.matchAll(/invoke(?:Native|Download)?<[^>]*>\(\s*'([a-z_]+)'/g)].map((m) => m[1]))
 function registeredPaths(source) {
   const block = source.match(/audited_handler!\s*\[([\s\S]*?)\]/)?.[1]
   assert.ok(block, '缺少 audited_handler 注册块')
@@ -35,7 +35,7 @@ test('v2 调用面覆盖核心命令', () => {
     'uninstall_local_mod', 'refresh_mod_repository',
     'evaluate_mod_changes', 'plan_mod_changes', 'prepare_mod_changes', 'execute_mod_changes', 'cancel_mod_changes',
     'get_app_distribution', 'check_app_update', 'stage_app_update', 'get_pending_app_update_recovery', 'finish_app_update_recovery',
-    'save_settings', 'clear_diychef_cache', 'open_external_page']) {
+    'save_settings', 'clear_diychef_cache', 'open_external_page', 'control_download_race']) {
     assert.ok(invoked.has(required), `services/tauri.ts 缺少 ${required}`)
   }
 })

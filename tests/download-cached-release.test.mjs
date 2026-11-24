@@ -128,7 +128,10 @@ test('map explicit versions and assets are forwarded directly from the cached sn
   const state = reset()
   state.maps = [map({ cached_releases: [release('v2.0'), release('v1.0')] })]
   await useLevelSetImport().installRelease('map', 'v1.0', 'chosen.zip')
-  assert.deepEqual(state.calls, [['stageMapRelease', 'map', 'v1.0', 'chosen.zip']])
+  const [[command, mapId, tag, assetName, onProgress]] = state.calls
+  assert.equal(state.calls.length, 1)
+  assert.deepEqual([command, mapId, tag, assetName], ['stageMapRelease', 'map', 'v1.0', 'chosen.zip'])
+  assert.equal(typeof onProgress, 'function')
   assert.deepEqual(state.errors, [])
 })
 
@@ -151,7 +154,9 @@ test('map retry keeps its version when the cached latest changes, and refuses a 
   source.cached_releases.unshift(release('v3.0'))
   retry()
   await new Promise(resolve => setImmediate(resolve))
-  assert.deepEqual(state.calls, Array(2).fill(['stageMapRelease', 'map', 'v2.0', undefined]))
+  assert.deepEqual(state.calls.map(([command, mapId, tag, assetName, onProgress]) => [command, mapId, tag, assetName, typeof onProgress]),
+    Array(2).fill(['stageMapRelease', 'map', 'v2.0', undefined, 'function']))
+  assert.notEqual(state.calls[0][4], state.calls[1][4], 'each retry owns its progress callback')
   source.cached_releases = [release('v3.0')]
   retry()
   await new Promise(resolve => setImmediate(resolve))

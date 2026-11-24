@@ -1,32 +1,38 @@
 <script setup lang="ts">
 import { t } from '../i18n'
 import type { DownloadProgress } from '../types'
-import { downloadAmount, downloadRace, downloadRate, downloadRoute } from '../downloadPresentation'
+import { downloadAmount, downloadRate, downloadRoute } from '../downloadPresentation'
 import { computed, shallowRef } from 'vue'
 import type { DeepReadonly } from 'vue'
+import DownloadRace from './DownloadRace.vue'
 
 const props = defineProps<{ volumes: DeepReadonly<NonNullable<DownloadProgress['volumes']>> }>()
 const open = shallowRef(false)
 const complete = computed(() => props.volumes.filter(volume => volume.state === 'completed').length)
+const openVolumes = computed(() => open.value || props.volumes.some(volume => volume.progress.phase === 'locked_failed'))
 </script>
 
 <template>
-  <details v-if="volumes.length" class="dl-volumes" @toggle="open = ($event.currentTarget as HTMLDetailsElement).open">
+  <details v-if="volumes.length" class="dl-volumes" :open="openVolumes" @toggle="open = ($event.currentTarget as HTMLDetailsElement).open">
     <summary data-download-details tabindex="0">{{ t('tools.volumeSummary', { done: complete, total: volumes.length }) }}</summary>
-    <ul v-if="open" class="dl-volume-list">
+    <ul v-if="openVolumes" class="dl-volume-list">
       <li v-for="volume in volumes" :key="volume.name" class="dl-volume">
         <div class="dl-volume-heading">
           <span class="dl-volume-name">{{ volume.name }}</span>
-          <span>{{ t(`tools.volumeState.${volume.state}`) }}</span>
+          <span>{{ t(volume.progress.phase === 'locked_failed' ? 'tools.downloadRace.lockedFailed'
+            : volume.state === 'downloading' && volume.progress.phase === 'connecting' ? 'tools.downloadRace.connecting'
+            : volume.state === 'downloading' && volume.progress.phase === 'verifying' ? 'tools.downloadRace.verifying'
+            : `tools.volumeState.${volume.state}`) }}</span>
         </div>
         <div class="dl-volume-meta">
           <span>{{ downloadAmount(volume.progress) }}</span>
           <span v-if="volume.state === 'downloading' && downloadRate(volume.progress)">{{ downloadRate(volume.progress) }}</span>
           <span v-if="volume.retry">{{ t('tools.volumeRetry', { count: volume.retry }) }}</span>
         </div>
-        <div v-if="volume.state === 'downloading'" class="dl-volume-meta">
+        <DownloadRace v-if="volume.progress.race && (volume.state === 'downloading' || volume.progress.phase === 'locked_failed')"
+          :key="volume.progress.race.id" :race="volume.progress.race" interactive />
+        <div v-else-if="volume.state === 'downloading'" class="dl-volume-meta">
           <span v-if="downloadRoute(volume.progress)">{{ downloadRoute(volume.progress) }}</span>
-          <span v-if="downloadRace(volume.progress)">{{ downloadRace(volume.progress) }}</span>
         </div>
       </li>
     </ul>

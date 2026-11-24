@@ -78,6 +78,7 @@ fn fixture() -> Fixture {
         request: ChangeRequest::default(),
         wire_request: PlanRequest::default(),
         dependency_policy: Default::default(),
+        recovery_revisions: Default::default(),
         plan: ChangePlan {
             replan_scope: None,
             plan_id: "fixture".into(),
@@ -96,6 +97,8 @@ fn fixture() -> Fixture {
             retired_mod_copies: Default::default(),
             untracked_overwrites: Vec::new(),
             provider_choices: Vec::new(),
+            recovery_conflicts: Vec::new(),
+            recovery_approval: None,
             install_notes: vec![],
             prepared: true,
         },

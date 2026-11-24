@@ -19,7 +19,7 @@ function fixture(overrides = {}) {
   const backend = {
     plan: async value => { calls.push(['plan', value]); return plan() },
     prepare: async id => { calls.push(['prepare', id]); return plan(id, { prepared: true }) },
-    execute: async id => { calls.push(['execute', id]); return { ok: true, message: 'modChanges.completed' } },
+    execute: async (...args) => { calls.push(['execute', ...args]); return { ok: true, message: 'modChanges.completed' } },
     cancel: async id => { calls.push(['cancel', id]) }, ...overrides,
   }
   const workflow = createChangeWorkflow(backend, value => states.push(value))
@@ -34,9 +34,106 @@ test('one confirmation still applies a plan whose actions need no package', asyn
   await f.confirm()
   assert.deepEqual(await pending, { ok: true, message: 'modChanges.completed' })
   assert.deepEqual(f.calls.map(call => call[0]), ['plan', 'prepare', 'execute'])
-  assert.equal(f.calls[2][1], 'plan-1')
+  assert.deepEqual(f.calls[2], ['execute', 'plan-1'])
   assert.equal(f.state, null)
 })
+
+const recoveryConflict = [{ transaction_id: 'old-transaction', paths: ['BepInEx/plugins/Owner.dll'] }]
+
+test('a prepared package with a recovery conflict never executes automatically or through ordinary confirm', async () => {
+  const final = plan('verified', { prepared: true, actions: [rootInstall], recovery_conflicts: recoveryConflict, recovery_approval: 'bound-proof',
+    install_notes: [{ id: 'note' }] })
+  const fixtureState = fixture({ prepare: async () => final })
+  const pending = fixtureState.run(request)
+  await tick()
+  assert.equal(fixtureState.state.phase, 'reconfirming')
+  assert.equal(fixtureState.state.noteOnlyReview, undefined)
+  await fixtureState.confirm()
+  await fixtureState.confirmRecovery('wrong-plan', 'bound-proof')
+  await fixtureState.confirmRecovery('verified', 'old-proof')
+  assert.equal(fixtureState.calls.some(call => call[0] === 'execute'), false)
+  await Promise.all([fixtureState.confirmRecovery('verified', 'bound-proof'), fixtureState.confirmRecovery('verified', 'bound-proof')])
+  assert.equal((await pending).ok, true)
+  assert.deepEqual(fixtureState.calls.filter(call => call[0] === 'execute'), [['execute', 'verified', 'bound-proof']])
+})
+
+test('recovery conflict found by preparation exposes an otherwise silent switch and is not written without a proof', async () => {
+  const switchRequest = { roots: [{ node_id: 'mod:owner', enabled: false }], toggle_scope: 'package' }
+  const switchPlan = plan('switch', { actions: [{ node_id: 'mod:owner', kind: 'disable', from_candidate_id: 'one', to_candidate_id: 'one' }],
+    nodes: [{ node_id: 'mod:owner', kind: 'mod', dll_files: ['Owner.dll'] }] })
+  const fixtureState = fixture({ plan: async () => switchPlan,
+    prepare: async () => ({ ...switchPlan, prepared: true, recovery_conflicts: recoveryConflict }) })
+  const pending = fixtureState.run(switchRequest)
+  await tick()
+  assert.equal(fixtureState.state.phase, 'reconfirming')
+  assert.equal(!!fixtureState.state.silent, false)
+  await fixtureState.confirm()
+  await fixtureState.confirmRecovery('switch', 'untrusted')
+  assert.equal(fixtureState.calls.some(call => call[0] === 'execute'), false)
+  await fixtureState.cancel()
+  assert.equal(await pending, null)
+})
+
+test('retry recalculates a recovery approval and cancellation cannot reuse it', async () => {
+  const scope = 'same-game'
+  let preparationCount = 0
+  const attempts = []
+  const fixtureState = fixture({ plan: async () => plan('initial', { replan_scope: scope }),
+    prepare: async () => {
+      const revision = ++preparationCount
+      return plan(`prepared-${revision}`, { prepared: true, replan_scope: scope, actions: [rootInstall],
+        recovery_conflicts: recoveryConflict, recovery_approval: `approval-${revision}` })
+    },
+    execute: async (...args) => {
+      attempts.push(args)
+      return { ok: false, message: 'modChanges.recoveryConflictChanged' }
+    },
+  })
+  const pending = fixtureState.run(request)
+  await tick()
+  await fixtureState.confirmRecovery('prepared-1', 'approval-1')
+  assert.equal(fixtureState.state.phase, 'failed')
+  await fixtureState.retry()
+  assert.equal(fixtureState.state.phase, 'reconfirming')
+  await fixtureState.confirmRecovery('prepared-1', 'approval-1')
+  await fixtureState.confirmRecovery('prepared-2', 'approval-1')
+  await fixtureState.cancel()
+  await fixtureState.confirmRecovery('prepared-2', 'approval-2')
+  assert.equal(await pending, null)
+  assert.deepEqual(attempts, [['prepared-1', 'approval-1']])
+})
+
+test('a new game root invalidates even the visible recovery approval before a click can apply', async () => {
+  const ready = plan('current', { prepared: true, recovery_conflicts: recoveryConflict, recovery_approval: 'old-root-proof' })
+  const fixtureState = fixture({ plan: async () => ready })
+  const pending = fixtureState.run(manualRequest)
+  await tick()
+  assert.equal(fixtureState.state.phase, 'reconfirming')
+  fixtureState.invalidateRecoveryApproval()
+  assert.equal(fixtureState.state.phase, 'failed')
+  assert.equal(fixtureState.state.error, 'modChanges.targetChanged')
+  await fixtureState.confirmRecovery('current', 'old-root-proof')
+  assert.equal(fixtureState.calls.some(call => call[0] === 'execute'), false)
+  await fixtureState.cancel()
+  assert.equal(await pending, null)
+})
+
+for (const error of ['modChanges.recoveryRequired', 'modChanges.recoveryChanged']) {
+  test(`a ${error} blocker stays read-only and allows explicit replan`, async () => {
+    let plans = 0
+    const fixtureState = fixture({ plan: async () => ++plans === 1 ? plan('blocked', { status: 'unsatisfiable', blockers: [{ code: error }] }) : plan('new') })
+    const pending = fixtureState.run(manualRequest)
+    await tick()
+    await fixtureState.confirm()
+    assert.equal(fixtureState.calls.length, 0)
+    await fixtureState.retry()
+    assert.equal(fixtureState.state.phase, 'confirming')
+    assert.equal(fixtureState.state.plan.plan_id, 'new')
+    assert.deepEqual(fixtureState.calls, [['cancel', 'blocked']])
+    await fixtureState.cancel()
+    assert.equal(await pending, null)
+  })
+}
 
 test('exact install, upgrade, RAW and ordinary dependency repair apply without review', async () => {
   const dependencies = [dependency('mod:transitive', 'mod:dependency', 'enable'), dependency('mod:dependency', 'mod:owner')]

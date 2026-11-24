@@ -5,7 +5,7 @@ use super::{
     },
     freshness, guard, inventory, live_game,
     model::{ActionKind, NodeKind, SolveStatus},
-    mutations, preparation,
+    mutations, preparation, recovery_scope,
     session::*,
     transaction::*,
 };
@@ -17,10 +17,11 @@ pub(crate) fn execute(
     app: &AppHandle,
     state: &AppState,
     id: &str,
+    recovery_approval: Option<&str>,
     mut report: impl FnMut(ChangeApplicationProgress),
 ) -> ChangeApplicationOutcome {
     let mut progress = ChangeApplicationProgress::new(id);
-    let result = execute_inner(app, state, id, |update| {
+    let result = execute_inner(app, state, id, recovery_approval, |update| {
         progress.retain_terminal(&update);
         report(update);
     });
@@ -34,11 +35,12 @@ fn execute_inner(
     app: &AppHandle,
     state: &AppState,
     id: &str,
+    recovery_approval: Option<&str>,
     report: impl FnMut(ChangeApplicationProgress),
 ) -> Result<OperationResult, String> {
     let mut lease = SessionLease::take(state, id)?;
     let session = lease.session.as_mut().ok_or("modChanges.planExpired")?;
-    commit(state, session, report)?;
+    commit_with_recovery(state, session, recovery_approval, report)?;
     // Only a completed solution can scope the notification. A map request may
     // also enable or replace MODs, so the original intent alone is insufficient.
     let actions = &session.plan.result.actions;
@@ -74,9 +76,19 @@ fn execute_inner(
 
 /// The write boundary is also used by isolated real-file orchestration tests.
 /// Notification failures are deliberately outside the durable transaction.
+#[cfg(test)]
 pub(super) fn commit(
     state: &AppState,
     session: &mut PlanSession,
+    report: impl FnMut(ChangeApplicationProgress),
+) -> Result<(), String> {
+    commit_with_recovery(state, session, None, report)
+}
+
+pub(super) fn commit_with_recovery(
+    state: &AppState,
+    session: &mut PlanSession,
+    recovery_approval: Option<&str>,
     report: impl FnMut(ChangeApplicationProgress),
 ) -> Result<(), String> {
     let op = session.operation_id().to_owned();
@@ -89,7 +101,7 @@ pub(super) fn commit(
         session.mutations.as_ref().map_or(0, Vec::len)
     );
     let mut step = "validate_plan";
-    let outcome = commit_inner(state, session, report, &trace, &mut step);
+    let outcome = commit_inner(state, session, recovery_approval, report, &trace, &mut step);
     match &outcome {
         Ok(()) => log::info!(
             "整链应用完成 op={op} plan={plan} elapsed_ms={}",
@@ -103,6 +115,7 @@ pub(super) fn commit(
 fn commit_inner(
     state: &AppState,
     session: &mut PlanSession,
+    recovery_approval: Option<&str>,
     report: impl FnMut(ChangeApplicationProgress),
     trace: &OperationTrace<'_>,
     step: &mut &'static str,
@@ -112,7 +125,7 @@ fn commit_inner(
     }
     *step = "lock_and_recovery";
     let _operation = state.operation.lock().map_err(|_| "lock.poisoned")?;
-    let recovered = guard::ensure_recovered(state)?;
+    recovery_scope::check_plan_revisions(state, session, None)?;
     let (root, config) = freshness::current_target(state)?;
     if crate::level_sets::recompress::has_pending_recovery(&root) {
         return Err("levelSet.recoveryRequired".into());
@@ -169,8 +182,23 @@ fn commit_inner(
         session,
         &root,
         &scope,
-        recovered,
+        false,
         session.mutations.as_deref(),
+    )?;
+    *step = "verify_recovery_scope";
+    let verify_recovery = |session: &PlanSession,
+                           changes: &[super::application_progress::OwnedMutation],
+                           own_transaction| {
+        recovery_scope::review(state, session, &roots, changes, own_transaction)?
+            .verify(session.plan.recovery_approval.as_deref(), recovery_approval)
+    };
+    verify_recovery(
+        session,
+        session
+            .mutations
+            .as_deref()
+            .ok_or("modChanges.notPrepared")?,
+        None,
     )?;
     *step = "consume_approval";
     let changes = session.mutations.take().ok_or("modChanges.notPrepared")?;
@@ -184,9 +212,9 @@ fn commit_inner(
         state.invalidate_local_mod_snapshot()?;
         // A failure or rollback cannot inherit evidence from an older commit.
         state.committed_watch_paths.publish(Default::default());
-        let (changes, records) = changes
-            .into_iter()
-            .map(|owned| (owned.mutation, owned.items))
+        let (mutations, records) = changes
+            .iter()
+            .map(|owned| (owned.mutation.clone(), owned.items.clone()))
             .unzip();
         let action_items = session
             .plan
@@ -215,10 +243,11 @@ fn commit_inner(
         let transaction = prepare_for_operation(
             &state.config.mod_change_transactions_dir(),
             &roots,
-            changes,
+            mutations,
             Some(op),
             session.release_target_claims.orphan_original_files(),
-        )?;
+        )
+        .inspect_err(|_| guard::notify(state, false))?;
         let transaction_id = transaction.id().to_owned();
         log::info!(
             "应用整链事务 op={op} txn={transaction_id} actions={} prepare_ms={}",
@@ -231,6 +260,7 @@ fn commit_inner(
         let check_targets = || -> Result<(), String> {
             transaction_stage.set("verify_live_claims_before_write");
             check_game()?;
+            verify_recovery(session, &changes, Some(&transaction_id))?;
             if (session
                 .map_payload
                 .as_ref()
@@ -259,7 +289,7 @@ fn commit_inner(
             Ok(())
         };
         *step = "apply_transaction";
-        match transaction.apply_checked(
+        let applied = transaction.apply_checked(
             crate::archive::is_download_cancelled,
             check_targets,
             || {
@@ -283,7 +313,9 @@ fn commit_inner(
                 }
                 progress.observe(event);
             },
-        ) {
+        );
+        guard::notify(state, false);
+        match applied {
             Ok(watch_paths) => {
                 log::info!(
                     "整链事务已提交 op={op} txn={transaction_id} elapsed_ms={}",

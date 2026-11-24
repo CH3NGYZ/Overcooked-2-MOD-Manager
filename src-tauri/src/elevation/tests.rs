@@ -230,11 +230,34 @@ fn cancel_relaunch(directory: &Path) {
     assert!(recompress::take_rescan_request());
     assert!(!recompress::take_rescan_request());
 
+    let transaction = state
+        .config
+        .mod_change_transactions_dir()
+        .join(uuid::Uuid::new_v4().to_string());
+    std::fs::create_dir_all(&transaction).unwrap();
+    let journal = transaction.join("journal.json");
+    std::fs::write(&journal, b"unrecognized transaction").unwrap();
+    let result = system::relaunch_with(&state, || Err(io::ErrorKind::BrokenPipe.into())).unwrap();
+    assert!(!result.ok, "a pending chain alone must not prevent restart");
+
     let map = directory.join("pending-map");
     let backup = directory.join("retained-backup");
     std::fs::write(&map, b"interrupted conversion").unwrap();
     std::fs::write(&backup, b"original").unwrap();
     let _failed_write = recompress::PendingRecoveryFixture::new(directory, &map, &backup);
+    assert_eq!(
+        system::relaunch_with(&state, || panic!("must not restore over a pending chain"))
+            .err()
+            .unwrap(),
+        "assetBundle.recoveryPending"
+    );
+    assert_eq!(std::fs::read(&map).unwrap(), b"interrupted conversion");
+    assert_eq!(
+        std::fs::read(&journal).unwrap(),
+        b"unrecognized transaction"
+    );
+    std::fs::remove_file(journal).unwrap();
+    std::fs::remove_dir(transaction).unwrap();
     std::fs::write(&backup, b"damaged backup").unwrap();
     assert_eq!(
         system::relaunch_with(&state, || panic!("must restore before launching"))

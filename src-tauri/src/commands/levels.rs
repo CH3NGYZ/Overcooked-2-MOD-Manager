@@ -98,7 +98,6 @@ pub async fn get_level_sets(
             .operation
             .lock()
             .map_err(|_| "lock.poisoned".to_string())?;
-        crate::mod_changes::guard::ensure_recovered(&state)?;
         state
             .local_mod_snapshot
             .lock()
@@ -151,14 +150,16 @@ fn prepare_level_set_scan(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
-    crate::mod_changes::guard::ensure_recovered(&state)?;
     let config = state.config.load_or_default();
     let Some(game_root) = game::detect_game(&config).path else {
         return Ok(None);
     };
     let (snapshot, roots) =
         crate::mods::snapshot::level_roots(state, std::path::Path::new(&game_root))?;
-    if roots.package_root().is_some() {
+    if roots.package_root().is_some()
+        && !crate::level_sets::recompress::has_pending_recovery(roots.game_root())
+        && crate::mod_changes::guard::check_unscoped_write(state).is_ok()
+    {
         crate::level_sets::migrate_legacy_disabled_root(&roots);
     }
     Ok(Some((config, snapshot, roots)))
@@ -371,7 +372,7 @@ pub async fn retry_level_compression_recovery(
             .operation
             .lock()
             .map_err(|_| "lock.poisoned".to_string())?;
-        crate::mod_changes::guard::ensure_recovered(&state)?;
+        crate::mod_changes::guard::check_unscoped_write(&state)?;
         let config = state.config.load_or_default();
         let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
         crate::level_sets::recompress::retry_recovery(&game_root, &recovery_id)?;

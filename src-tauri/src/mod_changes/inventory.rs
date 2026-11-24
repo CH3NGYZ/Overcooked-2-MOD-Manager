@@ -650,10 +650,8 @@ fn mod_label(
 
 /// Reuse one backend-owned scan until either source selection or physical facts change.
 pub(crate) fn cached(state: &AppState) -> Result<std::sync::Arc<TrustedInventory>, String> {
-    // Evaluation must never publish half-applied facts. Writers already use this
-    // same lock; recovery invalidates the cache before a new snapshot is read.
+    // Observe the actual current disk only after any running writer lets go.
     let _operation = state.operation.lock().map_err(|_| "lock.poisoned")?;
-    super::guard::ensure_recovered(state)?;
     let config = state.config.load_or_default();
     let detected = game::detect_game(&config).path.ok_or("game.notFound")?;
     let root = game::resolve_existing_ancestor(Path::new(&detected))?;
@@ -686,8 +684,7 @@ pub(crate) fn validate_solution(
     solved: &Inventory,
     suppressed: &BTreeSet<&str>,
 ) -> Result<(), String> {
-    use super::evaluate::{matches, relation_active, targets};
-    use std::collections::BTreeSet;
+    use super::evaluate::targets;
     if let Some(id) = request.repair_dependencies_of.as_deref() {
         let before = trusted.inventory.nodes.iter().find(|node| node.id == id);
         let after = solved.nodes.iter().find(|node| node.id == id);
@@ -695,60 +692,13 @@ pub(crate) fn validate_solution(
             return Err("modChanges.targetChanged".into());
         }
     }
-    let mut affected = request
-        .roots
-        .iter()
-        .map(|root| root.node_id.clone())
-        .collect::<BTreeSet<_>>();
-    for node in &solved.nodes {
-        if trusted
-            .inventory
-            .nodes
-            .iter()
-            .find(|original| original.id == node.id)
-            .is_none_or(|original| {
-                original.current != node.current || original.enabled != node.enabled
-            })
-        {
-            affected.insert(node.id.clone());
-        }
-    }
-    loop {
-        let before = affected.len();
-        for node in &solved.nodes {
-            if !node.enabled
-                || !affected.contains(&node.id)
-                || suppressed.contains(node.id.as_str())
-            {
-                continue;
-            }
-            let Some(candidate) = &node.current else {
-                continue;
-            };
-            for owned in &candidate.relations {
-                if owned.relation.kind != RelationKind::Requires
-                    || owned.relation.optional
-                    || !relation_active(candidate, owned, false)
-                {
-                    continue;
-                }
-                for (index, plugin) in targets(solved, &owned.relation.guid, true) {
-                    if matches(&owned.relation, plugin) != Some(false) {
-                        affected.insert(solved.nodes[index].id.clone());
-                    }
-                }
-            }
-        }
-        if before == affected.len() {
-            break;
-        }
-    }
+    let affected = affected_nodes(&trusted.inventory, request, solved, suppressed);
     // Plugin GUIDs cannot represent the native loader. Reuse its real disk
     // detection at every approval/write gate, including local ZIP installs.
     // Disabling content remains possible even if the loader has been removed.
     if solved.nodes.iter().any(|node| {
         node.enabled
-            && affected.contains(&node.id)
+            && affected.contains(node.id.as_str())
             && (trusted
                 .inventory
                 .nodes
@@ -780,14 +730,14 @@ pub(crate) fn validate_solution(
     use super::mutations::{InstallBlock, node_label, report_install_block};
     let mut ids = BTreeSet::new();
     for node in &solved.nodes {
-        if !ids.insert(&node.id) && affected.contains(&node.id) {
+        if !ids.insert(&node.id) && affected.contains(node.id.as_str()) {
             return Err(report_install_block(
                 "modChanges.installTargetIdentityConflict",
                 &node.id,
                 &[("name", node_label(trusted, &node.id))],
             ));
         }
-        if !affected.contains(&node.id) {
+        if !affected.contains(node.id.as_str()) {
             continue;
         }
         if !node.mutable {
@@ -837,4 +787,57 @@ pub(crate) fn validate_solution(
         }
     }
     Ok(())
+}
+
+pub(super) fn affected_nodes<'a>(
+    installed: &Inventory,
+    request: &'a ChangeRequest,
+    solved: &'a Inventory,
+    suppressed: &BTreeSet<&str>,
+) -> BTreeSet<&'a str> {
+    use super::evaluate::{matches, relation_active, targets};
+    let mut affected: BTreeSet<_> = request
+        .roots
+        .iter()
+        .map(|root| root.node_id.as_str())
+        .collect();
+    for node in &solved.nodes {
+        if installed
+            .nodes
+            .iter()
+            .find(|old| old.id == node.id)
+            .is_none_or(|old| old.current != node.current || old.enabled != node.enabled)
+        {
+            affected.insert(&node.id);
+        }
+    }
+    loop {
+        let before = affected.len();
+        for node in &solved.nodes {
+            if !node.enabled
+                || !affected.contains(node.id.as_str())
+                || suppressed.contains(node.id.as_str())
+            {
+                continue;
+            }
+            if let Some(candidate) = &node.current {
+                for owned in &candidate.relations {
+                    if owned.relation.kind != RelationKind::Requires
+                        || owned.relation.optional
+                        || !relation_active(candidate, owned, false)
+                    {
+                        continue;
+                    }
+                    for (index, plugin) in targets(solved, &owned.relation.guid, true) {
+                        if matches(&owned.relation, plugin) != Some(false) {
+                            affected.insert(&solved.nodes[index].id);
+                        }
+                    }
+                }
+            }
+        }
+        if before == affected.len() {
+            return affected;
+        }
+    }
 }

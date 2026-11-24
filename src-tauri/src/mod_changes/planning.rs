@@ -213,10 +213,11 @@ fn create_inner(
     }
     *step = "lease_and_recovery";
     let mut lease = SessionLease::creating(state)?;
-    {
+    let recovery_revisions = {
         let _operation = state.operation.lock().map_err(|_| "lock.poisoned")?;
-        super::guard::ensure_recovered(state)?;
-    }
+        super::guard::ensure_plannable(state)?;
+        super::recovery_scope::revisions(&super::guard::records_for_plan(state, None)?)
+    };
     *step = "installed_inventory";
     let trusted = (*inventory::cached(state)?).clone();
     *step = "validate_target_scope";
@@ -283,6 +284,7 @@ fn create_inner(
         wire_request,
         dependency_policy: DependencyPolicy::default(),
         plan,
+        recovery_revisions,
         solved: None,
         payloads: HashMap::new(),
         verified_payloads: HashMap::new(),

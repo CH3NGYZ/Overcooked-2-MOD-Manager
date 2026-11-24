@@ -39,16 +39,33 @@ test('chain preparation consumes the same repository download without creating a
 })
 
 test('recovery gate protects write and game handoff commands while holding their existing locks', () => {
-  for (const path of ['commands/dashboard.rs', 'commands/game.rs', 'commands/recycle.rs', 'commands/bepinex.rs',
-    'commands/mods_local.rs', 'commands/diy_level.rs', 'commands/levels.rs', 'manager_data.rs', 'commands/mod_settings.rs']) {
+  for (const path of ['commands/game.rs', 'commands/recycle.rs', 'commands/bepinex.rs',
+    'commands/mods_local.rs', 'commands/diy_level.rs', 'manager_data.rs', 'commands/mod_settings.rs']) {
     assert.match(read(path), /mod_changes::guard::ensure_recovered/, path)
   }
   const guard = read('mod_changes/guard.rs')
-  assert.match(guard, /transaction::has_pending/)
-  assert.match(guard, /game::ensure_game_stopped/)
-  assert.match(guard, /transaction::recover_all/)
-  assert.match(guard, /!report\.blocked\.is_empty\(\)/)
-  assert.doesNotMatch(guard, /state\.operation\.lock\(/)
+  const method = name => guard.match(new RegExp(`fn ${name}\\([\\s\\S]*?\\n\\}`))?.[0] ?? ''
+  assert.match(method('ensure_plannable'), /try_automatic\(state\)[\s\S]*records_for_plan\(state, None\)/)
+  assert.match(method('ensure_recovered'), /try_automatic\(state\)[\s\S]*check_unscoped_write\(state\)/)
+  assert.match(method('records_for_plan'), /list\(state\)[\s\S]*all\(can_plan\)/)
+  assert.match(method('check_unscoped_write'), /list\(state\)[\s\S]*any\(blocks_unscoped_write\)/)
+  assert.match(method('ensure_game_stopped'), /game::ensure_game_stopped/)
+  assert.match(method('try_automatic'), /recover_files\([\s\S]*transaction::recover_all[\s\S]*!report\.blocked\.is_empty\(\)/)
+  for (const name of ['ensure_plannable', 'ensure_recovered', 'records_for_plan', 'check_unscoped_write', 'try_automatic']) {
+    assert.doesNotMatch(method(name), /state\.operation\.lock\(/, name)
+  }
+  assert.match(method('decide'), /state\.operation\.lock\(/)
+})
+
+test('inventory reads do not recover and background writes check the persistent recovery gate', () => {
+  assert.doesNotMatch(read('commands/dashboard.rs'), /guard::ensure_recovered/)
+  const levels = read('commands/levels.rs').match(/fn prepare_level_set_scan\([\s\S]*?\n\}/)?.[0]
+  assert.doesNotMatch(levels, /guard::ensure_recovered/)
+  assert.match(levels, /guard::check_unscoped_write\(state\)\.is_ok\(\)[\s\S]*migrate_legacy_disabled_root\(&roots\)/)
+  assert.match(read('level_sets/recompress.rs'), /state\.operation\.lock\(\)[\s\S]*guard::check_unscoped_write\(state\)[\s\S]*if !replace\(/)
+  assert.match(read('level_sets/recompress.rs'), /if !recovery::any_pending\(\)\s*\{\s*return Ok\(\(\)\);\s*\}\s*crate::mod_changes::guard::check_unscoped_write\(state\)\?[\s\S]*recovery::restore_all\(\)/)
+  assert.match(read('repository_sources/apply.rs'), /guard::check_unscoped_write\(&state\)[\s\S]*Ok\(\(\)\) => sync_manifest_groups/)
+  assert.match(read('manager_data.rs'), /transaction::has_retained_material/)
 })
 
 test('compression recovery IPC uses the generated Tauri argument names', () => {

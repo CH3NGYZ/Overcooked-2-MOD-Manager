@@ -54,7 +54,7 @@ test('map IPCs defer the game gate to concrete MOD mutations', () => {
   }
   const levelCommands = readText(resolve(root, '../commands/levels.rs'))
   const recoveryCommand = name => levelCommands.match(new RegExp(`pub async fn ${name}_level_compression_recovery\\([\\s\\S]*?\\n\\}`))?.[0] ?? ''
-  assert.match(recoveryCommand('retry'), /guard::ensure_recovered\(&state\)[\s\S]*recompress::retry_recovery\(&game_root, &recovery_id\)/)
+  assert.match(recoveryCommand('retry'), /guard::check_unscoped_write\(&state\)[\s\S]*recompress::retry_recovery\(&game_root, &recovery_id\)/)
   assert.match(recoveryCommand('ignore'), /game::ensure_game_stopped/)
   const recovery = readText(resolve(root, 'recompress/recovery.rs'))
   assert.match(recovery, /fn retry_recovery\([\s\S]*registry\(\)\.retry\([\s\S]*&crate::game::ensure_game_stopped/)

@@ -75,6 +75,32 @@ test('pending plan and its first-install note both block preparation until expli
  await store.cancel();assert.equal(await again,null)
 })
 
+test('recovery approval cannot bypass installation notes, the update gate, or independent confirmation',async t=>{
+ const calls=[],store=useModChanges()
+ const ready={...plan('verified-conflict',true,[note]),recovery_conflicts:[{transaction_id:'old',paths:['Owner.dll']}],recovery_approval:'verified-proof'}
+ globalThis.__changeStoreApi=async(name,args)=>{
+   calls.push([name,args[0],args[2]])
+   if(name==='planModChanges')return ready
+   if(name==='executeModChanges')return {ok:true,message:''}
+ }
+ const pending=store.run({roots:[]});await tick()
+ t.after(()=>setCheckingUpdateRecovery(false))
+ assert.equal(store.state.value.phase,'reconfirming')
+ assert.equal(store.installNotes.value.length,1)
+ await store.confirmRecovery(ready.plan_id,ready.recovery_approval)
+ assert.equal(calls.length,1)
+ await readCurrentNotes(store)
+ assert.deepEqual(store.installNotes.value,[])
+ await store.confirm()
+ setCheckingUpdateRecovery(true)
+ await store.confirmRecovery(ready.plan_id,ready.recovery_approval)
+ assert.equal(calls.length,1)
+ setCheckingUpdateRecovery(false)
+ await store.confirmRecovery(ready.plan_id,ready.recovery_approval)
+ assert.equal((await pending).ok,true)
+ assert.deepEqual(calls.at(-1),['executeModChanges','verified-conflict','verified-proof'])
+})
+
 for(const revised of [note,{...note,note:'Instructions changed.'}])test(`reconfirmation ${revised===note?'skips read':'gates revised'} notes`,async()=>{
  const calls=[]
  globalThis.__changeStoreApi=async(name)=>{

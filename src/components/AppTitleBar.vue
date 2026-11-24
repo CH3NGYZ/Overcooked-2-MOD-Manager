@@ -5,6 +5,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   CloseOutline, ContrastOutline, ContractOutline, ExpandOutline, LanguageOutline, MoonOutline,
   PlayOutline, RemoveOutline, SquareOutline, StopOutline, SunnyOutline,
+  WarningOutline,
 } from '@vicons/ionicons5'
 import { ACCENTS, accentKey, cycleAccent, cycleThemeMode, isDark, resolvedMode, setAccent, themeMode } from '../theme'
 import { useNotify } from '../useNotify'
@@ -22,6 +23,7 @@ import RecycleBinStatus from './RecycleBinStatus.vue'
 import AppUpdateStatus from './AppUpdateStatus.vue'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { demoActive, withDemoGame } from '../tutorial/demo'
+import { openTransactionRecovery, transactionRecoveries, transactionRecoveryReadError, transactionRecoveryUnavailable } from '../modChanges/transactionRecovery'
 
 const props = defineProps<{ version: string }>()
 const emit = defineEmits<{ 'apply-update': [] }>()
@@ -240,6 +242,13 @@ defineExpose({ onUnmountedCleanup })
       <AppUpdateStatus :prompt-open="appUpdatePromptMode !== null" @apply-update="emit('apply-update')" />
       <LevelCompressionStatus />
       <RecycleBinStatus />
+      <button v-if="transactionRecoveries.length || transactionRecoveryReadError" type="button"
+        class="pill icon-only transaction-recovery-entry" data-transaction-recovery-entry
+        :class="{ 'transaction-recovery-pending': transactionRecoveries.some(record => !record.archived) }"
+        :disabled="transactionRecoveryUnavailable()" :title="t('modChanges.transactionRecovery.title')"
+        :aria-label="t('modChanges.transactionRecovery.title')" @click="openTransactionRecovery">
+        <WarningOutline width="16" height="16" aria-hidden="true" />
+      </button>
       <!-- 界面缩放：下拉选择（与语言下拉一致） -->
       <n-dropdown :options="zoomOptions" :value="zoomKey" trigger="click" :z-index="TITLEBAR_MENU_Z_INDEX"
         @select="onZoomSelect">
@@ -427,7 +436,7 @@ defineExpose({ onUnmountedCleanup })
   pointer-events: none;
   z-index: 10;
 }
-.brand-text { display: flex; flex-direction: column; min-width: 0; }
+.brand-text { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
 .brand-title-row { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 /* 版本号跟在标题后面，弱化到副标题层级，不抢标题的视觉权重。 */
 .brand-version {
@@ -480,6 +489,7 @@ defineExpose({ onUnmountedCleanup })
 .pill > .swatch { flex: 0 0 auto; }
 .pill:hover { border-color: var(--oc2-accent); color: var(--oc2-text-1); }
 .pill.icon-only { padding: 0; width: 32px; max-width: 32px; justify-content: center; }
+.transaction-recovery-pending { color: var(--oc2-status-warning); }
 .caret { color: var(--oc2-text-4); font-size: 10px; }
 .swatch {
   width: 15px; height: 15px; border-radius: 50%;

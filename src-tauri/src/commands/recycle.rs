@@ -29,7 +29,6 @@ fn get_mod_recycle_bin_blocking(
         .operation
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
-    crate::mod_changes::guard::ensure_recovered(&state)?;
     recycle_bin::list(&state.config.mod_recycle_bin_dir())
         .map(|entries| {
             // 记录里存的是删除时的 canonical 路径，只在送给前端时换成展示形态。

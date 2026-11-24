@@ -1,6 +1,7 @@
 import type { LevelPreview, LevelPreviewDetail } from '../types'
 import type { ChangeRequest, ChangePlan, ChangePreparationOutcome, ChangePreparationProgress, EvaluationSnapshot, EvaluationSubject, ChangeExecutionOutcome, ChangeExecutionProgress } from '../modChanges/types'
 import { ChangePreparationError } from '../modChanges/types'
+import type { TransactionRecoveryEntry } from '../modChanges/transactionRecoveryTypes'
 import type { LocalModSnapshot, ChefEditorOpen, ChefEditorSnapshot, ChefDraft, ChefValidation, ChefFilesChanged } from '../diychef/types'
 import type { ChefPreviewScene } from '../diychef/preview/types'
 import type { PublishProvider } from '../types'
@@ -99,12 +100,14 @@ export const api = {
     }
     finally { active = false }
   },
-  executeModChanges: async (planId: string, onProgress: (value: ChangeExecutionProgress) => void) => {
+  executeModChanges: async (planId: string, onProgress: (value: ChangeExecutionProgress) => void, recoveryApproval?: string) => {
     const onUpdate = new Channel<ChangeExecutionProgress>()
     let active = true
     onUpdate.onmessage = value => { if (active && value.plan_id === planId) onProgress(value) }
     try {
-      const { progress, ...result } = await invoke<ChangeExecutionOutcome>('execute_mod_changes', { planId, onUpdate })
+      const { progress, ...result } = await invoke<ChangeExecutionOutcome>('execute_mod_changes', {
+        planId, onUpdate, ...(recoveryApproval ? { recoveryApproval } : {}),
+      })
       // As in preparation, the command owns its final snapshot; a late Channel
       // packet must never overwrite the actual outcome of the transaction.
       active = false
@@ -114,6 +117,13 @@ export const api = {
     finally { active = false }
   },
   cancelModChanges: (planId: string) => invoke<void>('cancel_mod_changes', { planId }),
+  modChangeRecoveries: () => invoke<TransactionRecoveryEntry[]>('get_mod_change_recoveries'),
+  pauseModChangeRecovery: (transactionId: string, revision: string) =>
+    invoke<TransactionRecoveryEntry[]>('pause_mod_change_recovery', { transactionId, revision }),
+  retryModChangeRecovery: (transactionId: string, revision: string) =>
+    invoke<TransactionRecoveryEntry[]>('retry_mod_change_recovery', { transactionId, revision }),
+  abandonModChangeRecovery: (transactionId: string, revision: string, highRisk: boolean) =>
+    invoke<TransactionRecoveryEntry[]>('abandon_mod_change_recovery', { transactionId, revision, highRisk }),
   dashboard: readDashboard,
   localMods: () => invoke<LocalModSnapshot>('get_local_mods'),
   diyChefOpen: (generation: number, targetId?: string) => invoke<ChefEditorOpen>('open_diychef_editor', { generation, targetId }),
@@ -512,6 +522,10 @@ export function watchDataProvider(callback: () => void): Promise<UnlistenFn> {
 /** Re-read the local DLL snapshot after the OS reports plugin changes. */
 export function watchLocalModsChanged(callback: () => void): Promise<UnlistenFn> {
   return listen('local-mods-changed', () => callback())
+}
+
+export function watchModChangeRecovery(callback: () => void): Promise<UnlistenFn> {
+  return listen('mod-change-recovery-changed', () => callback())
 }
 
 /** One process-wide subscription keeps both recycle-bin surfaces current. */

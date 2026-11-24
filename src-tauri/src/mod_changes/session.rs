@@ -90,6 +90,10 @@ pub(crate) struct ChangePlan {
     pub untracked_overwrites: Vec<UntrackedOverwrite>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub provider_choices: Vec<super::evidence::ProviderEvidence>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub recovery_conflicts: Vec<super::recovery_scope::Conflict>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery_approval: Option<String>,
     pub install_notes: Vec<InstallNote>,
     pub prepared: bool,
 }
@@ -246,6 +250,7 @@ pub(crate) struct PlanSession {
     pub wire_request: PlanRequest,
     pub dependency_policy: super::solve::DependencyPolicy,
     pub plan: ChangePlan,
+    pub(super) recovery_revisions: BTreeMap<String, String>,
     pub solved: Option<Inventory>,
     pub payloads: HashMap<String, Payload>,
     /// Retain every verified asset across failed preparation and graph revisions.
@@ -463,6 +468,8 @@ pub(crate) fn presentation(
         retired_mod_copies: BTreeMap::new(),
         untracked_overwrites: Vec::new(),
         provider_choices: Vec::new(),
+        recovery_conflicts: Vec::new(),
+        recovery_approval: None,
         install_notes: Vec::new(),
     }
 }

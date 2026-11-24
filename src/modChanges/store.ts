@@ -78,7 +78,7 @@ const workflow = createChangeWorkflow({
       endDownloadTask(token)
     }
   },
-  execute: async planId => {
+  execute: async (planId, recoveryApproval) => {
     let committed = false
     let active = true
     execution.clear()
@@ -86,7 +86,7 @@ const workflow = createChangeWorkflow({
       const result = await api.executeModChanges(planId, progress => {
         if (!active || progress.plan_id !== planId) return
         for (const { node_id, member_key, stage } of progress.items) execution.set(changeStatusKey(node_id, member_key), stage)
-      })
+      }, recoveryApproval)
       committed = result.ok
       // The command reply is the authority. Its legacy broadcast can arrive
       // on either side of the reply and must not trigger a second refresh.
@@ -124,6 +124,10 @@ function acceptInstallNotes(notes: readonly InstallNote[], planId: string, apply
 
 async function confirm() {
   if (!installNotes.value.length) await workflow.confirm()
+}
+
+async function confirmRecovery(planId: string, approval: string) {
+  if (!installNotes.value.length && !appUpdateBlocksOperations()) await workflow.confirmRecovery(planId, approval)
 }
 
 function canCancelPreparation() {
@@ -205,6 +209,6 @@ export function useModChanges() {
     evaluation: readonly(evaluation), evaluating: readonly(evaluating), appliedRevision: readonly(appliedRevision),
     busy: computed(() => state.value !== null),
     run: workflow.run, refresh, invalidate, clearEvaluation, setEvaluationPaused, confirm, cancel: workflow.cancel, retry: workflow.retry,
-    forceOverwriteManifest: workflow.forceOverwriteManifest,
+    forceOverwriteManifest: workflow.forceOverwriteManifest, confirmRecovery, invalidateRecoveryApproval: workflow.invalidateRecoveryApproval,
   }
 }

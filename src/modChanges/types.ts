@@ -112,6 +112,7 @@ export interface BundledDllDisplay {
   map_name?: ChangeLabel & { name_zh?: string | null }
 }
 export interface ChangeLabel { label: string; name_i18n?: Record<string, string> }
+export interface ChangeRecoveryConflict { transaction_id: string; paths: string[] }
 export interface ChangePlan {
   plan_id: string
   /** Opaque backend identity for comparing the same request after an inventory change. */
@@ -130,6 +131,8 @@ export interface ChangePlan {
   retired_mod_copies?: Record<string, RetiredModCopy[]>
   /** Existing files that require overwrite approval in the prepared plan. */
   untracked_overwrites?: { node_id: string; path: string }[]
+  recovery_conflicts?: ChangeRecoveryConflict[]
+  recovery_approval?: string
   provider_choices?: ProviderEvidence[]
   install_notes: ChangeInstallNote[]
   prepared: boolean
@@ -203,6 +206,6 @@ export interface ChangeBackend {
   prepare(planId: string): Promise<ChangePlan>
   /** Let a visible preparation surface show its terminal state before replacing it. */
   presentPrepared?(): Promise<void> | void
-  execute(planId: string): Promise<ChangeExecutionResult>
+  execute(planId: string, recoveryApproval?: string): Promise<ChangeExecutionResult>
   cancel(planId: string): Promise<void>
 }

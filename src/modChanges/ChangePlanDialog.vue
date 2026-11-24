@@ -3,7 +3,7 @@ import { computed, nextTick, useTemplateRef, watch } from 'vue'
 import { NAlert, NButton, NProgress, NSpin } from 'naive-ui'
 import AppModal from '../components/AppModal.vue'
 import { locale, pickI18n, t } from '../i18n'
-import { backendMessageOf } from '../locale/backend'
+import { backendMessageOf, backendPayloadOf } from '../locale/backend'
 import { useModChanges } from './store'
 import { useModChangesLifecycle } from './useModChangesLifecycle'
 import { changeReasonText } from './messages'
@@ -16,7 +16,10 @@ import { changePlanLabels, preparationCompletion } from './presentation'
 import { activeDownloadProgress } from '../downloadTask'
 import { appUpdateBlocksOperations } from '../appUpdateState'
 import { isPackageAction } from './types'
-import { isChangePlanLocked } from './workflow'
+import { isChangePlanLocked, missingRecoveryApproval, needsRecoveryApproval, recoveryBlockedPlan } from './workflow'
+import { openTransactionRecovery, showTransactionRecovery, transactionRecoveryUnavailable } from './transactionRecovery'
+import { isTransactionRecoveryError } from './transactionRecoveryTypes'
+import TransactionConflictConfirmation from './TransactionConflictConfirmation.vue'
 const changes = useModChanges()
 useModChangesLifecycle()
 const state = changes.state
@@ -31,6 +34,12 @@ const completedPreparation = computed(() => state.value?.phase === 'prepared')
 const canCancel = computed(() => !isChangePlanLocked(state.value?.phase))
 const applyReview = computed(() => state.value?.applyReview)
 const manifestOverwrite = computed(() => state.value?.manifestOverwrite)
+const recoveryReview = computed(() => state.value?.phase === 'reconfirming' && plan.value?.prepared
+  && plan.value.status === 'ready' && needsRecoveryApproval(plan.value))
+const recoveryBlocked = computed(() => recoveryBlockedPlan(plan.value))
+const recoveryProofMissing = computed(() => missingRecoveryApproval(plan.value))
+const recoveryEntry = computed(() => needsRecoveryApproval(plan.value) || recoveryBlocked.value
+  || isTransactionRecoveryError(backendPayloadOf(state.value?.error)?.tag))
 const overwriteGroups = computed(() => {
   const verified = plan.value
   if (state.value?.phase !== 'reconfirming' || !applyReview.value || verified?.status !== 'ready' || !verified.prepared) return []
@@ -152,6 +161,18 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
           :truncated="failureEvidence.providers?.truncated" :names="names?.nodes" />
       </NAlert>
       <ChangeRecoveryPanel v-if="state?.phase === 'failed' && state.error === 'levelSet.recoveryRequired'" />
+      <NAlert v-if="recoveryEntry" type="warning" :bordered="false" data-plan-recovery-conflict>
+        <template v-if="plan?.recovery_conflicts?.length">
+          <p class="diagnostic-note">{{ t('modChanges.transactionRecovery.conflictDescription') }}</p>
+          <section v-for="conflict in plan.recovery_conflicts" :key="conflict.transaction_id" class="plan-message">
+            <code>{{ conflict.transaction_id }}</code>
+            <ChangeEvidenceList :rows="conflict.paths.map(path => ({ path }))" />
+          </section>
+        </template>
+        <p v-if="recoveryProofMissing" class="diagnostic-note">{{ t('modChanges.recoveryConflictChanged') }}</p>
+        <NButton size="small" secondary :disabled="transactionRecoveryUnavailable()" data-plan-action="open-transaction-recovery"
+          @click="openTransactionRecovery">{{ t('modChanges.transactionRecovery.title') }}</NButton>
+      </NAlert>
       <NAlert v-if="manifestOverwrite" type="warning" :bordered="false" data-manifest-overwrite
         :title="t(state?.phase === 'failed' ? 'modChanges.manifestOverwrite.conflict' : 'modChanges.manifestOverwrite.title')">
         <ChangeEvidenceList :rows="[{ path: manifestOverwrite.manifestPath }]" />
@@ -195,8 +216,11 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
           <NButton v-if="showDownloadFallback" :loading="changes.cancellingDownload.value"
             :disabled="!changes.canCancelDownload.value" @click="changes.cancelPreparationDownload">{{ t('common.cancelDownload') }}</NButton>
           <NButton data-plan-action="cancel" :disabled="!canCancel" @click="changes.cancel">{{ t('common.action.cancel') }}</NButton>
-          <NButton v-if="state?.phase === 'failed'" data-plan-action="retry" type="primary" @click="changes.retry">{{ t('modChanges.retry') }}</NButton>
-          <NButton v-else data-plan-action="confirm" type="primary" :loading="working" :disabled="working || completedPreparation || plan?.status !== 'ready'"
+          <NButton v-if="state?.phase === 'failed' || recoveryBlocked || recoveryProofMissing" data-plan-action="retry" type="primary"
+            @click="changes.retry">{{ t('modChanges.retry') }}</NButton>
+          <TransactionConflictConfirmation v-else-if="recoveryReview && plan && !showTransactionRecovery"
+            :plan="plan" @approve="changes.confirmRecovery" />
+          <NButton v-else data-plan-action="confirm" type="primary" :loading="working" :disabled="working || completedPreparation || plan?.status !== 'ready' || recoveryReview"
             @click="changes.confirm">{{ t(confirmLabel) }}</NButton>
           <NButton v-if="state?.phase === 'failed' && manifestOverwrite" data-plan-action="overwrite-manifest"
             type="warning" @click="changes.forceOverwriteManifest">{{ t('modChanges.manifestOverwrite.action') }}</NButton>

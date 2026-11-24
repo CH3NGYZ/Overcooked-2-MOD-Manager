@@ -30,6 +30,8 @@ mod live_game_info;
 mod local_framework_zip;
 #[path = "orchestration_tests/map_runtime_duplicate.rs"]
 mod map_runtime_duplicate;
+#[path = "orchestration_tests/recovery_control.rs"]
+mod recovery_control;
 #[path = "orchestration_tests/repair_cycle.rs"]
 mod repair_cycle;
 #[path = "orchestration_tests/repository_preparation.rs"]
@@ -475,7 +477,7 @@ fn expired_session_removes_only_private_stage_and_busy_creation_is_rejected() {
 }
 
 #[test]
-fn evaluation_recovers_pending_journal_before_reading_cached_inventory() {
+fn evaluation_is_read_only_and_fresh_planning_recovers_automatic_journal() {
     let f = fixture(vec![repository("one", "fixture-one", &["1.0.0"], vec![])]);
     let file = install(&f, "one", "fixture-one", "1.0.0", true);
     let cached = inventory::cached(&f.state).unwrap();
@@ -504,6 +506,8 @@ fn evaluation_recovers_pending_journal_before_reading_cached_inventory() {
     drop(transaction);
     let actual = planning::evaluate(&f.state, vec![]).unwrap();
     assert_eq!(actual.revision, cached.revision);
+    assert!(has_pending(&transaction_root).unwrap());
+    planning::create(&f.state, request("one", None, false)).unwrap();
     assert!(!has_pending(&transaction_root).unwrap());
     assert!(f.game.join(file).is_file());
 }

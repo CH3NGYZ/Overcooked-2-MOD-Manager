@@ -24,8 +24,10 @@ pub fn open_mod_directory(state: State<'_, AppState>) -> Result<OperationResult,
     log::debug!("打开 MOD 目录");
     let config = state.config.load_or_default();
     let game_root = game::detect_game(&config).path.ok_or("game.notFound")?;
-    let plugins = PathBuf::from(game_root).join("BepInEx/plugins");
-    fs::create_dir_all(&plugins).map_err(|e| e.to_string())?;
+    let plugins = game::safe_game_path(Path::new(&game_root), "BepInEx/plugins")?;
+    if !plugins.is_dir() {
+        return Err("framework.bepInExDirMissing".into());
+    }
     shell_open::open_path(&plugins)?;
     Ok(OperationResult {
         ok: true,

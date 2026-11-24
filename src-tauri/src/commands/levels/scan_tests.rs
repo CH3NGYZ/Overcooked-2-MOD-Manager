@@ -111,3 +111,22 @@ fn a_completed_scan_without_plugin_leaves_legacy_directories_untouched() {
     assert!(ws.legacy().is_dir());
     assert!(!crate::level_sets::disabled_root(&ws.game).exists());
 }
+
+#[test]
+fn pending_chain_keeps_legacy_migration_read_only_without_blocking_map_scan() {
+    let ws = Workspace::new();
+    ws.publish(true);
+    let transaction = ws
+        .state
+        .config
+        .mod_change_transactions_dir()
+        .join(uuid::Uuid::new_v4().to_string());
+    fs::create_dir_all(&transaction).unwrap();
+    let journal = transaction.join("journal.json");
+    fs::write(&journal, b"unrecognized transaction").unwrap();
+    let (_, _, roots) = prepare_level_set_scan(&ws.state).unwrap().unwrap();
+    assert!(roots.package_root().is_some());
+    assert!(ws.legacy().is_dir());
+    assert!(!crate::level_sets::disabled_root(&ws.game).exists());
+    assert_eq!(fs::read(journal).unwrap(), b"unrecognized transaction");
+}

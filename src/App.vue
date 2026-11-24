@@ -14,6 +14,7 @@ import StartupPreflightDialog from './components/StartupPreflightDialog.vue'
 import GameOperationDialog from './components/GameOperationDialog.vue'
 import DependencyNavigationDialog from './components/DependencyNavigationDialog.vue'
 import ChangePlanDialog from './modChanges/ChangePlanDialog.vue'
+import TransactionRecoveryDialog from './modChanges/TransactionRecoveryDialog.vue'
 import { startupPreflightState, useStartupPreflight } from './composables/useStartupPreflight'
 import TutorialOverlay from './components/TutorialOverlay.vue'
 import { acceptLabel } from './dropAccept'
@@ -234,6 +235,7 @@ onMounted(() => {
         <GameOperationDialog />
         <DependencyNavigationDialog />
         <ChangePlanDialog />
+        <TransactionRecoveryDialog />
         <StartupPreflightDialog :state="startupPreflightState" :gate="startupPreflight" />
         <TutorialOverlay v-if="!appUpdateBlocksOperations()" />
       </n-dialog-provider>

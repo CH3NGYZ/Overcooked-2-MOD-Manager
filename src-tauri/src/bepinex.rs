@@ -103,9 +103,14 @@ impl Package {
 /// `BepInEx/plugins/`。只判断目录会把这个空壳当成已安装，界面于是显示
 /// 启用开关和卸载按钮，而开关又会因为找不到加载器直接报错。
 pub(crate) fn installed(game: &Path) -> bool {
+    let core = core_dir(game);
     ["BepInEx.dll", "BepInEx.Core.dll"]
         .iter()
-        .any(|name| game.join("BepInEx/core").join(name).is_file())
+        .any(|name| core.join(name).is_file())
+}
+
+pub(crate) fn core_dir(game: &Path) -> std::path::PathBuf {
+    game.join("BepInEx/core")
 }
 
 pub(crate) fn state(game: &Path, settings: &GameConfig) -> WinhttpState {

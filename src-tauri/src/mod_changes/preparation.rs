@@ -4,8 +4,8 @@ use super::progress::{
     PreparationStage,
 };
 use super::{
-    freshness, guard, inventory, live_game, model::*, mutations, planning, session::*,
-    transaction::*,
+    freshness, guard, inventory, live_game, model::*, mutations, planning, recovery_scope,
+    session::*, transaction::*,
 };
 use crate::{
     app_state::AppState,
@@ -442,6 +442,13 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
     if let Some(batch) = &session.map_payload {
         session.plan.untracked_overwrites.extend(batch.overwrites());
     }
+    let _operation = state
+        .operation
+        .lock()
+        .map_err(|_| "lock.poisoned".to_string())?;
+    let review = recovery_scope::review(state, session, &roots, &changes, None)?;
+    session.plan.recovery_conflicts = review.conflicts;
+    session.plan.recovery_approval = review.approval;
     session.mutations = Some(changes);
     Ok(())
 }
@@ -452,7 +459,8 @@ fn verify_preparation_freshness(
     frozen: Option<&[super::application_progress::OwnedMutation]>,
 ) -> Result<(), String> {
     let _operation = state.operation.lock().map_err(|_| "lock.poisoned")?;
-    let recovered = guard::ensure_recovered(state)?;
+    let recovered = guard::ensure_plannable(state)?;
+    recovery_scope::check_plan_revisions(state, session, None)?;
     let (root, config) = freshness::current_target(state)?;
     let scope = freshness::check_scope(state, session, &root, &config)?;
     if crate::level_sets::recompress::has_pending_recovery(&root) {
@@ -464,7 +472,7 @@ fn verify_preparation_freshness(
 
 pub(crate) fn ensure_fresh(state: &AppState, expected: &str) -> Result<(), String> {
     let _operation = state.operation.lock().map_err(|_| "lock.poisoned")?;
-    guard::ensure_recovered(state)?;
+    guard::ensure_plannable(state)?;
     let (root, config) = freshness::current_target(state)?;
     if inventory::revision(state, &root, &config)? != expected {
         return Err("modChanges.targetChanged".into());

@@ -13,7 +13,7 @@ test('commands root only declares domains; registered IPC points at the real imp
   const handler = read('lib.rs').match(/audited_handler!\s*\[([\s\S]*?)\]/)?.[1]
   assert.ok(handler)
   const paths = [...handler.matchAll(/\bcommands::([a-z_]+)::([a-z_]+)\b/g)]
-  assert.equal(paths.length, 144, '包含地图压缩恢复 IPC')
+  assert.equal(paths.length, 148, '包含地图压缩和整链事务恢复 IPC')
   assert.ok(paths.some(([, domain, name]) => domain === 'logs' && name === 'record_ipc_failure'))
   assert.ok(paths.some(([, domain, name]) => domain === 'logs' && name === 'record_file_drop'))
   assert.ok(paths.some(([, domain, name]) => domain === 'system' && name === 'open_external_page'))
@@ -25,6 +25,7 @@ test('commands root only declares domains; registered IPC points at the real imp
   }
   assert.ok(!paths.some(([, domain, name]) => domain === 'update' && name === 'install_app_update'))
   for (const name of ['evaluate_mod_changes', 'plan_mod_changes', 'prepare_mod_changes', 'execute_mod_changes', 'cancel_mod_changes']) assert.ok(paths.some(([, domain, actual]) => domain === 'mod_changes' && actual === name))
+  for (const name of ['get_mod_change_recoveries', 'pause_mod_change_recovery', 'retry_mod_change_recovery', 'abandon_mod_change_recovery']) assert.ok(paths.some(([, domain, actual]) => domain === 'mod_changes' && actual === name))
   for (const name of ['get_manager_data_directory', 'clear_all_config', 'migrate_manager_data']) assert.ok(paths.some(([, domain, actual]) => domain === 'manager_data' && actual === name))
   for (const name of ['open_diychef_editor', 'migrate_diychef_resources', 'initialize_diychef_config', 'validate_diychef_draft', 'save_diychef_config', 'delete_diychef_resource']) assert.ok(paths.some(([, domain, actual]) => domain === 'diychef_editor' && actual === name))
   for (const name of ['get_diychef_preview', 'read_diychef_preview_asset', 'clear_diychef_cache']) assert.ok(paths.some(([, domain, actual]) => domain === 'diychef_preview' && actual === name))

@@ -48,7 +48,6 @@ pub async fn get_local_mods(
                 .operation
                 .lock()
                 .map_err(|_| "lock.poisoned".to_string())?;
-            crate::mod_changes::guard::ensure_recovered(&state)?;
             if state.config.load_or_default().game != config.game {
                 return Err("diychef.staleScan".into());
             }
@@ -78,7 +77,6 @@ pub async fn get_local_mods(
             .operation
             .lock()
             .map_err(|_| "lock.poisoned".to_string())?;
-        crate::mod_changes::guard::ensure_recovered(&state)?;
         let latest_config = state.config.load_or_default();
         let latest = game::detect_game(&latest_config);
         if latest_config.game != config.game || latest.path.as_deref() != game_info.path.as_deref()

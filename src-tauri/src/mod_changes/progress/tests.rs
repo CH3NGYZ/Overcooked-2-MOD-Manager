@@ -104,6 +104,7 @@ fn session(candidate_id: &str) -> PlanSession {
         request: ChangeRequest::default(),
         wire_request: PlanRequest::default(),
         dependency_policy: Default::default(),
+        recovery_revisions: Default::default(),
         plan: ChangePlan {
             replan_scope: None,
             plan_id: "revised-plan".into(),
@@ -114,6 +115,8 @@ fn session(candidate_id: &str) -> PlanSession {
             retired_mod_copies: Default::default(),
             untracked_overwrites: Vec::new(),
             provider_choices: Vec::new(),
+            recovery_conflicts: Vec::new(),
+            recovery_approval: None,
             install_notes: vec![],
             prepared: false,
             result: SolveResult {

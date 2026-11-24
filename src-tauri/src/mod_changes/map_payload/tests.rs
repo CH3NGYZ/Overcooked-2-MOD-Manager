@@ -281,6 +281,8 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
         retired_mod_copies: Default::default(),
         untracked_overwrites: Vec::new(),
         provider_choices: Vec::new(),
+        recovery_conflicts: Vec::new(),
+        recovery_approval: None,
         install_notes: vec![],
         prepared: false,
     };
@@ -290,6 +292,7 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
         wire_request: PlanRequest::default(),
         dependency_policy: Default::default(),
         plan,
+        recovery_revisions: Default::default(),
         solved: None,
         payloads: HashMap::new(),
         verified_payloads: HashMap::new(),

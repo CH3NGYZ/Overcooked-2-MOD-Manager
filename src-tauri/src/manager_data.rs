@@ -1,5 +1,6 @@
 //! Mutate the selected data root only after every manager process releases it.
 //! A fixed bootstrap lock/journal coordinates reset and migration across roots.
+use crate::app_state::AppState;
 use crate::file_check::log_path;
 use std::fs::File;
 use std::path::Path;
@@ -359,10 +360,7 @@ fn change_and_exit(
             "获取数据写入门禁",
             state.operation.try_lock().map_err(|_| BUSY.to_owned()),
         )?;
-        check_step(
-            "恢复既有安装事务",
-            crate::mod_changes::guard::ensure_recovered(state),
-        )?;
+        check_data_handoff_gate(state)?;
     }
     let mut helper = check_step(
         "等待原生辅助进程就绪",
@@ -373,21 +371,7 @@ fn change_and_exit(
         "交接前重新获取数据写入门禁",
         state.operation.try_lock().map_err(|_| BUSY.to_owned()),
     )?;
-    check_step(
-        "交接前恢复既有安装事务",
-        crate::mod_changes::guard::ensure_recovered(state),
-    )?;
-    if check_step(
-        "检查待恢复安装事务",
-        crate::mod_changes::transaction::has_pending(
-            &paths
-                .root
-                .join(crate::mod_changes::transaction::DIRECTORY_NAME),
-        ),
-    )? {
-        log::warn!("[data] 仍有待恢复的安装事务，未交接：原因=modChanges.recoveryRequired");
-        return Err("modChanges.recoveryRequired".into());
-    }
+    check_data_handoff_gate(state)?;
     compression.restore(state).map_err(|error| {
         log::error!(
             "[data] 地图资源恢复未完成，保留管理器数据：原因={}",
@@ -414,4 +398,19 @@ fn change_and_exit(
     )?;
     log::logger().flush();
     std::process::exit(0)
+}
+
+fn check_data_handoff_gate(state: &AppState) -> Result<(), String> {
+    check_step(
+        "恢复既有安装事务",
+        crate::mod_changes::guard::ensure_recovered(state),
+    )?;
+    let retained = crate::mod_changes::transaction::has_retained_material(
+        &state.config.mod_change_transactions_dir(),
+    )
+    .map_err(|_| "modChanges.recoveryRequired")?;
+    if retained {
+        return Err("modChanges.recoveryRequired".into());
+    }
+    Ok(())
 }

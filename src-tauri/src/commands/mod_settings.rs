@@ -112,7 +112,6 @@ fn resolve_mod_config(
 fn resolve_config_game(state: &AppState) -> Result<(PathBuf, AppConfig), String> {
     let config = {
         let _guard = state.operation.lock().map_err(|_| "lock.poisoned")?;
-        crate::mod_changes::guard::ensure_recovered(state)?;
         state.config.load_or_default()
     };
     let root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);

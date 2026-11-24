@@ -99,6 +99,7 @@ winapi = { version = "0.3", features = [
     "shlobj",
     "securitybaseapi",
     "shtypes",
+    "stringapiset",
     "winbase",
     "winerror",
     "processthreadsapi",

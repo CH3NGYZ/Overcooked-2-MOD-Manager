@@ -244,6 +244,7 @@ fn abandon_keeps_journal_original_backup_stage_and_live_file() {
     abandon(&workspace, &entry, false).unwrap();
     let archived = get(&workspace);
     assert_eq!(archived.state, RecoveryDecisionState::Abandoned);
+    assert!(archived.archived);
     assert!(archived.scope_known);
     assert!(!archived.can_decide);
     assert!(!archived.unknown_scope_acknowledged);
@@ -295,6 +296,8 @@ fn malformed_journal_requires_acknowledgment_bound_to_exact_bytes() {
     fs::write(&journal, b"different broken record").unwrap();
     assert!(has_pending(&workspace.journal_root).unwrap());
     let changed = get(&workspace);
+    assert_eq!(changed.state, RecoveryDecisionState::Abandoned);
+    assert!(!changed.archived && changed.can_decide);
     assert!(!changed.unknown_scope_acknowledged);
     assert!(abandon(&workspace, &paused, true).is_err());
     assert!(retry(&workspace, &changed).is_err());
@@ -302,8 +305,18 @@ fn malformed_journal_requires_acknowledgment_bound_to_exact_bytes() {
         recover_all(&workspace.journal_root, &workspace.roots)
             .unwrap()
             .blocked,
-        [changed.id]
+        [changed.id.clone()]
     );
+    assert_eq!(
+        abandon(&workspace, &changed, false).unwrap_err(),
+        "modChanges.recoveryHighRiskRequired"
+    );
+    abandon(&workspace, &changed, true).unwrap();
+    assert!(get(&workspace).archived);
+    assert!(!has_pending(&workspace.journal_root).unwrap());
+    assert_eq!(fs::read(&journal).unwrap(), b"different broken record");
+    assert_eq!(fs::read(directory.join("before/0")).unwrap(), b"old");
+    assert_eq!(workspace.read("a.dll"), b"new");
 }
 
 #[test]
@@ -328,15 +341,21 @@ fn missing_journal_with_material_requires_high_risk_and_restored_journal_blocks_
     fs::write(&path, &original).unwrap();
     assert!(has_pending(&workspace.journal_root).unwrap());
     let changed = get(&workspace);
-    assert!(!changed.unknown_scope_acknowledged && !changed.scope_known);
+    assert!(!changed.archived && !changed.unknown_scope_acknowledged && changed.scope_known);
+    assert!(changed.can_decide);
+    assert!(retry(&workspace, &changed).is_err());
     assert_eq!(
         recover_all(&workspace.journal_root, &workspace.roots)
             .unwrap()
             .blocked,
-        [changed.id]
+        [changed.id.clone()]
     );
     assert_eq!(fs::read(&path).unwrap(), original);
     assert_eq!(workspace.read("a.dll"), b"new");
+    abandon(&workspace, &changed, false).unwrap();
+    let renewed = get(&workspace);
+    assert!(renewed.archived && renewed.scope_known && !renewed.unknown_scope_acknowledged);
+    assert_eq!(fs::read(&path).unwrap(), original);
 }
 
 #[test]

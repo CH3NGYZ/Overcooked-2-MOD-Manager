@@ -78,6 +78,7 @@ export function useModChangesLifecycle() {
   // In a different context the old actions are not meaningful. During reads
   // in the same context keep the last complete conclusion until replacement.
   watch([levels.contextRevision, demoActive], changes.clearEvaluation, { flush: 'sync' })
+  watch(path, changes.invalidateRecoveryApproval, { flush: 'sync' })
   watch(changes.appliedRevision, () => {
     committed = true
     requestRefresh('mods')

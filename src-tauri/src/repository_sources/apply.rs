@@ -382,9 +382,8 @@ pub(crate) async fn import_repository_source_into_config(
         log::error!("仓库源刷新后保存配置失败：源={}，原因={}", source_id, error);
         error.to_string()
     })?;
-    match crate::mod_changes::transaction::has_pending(&state.config.mod_change_transactions_dir()) {
-        Ok(false) => sync_manifest_groups(&state, &config),
-        Ok(true) => log::info!("源已刷新，保留待恢复事务的安装清单：源={source_id}"),
+    match crate::mod_changes::guard::check_unscoped_write(&state) {
+        Ok(()) => sync_manifest_groups(&state, &config),
         Err(error) => log::warn!(
             "源已刷新，无法确认事务状态，未同步安装清单：源={source_id}，原因={error}"
         ),

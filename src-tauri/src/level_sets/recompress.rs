@@ -107,7 +107,7 @@ impl ExitPause {
         if !recovery::any_pending() {
             return Ok(());
         }
-        crate::mod_changes::guard::ensure_recovered(state)?;
+        crate::mod_changes::guard::check_unscoped_write(state)?;
         let pending_count = recovery::restore_all();
         if pending_count > 0 {
             return Err(format!(
@@ -196,6 +196,14 @@ pub(crate) fn enqueue_installed(
     app: &tauri::AppHandle,
     selected: Option<&[String]>,
 ) {
+    {
+        let Ok(_operation) = state.operation.lock() else {
+            return;
+        };
+        if crate::mod_changes::guard::check_unscoped_write(state).is_err() {
+            return;
+        }
+    }
     let config = state.config.load_or_default();
     let info = crate::game::detect_game(&config);
     if let Some(progress) = set_game_running(info.kitchen_running) {
@@ -462,7 +470,7 @@ fn convert(
     }
     {
         let _guard = state.operation.lock().map_err(|_| "lock.poisoned")?;
-        if crate::mod_changes::guard::ensure_recovered(state).is_err() {
+        if crate::mod_changes::guard::check_unscoped_write(state).is_err() {
             fs::remove_dir_all(&work).map_err(|error| error.to_string())?;
             return Ok(None);
         }

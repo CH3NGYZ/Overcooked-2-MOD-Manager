@@ -24,19 +24,21 @@ pub(crate) use paths::{has_single_link, key as path_key};
 pub(crate) use prepare::prepare;
 pub(super) use prepare::{prepare_for_operation, verify_frozen_targets};
 pub(crate) use recovery::remove_private_tree;
+#[cfg(test)]
+pub(crate) use recovery_control::has_pending;
 pub(crate) use recovery_control::{
-    abandon_recovery, has_pending, has_retained_material, list_recoveries, pause_recovery,
-    recover_all, retry_recovery,
+    abandon_recovery, has_retained_material, list_recoveries, pause_recovery, recover_all,
+    retry_recovery,
 };
 pub(crate) use tree::copy_tree as stage_tree;
 pub(crate) use tree::preserve_replaced_permissions as preserve_replaced_tree_permissions;
-#[cfg(test)]
-pub(crate) use types::JournalState;
 pub(crate) use types::{
     FileChange, Fingerprint, MoveChange, Mutation, RecoveryDecisionState, RecoveryEntry,
-    RecoveryPath, RecoveryPathKind, RecoveryReport, RootKind, StagedFile, StagedTree,
-    TransactionPath, TransactionRoots, TreeChange,
+    RecoveryPathKind, RootKind, StagedFile, StagedTree, TransactionPath, TransactionRoots,
+    TreeChange,
 };
+#[cfg(test)]
+pub(crate) use types::{JournalState, RecoveryPath, RecoveryReport};
 #[cfg(windows)]
 pub(super) use volume::check_write_roots;
 

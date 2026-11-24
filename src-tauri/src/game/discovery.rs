@@ -11,6 +11,10 @@ pub fn detect_game(config: &crate::models::AppConfig) -> GameInfo {
     detect_game_from_settings(&config.game)
 }
 
+pub(crate) fn detect_game_root(config: &GameConfig) -> Option<PathBuf> {
+    find_game_path(config).map(|location| location.game)
+}
+
 pub(crate) fn detect_game_from_settings(config: &crate::models::GameConfig) -> GameInfo {
     log::debug!(
         "开始探测游戏状态：运行方式={:?}，配置路径={:?}",

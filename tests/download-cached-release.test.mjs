@@ -194,6 +194,7 @@ test('the shared workflow commits one planId and the UI never executes individua
   const workflow=readFileSync(new URL('../src/modChanges/workflow.ts',import.meta.url),'utf8')
   const ui=readFileSync(new URL('../src/modChanges/ChangePlanDialog.vue',import.meta.url),'utf8')
   assert.equal([...workflow.matchAll(/backend\.execute\(/g)].length,1)
-  assert.match(workflow,/backend\.execute\(plan\.plan_id\)/)
+  assert.match(workflow,/recoveryApproval \? \[plan\.plan_id, recoveryApproval\] : \[plan\.plan_id\]/)
+  assert.match(workflow,/backend\.execute\(\.\.\.executionArgs\)/)
   assert.doesNotMatch(ui,/installModRepository|confirmModInstall|uninstallLocalMod|importLevelSets/)
 })

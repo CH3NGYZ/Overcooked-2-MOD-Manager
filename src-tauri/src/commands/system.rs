@@ -73,9 +73,14 @@ pub(super) async fn request_user_exit(
         }
         match action {
             ExitAction::Update(update) => {
-                if update != UpdateOnExit::Skip && closing.has_ready()? {
-                    crate::mod_changes::guard::ensure_recovered(&state)?;
-                }
+                let update = if update != UpdateOnExit::Skip && closing.has_ready()? {
+                    update_after_recovery_check(
+                        update,
+                        crate::mod_changes::guard::ensure_recovered(&state),
+                    )?
+                } else {
+                    update
+                };
                 let restart = update == UpdateOnExit::Restart;
                 if let Some(staged) = closing.take_ready(update)?
                     && let Err(error) = staged.handoff(&app, restart)
@@ -102,6 +107,20 @@ fn exit_process(app: &AppHandle) -> ! {
     tauri_plugin_single_instance::destroy(app);
     log::logger().flush();
     std::process::exit(0)
+}
+
+fn update_after_recovery_check(
+    update: UpdateOnExit,
+    recovery: Result<bool, String>,
+) -> Result<UpdateOnExit, String> {
+    match recovery {
+        Err(error) if update == UpdateOnExit::Install => {
+            log::warn!("退出时未应用暂存更新，保留待恢复的整链事务：{error}");
+            Ok(UpdateOnExit::Skip)
+        }
+        Err(error) => Err(error),
+        Ok(_) => Ok(update),
+    }
 }
 
 fn restore_map_compression_for_exit(
@@ -131,12 +150,20 @@ pub struct PermissionStatus {
 
 #[tauri::command]
 pub fn permission_status(state: State<'_, AppState>) -> Result<PermissionStatus, String> {
+    let _operation = state.operation.lock().map_err(|_| "lock.poisoned")?;
     let config = state.config.load_or_default();
     let game_root = game::detect_game(&config).path;
-    let game_writable = game_root
-        .as_deref()
-        .map(|path| probe_writable(&Path::new(path).join("BepInEx").join("plugins")))
-        .unwrap_or(false);
+    let game_writable = crate::mod_changes::guard::check_unscoped_write(&state).is_ok()
+        && game_root.as_deref().is_some_and(|path| {
+            let Ok(target) = game::safe_game_path(Path::new(path), "BepInEx/plugins") else {
+                return false;
+            };
+            target
+                .ancestors()
+                .take(3)
+                .find(|directory| directory.exists())
+                .is_some_and(probe_writable)
+        });
     let data_root = crate::user_paths::root();
     let data_writable = match &data_root {
         Ok(root) => probe_writable(root),
@@ -162,13 +189,14 @@ pub fn permission_status(state: State<'_, AppState>) -> Result<PermissionStatus,
 
 /// 探测目录是否可写：创建并删除一个临时文件，不改动任何既有内容。
 fn probe_writable(dir: &Path) -> bool {
-    if let Err(error) = std::fs::create_dir_all(dir) {
-        log_permission_probe_error("create_directory", dir, &error);
-        return false;
-    }
     let probe = dir.join(format!(".oc2-write-probe-{}", uuid::Uuid::new_v4()));
-    match std::fs::write(&probe, b"") {
-        Ok(()) => {
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
+        Ok(file) => {
+            drop(file);
             if let Err(error) = std::fs::remove_file(&probe) {
                 log_permission_probe_error("remove_probe", &probe, &error);
             }
@@ -203,10 +231,34 @@ mod permission_diagnostics_tests {
             crate::http_diagnostics::capture_test_logs("app_lib::commands::system", needle);
         assert!(!probe_writable(&blocked));
         let messages = capture.messages().join("\n");
-        assert!(messages.contains("stage=create_directory"), "{messages}");
+        assert!(messages.contains("stage=write_probe"), "{messages}");
         assert!(messages.contains("plugins-as-file"), "{messages}");
         assert!(messages.contains("os_code=Some("), "{messages}");
         assert!(!messages.contains("private fixture contents"));
+    }
+}
+
+#[cfg(test)]
+mod exit_tests {
+    use super::*;
+
+    #[test]
+    fn unresolved_chain_skips_update_on_normal_close_but_rejects_immediate_restart() {
+        let blocked = || Err("modChanges.recoveryRequired".to_string());
+        assert!(matches!(
+            update_after_recovery_check(UpdateOnExit::Install, blocked()),
+            Ok(UpdateOnExit::Skip)
+        ));
+        assert_eq!(
+            update_after_recovery_check(UpdateOnExit::Restart, blocked())
+                .err()
+                .as_deref(),
+            Some("modChanges.recoveryRequired")
+        );
+        assert!(matches!(
+            update_after_recovery_check(UpdateOnExit::Install, Ok(true)),
+            Ok(UpdateOnExit::Install)
+        ));
     }
 }
 

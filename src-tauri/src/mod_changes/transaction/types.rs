@@ -167,6 +167,7 @@ fn serialize_display_path<S: serde::Serializer>(
 pub(crate) struct RecoveryEntry {
     pub id: String,
     pub state: RecoveryDecisionState,
+    pub archived: bool,
     pub application_error: Option<String>,
     pub recovery_error: Option<String>,
     pub legacy_error: Option<String>,

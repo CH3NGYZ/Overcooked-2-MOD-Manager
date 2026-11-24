@@ -211,6 +211,24 @@ pub fn run() {
             });
             app.manage(state.clone());
             main_webview::create(app)?;
+            let mut recovery_changes = state.mod_change_recovery_events.subscribe();
+            let mut latest = *recovery_changes.borrow_and_update();
+            let recovery_events = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                while recovery_changes.changed().await.is_ok() {
+                    let current = *recovery_changes.borrow_and_update();
+                    let _ = recovery_events.emit("mod-change-recovery-changed", ());
+                    if current.1 != latest.1 {
+                        let _ = recovery_events.emit("local-mods-changed", ());
+                    }
+                    latest = current;
+                }
+            });
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Ok(_operation) = state.operation.lock() {
+                    let _ = mod_changes::guard::try_automatic(&state);
+                }
+            });
             #[cfg(target_os = "macos")]
             if let Err(error) = app_update::staged::mac_quit::install(app.handle()) {
                 log::warn!("无法为 macOS 应用菜单接入安全退出：{error}");
@@ -267,6 +285,10 @@ pub fn run() {
             commands::mod_changes::prepare_mod_changes,
             commands::mod_changes::execute_mod_changes,
             commands::mod_changes::cancel_mod_changes,
+            commands::mod_changes::get_mod_change_recoveries,
+            commands::mod_changes::pause_mod_change_recovery,
+            commands::mod_changes::retry_mod_change_recovery,
+            commands::mod_changes::abandon_mod_change_recovery,
             commands::dashboard::get_dashboard,
             commands::dashboard::get_local_mods,
             commands::diychef_editor::open_diychef_editor,

@@ -22,7 +22,6 @@ struct RecoveryRecord {
     journal: Option<Journal>,
     validation_error: Option<String>,
     journal_stamp: Option<String>,
-    abandoned: bool,
 }
 
 fn records(transaction_root: &Path) -> Result<Vec<PathBuf>, String> {
@@ -180,14 +179,12 @@ fn inspect(directory: PathBuf, roots: Option<&TransactionRoots>) -> Option<Recov
     {
         validation_error = validate_selected_roots(journal, roots, &journal_path).err();
     }
-    let scope_known = paths_verified
-        && validation_error.is_none()
-        && (state != RecoveryDecisionState::Abandoned || decision_matches);
+    let scope_known = paths_verified && validation_error.is_none();
     let unknown_scope_acknowledged = decision_matches
         && decision
             .as_ref()
             .is_some_and(|value| value.unknown_scope_acknowledged);
-    let abandoned = decision_matches && (scope_known || unknown_scope_acknowledged);
+    let archived = decision_matches && (scope_known || unknown_scope_acknowledged);
     let revision = format!(
         "{:x}",
         Sha256::new()
@@ -203,6 +200,7 @@ fn inspect(directory: PathBuf, roots: Option<&TransactionRoots>) -> Option<Recov
     let entry = RecoveryEntry {
         id: id.clone(),
         state,
+        archived,
         application_error: journal
             .as_ref()
             .and_then(|value| value.application_error.clone()),
@@ -220,7 +218,7 @@ fn inspect(directory: PathBuf, roots: Option<&TransactionRoots>) -> Option<Recov
             .and_then(|value| value.legacy_error.clone()),
         paths: affected,
         scope_known,
-        can_decide: can_decide && !abandoned,
+        can_decide: can_decide && !archived,
         unknown_scope_acknowledged,
         revision,
     };
@@ -230,7 +228,6 @@ fn inspect(directory: PathBuf, roots: Option<&TransactionRoots>) -> Option<Recov
         journal,
         validation_error,
         journal_stamp,
-        abandoned,
     })
 }
 
@@ -266,10 +263,11 @@ pub(crate) fn list_recoveries(
         .collect())
 }
 
+#[cfg(test)]
 pub(crate) fn has_pending(transaction_root: &Path) -> Result<bool, String> {
     Ok(records(transaction_root)?
         .into_iter()
-        .any(|directory| inspect(directory, None).is_some_and(|record| !record.abandoned)))
+        .any(|directory| inspect(directory, None).is_some_and(|record| !record.entry.archived)))
 }
 
 pub(crate) fn has_retained_material(transaction_root: &Path) -> Result<bool, String> {
@@ -351,7 +349,7 @@ pub(crate) fn recover_all(
         let Some(record) = inspect(directory, Some(roots)) else {
             continue;
         };
-        if record.abandoned {
+        if record.entry.archived {
             continue;
         }
         match record.entry.state {

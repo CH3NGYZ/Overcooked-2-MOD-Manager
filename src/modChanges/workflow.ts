@@ -1,4 +1,5 @@
 import { ChangePreparationError, isPackageAction, type ChangeAction, type ChangeBackend, type ChangePlan, type ChangeRequest, type ChangeExecutionResult, type ManifestOverwriteOffer } from './types.ts'
+import { isTransactionRecoveryError } from './transactionRecoveryTypes.ts'
 
 export type ChangePhase = 'planning' | 'confirming' | 'preparing' | 'prepared' | 'reconfirming' | 'executing' | 'failed'
 export interface ChangeWorkflowState {
@@ -17,7 +18,17 @@ export function isChangePlanLocked(phase?: ChangePhase) {
 
 function needsReview(plan: ChangePlan) {
   return plan.status !== 'ready' || plan.blockers.length || plan.notices?.length
-    || plan.untracked_overwrites?.length || Object.values(plan.retired_mod_copies ?? {}).some(copies => copies.length)
+    || plan.untracked_overwrites?.length || needsRecoveryApproval(plan)
+    || Object.values(plan.retired_mod_copies ?? {}).some(copies => copies.length)
+}
+
+export function needsRecoveryApproval(plan?: { recovery_conflicts?: readonly unknown[]; recovery_approval?: string } | null) {
+  return !!(plan?.recovery_conflicts?.length || plan?.recovery_approval)
+}
+
+export function recoveryBlockedPlan(plan?: { status: string; blockers: readonly { code: string; message?: string }[] } | null) {
+  return !!plan && plan.status !== 'ready' && plan.blockers.some(({ code, message }) =>
+    isTransactionRecoveryError(message) || isTransactionRecoveryError(code))
 }
 
 function canApplyToggle(request: ChangeRequest, plan: ChangePlan) {
@@ -159,6 +170,7 @@ export function createChangeWorkflow(backend: ChangeBackend, publish: (state: Ch
       if (plan.status === 'ready' && (isPackageRequest(request) || manifestOverwrite)) {
         await apply(plan, 'package', undefined, requireReview, previous, manifestOverwrite)
       } else if (!requireReview && request.toggle_scope && canApplyToggle(request, plan)) await apply(plan, 'toggle')
+      else if (plan.prepared && needsRecoveryApproval(plan)) update({ phase: 'reconfirming', plan, error: null, applyReview: 'prepared' })
       else update({ phase: 'confirming', plan, error: null })
     } catch (error) {
       if (mine === generation) update({ phase: 'failed', plan: null, error })
@@ -166,7 +178,7 @@ export function createChangeWorkflow(backend: ChangeBackend, publish: (state: Ch
   }
 
   async function apply(plan: ChangePlan, mode?: 'package' | 'toggle', applyReview?: ChangeWorkflowState['applyReview'],
-    requireReview = false, previous?: ChangePlan, manifestOverwrite?: ManifestOverwriteOffer) {
+    requireReview = false, previous?: ChangePlan, manifestOverwrite?: ManifestOverwriteOffer, recoveryApproval?: string) {
     if (plan.status !== 'ready') return
     const mine = generation
     const request = originalRequest!
@@ -194,6 +206,11 @@ export function createChangeWorkflow(backend: ChangeBackend, publish: (state: Ch
         await backend.presentPrepared?.()
         if (mine !== generation) return
       }
+      if (needsRecoveryApproval(prepared) && (!recoveryApproval || recoveryApproval !== prepared.recovery_approval)) {
+        update({ phase: 'reconfirming', plan: prepared, error: null,
+          applyReview: changed || applyReview === 'changed' ? 'changed' : 'prepared', manifestOverwrite })
+        return
+      }
       const routinePackage = !applyReview && mode === 'package' && !requireReview && canApplyPackage(request, prepared, previous)
       if (!applyReview && (manifestOverwrite || (mode === 'package' ? !routinePackage || prepared.install_notes.length
         : changed || hasPackages || prepared.untracked_overwrites?.length))) {
@@ -204,7 +221,8 @@ export function createChangeWorkflow(backend: ChangeBackend, publish: (state: Ch
       }
       ensureOperationsAllowed()
       update({ phase: 'executing', plan, error: null, silent, applyReview })
-      const result = await backend.execute(plan.plan_id)
+      const executionArgs: [planId: string, recoveryApproval?: string] = recoveryApproval ? [plan.plan_id, recoveryApproval] : [plan.plan_id]
+      const result = await backend.execute(...executionArgs)
       if (mine !== generation) return
       if (!result.ok) throw result.message
       finish(result)
@@ -223,8 +241,24 @@ export function createChangeWorkflow(backend: ChangeBackend, publish: (state: Ch
 
   async function confirm() {
     const state = current
-    if (state?.plan && (state.phase === 'confirming' || state.phase === 'reconfirming')) {
+    if (state?.plan && (state.phase === 'confirming' || state.phase === 'reconfirming')
+      && !(state.plan.prepared && needsRecoveryApproval(state.plan))) {
       await apply(state.plan, undefined, state.applyReview, false, undefined, state.manifestOverwrite)
+    }
+  }
+
+  async function confirmRecovery(planId: string, approval: string) {
+    const state = current
+    const plan = state?.plan
+    if (state?.phase !== 'reconfirming' || !state.applyReview || plan?.status !== 'ready' || !plan.prepared
+      || !approval || plan.plan_id !== planId || plan.recovery_approval !== approval) return
+    await apply(plan, undefined, state.applyReview, false, undefined, state.manifestOverwrite, approval)
+  }
+
+  function invalidateRecoveryApproval() {
+    const state = current
+    if ((state?.phase === 'confirming' || state?.phase === 'reconfirming') && needsRecoveryApproval(state.plan)) {
+      update({ phase: 'failed', plan: state.plan, error: 'modChanges.targetChanged' })
     }
   }
 
@@ -238,7 +272,8 @@ export function createChangeWorkflow(backend: ChangeBackend, publish: (state: Ch
 
   /** A failure is replanned and reviewed; it never blindly retries a commit. */
   async function retry() {
-    if (current?.phase !== 'failed' || !originalRequest) return
+    if (!current || !originalRequest || isChangePlanLocked(current.phase)
+      || (current.phase !== 'failed' && !recoveryBlockedPlan(current.plan) && !missingRecoveryApproval(current.plan))) return
     await planRequest(originalRequest, ++generation, current.plan ?? undefined, true)
   }
 
@@ -251,5 +286,9 @@ export function createChangeWorkflow(backend: ChangeBackend, publish: (state: Ch
       ++generation, state.plan ?? undefined, true, offer)
   }
 
-  return { run, confirm, cancel, retry, forceOverwriteManifest }
+  return { run, confirm, confirmRecovery, invalidateRecoveryApproval, cancel, retry, forceOverwriteManifest }
+}
+
+export function missingRecoveryApproval(plan?: { prepared: boolean; recovery_conflicts?: readonly unknown[]; recovery_approval?: string } | null) {
+  return !!(plan?.prepared && needsRecoveryApproval(plan) && !plan.recovery_approval)
 }

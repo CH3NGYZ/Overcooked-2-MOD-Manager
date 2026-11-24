@@ -68,6 +68,7 @@ test('application shows the rollback and exact failed row even when the terminal
     }
     assert.equal(name, 'execute_mod_changes')
     assert.equal(args.planId, 'one')
+    assert.equal(Object.hasOwn(args, 'recoveryApproval'), false)
     return outcome.promise
   }
   const pending = api.executeModChanges('one', value => seen.push(value))
@@ -85,4 +86,25 @@ test('application shows the rollback and exact failed row even when the terminal
   assert.deepEqual(failures.map(({ elapsedMs, ...failure }) => failure), [
     { command: 'execute_mod_changes', rejected: false, tag: 'recycle.payloadModified' },
   ])
+})
+
+test('transaction recovery uses the decision revision and forwards approval only for the chosen plan', async () => {
+  const entries = [{ id: 'record-id', revision: 'current-revision' }], sent = []
+  boundary.invoke = async (name, args) => {
+    sent.push([name, args])
+    return name === 'execute_mod_changes' ? { ok: true, message: '' } : entries
+  }
+  assert.strictEqual(await api.modChangeRecoveries(), entries)
+  for (const method of [api.pauseModChangeRecovery, api.retryModChangeRecovery]) {
+    assert.strictEqual(await method('record-id', 'current-revision'), entries)
+  }
+  assert.strictEqual(await api.abandonModChangeRecovery('record-id', 'current-revision', true), entries)
+  await api.executeModChanges('chosen-plan', () => {}, 'approval-token')
+  assert.deepEqual(sent.slice(0, 4), [
+    ['get_mod_change_recoveries', undefined],
+    ['pause_mod_change_recovery', { transactionId: 'record-id', revision: 'current-revision' }],
+    ['retry_mod_change_recovery', { transactionId: 'record-id', revision: 'current-revision' }],
+    ['abandon_mod_change_recovery', { transactionId: 'record-id', revision: 'current-revision', highRisk: true }],
+  ])
+  assert.deepEqual(sent[4], ['execute_mod_changes', { planId: 'chosen-plan', onUpdate: channels.at(-1), recoveryApproval: 'approval-token' }])
 })

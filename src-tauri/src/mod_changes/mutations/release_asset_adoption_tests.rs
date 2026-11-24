@@ -58,7 +58,7 @@ fn set_old_binding(f: &mut Fixture, id: &str, primary: &str, tag: &str) {
     archive::write_manifest(&f.roots.data_root.join("manifests"), &files.manifests[0]).unwrap();
 }
 
-fn upgrades(web_digest: bool) -> Fixture {
+pub(super) fn upgrades(web_digest: bool) -> Fixture {
     upgrades_with_extra(web_digest, &[])
 }
 
@@ -142,7 +142,7 @@ fn fingerprint(f: &Fixture) -> (Fingerprint, Fingerprint) {
     )
 }
 
-fn freeze_writes(f: &mut Fixture) -> Result<Vec<OwnedMutation>, String> {
+pub(super) fn freeze_writes(f: &mut Fixture) -> Result<Vec<OwnedMutation>, String> {
     f.session.release_target_claims = ReleaseTargetClaims::collect(
         &f.session,
         f.roots.clone(),

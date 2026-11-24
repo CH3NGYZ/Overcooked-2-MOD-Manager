@@ -1,6 +1,6 @@
 use super::loose_files::{LooseFile, exact_replacement};
 use super::manifest_replacement::ManifestReplacement;
-use super::missing_install::MissingInstallRecord;
+use super::missing_install::{MissingInstallRecord, repository_id_is_configured};
 use super::*;
 use crate::mod_changes::progress::PreparationError;
 use crate::mod_changes::session::UntrackedOverwrite;
@@ -198,10 +198,27 @@ impl ReleaseTargetClaims {
 
     pub fn verify_reinstalled_paths(
         &self,
+        state: &AppState,
         roots: &TransactionRoots,
         written: &BTreeMap<String, String>,
     ) -> Result<(), String> {
+        let config = self
+            .missing_records
+            .values()
+            .any(|record| record.retired_id.is_some())
+            .then(|| state.config.load())
+            .transpose()
+            .map_err(|_| "modChanges.targetChanged")?;
         for (owner, record) in &self.missing_records {
+            if let Some(id) = &record.retired_id
+                && (config
+                    .as_ref()
+                    .is_some_and(|config| repository_id_is_configured(config, id))
+                    || Fingerprint::capture(&data(&record.relative).resolve(roots)?)?
+                        != Fingerprint::Missing)
+            {
+                return Err(InstallBlock::VerificationChanged.report(owner, &record.relative));
+            }
             if let Some(relative) = record.unexpected_path(roots, written)? {
                 return Err(InstallBlock::VerificationChanged.report(owner, &relative));
             }
@@ -236,13 +253,23 @@ impl ReleaseTargetClaims {
             let levels = crate::mod_changes::level_trees::selected_bundled_level_root(
                 &node.id, solved, current, payload,
             )?;
-            if let Some(record) =
-                builder.missing_install_record(&node.id, payload, levels.as_deref())?
+            if node.kind == NodeKind::Mod
+                && let Some(recovery) =
+                    builder.missing_install_record(&node.id, payload, levels.as_deref())?
             {
+                let record = recovery.record;
                 if !reserved_records.insert(path_key(Path::new(&record.relative))) {
                     return Err(InstallBlock::InstallRecord
                         .report(&node.id, &record.relative)
                         .into());
+                }
+                for (key, file) in recovery.files {
+                    if !seen.insert(path_key(Path::new(&file.relative))) {
+                        return Err(InstallBlock::PathCollision
+                            .report(&node.id, &file.relative)
+                            .into());
+                    }
+                    result.loose.insert((node.id.clone(), key), file);
                 }
                 result.missing_records.insert(node.id.clone(), record);
             } else if node.kind == NodeKind::Mod

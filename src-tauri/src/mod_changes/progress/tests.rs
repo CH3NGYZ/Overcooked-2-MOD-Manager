@@ -89,6 +89,7 @@ fn session(candidate_id: &str) -> PlanSession {
             inventory: inventory.clone(),
             files: BTreeMap::new(),
             revision: "test".into(),
+            replan_scope: None,
             game_root: PathBuf::new(),
             level_roots: crate::level_sets::LevelSetRoots::new(PathBuf::new(), None),
             config: crate::config::default_config(),
@@ -104,6 +105,7 @@ fn session(candidate_id: &str) -> PlanSession {
         wire_request: PlanRequest::default(),
         dependency_policy: Default::default(),
         plan: ChangePlan {
+            replan_scope: None,
             plan_id: "revised-plan".into(),
             roots: vec![],
             nodes: vec![],

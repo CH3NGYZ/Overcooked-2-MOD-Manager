@@ -6,12 +6,12 @@ import MarkdownBody from '../components/MarkdownBody.vue'
 import { t } from '../i18n'
 import { installNoteKey, type InstallNote } from './planNotes'
 
-const props = defineProps<{ notes: readonly InstallNote[] }>()
-const emit = defineEmits<{ continue: [notes: readonly InstallNote[]]; cancel: [] }>()
+const props = defineProps<{ notes: readonly InstallNote[]; planId: string; applyOnRead: boolean }>()
+const emit = defineEmits<{ continue: [notes: readonly InstallNote[], planId: string, applyOnRead: boolean]; cancel: [] }>()
 const READ_SECONDS = 5
 const remaining = shallowRef(READ_SECONDS)
 
-watch(() => JSON.stringify(props.notes.map(installNoteKey)), (_, __, onCleanup) => {
+watch(() => JSON.stringify([props.planId, props.applyOnRead, props.notes.map(installNoteKey)]), (_, __, onCleanup) => {
   remaining.value = READ_SECONDS
   const deadline = performance.now() + READ_SECONDS * 1000
   const timer = setInterval(() => {
@@ -19,10 +19,10 @@ watch(() => JSON.stringify(props.notes.map(installNoteKey)), (_, __, onCleanup) 
     if (!remaining.value) clearInterval(timer)
   }, 100)
   onCleanup(() => clearInterval(timer))
-}, { immediate: true })
+}, { immediate: true, flush: 'sync' })
 
 function continueReading() {
-  if (remaining.value === 0) emit('continue', props.notes)
+  if (remaining.value === 0) emit('continue', props.notes, props.planId, props.applyOnRead)
 }
 </script>
 
@@ -37,7 +37,7 @@ function continueReading() {
     <template #footer>
       <NButton @click="emit('cancel')">{{ t('common.action.cancel') }}</NButton>
       <NButton type="primary" :disabled="remaining > 0" @click="continueReading">
-        {{ t('dialogs.continueAfterReading') }}{{ remaining ? ` (${remaining})` : '' }}
+        {{ t(applyOnRead ? 'modChanges.readAndApply' : 'dialogs.continueAfterReading') }}{{ remaining ? ` (${remaining})` : '' }}
       </NButton>
     </template>
   </AppModal>

@@ -23,7 +23,7 @@ test('blocked and busy plans cannot confirm; failure can only replan; preparatio
  assert.match(dialog,/@click="changes\.retry"/)
 })
 test('the shared plan dialog alternates between the first-install note and plan confirmation',()=>{
- assert.match(dialog,/<ModInstallNoteDialog v-if="installNotes\.length" :notes="installNotes"\s+@continue="changes\.acceptInstallNotes" @cancel="changes\.cancel"\s*\/>\s*<AppModal v-else/)
+ assert.match(dialog,/<ModInstallNoteDialog v-if="installNotes\.length && plan" :key="plan\.plan_id" :plan-id="plan\.plan_id"\s+:notes="installNotes" :apply-on-read="!!state\?\.noteOnlyReview"\s+@continue="changes\.acceptInstallNotes" @cancel="changes\.cancel"\s*\/>\s*<AppModal v-else/)
  assert.doesNotMatch(dialog,/v-html|setInterval|readingSeconds/)
 })
 test('map selection and manual preview never pre-uninstall or execute individual rows',()=>{

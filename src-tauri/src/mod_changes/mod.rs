@@ -5,6 +5,7 @@ pub(crate) mod candidates;
 pub(crate) mod downloaded_source;
 pub(crate) mod evaluate;
 pub(crate) mod execution;
+mod freshness;
 pub(crate) mod guard;
 mod install_notes;
 pub(crate) mod inventory;

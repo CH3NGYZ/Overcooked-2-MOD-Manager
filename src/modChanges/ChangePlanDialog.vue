@@ -101,7 +101,8 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
 </script>
 
 <template>
-  <ModInstallNoteDialog v-if="installNotes.length" :notes="installNotes"
+  <ModInstallNoteDialog v-if="installNotes.length && plan" :key="plan.plan_id" :plan-id="plan.plan_id"
+    :notes="installNotes" :apply-on-read="!!state?.noteOnlyReview"
     @continue="changes.acceptInstallNotes" @cancel="changes.cancel" />
   <AppModal v-else :key="applyReview ? 'apply-review' : 'prepare-review'"
     :show="!!state && !state.silent" :title="t(applyReview ? 'modChanges.applyTitle' : 'modChanges.title')" :z-index="2599" max-width="90%" max-height="90%"

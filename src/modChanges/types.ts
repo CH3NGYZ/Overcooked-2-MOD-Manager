@@ -88,6 +88,8 @@ export interface RetiredModCopy { member_key: string; label: string; version: st
 export interface ChangeLabel { label: string; name_i18n?: Record<string, string> }
 export interface ChangePlan {
   plan_id: string
+  /** Opaque backend identity for comparing the same request after an inventory change. */
+  replan_scope?: string
   status: 'ready' | 'unsatisfiable' | 'incomplete'
   actions: ChangeAction[]
   evaluations: NodeEvaluation[]
@@ -101,7 +103,7 @@ export interface ChangePlan {
   previous_enabled_members?: Record<string, string[]>
   /** Independently installed older copies removed as part of an approved upgrade. */
   retired_mod_copies?: Record<string, RetiredModCopy[]>
-  /** Existing files without an install record that the prepared plan will replace. */
+  /** Existing files that require overwrite approval in the prepared plan. */
   untracked_overwrites?: { node_id: string; path: string }[]
   install_notes: ChangeInstallNote[]
   prepared: boolean
@@ -169,6 +171,7 @@ export class ChangePreparationError extends Error {
 }
 export interface ChangeBackend {
   plan(request: ChangeRequest): Promise<ChangePlan>
+  operationsBlocked?(): boolean
   prepare(planId: string): Promise<ChangePlan>
   /** Let a visible preparation surface show its terminal state before replacing it. */
   presentPrepared?(): Promise<void> | void

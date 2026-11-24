@@ -6,6 +6,44 @@ use crate::{file_check, file_metadata::FileIdentity};
 use std::{collections::HashSet, fs, path::Path};
 use uuid::Uuid;
 
+pub(in crate::mod_changes) fn verify_frozen_targets<'a>(
+    roots: &TransactionRoots,
+    mutations: impl IntoIterator<Item = &'a Mutation>,
+) -> Result<(), String> {
+    for mutation in mutations {
+        verify_frozen_target(roots, mutation)?;
+    }
+    Ok(())
+}
+
+fn verify_frozen_target(roots: &TransactionRoots, mutation: &Mutation) -> Result<(), String> {
+    match mutation {
+        Mutation::File(change) => super::engine::verify_file_before(
+            &check::resolve(&change.target, roots, check::TARGET)?,
+            &change.expected,
+            change.require_single_link,
+        ),
+        Mutation::Move(change) => {
+            let from = check::resolve(&change.from, roots, check::TARGET)?;
+            let to = check::resolve(&change.to, roots, check::TARGET)?;
+            if change.expected == Fingerprint::Missing {
+                return Err(file_check::report(
+                    check::TARGET,
+                    &from,
+                    file_check::MISSING,
+                ));
+            }
+            check::expect(&from, check::TARGET, &change.expected)?;
+            check::expect(&to, check::TARGET, &Fingerprint::Missing)
+        }
+        Mutation::Tree(change) => check::expect(
+            &check::resolve(&change.target, roots, check::TARGET)?,
+            check::TARGET,
+            &change.expected,
+        ),
+    }
+}
+
 /// Sources must already represent the complete validated download set. Only private staging
 /// is written here; the write-ahead journal is published after all source copies verify.
 pub(crate) fn prepare_for_operation(
@@ -51,14 +89,10 @@ pub(crate) fn prepare_for_operation(
         let mut known_parents = HashSet::new();
         for (index, mutation) in mutations.into_iter().enumerate() {
             let _step = diagnostics::step(index, "prepare_record");
+            verify_frozen_target(roots, &mutation)?;
             let operation = match mutation {
                 Mutation::File(change) => {
                     let target = check::resolve(&change.target, roots, check::TARGET)?;
-                    super::engine::verify_file_before(
-                        &target,
-                        &change.expected,
-                        change.require_single_link,
-                    )?;
                     if matches!(change.expected, Fingerprint::Directory { .. }) {
                         return Err(file_check::report(check::TARGET, &target, file_check::TYPE));
                     }
@@ -158,17 +192,6 @@ pub(crate) fn prepare_for_operation(
                     }
                 }
                 Mutation::Move(change) => {
-                    let from = check::resolve(&change.from, roots, check::TARGET)?;
-                    let to = check::resolve(&change.to, roots, check::TARGET)?;
-                    if change.expected == Fingerprint::Missing {
-                        return Err(file_check::report(
-                            check::TARGET,
-                            &from,
-                            file_check::MISSING,
-                        ));
-                    }
-                    check::expect(&from, check::TARGET, &change.expected)?;
-                    check::expect(&to, check::TARGET, &Fingerprint::Missing)?;
                     collect_missing_parents(&change.to, roots, &mut parents, &mut known_parents)?;
                     RecordedMutation::Move {
                         from: change.from,
@@ -178,7 +201,6 @@ pub(crate) fn prepare_for_operation(
                 }
                 Mutation::Tree(change) => {
                     let target = check::resolve(&change.target, roots, check::TARGET)?;
-                    check::expect(&target, check::TARGET, &change.expected)?;
                     if !matches!(
                         change.expected,
                         Fingerprint::Missing | Fingerprint::Directory { .. }

@@ -134,25 +134,27 @@ for(const staged of [false,true])test(`cancelling the shared map plan ${staged?'
   const value=staged?'https://example.com/map.zip':path
   const f=fixture({staged:{path,staged,sets:[mapItem],origin:null}})
   let state
+  const actions=[{node_id:'map:root',kind:'install'}]
+  const plan={plan_id:'map-plan',status:'ready',actions,blockers:[],install_notes:[],roots:[],impacts:[]}
   const workflow=createChangeWorkflow({
-    async plan(request){f.plans.push(request);return {plan_id:'map-plan',status:'ready'}},
+    async plan(request){f.plans.push(request);return plan},
     async cancel(planId){f.calls.push(['cancelModChanges',planId])},
-    async prepare(){f.calls.push(['unexpectedPrepare'])},
+    async prepare(planId){f.calls.push(['prepareModChanges',planId]);return {...plan,prepared:true}},
     async execute(){f.calls.push(['unexpectedExecute'])},
   },next=>{state=next})
   f.run=workflow.run
   const scope=effectScope(),flow=scope.run(()=>useLevelSetImport());t.after(()=>scope.stop())
   const pending=flow.importSource({kind,value},'routed')
   await tick()
-  assert.equal(state?.phase,'confirming')
+  assert.equal(state?.phase,'reconfirming')
   assert.deepEqual(f.plans,[{roots:[],map_import:{zip_path:path,selected:['Map-A'],origin:null}}])
-  assert.deepEqual(f.calls,[['stageMapSource',kind,value]])
+  assert.deepEqual(f.calls,[['stageMapSource',kind,value],['prepareModChanges','map-plan']])
   await workflow.cancel()
   await pending
   assert.equal(state,null)
   assert.equal(flow.importing.value,false)
   assert.deepEqual(f.notices,[])
-  assert.deepEqual(f.calls,[['stageMapSource',kind,value],['cancelModChanges','map-plan'],
+  assert.deepEqual(f.calls,[['stageMapSource',kind,value],['prepareModChanges','map-plan'],['cancelModChanges','map-plan'],
     ...(staged?[['discardMapSource',path]]:[])])
 })
 

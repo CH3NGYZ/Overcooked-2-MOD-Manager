@@ -33,7 +33,7 @@ registerHooks({
     }
     if (url.endsWith('/src/modChanges/store.ts')) return fake(`export const useModChanges=()=>{const f=globalThis.__changeRender;
       return{state:f.state,preparation:f.preparation,execution:f.execution,canCancelDownload:f.cancelDownload,cancellingDownload:f.cancelling,
-      installNotes:f.installNotes,acceptInstallNotes:()=>f.calls.push('note-read'),
+      installNotes:f.installNotes,acceptInstallNotes:(notes,planId,applyOnRead)=>f.calls.push(['note-read',notes,planId,applyOnRead]),
       confirm:()=>f.calls.push('confirm'),retry:()=>f.calls.push('retry'),cancel:()=>f.calls.push('cancel'),cancelPreparationDownload:()=>f.calls.push('cancel-download')}}`)
     if (url.endsWith('/src/modChanges/useModChangesLifecycle.ts')) return fake('export const useModChangesLifecycle=()=>{}')
     if (url.endsWith('/src/components/AppModal.vue')) return fake(`import{h}from'vue';export default{props:['show','cardClass','maxWidth','maxHeight','fill'],setup:(p,{slots})=>()=>p.show?h('modal',{class:p.cardClass,maxWidth:p.maxWidth,maxHeight:p.maxHeight,fill:p.fill},[h('header',{},slots['header-extra']?.()),slots.default?.(),h('footer',{},slots.footer?.())]):null}`)
@@ -98,6 +98,46 @@ test('first install hides the entire plan while one five-second note window can 
   assert.deepEqual(fixture.calls, [])
   cancel.props.onClick()
   assert.deepEqual(fixture.calls, ['cancel'])
+})
+
+test('read-and-apply reflects its exact plan and restarts the countdown when either changes', async t => {
+  const root = mounted(t)
+  let now = 0
+  const intervals = new Map()
+  t.mock.method(performance, 'now', () => now)
+  t.mock.method(globalThis, 'setInterval', run => {
+    const token = Symbol()
+    intervals.set(token, run)
+    return token
+  })
+  t.mock.method(globalThis, 'clearInterval', token => intervals.delete(token))
+  const notes = [{ id: 'one', name: '前置', text: 'Read this note.' }]
+  const prepared = { ...plan, prepared: true }
+  fixture.installNotes.value = notes
+  fixture.state.value = { phase: 'reconfirming', applyReview: 'prepared', noteOnlyReview: true, plan: prepared, error: null }
+  await nextTick()
+  const button = () => find(root, node => node.tag === 'button')[1]
+  const advance = async milliseconds => {
+    now += milliseconds
+    for (const run of intervals.values()) run()
+    await nextTick()
+  }
+  assert.equal(text(button()), '已读并应用变更 (5)')
+  button().props.onClick()
+  assert.deepEqual(fixture.calls, [])
+  await advance(5000)
+  assert.equal(button().props.disabled, false)
+  fixture.state.value = { ...fixture.state.value, plan: { ...prepared, plan_id: 'fresh' } }
+  await nextTick()
+  assert.equal(button().props.disabled, true)
+  await advance(4500)
+  fixture.installNotes.value = [{ ...notes[0], text: 'New instructions.' }]
+  await nextTick()
+  await advance(500)
+  assert.equal(button().props.disabled, true)
+  await advance(4500)
+  button().props.onClick()
+  assert.deepEqual(fixture.calls, [['note-read', fixture.installNotes.value, 'fresh', true]])
 })
 
 test('the plan table shows live preparation only in the affected row and leaves transfer details to the race overlay', async t => {

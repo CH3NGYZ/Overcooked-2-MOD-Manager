@@ -1,5 +1,6 @@
 import { computed, readonly, shallowReactive, shallowRef } from 'vue'
 import { api } from '../services/tauri'
+import { appUpdateBlocksOperations } from '../appUpdateState'
 import { beginDownloadTask, cancelDownloadTask, endDownloadTask, updateDownloadProgress } from '../downloadTask'
 import { createChangeWorkflow } from './workflow'
 import { setEvaluationSnapshotReader } from './evaluationProjection'
@@ -55,6 +56,7 @@ export function registerEvaluationSubject(subject: EvaluationSubject) {
 
 const workflow = createChangeWorkflow({
   plan: request => api.planModChanges(request),
+  operationsBlocked: appUpdateBlocksOperations,
   presentPrepared,
   prepare: async planId => {
     const sequence = ++preparationSequence
@@ -108,12 +110,16 @@ const workflow = createChangeWorkflow({
   if (value?.phase !== 'preparing') cancellingDownload.value = false
 })
 
-function acceptInstallNotes(notes: readonly InstallNote[]) {
+function acceptInstallNotes(notes: readonly InstallNote[], planId: string, applyOnRead: boolean) {
+  const current = state.value
+  if (!current?.plan || current.plan.plan_id !== planId || !!current.noteOnlyReview !== applyOnRead
+    || applyOnRead && (!current.plan.prepared || current.phase !== 'reconfirming') || appUpdateBlocksOperations()) return
   const pending = installNotes.value
   const read = notes.map(installNoteKey)
   if (!read.length || pending.length !== read.length || pending.some((note, i) => installNoteKey(note) !== read[i])) return
   // Use source and text, since package verification can change the plan ID or release.
   readNotes.value = new Set([...readNotes.value, ...read])
+  if (applyOnRead) return confirm()
 }
 
 async function confirm() {

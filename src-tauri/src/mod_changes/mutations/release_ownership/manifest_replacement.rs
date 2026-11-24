@@ -369,7 +369,7 @@ impl Builder<'_> {
                     &path,
                     parent,
                     registry,
-                    Some(owner),
+                    Some(AllowedClaim::Scanned(owner)),
                     true,
                     Some(owner),
                 )

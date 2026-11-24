@@ -179,6 +179,7 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
         inventory,
         files,
         revision: "fixture".into(),
+        replan_scope: None,
         game_root: game.clone(),
         level_roots: live_roots,
         config,
@@ -268,6 +269,7 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
     )
     .unwrap();
     let plan = ChangePlan {
+        replan_scope: None,
         plan_id: "fixture".into(),
         result: super::super::solve(&trusted.inventory, &ChangeRequest::default()),
         roots: vec![],

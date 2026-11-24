@@ -16,6 +16,8 @@ mod diagnostic_logs;
 mod disable_fallback;
 #[path = "orchestration_tests/duplicate_release_target.rs"]
 mod duplicate_release_target;
+#[path = "orchestration_tests/freshness.rs"]
+mod freshness;
 #[path = "orchestration_tests/install_notes.rs"]
 mod install_notes;
 #[path = "orchestration_tests/installed_relations.rs"]

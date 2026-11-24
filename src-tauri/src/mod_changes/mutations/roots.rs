@@ -14,6 +14,7 @@ pub(in crate::mod_changes) fn final_framework_package(
     let members = inventory
         .nodes
         .iter()
+        .filter(|node| node.kind == NodeKind::Mod && !node.is_registered_map_plugin())
         .filter_map(|node| node.current.as_ref().map(|candidate| (node, candidate)))
         .flat_map(|(node, candidate)| candidate.provides.iter().map(move |member| (node, member)))
         .filter(|(_, member)| {

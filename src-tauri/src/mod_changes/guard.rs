@@ -23,7 +23,7 @@ pub(super) fn ensure_game_stopped(_state: &AppState, game_root: &Path) -> Result
 }
 
 /// Call only while holding AppState.operation. This function never acquires it.
-pub(crate) fn ensure_recovered(state: &AppState) -> Result<(), String> {
+pub(crate) fn ensure_recovered(state: &AppState) -> Result<bool, String> {
     let data_root = state
         .config
         .config_path()
@@ -32,7 +32,7 @@ pub(crate) fn ensure_recovered(state: &AppState) -> Result<(), String> {
         .to_path_buf();
     let transaction_root = data_root.join("mod-change-transactions");
     if !transaction::has_pending(&transaction_root).map_err(|_| REQUIRED.to_string())? {
-        return Ok(());
+        return Ok(false);
     }
     let result = (|| {
         let config = state.config.load_or_default();
@@ -50,7 +50,7 @@ pub(crate) fn ensure_recovered(state: &AppState) -> Result<(), String> {
         if !report.recovered.is_empty() || !report.cleaned.is_empty() {
             state.invalidate_local_mod_snapshot()?;
         }
-        Ok(())
+        Ok(true)
     })();
     result.map_err(|error: String| {
         log::error!("未完成链式事务阻止当前操作，恢复材料已保留：{error}");

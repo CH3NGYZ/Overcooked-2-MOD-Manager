@@ -71,6 +71,8 @@ pub(crate) struct UntrackedOverwrite {
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ChangePlan {
     pub plan_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replan_scope: Option<String>,
     #[serde(flatten)]
     pub result: SolveResult,
     pub roots: Vec<RootSummary>,
@@ -260,6 +262,24 @@ pub(crate) struct PlanSession {
 }
 
 impl PlanSession {
+    pub(super) fn may_replan_inventory(&self) -> bool {
+        let request = &self.wire_request;
+        request.map_import.is_none()
+            && request.toggle_scope.is_none()
+            && !request.bulk_toggle
+            && (request.repair_dependencies_of.is_some()
+                || (!request.roots.is_empty()
+                    && request.roots.iter().all(|root| {
+                        root.intent.enabled
+                            && root.intent.member_key.is_none()
+                            && root
+                                .intent
+                                .candidate_id
+                                .as_deref()
+                                .is_some_and(|id| id.starts_with("release:"))
+                    })))
+    }
+
     pub(super) fn operation_id(&self) -> &str {
         self.staging
             .file_name()
@@ -432,6 +452,7 @@ pub(crate) fn presentation(
         .collect();
     ChangePlan {
         plan_id: id,
+        replan_scope: trusted.replan_scope.clone(),
         relation_labels: relation_labels(trusted, &result),
         result,
         prepared,

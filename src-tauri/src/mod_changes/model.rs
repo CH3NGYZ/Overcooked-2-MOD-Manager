@@ -68,6 +68,10 @@ pub struct ChangeNode {
 }
 
 impl ChangeNode {
+    pub(super) fn is_registered_map_plugin(&self) -> bool {
+        self.id.starts_with("map-dll:")
+    }
+
     pub(super) fn can_repair_dependencies(&self) -> bool {
         self.current.is_some() && (self.enabled || self.kind == NodeKind::Map)
     }

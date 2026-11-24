@@ -3,8 +3,12 @@ use crate::mod_changes::execution;
 use crate::mod_changes::transaction::has_pending;
 use std::path::PathBuf;
 
+#[path = "missing_dll/cross_id.rs"]
+mod cross_id;
 #[path = "missing_dll/relocated.rs"]
 mod relocated;
+#[path = "missing_dll/same_id.rs"]
+mod same_id;
 #[path = "missing_dll/stale_installed.rs"]
 mod stale_installed;
 

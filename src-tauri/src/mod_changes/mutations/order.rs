@@ -28,7 +28,26 @@ pub(super) fn for_apply(
     let mut prerequisites = Vec::new();
     let mut metadata = Vec::new();
     let mut targets = Vec::new();
+    let mut migrated_records = Vec::new();
+    let mut retired_records = Vec::new();
     for owned in mutations {
+        if let Mutation::File(change) = &owned.mutation
+            && change.target.root == RootKind::Data
+            && let Some(record) = owned
+                .items
+                .iter()
+                .find_map(|item| session.release_target_claims.missing_record(&item.node_id))
+            && record.retired_id.is_some()
+        {
+            if change.source.is_some() && change.target == record.replacement {
+                migrated_records.push(owned);
+                continue;
+            }
+            if change.source.is_none() && change.target.relative == record.relative {
+                retired_records.push(owned);
+                continue;
+            }
+        }
         let retires_copy = matches!(&owned.mutation, Mutation::File(change) if change.source.is_none())
             && owned.items.iter().any(|item| {
                 session
@@ -76,5 +95,7 @@ pub(super) fn for_apply(
     // composed old/new tree order, and never split an atomic replacement.
     prerequisites.extend(metadata);
     prerequisites.extend(targets);
+    prerequisites.extend(migrated_records);
+    prerequisites.extend(retired_records);
     prerequisites
 }

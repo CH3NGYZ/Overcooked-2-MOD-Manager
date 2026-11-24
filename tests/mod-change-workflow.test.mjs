@@ -5,8 +5,15 @@ import { createChangeWorkflow } from '../src/modChanges/workflow.ts'
 const plan = (id = 'plan-1', extra = {}) => ({ plan_id: id, status: 'ready', actions: [], evaluations: [],
   blockers: [], impacts: [], roots: [{ node_id: 'mod:owner', label: 'Owner', tag: 'v1' }], nodes: [], install_notes: [], prepared: false, ...extra })
 const request = { roots: [{ node_id: 'mod:owner', candidate_id: 'release:owner:v1', enabled: true }] }
+const manualRequest = { roots: [{ node_id: 'mod:owner', enabled: true }] }
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no }); return { promise, resolve, reject } }
 const tick = () => new Promise(resolve => setImmediate(resolve))
+const rootInstall = { node_id: 'mod:owner', kind: 'install', to_candidate_id: 'release:owner:v1' }
+const dependency = (id, owner, kind = 'install') => ({
+  node_id: id, kind, to_candidate_id: `${id}:candidate`,
+  from_candidate_id: kind === 'install' ? null : `${id}:candidate`,
+  reason_details: [{ kind: 'required_by', related_node_ids: [owner] }],
+})
 function fixture(overrides = {}) {
   const calls = [], states = []
   const backend = {
@@ -20,10 +27,10 @@ function fixture(overrides = {}) {
 }
 
 test('one confirmation still applies a plan whose actions need no package', async () => {
-  const f = fixture(), pending = f.run(request)
+  const f = fixture(), pending = f.run(manualRequest)
   await tick()
   assert.equal(f.state.phase, 'confirming')
-  assert.deepEqual(f.calls, [['plan', request]])
+  assert.deepEqual(f.calls, [['plan', manualRequest]])
   await f.confirm()
   assert.deepEqual(await pending, { ok: true, message: 'modChanges.completed' })
   assert.deepEqual(f.calls.map(call => call[0]), ['plan', 'prepare', 'execute'])
@@ -31,13 +38,191 @@ test('one confirmation still applies a plan whose actions need no package', asyn
   assert.equal(f.state, null)
 })
 
-for (const kind of ['install', 'upgrade', 'downgrade', 'replace']) test(`unchanged ${kind} must show completion and get separate approval to write`, async () => {
-  const presentation = deferred(), actions = [{ node_id: 'mod:owner', kind }]
+test('exact install, upgrade, RAW and ordinary dependency repair apply without review', async () => {
+  const dependencies = [dependency('mod:transitive', 'mod:dependency', 'enable'), dependency('mod:dependency', 'mod:owner')]
+  const raw = { roots: [{ ...request.roots[0], candidate_id: 'raw:owner' }] }
+  for (const [intent, rootActions] of [
+    [request, [rootInstall]],
+    [request, [{ ...rootInstall, kind: 'upgrade', from_candidate_id: 'installed:owner' }]],
+    [raw, [{ ...rootInstall, to_candidate_id: 'raw:owner' }]],
+    [{ repair_dependencies_of: 'mod:owner' }, []],
+  ]) {
+    const f = fixture({ prepare: async () => plan('verified', { prepared: true, actions: [...rootActions, ...dependencies],
+      impacts: ['mod:owner', 'mod:dependency', 'mod:transitive'] }) })
+    assert.equal((await f.run(intent)).ok, true)
+    assert.deepEqual(f.calls, [['plan', intent], ['execute', 'verified']])
+    assert.deepEqual(f.states.filter(Boolean).map(state => state.phase), ['planning', 'preparing', 'prepared', 'executing'])
+  }
+})
+
+test('ordinary repair that is already satisfied executes the backend no-op', async () => {
+  const f = fixture(), intent = { repair_dependencies_of: 'mod:owner' }
+  assert.equal((await f.run(intent)).ok, true)
+  assert.deepEqual(f.calls, [['plan', intent], ['prepare', 'plan-1'], ['execute', 'plan-1']])
+})
+
+test('routine repairs can reach a missing dependency through an unchanged compatible provider', async () => {
+  const final = plan('verified', {
+    prepared: true,
+    actions: [dependency('mod:missing', 'mod:bridge')],
+    evaluations: [{ node_id: 'mod:owner', runtime: [{ state: 'satisfied', relation: { kind: 'requires' }, targets: ['mod:bridge'] }] }],
+    impacts: ['mod:owner', 'mod:missing'],
+  })
+  const f = fixture({ prepare: async () => final })
+  assert.equal((await f.run({ repair_dependencies_of: 'mod:owner' })).ok, true)
+  assert.deepEqual(f.calls.at(-1), ['execute', 'verified'])
+})
+
+test('high-impact and unproven actions get one final review', async () => {
+  const outside = dependency('mod:outside', 'mod:unrelated')
+  for (const extra of [
+    { actions: [rootInstall, { ...dependency('mod:dependency', 'mod:owner'), kind: 'upgrade' }] },
+    { actions: [rootInstall, { node_id: 'mod:dependent', kind: 'disable' }] },
+    { actions: [{ ...rootInstall, to_candidate_id: 'release:owner:v2' }] },
+    { actions: [rootInstall, outside] },
+    { actions: [rootInstall, outside], evaluations: [{ node_id: 'mod:owner', runtime: [
+      { state: 'satisfied', relation: { kind: 'requires' }, targets: ['mod:other', 'mod:unrelated'] },
+    ] }] },
+    { actions: [rootInstall, { ...outside, reason_details: [] }] },
+    { actions: [rootInstall], impacts: ['mod:unexplained'] },
+    { notices: ['modChanges.targetChanged'] },
+    { install_notes: [{ id: 'new-note' }] },
+    { untracked_overwrites: [{ node_id: 'mod:owner', path: 'loose.dll' }] },
+    { retired_mod_copies: { 'mod:owner': [{ member_key: 'old-dll' }] } },
+  ]) {
+    const f = fixture({ prepare: async () => plan('verified', { prepared: true, actions: [rootInstall], ...extra }) })
+    const pending = f.run(request)
+    await tick()
+    assert.equal(f.state.phase, 'reconfirming')
+    assert.equal(f.state.applyReview, 'prepared')
+    assert.deepEqual(f.calls, [['plan', request]])
+    await f.cancel()
+    assert.equal(await pending, null)
+    assert.deepEqual(f.calls.at(-1), ['cancel', 'verified'])
+  }
+})
+
+for (const stalePhase of ['prepare', 'execute']) test(`refreshes typed ${stalePhase} staleness once with the exact original asset`, async () => {
+  const calls = [], ids = ['original', 'replanned'], scope = 'game/source/intent'
+  let plans = 0
+  const submitted = { roots: [{ ...request.roots[0], asset_name: 'exact.zip' }] }
+  const f = fixture({
+    plan: async value => { calls.push(structuredClone(value)); return plan(ids[plans++], { replan_scope: scope }) },
+    prepare: async id => {
+      if (id === ids[0] && stalePhase === 'prepare') throw new Error('modChanges.inventoryChanged')
+      return plan(id, { prepared: true, replan_scope: scope, actions: [rootInstall] })
+    },
+    execute: async id => {
+      calls.push(id)
+      return id === ids[0] && stalePhase === 'execute' ? { ok: false, message: 'modChanges.inventoryChanged' } : { ok: true, message: '' }
+    },
+  })
+  const pending = f.run(submitted)
+  submitted.roots[0].asset_name = 'different.zip'
+  assert.equal((await pending).ok, true)
+  const frozen = { roots: [{ ...request.roots[0], asset_name: 'exact.zip' }] }
+  assert.deepEqual(calls, stalePhase === 'prepare' ? [frozen, frozen, 'replanned'] : [frozen, 'original', frozen, 'replanned'])
+  assert.deepEqual(f.calls, [['cancel', 'original']])
+})
+
+for (const change of ['new-upgrade', 'different-version', 'different-candidate', 'different-files', 'same-upgrade']) {
+  test(`automatic replanning reviews an upgrade only when its installed target changed: ${change}`, async () => {
+    const upgrade = { ...rootInstall, kind: 'upgrade', from_candidate_id: 'installed:owner', from_tag: 'v0.9', to_tag: 'v1' }
+    const beforeAction = change === 'new-upgrade' ? rootInstall : upgrade
+    const afterAction = change === 'different-version' ? { ...upgrade, from_tag: 'v0.8' }
+      : change === 'different-candidate' ? { ...upgrade, from_candidate_id: 'installed:other' } : upgrade
+    const beforePath = 'BepInEx/plugins/Owner/Main.dll'
+    const afterPath = change === 'different-files' ? 'BepInEx/plugins/NewOwner/Main.dll' : beforePath
+    const helperPath = 'BepInEx/plugins/Owner/Helper.dll'
+    const installed = (dll_files) => ({ node_id: 'mod:owner', kind: 'mod', dll_files })
+    const beforeNodes = [installed(change === 'new-upgrade' ? [] : [beforePath, helperPath])]
+    const afterNodes = [installed([helperPath, afterPath])]
+    const tentative = change === 'different-files' ? beforeNodes : afterNodes
+    let plans = 0
+    const f = fixture({
+      plan: async () => ++plans === 1
+        ? plan('original', { replan_scope: 'same', actions: [beforeAction], nodes: beforeNodes })
+        : plan('fresh', { replan_scope: 'same', actions: [afterAction], nodes: tentative }),
+      prepare: async id => {
+        if (id === 'original') throw new Error('modChanges.inventoryChanged')
+        return plan(id, { prepared: true, replan_scope: 'same', actions: [afterAction], nodes: afterNodes })
+      },
+    })
+    const pending = f.run(request)
+    await tick()
+    if (change !== 'same-upgrade') {
+      assert.equal(f.state?.phase, 'reconfirming')
+      assert.equal(f.state.plan.actions[0].kind, 'upgrade')
+      assert.deepEqual(f.calls, [['cancel', 'original']])
+      await f.confirm()
+    }
+    assert.equal((await pending).ok, true)
+    assert.deepEqual(f.calls, [['cancel', 'original'], ['execute', 'fresh']])
+  })
+}
+
+for (const [tag, previous, fresh, refreshes] of [
+  ['modChanges.inventoryChanged', 'same', 'same', true],
+  ['modChanges.inventoryChanged', undefined, 'same', false],
+  ['modChanges.inventoryChanged', 'same', undefined, true],
+  ['modChanges.inventoryChanged', 'old', 'new', true],
+  ['modChanges.targetChanged', 'same', 'same', false],
+  ['modChanges.recoveryRequired', 'same', 'same', false],
+  ['download.cancelled', 'same', 'same', false],
+]) test(`bounded refresh when ${tag} with ${previous} -> ${fresh}`, async () => {
+  let plans = 0, prepares = 0
+  const f = fixture({
+    plan: async () => ++plans === 1 ? plan('original', { replan_scope: previous }) : plan('replanned', { replan_scope: fresh }),
+    prepare: async () => { prepares++; throw new Error(tag) },
+  })
+  const pending = f.run(request)
+  await tick()
+  assert.equal(f.state.phase, 'failed')
+  assert.equal(plans, refreshes ? 2 : 1)
+  assert.equal(prepares, refreshes && previous === fresh ? 2 : 1)
+  assert.equal(f.calls.some(call => call[0] === 'execute'), false)
+  await f.cancel(); assert.equal(await pending, null)
+})
+
+test('auto-replanning cancels the old plan and discards destructive consent', async () => {
+  let plans = 0, executions = 0
+  const f = fixture({
+    plan: async () => plan(++plans === 1 ? 'original' : 'new', { replan_scope: 'same' }),
+    prepare: async id => plan(id, { prepared: true, replan_scope: 'same', actions: [rootInstall],
+      untracked_overwrites: [{ node_id: 'mod:owner', path: id === 'original' ? 'old.dll' : 'new.dll' }] }),
+    execute: async () => ({ ok: ++executions > 1, message: 'modChanges.inventoryChanged' }),
+  })
+  const pending = f.run(request)
+  await tick()
+  await f.confirm()
+  assert.equal(f.state.phase, 'reconfirming')
+  assert.equal(f.state.plan.plan_id, 'new')
+  assert.equal(f.state.plan.untracked_overwrites[0].path, 'new.dll')
+  assert.equal(executions, 1)
+  assert.deepEqual(f.calls, [['cancel', 'original']])
+  await f.confirm()
+  assert.equal((await pending).ok, true)
+})
+
+test('update operation gate prevents package work across preparation', async () => {
+  let blocked = true
+  const f = fixture({ operationsBlocked: () => blocked,
+    prepare: async id => { blocked = true; return plan(id, { prepared: true, actions: [rootInstall] }) } })
+  await assert.rejects(f.run(request), /update.inProgress/)
+  blocked = false
+  const pending = f.run(request)
+  await tick()
+  assert.equal(f.state.phase, 'failed')
+  assert.equal(f.state.error.message, 'update.inProgress')
+  assert.deepEqual(f.calls, [['plan', request]])
+  await f.cancel(); assert.equal(await pending, null)
+})
+
+for (const kind of ['downgrade', 'replace']) test(`exact ${kind} gets one confirmation after preparation`, async () => {
+  const presentation = deferred(), actions = [{ node_id: 'mod:owner', kind, to_candidate_id: request.roots[0].candidate_id }]
   const f = fixture({ plan: async () => plan('same', { actions }),
     prepare: async () => plan('same', { actions, prepared: true }), presentPrepared: () => presentation.promise })
   const pending = f.run(request)
-  await tick()
-  const staging = f.confirm()
   await tick()
   assert.equal(f.state.phase, 'prepared')
   await f.confirm()
@@ -45,7 +230,7 @@ for (const kind of ['install', 'upgrade', 'downgrade', 'replace']) test(`unchang
   assert.equal(f.state.phase, 'prepared')
   assert.deepEqual(f.calls, [])
   presentation.resolve()
-  await staging
+  await tick()
   assert.equal(f.state.phase, 'reconfirming')
   assert.equal(f.state.applyReview, 'prepared')
   assert.equal(f.state.plan.plan_id, 'same')
@@ -63,7 +248,7 @@ test('a prepared local preview or staged ZIP can be cancelled without writing', 
     const actions = [{ node_id, kind: 'replace' }]
     const f = fixture({ plan: async () => plan('unchanged', { actions, prepared: true }) })
     const pending = f.run(request)
-    await tick(); await f.confirm()
+    await tick()
     assert.equal(f.state.phase, 'reconfirming')
     assert(f.states.some(state => state?.phase === 'prepared'))
     assert.deepEqual(f.calls, [])
@@ -72,11 +257,11 @@ test('a prepared local preview or staged ZIP can be cancelled without writing', 
   }
 })
 
-test('changed downloaded content requires a second confirmation of the complete new plan', async () => {
+test('changed downloaded content requires one confirmation of the actual downgrade', async () => {
   const f = fixture({ prepare: async () => plan('verified-2', { prepared: true,
     actions: [{ node_id: 'mod:dependency', kind: 'downgrade', to_tag: 'v2' }] }) })
   const pending = f.run(request)
-  await tick(); await f.confirm()
+  await tick()
   assert.equal(f.state.phase, 'reconfirming')
   assert.equal(f.state.plan.plan_id, 'verified-2')
   assert.equal(f.calls.some(call => call[0] === 'execute'), false)
@@ -260,7 +445,7 @@ test('an old rejected plan cannot replace a newer request after cancellation', a
   const f = fixture({ plan: () => ++count === 1 ? old.promise : Promise.resolve(plan('new')) })
   const pendingOld = f.run(request)
   await f.cancel()
-  const pendingNew = f.run(request)
+  const pendingNew = f.run(manualRequest)
   await tick(); old.reject(new Error('stale')); await pendingOld
   assert.equal(f.state.plan.plan_id, 'new')
   assert.equal(f.state.phase, 'confirming')
@@ -270,20 +455,40 @@ test('an old rejected plan cannot replace a newer request after cancellation', a
 test('retry freezes the initial request, cleans failed preparation and requires a new confirmation', async () => {
   const submitted = { roots: [{ node_id: 'mod:owner', candidate_id: 'v1', enabled: true }] }
   let attempts = 0
-  const f = fixture({ prepare: async id => {
-    if (!attempts++) throw new Error('download.failed')
-    return plan(id, { prepared: true })
-  } })
+  const f = fixture({
+    plan: async value => { f.calls.push(['plan', value]); return plan('planned', { replan_scope: 'same' }) },
+    prepare: async id => {
+      if (!attempts++) throw new Error('download.failed')
+      return plan(id, { prepared: true, replan_scope: 'same' })
+    },
+  })
   const pending = f.run(submitted)
   submitted.roots[0].candidate_id = 'different'
   await tick(); await f.confirm()
   assert.equal(f.state.phase, 'failed')
   await f.retry()
-  assert.equal(f.state.phase, 'confirming')
+  assert.equal(f.state.phase, 'reconfirming')
   assert.deepEqual(f.calls.filter(call => call[0] === 'plan').at(-1)[1], { roots: [{ node_id: 'mod:owner', candidate_id: 'v1', enabled: true }] })
   assert.equal(f.calls.some(call => call[0] === 'execute'), false)
   assert.equal(f.calls.filter(call => call[0] === 'cancel').length, 1)
   await f.confirm(); assert.equal((await pending).ok, true)
+})
+
+test('manual retries cannot rebind a failed request to a changed target scope', async () => {
+  let plans = 0
+  const f = fixture({
+    plan: async value => { f.calls.push(['plan', value]); return plans++ === 0
+      ? plan('original', { replan_scope: 'game-a' }) : plan('other', { replan_scope: 'game-b' }) },
+    prepare: async id => { f.calls.push(['prepare', id]); throw new Error('download.failed') },
+  })
+  const pending = f.run(request)
+  await tick()
+  await f.retry(); await f.retry(); await f.confirm()
+  assert.equal(f.state.phase, 'failed')
+  assert.equal(f.state.error, 'modChanges.targetChanged')
+  assert.deepEqual(f.calls, [['plan', request], ['prepare', 'original'], ['cancel', 'original'],
+    ['plan', request], ['cancel', 'other'], ['plan', request], ['cancel', 'other']])
+  await f.cancel(); assert.equal(await pending, null)
 })
 
 test('cancelling a replan rejects its late progress and plan, without reviving the dialog', async () => {

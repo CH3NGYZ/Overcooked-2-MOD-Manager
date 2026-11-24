@@ -9,6 +9,8 @@ use std::{collections::HashMap, time::Instant};
 mod bundled_maps_tests;
 #[path = "bundled_members_tests.rs"]
 mod bundled_members_tests;
+#[path = "framework_origin_tests.rs"]
+mod framework_origin_tests;
 #[path = "physical_tests.rs"]
 mod physical_tests;
 #[path = "release_asset_adoption_tests.rs"]
@@ -59,6 +61,7 @@ fn fixture() -> Fixture {
         inventory: inventory.clone(),
         files: BTreeMap::new(),
         revision: "fixture".into(),
+        replan_scope: None,
         game_root: game_root.clone(),
         level_roots: crate::level_sets::LevelSetRoots::new(game_root.clone(), None),
         config: crate::config::default_config(),
@@ -76,6 +79,7 @@ fn fixture() -> Fixture {
         wire_request: PlanRequest::default(),
         dependency_policy: Default::default(),
         plan: ChangePlan {
+            replan_scope: None,
             plan_id: "fixture".into(),
             result: SolveResult {
                 status: SolveStatus::Ready,

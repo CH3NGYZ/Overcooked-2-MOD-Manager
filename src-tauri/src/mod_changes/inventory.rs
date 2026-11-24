@@ -2,11 +2,12 @@
 use super::{install_notes::ManagedMods, model::*};
 use crate::{app_state::AppState, archive, game, level_sets, models::*, mods};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 mod declared_bundles;
@@ -97,6 +98,7 @@ pub(crate) struct TrustedInventory {
     pub inventory: Inventory,
     pub files: BTreeMap<String, NodeFiles>,
     pub revision: String,
+    pub(super) replan_scope: Option<String>,
     pub game_root: PathBuf,
     pub level_roots: level_sets::LevelSetRoots,
     pub config: AppConfig,
@@ -128,20 +130,46 @@ pub(crate) fn key(path: &str) -> String {
     }
 }
 
-/// A cheap freshness stamp, including external edits. Content hashes are checked by
-/// the persistent transaction before writes; scanning a huge map tree never reads models.
+pub(super) fn replan_scope(
+    state: &AppState,
+    root: &Path,
+    config: &AppConfig,
+) -> Result<String, String> {
+    static KEY: OnceLock<uuid::Uuid> = OnceLock::new();
+    let selection = state.config.data_selection();
+    if selection.0 != config.data_provider {
+        return Err("modChanges.targetChanged".into());
+    }
+    let mut hash = Sha256::new();
+    hash.update(KEY.get_or_init(uuid::Uuid::new_v4).as_bytes());
+    hash.update(selection.1.to_le_bytes());
+    for path in [root, state.config.config_path().as_path()] {
+        let bytes = path.as_os_str().as_encoded_bytes();
+        hash.update((bytes.len() as u64).to_le_bytes());
+        hash.update(bytes);
+    }
+    hash.update(
+        serde_json::to_vec(&(config, config.data_provider))
+            .map_err(|_| "modChanges.targetChanged")?,
+    );
+    Ok(format!("{:x}", hash.finalize()))
+}
+
 pub(crate) fn revision(
     state: &AppState,
     root: &Path,
     config: &AppConfig,
 ) -> Result<String, String> {
+    revision_for_scope(state, root, &replan_scope(state, root, config)?)
+}
+
+pub(super) fn revision_for_scope(
+    state: &AppState,
+    root: &Path,
+    scope: &str,
+) -> Result<String, String> {
     let mut hash = std::collections::hash_map::DefaultHasher::new();
-    serde_json::to_vec(config)
-        .map_err(|e| e.to_string())?
-        .hash(&mut hash);
-    root.hash(&mut hash);
-    // Reselecting/reloading the same provider still revokes old source snapshots.
-    state.config.data_selection().1.hash(&mut hash);
+    scope.hash(&mut hash);
     for directory in [
         root.join("BepInEx/plugins"),
         level_sets::disabled_root(root),
@@ -305,7 +333,8 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
     let config = state.config.load_or_default();
     let detected = game::detect_game(&config).path.ok_or("game.notFound")?;
     let game_root = game::resolve_existing_ancestor(Path::new(&detected))?;
-    let stamp = revision(state, &game_root, &config)?;
+    let scope = replan_scope(state, &game_root, &config)?;
+    let stamp = revision_for_scope(state, &game_root, &scope)?;
     let installed =
         mods::scan_mods_with_manifests(&game_root, &config, Some(&state.config.manifests_dir()));
     let managed_mods = ManagedMods::from_scan(&installed);
@@ -575,6 +604,7 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
         inventory,
         files,
         revision: stamp,
+        replan_scope: Some(scope),
         game_root,
         level_roots,
         config,

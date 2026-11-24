@@ -3,13 +3,13 @@ use super::{
     application_progress::{
         ChangeApplicationOutcome, ChangeApplicationProgress, ItemKey, Recorder,
     },
-    guard, inventory, live_game,
+    freshness, guard, inventory, live_game,
     model::{ActionKind, NodeKind, SolveStatus},
     mutations, preparation,
     session::*,
     transaction::*,
 };
-use crate::{app_state::AppState, game, models::OperationResult, mods};
+use crate::{app_state::AppState, models::OperationResult, mods};
 use std::{fs, path::Path};
 use tauri::{AppHandle, Emitter};
 
@@ -112,27 +112,19 @@ fn commit_inner(
     }
     *step = "lock_and_recovery";
     let _operation = state.operation.lock().map_err(|_| "lock.poisoned")?;
-    let config = state.config.load_or_default();
-    let detected = game::detect_game(&config).path.ok_or("game.notFound")?;
-    let root = game::resolve_existing_ancestor(Path::new(&detected))?;
+    let recovered = guard::ensure_recovered(state)?;
+    let (root, config) = freshness::current_target(state)?;
     if crate::level_sets::recompress::has_pending_recovery(&root) {
         return Err("modChanges.recoveryRequired".into());
     }
-    guard::ensure_recovered(state)?;
     *step = "verify_game_root";
     let solved = session.solved.as_ref().ok_or("modChanges.notPrepared")?;
-    if root != session.trusted.game_root {
-        return Err("modChanges.targetChanged".into());
-    }
+    let scope = freshness::check_scope(state, session, &root, &config)?;
     *step = "verify_release_claims";
     if !session.release_target_claims.is_empty() {
         session
             .release_target_claims
             .verify(state, session, solved)?;
-    }
-    *step = "verify_installed_revision";
-    if inventory::revision(state, &root, &config)? != session.trusted.revision {
-        return Err("modChanges.targetChanged".into());
     }
     *step = "verify_frozen_payloads";
     preparation::verify_fingerprints(&session.payload_fingerprints)?;
@@ -171,6 +163,15 @@ fn commit_inner(
         Ok(())
     };
     check_game()?;
+    *step = "verify_installed_revision";
+    freshness::check_revision(
+        state,
+        session,
+        &root,
+        &scope,
+        recovered,
+        session.mutations.as_deref(),
+    )?;
     *step = "consume_approval";
     let changes = session.mutations.take().ok_or("modChanges.notPrepared")?;
     // Consuming frozen mutations consumes approval, including prepare failures.
@@ -235,7 +236,14 @@ fn commit_inner(
                 .as_ref()
                 .is_some_and(|batch| batch.has_claims())
                 || !session.release_target_claims.is_empty())
-                && inventory::revision(state, &root, &config)? != session.trusted.revision
+                && inventory::revision(
+                    state,
+                    &root,
+                    &state
+                        .config
+                        .load()
+                        .map_err(|_| "modChanges.targetChanged")?,
+                )? != session.trusted.revision
             {
                 return Err("modChanges.targetChanged".into());
             }
@@ -261,7 +269,7 @@ fn commit_inner(
                 }
                 session
                     .release_target_claims
-                    .verify_reinstalled_paths(&roots, &written)?;
+                    .verify_reinstalled_paths(state, &roots, &written)?;
                 transaction_stage.set("persist_commit");
                 Ok(())
             },

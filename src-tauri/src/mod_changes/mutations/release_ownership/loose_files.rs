@@ -10,6 +10,12 @@ pub(in crate::mod_changes::mutations) struct LooseFile {
     pub(super) changes_content: bool,
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum AllowedClaim<'a> {
+    Scanned(&'a str),
+    Recorded { manifest: &'a str, file: &'a str },
+}
+
 pub(super) fn exact_replacement(
     node: &ChangeNode,
     chosen: &Candidate,
@@ -58,6 +64,42 @@ impl Builder<'_> {
             .trusted
             .duplicate_releases
             .copies_for(&node.id, &current.id);
+        let scoped_release =
+            current.tag.is_some() && !current.raw && payload.candidate.source_id.is_some();
+        if scoped_release
+            && let Some(prior) = old.manifests.iter().find(|prior| {
+                let explicitly_retired = retirement.is_some_and(|copies| {
+                    copies
+                        .iter()
+                        .any(|copy| copy.manifest_id.as_ref() == Some(&prior.repository_id))
+                });
+                let rewritten = payload
+                    .manifest
+                    .as_ref()
+                    .is_some_and(|manifest| manifest.repository_id == prior.repository_id);
+                Some(&prior.repository_id) != payload.candidate.source_id.as_ref()
+                    && !(prior.is_manual() && prior.repository_binding.is_none())
+                    && (!explicitly_retired || rewritten)
+            })
+        {
+            let target = prior
+                .files
+                .iter()
+                .find(|file| mods::file_state::is_mod_file(Path::new(file)))
+                .map(|file| mods::canonical_dll_name(file))
+                .unwrap_or_else(|| records::install_record_path(&prior.repository_id).relative);
+            self.diagnose_record_claim(
+                &node.id,
+                &target,
+                None,
+                "cross_id_reinstall_scanned_owner",
+                self.records.records_for_id(&prior.repository_id),
+            );
+            return Err(ReleaseTargetError::ForeignManifest {
+                owner: node.id.clone(),
+                message: InstallBlock::InstallRecord.report(&node.id, &target),
+            });
+        }
         let package = std::cell::OnceCell::new();
         let registry = std::cell::OnceCell::new();
         for source in &payload.files {
@@ -68,15 +110,12 @@ impl Builder<'_> {
             let canonical = mods::canonical_dll_name(source);
             let key = inventory::key(&canonical);
             let is_dll = canonical.to_ascii_lowercase().ends_with(".dll");
-            let scoped_release =
-                current.tag.is_some() && !current.raw && payload.candidate.source_id.is_some();
             if !is_dll && !scoped_release {
                 continue;
             }
-            if result
-                .missing_record(&node.id)
-                .is_some_and(|record| record.owns_previous_path(&key))
-            {
+            if result.missing_record(&node.id).is_some_and(|record| {
+                record.owns_previous_path(&key) || result.get(&node.id, &key).is_some()
+            }) {
                 continue;
             }
             // Existing manifest writes and explicitly retired copies already
@@ -218,7 +257,10 @@ impl Builder<'_> {
                 }
                 None
             };
-            let scan_owner = loose_node.as_deref().or(own.then_some(node.id.as_str()));
+            let scan_owner = loose_node
+                .as_deref()
+                .or(own.then_some(node.id.as_str()))
+                .map(AllowedClaim::Scanned);
             self.ensure_loose_path_unclaimed(
                 &physical,
                 scope.directory,
@@ -246,7 +288,7 @@ impl Builder<'_> {
         relative: &str,
         directory: &str,
         registered: &[crate::level_sets::RegisteredLevelSetPlugin],
-        scan_owner: Option<&str>,
+        allowed: Option<AllowedClaim<'_>>,
         standalone: bool,
         requester: Option<&str>,
     ) -> Result<(), InstallBlock> {
@@ -270,6 +312,10 @@ impl Builder<'_> {
         let claims = self
             .records
             .claimed_files()
+            .filter(|(file, record)| {
+                !matches!(allowed, Some(AllowedClaim::Recorded { manifest, file: previous })
+                    if manifest == record.relative && previous == *file)
+            })
             .map(|(file, record)| (file, InstallBlock::InstallRecord, Some(record)))
             .chain(
                 registered
@@ -281,7 +327,10 @@ impl Builder<'_> {
                 node.summary
                     .members
                     .iter()
-                    .filter(move |member| Some(id.as_str()) != scan_owner || member.key != *key)
+                    .filter(move |member| {
+                        !matches!(allowed, Some(AllowedClaim::Scanned(owner))
+                            if owner == id && member.key == *key)
+                    })
                     .map(|m| (m.dll_file.as_str(), InstallBlock::PathOwned, None))
             }));
         self.ensure_physically_unclaimed(relative, &real_path, claims, requester)

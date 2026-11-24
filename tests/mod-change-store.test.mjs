@@ -6,6 +6,7 @@ registerHooks({resolve(specifier,context,next){if(specifier.startsWith('.')&&!/\
 const {useModChanges,registerEvaluationSubject}=await import('../src/modChanges/store.ts')
 const {changeStatusKey}=await import('../src/modChanges/presentation.ts')
 const {downloadTaskState,updateDownloadProgress}=await import('../src/downloadTask.ts')
+const {setCheckingUpdateRecovery}=await import('../src/appUpdateState.ts')
 const {backendMessageOf}=await import('../src/locale/backend.ts')
 const {i18n}=await import('../src/locale/index.ts')
 const tick=()=>new Promise(resolve=>setImmediate(resolve)),deferred=()=>{let resolve;const promise=new Promise(yes=>resolve=yes);return{promise,resolve}}
@@ -56,6 +57,7 @@ test('a map scan publishing just after the evaluation loop exits cannot lose its
 
 const plan=(id='initial',prepared=false,install_notes=[])=>({plan_id:id,prepared,status:'ready',nodes:[],roots:[],actions:[],evaluations:[],blockers:[],impacts:[],install_notes})
 const note={id:'github-beta',name:'Arcade Beta',name_i18n:{},note:'Read the beta instructions.',note_i18n:{}}
+const readCurrentNotes=(store)=>store.acceptInstallNotes(store.installNotes.value,store.state.value.plan.plan_id,!!store.state.value.noteOnlyReview)
 
 test('pending plan and its first-install note both block preparation until explicit approval',async()=>{
  const planned=deferred(),calls=[]
@@ -64,9 +66,9 @@ test('pending plan and its first-install note both block preparation until expli
  await store.confirm();assert.deepEqual(calls,[['planModChanges',request]])
  planned.resolve(plan('initial',false,[note]));await tick()
  assert.deepEqual(store.installNotes.value,[{id:note.id,name:note.name,text:note.note}])
- store.acceptInstallNotes([{id:note.id,name:note.name,text:'Stale text'}]);await store.confirm()
+ store.acceptInstallNotes([{id:note.id,name:note.name,text:'Stale text'}],'initial',false);await store.confirm()
  assert.deepEqual(calls,[['planModChanges',request]])
- store.acceptInstallNotes(store.installNotes.value);assert.deepEqual(store.installNotes.value,[])
+ readCurrentNotes(store);assert.deepEqual(store.installNotes.value,[])
  assert.deepEqual(calls,[['planModChanges',request]],'continuing opens review; it never prepares or applies')
  await store.cancel();assert.equal(await pending,null);assert.deepEqual(calls.at(-1),['cancelModChanges','initial'])
  const again=store.run(request);await tick();assert.equal(store.installNotes.value.length,1,'cancelled plan does not mark future installs as read')
@@ -83,15 +85,93 @@ for(const revised of [note,{...note,note:'Instructions changed.'}])test(`reconfi
    return snapshot('done')
  }
  const store=useModChanges(),pending=store.run({roots:[{node_id:'mod:root',enabled:true}]});await tick()
- store.acceptInstallNotes(store.installNotes.value);await store.confirm()
+ readCurrentNotes(store);await store.confirm()
  assert.equal(store.state.value.phase,'reconfirming');assert.deepEqual(calls,['planModChanges','prepareModChanges'])
  if(revised!==note){
    assert.equal(store.installNotes.value[0].text,revised.note)
    await store.confirm();assert.deepEqual(calls,['planModChanges','prepareModChanges'])
-   store.acceptInstallNotes(store.installNotes.value)
+   readCurrentNotes(store)
  }else assert.deepEqual(store.installNotes.value,[])
  await store.confirm();assert.equal((await pending).ok,true)
  assert.equal(calls.filter(name=>name==='executeModChanges').length,1)
+})
+
+test('exact note-only acknowledgment applies once and stale consent never applies a revised plan',async t=>{
+ const calls=[];let plans=0,executions=0
+ const revised={...note,note:'Instructions after the inventory refresh.'}
+ const scopedPlan=(id,prepared,notes)=>({...plan(id,prepared,notes),replan_scope:'same',roots:[{node_id:'mod:root'}],
+   actions:[{node_id:'mod:root',kind:'install',to_candidate_id:'release:root:v1'}]})
+ globalThis.__changeStoreApi=async(name,args)=>{
+   calls.push(name)
+   if(name==='planModChanges')return scopedPlan(++plans===1?'first':'fresh',false,[])
+   if(name==='prepareModChanges')return scopedPlan(args[0],true,[args[0]==='first'?note:revised])
+   if(name==='executeModChanges')return {ok:++executions===2,message:'modChanges.inventoryChanged'}
+ }
+ const store=useModChanges(),pending=store.run({roots:[{node_id:'mod:root',candidate_id:'release:root:v1',enabled:true}]})
+ await tick()
+ assert.equal(store.state.value.phase,'reconfirming')
+ assert.equal(store.state.value.noteOnlyReview,true)
+ assert.equal(store.installNotes.value[0].text,note.note)
+ const stale=store.installNotes.value
+ await store.confirm();assert.equal(executions,0)
+ await store.acceptInstallNotes(stale,'old-plan',true)
+ await store.acceptInstallNotes(stale,'first',false)
+ assert.equal(executions,0)
+ t.after(()=>setCheckingUpdateRecovery(false))
+ setCheckingUpdateRecovery(true)
+ await readCurrentNotes(store)
+ assert.equal(executions,0)
+ assert.equal(store.installNotes.value.length,1)
+ setCheckingUpdateRecovery(false)
+ await readCurrentNotes(store)
+ assert.equal(executions,1)
+ assert.deepEqual(calls,['planModChanges','prepareModChanges','executeModChanges','cancelModChanges','planModChanges','prepareModChanges'])
+ assert.equal(store.installNotes.value[0].text,revised.note)
+ assert.equal(store.state.value.noteOnlyReview,false)
+ await store.confirm();assert.equal(executions,1)
+ await store.acceptInstallNotes(store.installNotes.value,'first',false)
+ await store.acceptInstallNotes(stale,'fresh',false)
+ await store.acceptInstallNotes(store.installNotes.value,'fresh',true)
+ await store.confirm();assert.equal(executions,1)
+ await readCurrentNotes(store);assert.equal(executions,1)
+ await store.confirm()
+ assert.equal((await pending).ok,true)
+})
+
+test('notes alone can apply a routine repair but map, local, overwrites and manual retry still require approval',async()=>{
+ const exact={roots:[{node_id:'mod:root',candidate_id:'release:root:v1',enabled:true}]}
+ const repair={repair_dependencies_of:'mod:root'}
+ const local={roots:[{node_id:'preview:z',enabled:true}]}
+ const map={roots:[],map_import:{zip_path:'map.zip',selected:['map']}}
+ for(const {request,separate,overwrite,retry} of [
+   {request:repair,separate:false}, {request:local,separate:true}, {request:map,separate:true},
+   {request:exact,separate:true,overwrite:true}, {request:exact,separate:true,retry:true},
+ ]){
+   let executions=0,preparations=0
+   const nodeId=request.repair_dependencies_of??request.roots[0]?.node_id??'map:root'
+   const actions=request===repair
+     ? [{node_id:'mod:dep',kind:'install',to_candidate_id:'release:dep:v1',reason_details:[{kind:'required_by',related_node_ids:[nodeId]}]}]
+     : [{node_id:nodeId,kind:'install',to_candidate_id:request.roots[0]?.candidate_id}]
+   const selected={...plan('selected',false,[note]),roots:[{node_id:nodeId}],actions,
+     ...(overwrite?{untracked_overwrites:[{node_id:nodeId,path:'loose.dll'}]}:{})}
+   globalThis.__changeStoreApi=async(name)=>{
+     if(name==='planModChanges')return selected
+     if(name==='prepareModChanges'){
+       if(++preparations===1&&retry)throw new Error('download.failed')
+       return {...selected,prepared:true}
+     }
+     if(name==='executeModChanges'){executions++;return {ok:true,message:''}}
+   }
+   const store=useModChanges(),pending=store.run(request);await tick()
+   if(retry){assert.equal(store.state.value.phase,'failed');await store.retry()}
+   assert.equal(store.state.value.phase,'reconfirming')
+   assert.equal(store.state.value.noteOnlyReview,!separate)
+   await readCurrentNotes(store)
+   assert.equal(executions,separate?0:1)
+   if(separate)await store.confirm()
+   assert.equal((await pending).ok,true)
+   assert.equal(executions,1)
+ }
 })
 
 test('chain preparation feeds the shared race overlay from isolated IPC and a revised plan still needs confirmation',async()=>{
@@ -139,8 +219,6 @@ test('a map ZIP rejected as game.running during preparation never applies and ca
  }
  const revision=store.appliedRevision.value
  const pending=store.run(request);await tick()
- assert.equal(store.state.value.phase,'confirming')
- await store.confirm()
  assert.equal(store.state.value.phase,'failed')
  assert.equal(backendMessageOf(store.state.value.error),'《胡闹厨房2》正在运行，请先关闭后重试')
  await store.confirm()
@@ -148,9 +226,9 @@ test('a map ZIP rejected as game.running during preparation never applies and ca
  assert.equal(store.appliedRevision.value,revision)
  assert.equal(downloadTaskState.failure,null)
  await store.retry()
- assert.equal(store.state.value.phase,'confirming')
- assert.equal(store.state.value.error,null)
- assert.deepEqual(calls.slice(2),[['cancelModChanges','initial'],['planModChanges',request]])
+ assert.equal(store.state.value.phase,'failed')
+ assert.equal(backendMessageOf(store.state.value.error),'《胡闹厨房2》正在运行，请先关闭后重试')
+ assert.deepEqual(calls.slice(2),[['cancelModChanges','initial'],['planModChanges',request],['prepareModChanges','initial']])
  await store.cancel();assert.equal(await pending,null)
 })
 

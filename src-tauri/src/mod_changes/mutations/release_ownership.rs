@@ -60,6 +60,7 @@ impl Builder<'_> {
             .inventory
             .nodes
             .iter()
+            .filter(|node| node.kind == NodeKind::Mod)
             .filter_map(|node| node.current.as_ref().map(|current| (node, current)))
             .flat_map(|(node, current)| current.provides.iter().map(move |member| (node, member)))
             .filter(|(_, member)| same_guid(&member.guid, &incoming.guid));
@@ -78,7 +79,7 @@ impl Builder<'_> {
             &physical,
             parent,
             &registry,
-            Some(owner),
+            Some(AllowedClaim::Scanned(owner)),
             true,
             Some(owner),
         )
@@ -100,6 +101,7 @@ mod missing_install;
 mod search;
 pub(in crate::mod_changes) use claims::ReleaseTargetClaims;
 pub(in crate::mod_changes) use endpoints::verify_missing_dll_variant;
+use loose_files::AllowedClaim;
 pub(in crate::mod_changes) use search::LooseReleaseSearch;
 
 struct ReleaseCore<'repo, 'payload> {
@@ -378,6 +380,7 @@ impl Builder<'_> {
             .inventory
             .nodes
             .iter()
+            .filter(|node| node.kind == NodeKind::Mod)
             .flat_map(|node| {
                 node.current
                     .iter()

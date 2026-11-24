@@ -4,11 +4,12 @@ use super::progress::{
     PreparationStage,
 };
 use super::{
-    guard, inventory, live_game, model::*, mutations, planning, session::*, transaction::*,
+    freshness, guard, inventory, live_game, model::*, mutations, planning, session::*,
+    transaction::*,
 };
 use crate::{
     app_state::AppState,
-    archive, game,
+    archive,
     mods::repository_download::{RepositoryDownloadRequest, download_repository_asset},
 };
 use std::collections::HashMap;
@@ -70,15 +71,17 @@ async fn prepare_session(
     let initial_actions = session.plan.result.actions.len();
     // Freeze and recheck existing payloads before extending the plan.
     let fresh_state = state.clone();
-    let revision = session.trusted.revision.clone();
-    let fingerprints = session.payload_fingerprints.clone();
     *step = "verify_initial_revision_and_payloads";
-    tauri::async_runtime::spawn_blocking(move || {
-        ensure_fresh(&fresh_state, &revision)?;
-        verify_fingerprints(&fingerprints)
+    let session = lease.session.take().ok_or("modChanges.planExpired")?;
+    let (session, outcome) = tauri::async_runtime::spawn_blocking(move || {
+        let outcome = verify_preparation_freshness(&fresh_state, &session, None);
+        (session, outcome)
     })
     .await
-    .map_err(|e| e.to_string())??;
+    .map_err(|e| e.to_string())?;
+    lease.session = Some(session);
+    outcome?;
+    let session = lease.session.as_mut().ok_or("modChanges.planExpired")?;
     archive::start_download();
     for (node, payload) in &session.payloads {
         session.verified_payloads.insert(
@@ -395,8 +398,7 @@ pub(super) fn select_payloads(session: &mut PlanSession) -> Result<(), String> {
 }
 
 pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), PreparationError> {
-    ensure_fresh(state, &session.trusted.revision)?;
-    verify_fingerprints(&session.payload_fingerprints)?;
+    verify_preparation_freshness(state, session, None)?;
     if let Some(solved) = &session.solved {
         session
             .release_target_claims
@@ -425,7 +427,7 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
                 .insert(source.clone(), Fingerprint::capture(source)?);
         }
     }
-    ensure_fresh(state, &session.trusted.revision)?;
+    verify_preparation_freshness(state, session, Some(&changes))?;
     if live_game::touches_mods(session, &roots, &changes)? {
         guard::ensure_game_stopped(state, &roots.game_root)?;
     }
@@ -440,12 +442,26 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
     Ok(())
 }
 
+fn verify_preparation_freshness(
+    state: &AppState,
+    session: &PlanSession,
+    frozen: Option<&[super::application_progress::OwnedMutation]>,
+) -> Result<(), String> {
+    let _operation = state.operation.lock().map_err(|_| "lock.poisoned")?;
+    let recovered = guard::ensure_recovered(state)?;
+    let (root, config) = freshness::current_target(state)?;
+    let scope = freshness::check_scope(state, session, &root, &config)?;
+    if crate::level_sets::recompress::has_pending_recovery(&root) {
+        return Err("modChanges.recoveryRequired".into());
+    }
+    verify_fingerprints(&session.payload_fingerprints)?;
+    freshness::check_revision(state, session, &root, &scope, recovered, frozen)
+}
+
 pub(crate) fn ensure_fresh(state: &AppState, expected: &str) -> Result<(), String> {
     let _operation = state.operation.lock().map_err(|_| "lock.poisoned")?;
     guard::ensure_recovered(state)?;
-    let config = state.config.load_or_default();
-    let root = game::detect_game(&config).path.ok_or("game.notFound")?;
-    let root = game::resolve_existing_ancestor(std::path::Path::new(&root))?;
+    let (root, config) = freshness::current_target(state)?;
     if inventory::revision(state, &root, &config)? != expected {
         return Err("modChanges.targetChanged".into());
     }

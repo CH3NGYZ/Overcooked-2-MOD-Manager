@@ -650,7 +650,14 @@ impl Builder<'_> {
         manifest.files = final_files;
         let orphan = self.session.release_target_claims.orphan_record(&node.id);
         let (manifest_target, expected) = match (reinstall, orphan) {
-            (Some(record), _) => (data(&record.relative), record.expected.clone()),
+            (Some(record), _) => (
+                record.replacement.clone(),
+                if record.retired_id.is_some() {
+                    Fingerprint::Missing
+                } else {
+                    record.expected.clone()
+                },
+            ),
             (None, Some(record)) => (data(&record.relative), record.stamp.fingerprint.clone()),
             (None, None) => {
                 let target = install_record_path(&manifest.repository_id);
@@ -700,9 +707,14 @@ impl Builder<'_> {
                 target: manifest_target,
                 source: Some(StagedFile::capture(staged)?),
                 expected,
-                require_single_link: orphan.is_some() || reinstall.is_some(),
+                require_single_link: orphan.is_some()
+                    || reinstall.is_some_and(|record| record.retired_id.is_none()),
             },
-        )
+        )?;
+        if let Some(record) = reinstall.filter(|record| record.retired_id.is_some()) {
+            self.remove_retired_file(&node.id, None, data(&record.relative), &record.expected)?;
+        }
+        Ok(())
     }
 }
 

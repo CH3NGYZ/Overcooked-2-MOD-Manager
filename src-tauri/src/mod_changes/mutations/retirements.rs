@@ -65,11 +65,16 @@ impl Builder<'_> {
         if Fingerprint::capture(&game(&opposite).resolve(&self.roots)?)? != Fingerprint::Missing {
             return Err("modChanges.targetChanged".into());
         }
-        self.remove_retired_file(node_id, &copy.member_key, game(relative), &copy.fingerprint)?;
+        self.remove_retired_file(
+            node_id,
+            Some(&copy.member_key),
+            game(relative),
+            &copy.fingerprint,
+        )?;
         match (&copy.manifest_id, &copy.manifest_fingerprint) {
             (Some(id), Some(fingerprint)) => self.remove_retired_file(
                 node_id,
-                &copy.member_key,
+                Some(&copy.member_key),
                 data(&format!("manifests/{id}.toml")),
                 fingerprint,
             ),
@@ -78,10 +83,10 @@ impl Builder<'_> {
         }
     }
 
-    fn remove_retired_file(
+    pub(super) fn remove_retired_file(
         &mut self,
         node_id: &str,
-        member_key: &str,
+        member_key: Option<&str>,
         target: TransactionPath,
         fingerprint: &Fingerprint,
     ) -> Result<(), String> {
@@ -94,7 +99,7 @@ impl Builder<'_> {
         }
         self.write(
             node_id,
-            Some(ItemKey::new(node_id, Some(member_key))),
+            Some(ItemKey::new(node_id, member_key)),
             FileChange {
                 target,
                 source: None,

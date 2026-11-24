@@ -109,7 +109,7 @@ impl<'a> LooseReleaseSearch<'a> {
                         &physical,
                         scope.directory,
                         registered,
-                        Some(&nodes[index].id),
+                        Some(AllowedClaim::Scanned(&nodes[index].id)),
                         false,
                         None,
                     )

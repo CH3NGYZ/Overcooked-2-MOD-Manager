@@ -2,7 +2,7 @@ use crate::file_metadata::FileIdentity;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-pub(super) const JOURNAL_VERSION: u32 = 2;
+pub(super) const JOURNAL_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,13 +47,13 @@ pub(crate) enum Fingerprint {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct StagedFile {
     pub path: PathBuf,
     pub fingerprint: Fingerprint,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct FileChange {
     pub target: TransactionPath,
     /// A validated, fully downloaded/unpacked file. None removes the target.
@@ -63,20 +63,20 @@ pub(crate) struct FileChange {
     pub require_single_link: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct MoveChange {
     pub from: TransactionPath,
     pub to: TransactionPath,
     pub expected: Fingerprint,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct StagedTree {
     pub path: PathBuf,
     pub fingerprint: Fingerprint,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct TreeChange {
     pub target: TransactionPath,
     /// A complete validated tree. None removes the whole target tree.
@@ -84,7 +84,7 @@ pub(crate) struct TreeChange {
     pub expected: Fingerprint,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) enum Mutation {
     File(FileChange),
     Tree(TreeChange),
@@ -114,7 +114,67 @@ pub(super) struct Journal {
     /// interrupted mkdir before this counter persists may leave an empty folder.
     #[serde(default)]
     pub created_directory_count: usize,
-    pub error: Option<String>,
+    #[serde(default, rename = "error", skip_serializing_if = "Option::is_none")]
+    pub legacy_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub application_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RecoveryDecisionState {
+    #[default]
+    Automatic,
+    Paused,
+    Abandoned,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct RecoveryDecision {
+    pub id: String,
+    pub state: RecoveryDecisionState,
+    pub abandoned_journal_stamp: Option<String>,
+    pub unknown_scope_acknowledged: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RecoveryPathKind {
+    Target,
+    Backup,
+    Staging,
+    Parent,
+    Journal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub(crate) struct RecoveryPath {
+    pub kind: RecoveryPathKind,
+    #[serde(serialize_with = "serialize_display_path")]
+    pub path: PathBuf,
+}
+
+fn serialize_display_path<S: serde::Serializer>(
+    path: &std::path::Path,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&crate::display_path::display_path(path))
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RecoveryEntry {
+    pub id: String,
+    pub state: RecoveryDecisionState,
+    pub application_error: Option<String>,
+    pub recovery_error: Option<String>,
+    pub legacy_error: Option<String>,
+    pub paths: Vec<RecoveryPath>,
+    pub scope_known: bool,
+    pub can_decide: bool,
+    pub unknown_scope_acknowledged: bool,
+    pub revision: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -211,4 +271,6 @@ pub(crate) struct RecoveryReport {
     pub cleaned: Vec<String>,
     /// Nonempty means all game/data writes must remain blocked.
     pub blocked: Vec<String>,
+    /// User decisions stop automatic retries but keep operations scoped.
+    pub deferred: Vec<String>,
 }

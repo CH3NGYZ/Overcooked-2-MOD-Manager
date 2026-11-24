@@ -5,7 +5,7 @@ use crate::file_check;
 use std::{
     fs,
     fs::{File, OpenOptions},
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 use uuid::Uuid;
@@ -119,9 +119,22 @@ fn rename_exclusive(_: &Path, _: &Path) -> std::io::Result<()> {
     Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
 }
 
+pub(super) const JOURNAL_FILE: &str = "journal.json";
+pub(super) const MAX_JOURNAL_BYTES: u64 = 32 * 1024 * 1024;
+
 pub(super) fn write_journal(directory: &Path, journal: &Journal) -> Result<(), String> {
-    let temporary = directory.join(format!("journal-{}.tmp", Uuid::new_v4()));
-    let bytes = serde_json::to_vec(journal).map_err(io_error)?;
+    write_json(directory, JOURNAL_FILE, journal)
+}
+
+pub(super) fn write_json(
+    directory: &Path,
+    name: &str,
+    value: &impl serde::Serialize,
+) -> Result<(), String> {
+    let target = directory.join(name);
+    validate_absolute(&target)?;
+    let temporary = directory.join(format!("{name}-{}.tmp", Uuid::new_v4()));
+    let bytes = serde_json::to_vec(value).map_err(io_error)?;
     let write_error = |error| diagnostic_io(check::WRITE, &temporary, error, file_check::WRITE);
     let mut output = OpenOptions::new()
         .write(true)
@@ -131,36 +144,51 @@ pub(super) fn write_journal(directory: &Path, journal: &Journal) -> Result<(), S
     output.write_all(&bytes).map_err(write_error)?;
     output.sync_all().map_err(write_error)?;
     drop(output);
-    rename(&temporary, &directory.join("journal.json"), true)
+    rename(&temporary, &target, true)
 }
 
 pub(super) fn read_journal(directory: &Path) -> Result<Journal, String> {
-    const MAX_JOURNAL_BYTES: u64 = 32 * 1024 * 1024;
-    let path = directory.join("journal.json");
-    validate_absolute(&path).inspect_err(|error| {
+    let path = directory.join(JOURNAL_FILE);
+    parse_journal(
+        &path,
+        &read_record(&path, MAX_JOURNAL_BYTES)?.ok_or(INVALID)?,
+    )
+}
+
+pub(super) fn read_record(path: &Path, limit: u64) -> Result<Option<Vec<u8>>, String> {
+    let io = |error| super::paths::io_at(path, "read_transaction_record", error);
+    validate_absolute(path)?;
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(io(error)),
+    };
+    if super::paths::is_link(&metadata) || !metadata.is_file() || metadata.len() > limit {
         log::warn!(
             target: diagnostics::TARGET,
-            "整链事务记录路径无效：{}路径={:?}，原因={:?}",
-            diagnostics::Location, diagnostics::path(&path), crate::locale_tag::diagnostic_tag(error),
-        );
-    })?;
-    let metadata = fs::metadata(&path)
-        .map_err(|error| super::paths::io_at(&path, "read_journal_metadata", error))?;
-    if !metadata.is_file() || metadata.len() > MAX_JOURNAL_BYTES {
-        log::warn!(
-            target: diagnostics::TARGET,
-            "整链事务记录类型或大小不符合要求：{}路径={:?}，是普通文件={}，大小={}，上限={MAX_JOURNAL_BYTES}",
-            diagnostics::Location, diagnostics::path(&path), metadata.is_file(), metadata.len(),
+            "整链事务记录类型或大小不符合要求：{}路径={:?}，是普通文件={}，大小={}，上限={limit}",
+            diagnostics::Location, diagnostics::path(path), metadata.is_file(), metadata.len(),
         );
         return Err(INVALID.into());
     }
-    let bytes =
-        fs::read(&path).map_err(|error| super::paths::io_at(&path, "read_journal", error))?;
-    serde_json::from_slice(&bytes).map_err(|error| {
+    let file = File::open(path).map_err(io)?;
+    if !file.metadata().map_err(io)?.is_file() || !super::paths::has_single_link(&file) {
+        return Err(INVALID.into());
+    }
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes).map_err(io)?;
+    if bytes.len() as u64 > limit {
+        return Err(INVALID.into());
+    }
+    Ok(Some(bytes))
+}
+
+pub(super) fn parse_journal(path: &Path, bytes: &[u8]) -> Result<Journal, String> {
+    serde_json::from_slice(bytes).map_err(|error| {
         log::warn!(
             target: diagnostics::TARGET,
             "整链事务记录解析失败：{}路径={:?}，类型={:?}，行={}，列={}",
-            diagnostics::Location, diagnostics::path(&path), error.classify(), error.line(), error.column(),
+            diagnostics::Location, diagnostics::path(path), error.classify(), error.line(), error.column(),
         );
         INVALID.into()
     })

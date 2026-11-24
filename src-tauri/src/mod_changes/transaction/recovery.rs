@@ -1,160 +1,10 @@
-use super::types::RecoveryReport;
-use super::{PreparedTransaction, check, diagnostics, durable, engine, paths, types::*};
-use std::{fs, io::ErrorKind, path::Path};
+use super::{
+    PreparedTransaction, check, diagnostics, durable, engine, paths, recovery_control, types::*,
+};
+use std::{fs, path::Path};
 use uuid::Uuid;
 
-fn directories(transaction_root: &Path) -> Result<Option<fs::ReadDir>, String> {
-    match fs::read_dir(transaction_root) {
-        Ok(entries) => Ok(Some(entries)),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(paths::io_at(transaction_root, "list_journals", error)),
-    }
-}
-
-fn journal_present(path: &Path) -> Result<bool, String> {
-    match fs::symlink_metadata(path) {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(paths::io_at(path, "check_journal", error)),
-    }
-}
-
-pub(crate) fn has_pending(transaction_root: &Path) -> Result<bool, String> {
-    paths::validate_absolute(transaction_root)?;
-    for entry in directories(transaction_root)?.into_iter().flatten() {
-        let entry = entry.map_err(paths::io_error)?;
-        let path = entry.path();
-        let metadata = fs::symlink_metadata(&path).map_err(paths::io_error)?;
-        if paths::is_link(&metadata) {
-            return Err(paths::UNSAFE.into());
-        }
-        if metadata.is_dir() && journal_present(&path.join("journal.json"))? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-/// The caller holds the operation lock and checks that the game is stopped first.
-/// Wrong roots, damaged journals, or changed targets retain all recovery material.
-pub(crate) fn recover_all(
-    transaction_root: &Path,
-    roots: &TransactionRoots,
-) -> Result<RecoveryReport, String> {
-    paths::validate_roots(transaction_root, roots)?;
-    let mut report = RecoveryReport::default();
-    let Some(entries) = directories(transaction_root)? else {
-        return Ok(report);
-    };
-    let mut entries = entries
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(paths::io_error)?;
-    entries.sort_by_key(|entry| entry.file_name());
-    for entry in entries {
-        let directory = entry.path();
-        if paths::is_link(&fs::symlink_metadata(&directory).map_err(paths::io_error)?) {
-            report.blocked.push(directory.display().to_string());
-            continue;
-        }
-        if !directory.is_dir() {
-            continue;
-        }
-        let id = entry.file_name().to_string_lossy().into_owned();
-        let journal_path = directory.join("journal.json");
-        if !journal_present(&journal_path)? {
-            // A preparation interrupted before publication touched no live targets.
-            // Keep its staging for diagnosis; it must never be guessed into a rollback.
-            continue;
-        }
-        let result = (|| {
-            let _scope = diagnostics::enter(&id);
-            let journal = durable::read_journal(&directory)?;
-            let invalid_field = if !matches!(journal.version, 1 | JOURNAL_VERSION) {
-                Some("schema_version")
-            } else if journal.id != id || Uuid::parse_str(&id).is_err() {
-                Some("transaction_id")
-            } else if journal.roots != *roots {
-                Some("roots")
-            } else if journal.created_directory_count > journal.created_directories.len() {
-                Some("parent_count")
-            } else if journal.version == JOURNAL_VERSION
-                && journal.records.iter().any(|record| {
-                    record.publication.is_some() != record.operation.tracks_publication()
-                })
-            {
-                Some("file_publication")
-            } else {
-                None
-            };
-            if let Some(field) = invalid_field {
-                log::warn!(
-                    target: diagnostics::TARGET,
-                    "整链恢复记录校验失败：{}路径={:?}，字段={field}，实际版本={}，支持版本=1/{JOURNAL_VERSION}，ID与目录一致={}，父目录已建={}，计划父目录={}",
-                    diagnostics::Location, diagnostics::path(&journal_path), journal.version,
-                    journal.id == id, journal.created_directory_count, journal.created_directories.len(),
-                );
-                if field == "roots" {
-                    log::warn!(
-                        target: diagnostics::TARGET,
-                        "整链恢复根目录不符：{}记录游戏根={:?}，当前游戏根={:?}，记录数据根={:?}，当前数据根={:?}",
-                        diagnostics::Location,
-                        diagnostics::path(&journal.roots.game_root), diagnostics::path(&roots.game_root),
-                        diagnostics::path(&journal.roots.data_root), diagnostics::path(&roots.data_root),
-                    );
-                }
-                return Err(paths::INVALID.to_string());
-            }
-            paths::validate_records(&journal.records, transaction_root, roots).inspect_err(|error| {
-                log::warn!(
-                    target: diagnostics::TARGET,
-                    "整链恢复变更记录校验失败：{}路径={:?}，记录数={}，原因={:?}",
-                    diagnostics::Location, diagnostics::path(&journal_path), journal.records.len(),
-                    crate::locale_tag::diagnostic_tag(error),
-                );
-            })?;
-            for parent in &journal.created_directories {
-                let absolute = parent.resolve(roots).inspect_err(|error| {
-                    log::warn!(
-                        target: diagnostics::TARGET,
-                        "整链恢复父目录无效：{}父目录={:?}，原因={:?}",
-                        diagnostics::Location, diagnostics::endpoint(roots, parent),
-                        crate::locale_tag::diagnostic_tag(error),
-                    );
-                })?;
-                if paths::overlaps(&absolute, transaction_root) {
-                    log::warn!(
-                        target: diagnostics::TARGET,
-                        "整链恢复父目录与事务根重叠：{}父目录={:?}，事务根={:?}",
-                        diagnostics::Location, diagnostics::path(&absolute), diagnostics::path(transaction_root),
-                    );
-                    return Err(paths::UNSAFE.to_string());
-                }
-            }
-            let mut pending = PreparedTransaction { directory, journal };
-            if matches!(
-                pending.journal.state,
-                JournalState::Committed | JournalState::Cleaned
-            ) {
-                pending.cleanup()?;
-                report.cleaned.push(id.clone());
-            } else {
-                pending.rollback()?;
-                report.recovered.push(id.clone());
-            }
-            Ok(())
-        })();
-        if let Err(error) = result {
-            log::error!(
-                "批次 {:?} 自动恢复被阻止，保留恢复材料：记录={:?}，原因={:?}",
-                crate::file_check::log_field(&id),
-                diagnostics::path(&journal_path),
-                crate::locale_tag::diagnostic_tag(&error)
-            );
-            report.blocked.push(id);
-        }
-    }
-    Ok(report)
-}
+pub(super) const CLEANED_PREFIX: &str = ".cleaned-";
 
 impl PreparedTransaction {
     pub(super) fn rollback(&mut self) -> Result<(), String> {
@@ -198,8 +48,6 @@ impl PreparedTransaction {
                     blocked.get_or_insert(error);
                     continue;
                 }
-                self.journal.error = Some(error.clone());
-                let _ = self.persist();
                 return Err(error);
             }
             self.journal.records[index].phase = RecordPhase::Reverted;
@@ -239,8 +87,6 @@ impl PreparedTransaction {
             }
         }
         if let Some(error) = blocked {
-            self.journal.error = Some(error.clone());
-            self.persist()?;
             return Err(error);
         }
         self.journal.state = JournalState::Cleaned;
@@ -315,7 +161,7 @@ impl PreparedTransaction {
                 if guarded {
                     check::expect(&temporary, check::STAGED, &Fingerprint::Missing)?;
                 } else {
-                    remove_temporary(&temporary)?;
+                    remove_temporary(&temporary, false)?;
                 }
                 if *require_single_link {
                     // A newly linked file can be left alone if this record never changed it.
@@ -460,15 +306,70 @@ impl PreparedTransaction {
         }
         self.journal.state = JournalState::Cleaned;
         self.persist()?;
-        remove_private_tree(&self.directory)
+        for entry in fs::read_dir(&self.directory)
+            .map_err(|error| paths::io_at(&self.directory, "list_cleaned_transaction", error))?
+        {
+            let entry = entry.map_err(paths::io_error)?;
+            let name = entry.file_name();
+            let name = name.to_str().ok_or(paths::UNSAFE)?;
+            if matches!(
+                name,
+                durable::JOURNAL_FILE | recovery_control::DECISION_FILE
+            ) {
+                continue;
+            }
+            if !is_record_temporary(name) {
+                return Err(paths::UNSAFE.into());
+            }
+            remove_temporary(&entry.path(), true)?;
+        }
+        let parent = self.directory.parent().ok_or(paths::UNSAFE)?;
+        let cleaned = parent.join(format!("{CLEANED_PREFIX}{}", self.id()));
+        match durable::rename_durable(&self.directory, &cleaned, false, check::WRITE) {
+            Err(durable::RenameFailure::Unchanged(error)) => return Err(error),
+            Err(durable::RenameFailure::Sync(error)) => {
+                diagnostics::transaction(
+                    &self.journal,
+                    &cleaned,
+                    "sync_cleaned_transaction",
+                    &error,
+                );
+                return Ok(());
+            }
+            Ok(()) => (),
+        }
+        if let Err(error) = remove_temporary(&cleaned.join(recovery_control::DECISION_FILE), true)
+            .and_then(|()| remove_temporary(&cleaned.join(durable::JOURNAL_FILE), true))
+            .and_then(|()| {
+                fs::remove_dir(&cleaned)
+                    .map_err(|error| paths::io_at(&cleaned, "remove_cleaned_transaction", error))
+            })
+        {
+            diagnostics::transaction(
+                &self.journal,
+                &cleaned,
+                "remove_cleaned_transaction",
+                &error,
+            );
+        }
+        Ok(())
     }
 }
 
-fn remove_temporary(path: &Path) -> Result<(), String> {
+fn is_record_temporary(name: &str) -> bool {
+    ["journal-", "journal.json-", "recovery-decision.json-"]
+        .into_iter()
+        .filter_map(|prefix| name.strip_prefix(prefix)?.strip_suffix(".tmp"))
+        .any(|id| Uuid::parse_str(id).is_ok_and(|uuid| uuid.to_string() == id))
+}
+
+fn remove_temporary(path: &Path, require_single_link: bool) -> Result<(), String> {
     let fingerprint = Fingerprint::capture(path)?;
     match fingerprint {
         Fingerprint::Missing => Ok(()),
-        Fingerprint::File { .. } => durable::remove_file_checked(path, &fingerprint, false),
+        Fingerprint::File { .. } => {
+            durable::remove_file_checked(path, &fingerprint, require_single_link)
+        }
         _ => Err(paths::UNSAFE.into()),
     }
 }

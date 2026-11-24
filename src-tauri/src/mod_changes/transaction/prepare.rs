@@ -292,7 +292,9 @@ pub(crate) fn prepare_for_operation(
             records,
             created_directories: parents,
             created_directory_count: 0,
-            error: None,
+            legacy_error: None,
+            application_error: None,
+            recovery_error: None,
         };
         write_journal(&directory, &journal)?;
         super::durable::sync_parent(&directory)?;

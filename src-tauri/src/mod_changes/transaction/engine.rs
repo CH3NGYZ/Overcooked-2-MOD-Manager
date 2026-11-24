@@ -161,6 +161,7 @@ impl PreparedTransaction {
                         "commit_durability_unknown",
                         &error,
                     );
+                    self.record_ambiguous_commit_error(&error);
                     return Err(check::recovery_pending(&error));
                 }
                 diagnostics::transaction(&self.journal, &self.directory, "apply_failed", &error);
@@ -170,8 +171,9 @@ impl PreparedTransaction {
                     .iter()
                     .any(|record| record.phase == RecordPhase::Applied)
                     || self.journal.created_directory_count != 0;
-                self.journal.error = Some(error.clone());
+                self.journal.application_error = Some(error.clone());
                 if let Err(restore_error) = self.rollback() {
+                    self.record_recovery_error(&restore_error);
                     let stage = if entered_live_write || applied {
                         "rollback_failed"
                     } else {
@@ -194,6 +196,7 @@ impl PreparedTransaction {
         observe(RecordProgress::Committed);
         // A durable commit is final. Cleanup failure must never turn into a rollback.
         if let Err(error) = self.cleanup() {
+            self.record_recovery_error(&error);
             diagnostics::transaction(
                 &self.journal,
                 &self.directory,
@@ -203,6 +206,31 @@ impl PreparedTransaction {
         }
         self.finish_watch_paths(&mut committed);
         Ok(committed)
+    }
+
+    fn record_ambiguous_commit_error(&self, error: &str) {
+        let result = durable::read_journal(&self.directory).and_then(|mut durable| {
+            if durable.id != self.journal.id || durable.roots != self.journal.roots {
+                return Err(paths::INVALID.into());
+            }
+            durable
+                .application_error
+                .get_or_insert_with(|| error.to_owned());
+            durable::write_journal(&self.directory, &durable)
+        });
+        if let Err(persist_error) = result {
+            diagnostics::transaction(
+                &self.journal,
+                &self.directory,
+                "persist_ambiguous_commit_error",
+                &persist_error,
+            );
+        }
+    }
+
+    pub(super) fn record_recovery_error(&mut self, error: &str) {
+        self.journal.recovery_error = Some(error.to_owned());
+        let _ = self.persist();
     }
 
     fn apply_inner(

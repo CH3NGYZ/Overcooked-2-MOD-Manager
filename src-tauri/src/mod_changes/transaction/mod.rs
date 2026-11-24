@@ -10,6 +10,7 @@ mod permissions;
 mod prepare;
 mod publication;
 mod recovery;
+mod recovery_control;
 mod tree;
 mod types;
 #[cfg(windows)]
@@ -23,13 +24,17 @@ pub(crate) use paths::{has_single_link, key as path_key};
 pub(crate) use prepare::prepare;
 pub(super) use prepare::{prepare_for_operation, verify_frozen_targets};
 pub(crate) use recovery::remove_private_tree;
-pub(crate) use recovery::{has_pending, recover_all};
+pub(crate) use recovery_control::{
+    abandon_recovery, has_pending, has_retained_material, list_recoveries, pause_recovery,
+    recover_all, retry_recovery,
+};
 pub(crate) use tree::copy_tree as stage_tree;
 pub(crate) use tree::preserve_replaced_permissions as preserve_replaced_tree_permissions;
 #[cfg(test)]
 pub(crate) use types::JournalState;
 pub(crate) use types::{
-    FileChange, Fingerprint, MoveChange, Mutation, RootKind, StagedFile, StagedTree,
+    FileChange, Fingerprint, MoveChange, Mutation, RecoveryDecisionState, RecoveryEntry,
+    RecoveryPath, RecoveryPathKind, RecoveryReport, RootKind, StagedFile, StagedTree,
     TransactionPath, TransactionRoots, TreeChange,
 };
 #[cfg(windows)]
@@ -46,6 +51,8 @@ pub(crate) const DIRECTORY_NAME: &str = "mod-change-transactions";
 mod application_progress_tests;
 #[cfg(test)]
 mod publication_tests;
+#[cfg(test)]
+mod recovery_control_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

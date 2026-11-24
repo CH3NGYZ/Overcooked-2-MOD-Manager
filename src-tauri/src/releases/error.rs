@@ -8,6 +8,8 @@ pub enum ReleaseError {
     Http(String),
     #[error("Release operation failed: {0}")]
     Status(StatusCode),
+    #[error("source.apiRateLimited")]
+    Cooldown,
     /// 403/429 的响应及候选限流信号；是否封锁由闸门独立判断。
     #[error("Release operation failed: rate limited ({status})")]
     RateLimited {
@@ -26,12 +28,14 @@ impl ReleaseError {
         ) || matches!(self, Self::RateLimited { status, .. } if *status == StatusCode::FORBIDDEN)
     }
 
-    /// 提供 403/429 的信号，不代表其中必有足够的限流证据。
-    pub fn rate_limit_signal(&self) -> Option<&crate::api_rate_gate::RateLimitSignal> {
-        match self {
-            Self::RateLimited { signal, .. } => Some(signal),
-            _ => None,
-        }
+    pub(super) fn is_too_many_requests(&self) -> bool {
+        matches!(self, Self::RateLimited { status, .. } if *status == StatusCode::TOO_MANY_REQUESTS)
+    }
+}
+
+impl From<reqwest::Error> for ReleaseError {
+    fn from(error: reqwest::Error) -> Self {
+        Self::Http(error.without_url().to_string())
     }
 }
 
@@ -39,6 +43,7 @@ pub(super) fn release_error_kind(error: &ReleaseError) -> &'static str {
     match error {
         ReleaseError::InvalidUrl(_) => "invalid_url",
         ReleaseError::Http(_) => "http",
+        ReleaseError::Cooldown => "rate_limit_cooldown",
         ReleaseError::Status(status) if *status == StatusCode::FORBIDDEN => "http_403",
         ReleaseError::Status(status) if *status == StatusCode::TOO_MANY_REQUESTS => "http_429",
         ReleaseError::Status(_) => "http_status",

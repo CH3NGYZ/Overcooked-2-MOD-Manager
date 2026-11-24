@@ -6,6 +6,7 @@ pub async fn fetch_release_api(
     provider: &Provider,
     token: Option<&str>,
 ) -> Result<Vec<ReleaseInfo>, ReleaseError> {
-    let value = fetch_api_json(client, url, provider, token).await?;
+    let target = RepositoryApiTarget::new(url, url, provider, token, None);
+    let value = fetch_api_json(client, &target).await?;
     parse_release_json(&value, provider)
 }

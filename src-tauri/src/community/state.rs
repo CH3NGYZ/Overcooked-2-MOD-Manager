@@ -124,13 +124,7 @@ fn rate_limit_delay(status: StatusCode, headers: &HeaderMap) -> Option<Duration>
     let retry_after = headers
         .get("retry-after")
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| {
-            value.parse::<u64>().ok().or_else(|| {
-                chrono::DateTime::parse_from_rfc2822(value)
-                    .ok()
-                    .map(|date| (date.timestamp() - chrono::Utc::now().timestamp()).max(0) as u64)
-            })
-        });
+        .and_then(crate::api_rate_gate::retry_after_seconds);
     let reset = (headers
         .get("x-ratelimit-remaining")
         .and_then(|value| value.to_str().ok())

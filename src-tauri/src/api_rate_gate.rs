@@ -1,3 +1,4 @@
+use reqwest::{StatusCode, header::HeaderMap};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -18,6 +19,8 @@ use crate::models::Provider;
 
 /// Gitee 匿名 403 + 正文含 “Rate Limit Exceeded” 后锁定的时长。
 const GITEE_ANONYMOUS_BLOCK: Duration = Duration::from_secs(5 * 60);
+const GITCODE_FALLBACK_BLOCK_SECS: u64 = 60;
+const GITCODE_RETRY_HINT_CAP_SECS: u64 = 24 * 60 * 60;
 /// GitHub 既没有 x-ratelimit-reset 也没有 retry-after 时的保守等待。
 const GITHUB_FALLBACK_BLOCK: Duration = Duration::from_secs(60);
 /// 二级限流的指数退避上限。
@@ -51,7 +54,7 @@ pub struct ApiRateGate {
     state: Mutex<GateState>,
 }
 
-/// 一次 403 的判定结果，来自响应头与正文。
+/// 一次 403/429 的附加限流证据，来自响应头与正文。
 #[derive(Debug, Default, Clone)]
 pub struct RateLimitSignal {
     /// 正文是否包含限流文案（Gitee “Rate Limit Exceeded” / GitHub 二级限流提示）。
@@ -65,13 +68,42 @@ pub struct RateLimitSignal {
 }
 
 impl RateLimitSignal {
+    pub fn from_headers(provider: &Provider, status: StatusCode, headers: &HeaderMap) -> Self {
+        let get = |name| headers.get(name).and_then(|value| value.to_str().ok());
+        Self {
+            body_limit_message: false,
+            remaining_exhausted: get("x-ratelimit-remaining")
+                .is_some_and(|value| value.trim() == "0"),
+            reset_at: get("x-ratelimit-reset").and_then(|value| value.trim().parse().ok()),
+            retry_after: get("retry-after").and_then(|value| {
+                let value = value.trim();
+                if *provider == Provider::Gitcode && status == StatusCode::TOO_MANY_REQUESTS {
+                    retry_after_seconds(value)
+                } else {
+                    value.parse().ok()
+                }
+            }),
+        }
+    }
+
     /// 是否构成「触发限流锁」。
     ///
     /// 只认三类证据：正文限流文案、remaining=0、retry-after。
     /// 单纯的 403（例如私有仓库无权限）不应锁住整条通道。
-    pub fn is_rate_limited(&self) -> bool {
+    fn has_limit_evidence(&self) -> bool {
         self.body_limit_message || self.remaining_exhausted || self.retry_after.is_some()
     }
+}
+
+pub(crate) fn retry_after_seconds(value: &str) -> Option<u64> {
+    value.parse().ok().or_else(|| {
+        let date = chrono::DateTime::parse_from_rfc2822(value).ok()?;
+        Some(
+            date.timestamp()
+                .saturating_sub(chrono::Utc::now().timestamp())
+                .max(0) as u64,
+        )
+    })
 }
 
 fn now_epoch_secs() -> u64 {
@@ -108,14 +140,16 @@ impl ApiRateGate {
         }
     }
 
-    /// 403 之后调用：符合限流特征就上锁，返回锁定到什么时候（None 表示不是限流）。
-    pub fn record_forbidden(
+    /// 403/429 之后调用：符合限流判定就上锁，返回剩余冷却时间。
+    pub fn record_limit(
         &self,
         provider: &Provider,
         kind: GateKind,
+        status: StatusCode,
         signal: &RateLimitSignal,
     ) -> Option<Duration> {
-        if kind == GateKind::Proxy || !signal.is_rate_limited() {
+        let gitcode_429 = *provider == Provider::Gitcode && status == StatusCode::TOO_MANY_REQUESTS;
+        if kind == GateKind::Proxy || !(gitcode_429 || signal.has_limit_evidence()) {
             return None;
         }
         let mut state = match self.state.lock() {
@@ -123,6 +157,19 @@ impl ApiRateGate {
             Err(_) => return None,
         };
         let block = match provider {
+            Provider::Gitcode if gitcode_429 => Duration::from_secs(
+                signal
+                    .retry_after
+                    .filter(|&seconds| seconds > 0)
+                    .or_else(|| {
+                        signal
+                            .reset_at
+                            .and_then(|reset_at| reset_at.checked_sub(now_epoch_secs()))
+                            .filter(|&seconds| seconds > 0)
+                    })
+                    .unwrap_or(GITCODE_FALLBACK_BLOCK_SECS)
+                    .min(GITCODE_RETRY_HINT_CAP_SECS),
+            ),
             Provider::Gitcode => {
                 Duration::from_secs(signal.retry_after.unwrap_or(60).clamp(1, 900))
             }
@@ -151,14 +198,23 @@ impl ApiRateGate {
                 (base * factor).min(SECONDARY_BACKOFF_CAP)
             }
         };
-        let deadline = Instant::now() + block;
+        let now = Instant::now();
+        let deadline = now + block;
         match (provider, kind) {
             (Provider::Gitee, GateKind::Anonymous) => state.gitee_anonymous = Some(deadline),
             (Provider::Gitee, GateKind::Token) => state.gitee_token = Some(deadline),
             (Provider::Github, GateKind::Anonymous) => state.github_anonymous = Some(deadline),
             (Provider::Github, GateKind::Token) => state.github_token = Some(deadline),
-            (Provider::Gitcode, GateKind::Anonymous) => state.gitcode_anonymous = Some(deadline),
-            (Provider::Gitcode, GateKind::Token) => state.gitcode_token = Some(deadline),
+            (Provider::Gitcode, kind) => {
+                let slot = match kind {
+                    GateKind::Anonymous => &mut state.gitcode_anonymous,
+                    GateKind::Token => &mut state.gitcode_token,
+                    GateKind::Proxy => return None,
+                };
+                let deadline = slot.map_or(deadline, |current| current.max(deadline));
+                *slot = Some(deadline);
+                return Some(deadline - now);
+            }
             _ => {}
         }
         Some(block)
@@ -176,8 +232,7 @@ impl ApiRateGate {
         match (provider, kind) {
             (Provider::Gitee, GateKind::Anonymous) => state.gitee_anonymous = None,
             (Provider::Gitee, GateKind::Token) => state.gitee_token = None,
-            (Provider::Gitcode, GateKind::Anonymous) => state.gitcode_anonymous = None,
-            (Provider::Gitcode, GateKind::Token) => state.gitcode_token = None,
+            (Provider::Gitcode, _) => (),
             (Provider::Github, GateKind::Anonymous) => {
                 state.github_anonymous = None;
                 state.github_secondary_hits = 0;

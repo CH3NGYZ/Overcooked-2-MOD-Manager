@@ -139,9 +139,9 @@ async fn release_api_non_403_failures_try_three_times() {
         "500 Internal Server Error",
     ] {
         let server = ApiTestServer::new(vec![(status, ""); 3]);
-        let result =
-            fetch_release_api_with_retries(&api_test_client(), &server.url, &Provider::Gitee, None)
-                .await;
+        let target =
+            RepositoryApiTarget::new(&server.url, &server.url, &Provider::Gitee, None, None);
+        let result = fetch_release_api_with_retries(&api_test_client(), target).await;
         assert!(result.is_err());
         assert_eq!(server.requests().len(), 3, "{status}");
     }
@@ -153,12 +153,26 @@ async fn release_api_403_is_never_retried_even_after_an_ordinary_failure() {
         ("500 Internal Server Error", ""),
         ("403 Forbidden", ""),
     ]);
-    let error =
-        fetch_release_api_with_retries(&api_test_client(), &server.url, &Provider::Gitee, None)
-            .await
-            .unwrap_err();
+    let target = RepositoryApiTarget::new(&server.url, &server.url, &Provider::Gitee, None, None);
+    let error = fetch_release_api_with_retries(&api_test_client(), target)
+        .await
+        .unwrap_err();
     assert!(error.is_forbidden());
     assert_eq!(server.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn gitcode_release_api_429_ends_the_target_on_its_first_response() {
+    let server = ApiTestServer::new(vec![(
+        "429 Too Many Requests",
+        r#"{"error_code":429,"error_message":"The number of times the user invokes this API is too large."}"#,
+    )]);
+    let target = RepositoryApiTarget::new(&server.url, &server.url, &Provider::Gitcode, None, None);
+    let error = fetch_release_api_with_retries(&api_test_client(), target)
+        .await
+        .unwrap_err();
+    assert_eq!(release_error_kind(&error), "rate_limited_429");
+    assert_eq!(server.requests().len(), 1);
 }
 
 #[test]

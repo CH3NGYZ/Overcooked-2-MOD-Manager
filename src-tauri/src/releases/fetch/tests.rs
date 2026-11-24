@@ -164,7 +164,9 @@ async fn real_gitcode_proxy_reads_complete_release_pages() {
         let client = &client;
         let repo = &repo;
         async move {
-            let result = fetch_releases_from_targets(client, repo, &official, targets).await?;
+            let result =
+                fetch_releases_from_targets(client, repo, &official, targets, global_gate())
+                    .await?;
             println!(
                 "GitCode proxy page={page} raw_count={} projected_count={}",
                 result.1,
@@ -205,7 +207,8 @@ async fn release_api_success_stops_retries_and_remaining_targets() {
             &api_test_client(),
             &api_test_repository(),
             &official.url,
-            targets
+            targets,
+            &ApiRateGate::default(),
         )
         .await
         .is_ok()
@@ -235,9 +238,15 @@ async fn release_api_fallback_gets_a_fresh_timeout_and_keeps_token_on_official_r
     let mut repo = api_test_repository();
     repo.provider = Provider::Github;
     let started = Instant::now();
-    let (releases, received) = fetch_releases_from_targets(&client, &repo, &official.url, targets)
-        .await
-        .unwrap();
+    let (releases, received) = fetch_releases_from_targets(
+        &client,
+        &repo,
+        &official.url,
+        targets,
+        &ApiRateGate::default(),
+    )
+    .await
+    .unwrap();
     assert!(started.elapsed() >= timeout);
     assert_eq!(received, 1);
     assert_eq!(releases[0].tag_name, "v1.4.0");
@@ -266,7 +275,8 @@ async fn gitee_official_403_skips_token_and_proxy_success_stops_fallback() {
             &api_test_client(),
             &api_test_repository(),
             &official.url,
-            targets
+            targets,
+            &ApiRateGate::default(),
         )
         .await
         .is_ok()
@@ -294,6 +304,7 @@ async fn gitee_proxy_403_skips_that_proxy_and_tries_the_next_one() {
         &api_test_repository(),
         &official.url,
         targets,
+        &ApiRateGate::default(),
     )
     .await
     .unwrap();
@@ -318,7 +329,8 @@ async fn gitee_official_and_proxy_other_errors_exhaust_three_attempts_each() {
             &api_test_client(),
             &api_test_repository(),
             &official.url,
-            targets
+            targets,
+            &ApiRateGate::default(),
         )
         .await
         .is_err()
@@ -343,7 +355,7 @@ fn gitee_community_source_tag_zip_is_removed_after_real_api_parsing() {
                 {"name":"Mod.dll","browser_download_url":"https://gitee.com/Owner/Mod/releases/download/v1.8.7.15/Mod.dll"}
             ]}]"#)]);
             let releases = fetch_releases_from_targets(&api_test_client(), &RepositoryRequest::from(&repo), &server.url,
-                vec![(server.url.clone(), None)]).await.unwrap().0;
+                vec![(server.url.clone(), None)], &ApiRateGate::default()).await.unwrap().0;
             assert_eq!(releases[0].assets.iter().map(|asset| asset.name.as_str()).collect::<Vec<_>>(), ["Mod.zip", "Mod.dll"]);
             assert_eq!(server.requests().len(), 1);
         });
@@ -372,6 +384,7 @@ async fn all_providers_paginate_using_raw_response_counts_and_explicit_page_one(
         let client = api_test_client();
         let mut repo = api_test_repository();
         repo.provider = provider.clone();
+        let gate = &ApiRateGate::default();
         let releases = crate::releases::pagination::collect_release_pages(|page| {
             let official = crate::providers::repository_release_api_url_page(
                 &provider,
@@ -389,8 +402,14 @@ async fn all_providers_paginate_using_raw_response_counts_and_explicit_page_one(
             let client = &client;
             let repo = &repo;
             async move {
-                fetch_releases_from_targets(client, repo, &target, vec![(target.clone(), None)])
-                    .await
+                fetch_releases_from_targets(
+                    client,
+                    repo,
+                    &target,
+                    vec![(target.clone(), None)],
+                    gate,
+                )
+                .await
             }
         })
         .await
@@ -414,4 +433,112 @@ async fn all_providers_paginate_using_raw_response_counts_and_explicit_page_one(
             requests[1]
         );
     }
+}
+
+#[tokio::test]
+async fn gitcode_429_routes_around_a_cooling_official_across_repositories_and_default_branch() {
+    let official = ApiTestServer::new(vec![("429 Too Many Requests", ""), ("200 OK", "[]")]);
+    let limited_proxy = ApiTestServer::new(vec![("429 Too Many Requests", ""); 2]);
+    let working_proxy = ApiTestServer::new(vec![
+        ("200 OK", r#"[{"tag_name":"v1.0.0"}]"#),
+        ("200 OK", r#"[{"tag_name":"v2.0.0"}]"#),
+        ("200 OK", r#"{"default_branch":"main"}"#),
+    ]);
+    let gate = ApiRateGate::default();
+    let client = api_test_client();
+    let mut repo = api_test_repository();
+    repo.provider = Provider::Gitcode;
+    let targets = |official_url: &str| {
+        vec![
+            (official_url.to_owned(), None),
+            (limited_proxy.url.clone(), None),
+            (working_proxy.url.clone(), None),
+        ]
+    };
+    let (releases, _) =
+        fetch_releases_from_targets(&client, &repo, &official.url, targets(&official.url), &gate)
+            .await
+            .unwrap();
+    assert_eq!(releases[0].tag_name, "v1.0.0");
+    assert_eq!(official.requests().len(), 1);
+    assert_eq!(limited_proxy.requests().len(), 1);
+    let address = format!("{}?page=2", official.url);
+    repo.id = "another-gitcode-repo".into();
+    repo.repository = "AnotherRepo".into();
+    let (releases, _) =
+        fetch_releases_from_targets(&client, &repo, &address, targets(&address), &gate)
+            .await
+            .unwrap();
+    assert_eq!(releases[0].tag_name, "v2.0.0");
+    let branch = fetch_default_branch_from_targets(
+        &client,
+        &repo,
+        &address,
+        vec![(address.clone(), None), (working_proxy.url.clone(), None)],
+        &gate,
+    )
+    .await
+    .unwrap();
+    assert_eq!(branch, "main");
+    assert_eq!(official.requests().len(), 1);
+    assert_eq!(limited_proxy.requests().len(), 2);
+    assert_eq!(working_proxy.requests().len(), 3);
+
+    let error = fetch_releases_from_targets(
+        &client,
+        &repo,
+        &address,
+        vec![(address.clone(), None)],
+        &gate,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.to_string(), "source.apiRateLimited");
+    assert_eq!(official.requests().len(), 1);
+    assert!(
+        fetch_releases_from_targets(
+            &client,
+            &repo,
+            &address,
+            vec![(address.clone(), Some("fixture-token"))],
+            &gate
+        )
+        .await
+        .is_ok()
+    );
+    assert_eq!(official.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn gitcode_proxy_429_does_not_cool_official_and_plain_official_403_does_not_cool() {
+    let official = ApiTestServer::new(vec![
+        ("403 Forbidden", "Permission denied"),
+        ("200 OK", "[]"),
+    ]);
+    let proxy = ApiTestServer::new(vec![("429 Too Many Requests", "")]);
+    let gate = ApiRateGate::default();
+    let mut repo = api_test_repository();
+    repo.provider = Provider::Gitcode;
+    let targets = vec![(proxy.url.clone(), None), (official.url.clone(), None)];
+    let client = api_test_client();
+    assert_eq!(
+        fetch_releases_from_targets(&client, &repo, &official.url, targets, &gate)
+            .await
+            .unwrap_err()
+            .to_string(),
+        "source.apiRateLimited"
+    );
+    assert!(
+        fetch_releases_from_targets(
+            &client,
+            &repo,
+            &official.url,
+            vec![(official.url.clone(), None)],
+            &gate
+        )
+        .await
+        .is_ok()
+    );
+    assert_eq!(proxy.requests().len(), 1);
+    assert_eq!(official.requests().len(), 2);
 }

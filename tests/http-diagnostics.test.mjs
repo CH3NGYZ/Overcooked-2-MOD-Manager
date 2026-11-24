@@ -153,11 +153,11 @@ test('production API request owners keep send_api rather than bypassing provider
     const code = rust.get(path)
     assert.ok(code, path)
     assert.match(code, /\bApiRequestExt\b/, path)
-    assert.match(code, /\.\s*send_api\s*\(/, path)
+    assert.match(code, /\.\s*send_api(?:_checked)?\s*\(/, path)
   }
   for (const [path, code] of rust) {
     if (!/\bApiRequestExt\b/.test(code) || path === 'api_scheduler.rs') continue
-    assert.match(code, /\.\s*send_api\s*\(/, path)
+    assert.match(code, /\.\s*send_api(?:_checked)?\s*\(/, path)
     // Signed asset PUTs share this owner with scheduled API requests.
     if (path !== 'map_publish/assets.rs') assert.doesNotMatch(code, /\.\s*send_logged(?:_metadata)?\s*\(/, path)
   }

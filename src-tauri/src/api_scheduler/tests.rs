@@ -124,3 +124,40 @@ fn official_and_proxy_coordinates_share_installed_keys_including_unicode_paths()
         }
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn queued_api_request_rechecks_cooldown_before_sending() {
+    use crate::api_rate_gate::{ApiRateGate, GateKind, RateLimitSignal};
+    use crate::releases::ReleaseError;
+    use std::task::Poll;
+
+    let scheduler = local_scheduler(Duration::from_secs(1));
+    for _ in 0..3 {
+        scheduler.acquire(String::new()).await;
+    }
+    let gate = ApiRateGate::default();
+    let request = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap()
+        .get("http://127.0.0.1:0/releases");
+    let queued = scheduler.dispatch(&Provider::Gitcode, request, || {
+        gate.check(&Provider::Gitcode, GateKind::Anonymous)
+            .map_err(|_| ReleaseError::Cooldown)
+    });
+    tokio::pin!(queued);
+    std::future::poll_fn(|context| {
+        use std::future::Future;
+        assert!(queued.as_mut().poll(context).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+    gate.record_limit(
+        &Provider::Gitcode,
+        GateKind::Anonymous,
+        reqwest::StatusCode::TOO_MANY_REQUESTS,
+        &RateLimitSignal::default(),
+    );
+    tokio::time::advance(Duration::from_secs(1)).await;
+    assert!(matches!(queued.await, Err(ReleaseError::Cooldown)));
+}

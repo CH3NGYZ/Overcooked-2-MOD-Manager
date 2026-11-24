@@ -152,20 +152,42 @@ impl Scheduler {
             tokio::select! { _ = notified => {}, _ = tokio::time::sleep_until(wake) => {} }
         }
     }
+
+    async fn dispatch<E: From<reqwest::Error>>(
+        &self,
+        provider: &Provider,
+        builder: reqwest::RequestBuilder,
+        check: impl Fn() -> Result<(), E>,
+    ) -> Result<reqwest::Response, E> {
+        check()?;
+        let (client, request) = builder.build_split();
+        let request = request?;
+        self.acquire(request_key(provider, request.url())).await;
+        check()?;
+        Ok(crate::http_diagnostics::execute(client, request).await?)
+    }
 }
 
 pub(crate) trait ApiRequestExt {
     async fn send_api(self, provider: Provider) -> Result<reqwest::Response, reqwest::Error>;
+    async fn send_api_checked<E: From<reqwest::Error>>(
+        self,
+        provider: Provider,
+        check: impl Fn() -> Result<(), E>,
+    ) -> Result<reqwest::Response, E>;
 }
 
 impl ApiRequestExt for reqwest::RequestBuilder {
     async fn send_api(self, provider: Provider) -> Result<reqwest::Response, reqwest::Error> {
-        let (client, request) = self.build_split();
-        let request = request?;
-        scheduler(&provider)
-            .acquire(request_key(&provider, request.url()))
-            .await;
-        crate::http_diagnostics::execute(client, request).await
+        self.send_api_checked(provider, || Ok(())).await
+    }
+
+    async fn send_api_checked<E: From<reqwest::Error>>(
+        self,
+        provider: Provider,
+        check: impl Fn() -> Result<(), E>,
+    ) -> Result<reqwest::Response, E> {
+        scheduler(&provider).dispatch(&provider, self, check).await
     }
 }
 

@@ -10,11 +10,11 @@ pub(crate) mod planning;
 mod race;
 mod race_speed;
 
+#[cfg(test)]
+use race::ActiveSource;
 use race::race_candidates;
 #[cfg(test)]
-use race::{ActiveSource, leading_source};
-#[cfg(test)]
-use race_speed::{SourceSpeed, switching_candidate};
+use race_speed::{SourceSpeed, leading_source, switching_candidate};
 
 #[cfg(test)]
 mod race_tests;

@@ -6,7 +6,7 @@ import { computed, shallowRef } from 'vue'
 import type { DeepReadonly } from 'vue'
 import DownloadRace from './DownloadRace.vue'
 
-const props = defineProps<{ volumes: DeepReadonly<NonNullable<DownloadProgress['volumes']>> }>()
+const props = defineProps<{ volumes: DeepReadonly<NonNullable<DownloadProgress['volumes']>>; interactive: boolean }>()
 const open = shallowRef(false)
 const complete = computed(() => props.volumes.filter(volume => volume.state === 'completed').length)
 const openVolumes = computed(() => open.value || props.volumes.some(volume => volume.progress.phase === 'locked_failed'))
@@ -30,7 +30,7 @@ const openVolumes = computed(() => open.value || props.volumes.some(volume => vo
           <span v-if="volume.retry">{{ t('tools.volumeRetry', { count: volume.retry }) }}</span>
         </div>
         <DownloadRace v-if="volume.progress.race && (volume.state === 'downloading' || volume.progress.phase === 'locked_failed')"
-          :key="volume.progress.race.id" :race="volume.progress.race" interactive />
+          :key="volume.progress.race.id" :race="volume.progress.race" :interactive="interactive && !volume.progress.finished" />
         <div v-else-if="volume.state === 'downloading'" class="dl-volume-meta">
           <span v-if="downloadRoute(volume.progress)">{{ downloadRoute(volume.progress) }}</span>
         </div>

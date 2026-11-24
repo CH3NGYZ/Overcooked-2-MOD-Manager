@@ -61,6 +61,7 @@ watch(() => failure.value?.id, async id => {
 
 const cancelling = shallowRef<number | null>(null)
 const cancelPending = computed(() => running.value !== null && cancelling.value === running.value.id)
+const raceInteractive = computed(() => !!running.value && !cancelPending.value && !progress.value?.finished)
 async function cancel() {
   if (appUpdateBlocksOperations()) return
   const task = running.value
@@ -126,8 +127,8 @@ async function cancel() {
       </div>
     </div>
 
-    <DownloadRace v-if="progress?.race" :key="`${running?.id}:${progress.race.id}`" :race="progress.race" interactive />
-    <DownloadVolumes v-if="volumes?.length" :key="volumeKey" :volumes="volumes" />
+    <DownloadRace v-if="progress?.race" :key="`${running?.id}:${progress.race.id}`" :race="progress.race" :interactive="raceInteractive" />
+    <DownloadVolumes v-if="volumes?.length" :key="volumeKey" :volumes="volumes" :interactive="raceInteractive" />
 
     <template v-if="failure" #footer>
       <div class="dl-actions">

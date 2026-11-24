@@ -1,6 +1,8 @@
-use super::control::{RaceAction, RaceControl};
+use super::control::RaceControl;
 use super::history::RaceSession;
-use super::race_speed::{SourceSpeed, fastest_backup, probe_should_stop, switching_candidate};
+use super::race_speed::{
+    SourceSpeed, fastest_backup, leading_source, probe_should_stop, switching_candidate,
+};
 use super::{
     CompletedDownload, DownloadCandidate, DownloadContext, DownloadOutput, RacePolicy, source_host,
 };
@@ -16,6 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::Instant;
 
+mod actions;
 mod progress;
 #[cfg(test)]
 mod tests;
@@ -42,22 +45,6 @@ impl ActiveSource {
     }
 }
 
-pub(super) fn leading_source(
-    sources: &HashMap<usize, ActiveSource>,
-    previous: Option<usize>,
-) -> Option<usize> {
-    sources
-        .iter()
-        .max_by_key(|(id, source)| {
-            (
-                source.reporter.snapshot().downloaded,
-                previous == Some(**id),
-                std::cmp::Reverse(**id),
-            )
-        })
-        .map(|(id, _)| *id)
-}
-
 struct RaceState {
     id: String,
     started: Instant,
@@ -67,6 +54,7 @@ struct RaceState {
     parked: VecDeque<(usize, DownloadCandidate)>,
     sources: HashMap<usize, ActiveSource>,
     retired: BTreeMap<usize, DownloadSourceProgress>,
+    retryable: HashMap<usize, DownloadCandidate>,
     retiring: HashSet<usize>,
     primary: Option<usize>,
     displayed: Option<usize>,
@@ -74,7 +62,6 @@ struct RaceState {
     probe: Option<usize>,
     probe_running: Option<usize>,
     locked: Option<usize>,
-    locked_failed: Option<DownloadCandidate>,
     limit: usize,
     reserve_open: bool,
     last_error: Option<String>,
@@ -100,6 +87,7 @@ impl RaceState {
             parked: VecDeque::new(),
             sources: HashMap::new(),
             retired: BTreeMap::new(),
+            retryable: HashMap::new(),
             retiring: HashSet::new(),
             primary: None,
             displayed: None,
@@ -107,7 +95,6 @@ impl RaceState {
             probe,
             probe_running: None,
             locked: None,
-            locked_failed: None,
             limit: if preferred.is_some() {
                 1
             } else {
@@ -121,7 +108,11 @@ impl RaceState {
     }
 
     fn can_start(&self) -> bool {
-        self.locked_failed.is_none() && self.sources.len() + self.retiring.len() < self.limit
+        self.locked_failed().is_none() && self.sources.len() + self.retiring.len() < self.limit
+    }
+
+    fn locked_failed(&self) -> Option<usize> {
+        self.locked.filter(|id| self.retryable.contains_key(id))
     }
 
     fn next(&mut self, session: Option<&RaceSession>) -> Option<(usize, DownloadCandidate)> {
@@ -162,66 +153,33 @@ impl RaceState {
         Some((id, candidate))
     }
 
-    fn stop(&mut self, id: usize, allow_later: bool) {
+    fn abort_source(&mut self, id: usize) -> ActiveSource {
         let source = self.sources.remove(&id).unwrap();
-        let mut progress = source.progress(id, self.expected, self.preferred);
-        progress.phase = DownloadSourcePhase::Stopped;
-        progress.speed_bytes = None;
-        self.retired.insert(id, progress);
         self.retiring.insert(id);
         source.abort.abort();
-        if allow_later {
-            self.parked.push_back((id, source.candidate));
-        }
         if self.probe_running == Some(id) {
             self.probe_running = None;
         }
+        source
     }
 
-    fn action(&mut self, action: RaceAction, policy: RacePolicy, adaptive: bool) {
-        match action {
-            RaceAction::Lock(index) if self.locked.is_none() => {
-                let Some(id) = index.checked_sub(1) else {
-                    return;
-                };
-                if !self.sources.contains_key(&id)
-                    || self
-                        .sources
-                        .values()
-                        .any(|source| !source.lockable(self.expected))
-                {
-                    return;
-                }
-                self.locked = Some(id);
-                self.primary = Some(id);
-                self.limit = 1;
-                for other in self
-                    .sources
-                    .keys()
-                    .copied()
-                    .filter(|other| *other != id)
-                    .collect::<Vec<_>>()
-                {
-                    self.stop(other, true);
-                }
-            }
-            RaceAction::Retry if self.locked_failed.is_some() => {
-                let id = self.locked.unwrap();
-                self.pending
-                    .push_front((id, self.locked_failed.take().unwrap()));
-            }
-            RaceAction::Unlock if self.locked.take().is_some() => {
-                let failed = self.locked_failed.take().is_some();
-                if !adaptive {
-                    self.primary = leading_source(&self.sources, self.primary);
-                } else if failed {
-                    self.primary = fastest_backup(&self.sources);
-                }
-                self.pending.append(&mut self.parked);
-                self.limit = policy.parallelism;
-                self.reserve_open = true;
-            }
-            _ => {}
+    fn stop_slow(&mut self, id: usize, keep_as_reserve: bool) {
+        let source = self.abort_source(id);
+        let mut progress = source.progress(id, self.expected, self.preferred);
+        progress.phase = DownloadSourcePhase::Slow;
+        progress.speed_bytes = None;
+        self.retired.insert(id, progress);
+        if keep_as_reserve {
+            self.parked.push_back((id, source.candidate));
+        } else {
+            self.retryable.insert(id, source.candidate);
+        }
+    }
+
+    fn release_parked(&mut self) {
+        while let Some((id, candidate)) = self.parked.pop_front() {
+            self.retired.remove(&id);
+            self.pending.push_back((id, candidate));
         }
     }
 
@@ -238,7 +196,10 @@ impl RaceState {
         }
         let Some(session) = session else {
             if policy.reference_speed > 0
-                && !self.pending.is_empty()
+                && self
+                    .pending
+                    .iter()
+                    .any(|(id, _)| !self.retired.contains_key(id))
                 && self
                     .last_switch
                     .is_none_or(|last| now.duration_since(last) >= policy.window)
@@ -257,12 +218,15 @@ impl RaceState {
                     policy.reference_speed
                 );
                 self.last_switch = Some(now);
-                self.stop(id, false);
+                self.stop_slow(id, false);
             }
             return;
         };
 
-        let Some(primary) = self.primary.and_then(|id| self.sources.get(&id)) else {
+        let Some(primary_id) = self.primary else {
+            return;
+        };
+        let Some(primary) = self.sources.get(&primary_id) else {
             return;
         };
         let latest_start = self.sources.values().map(|source| source.started).max();
@@ -295,13 +259,14 @@ impl RaceState {
                 }
             };
             if slow_first_byte || slow_body {
-                self.pending.append(&mut self.parked);
+                self.release_parked();
                 self.limit += 1;
                 self.reserve_open = true;
             }
         }
         if let Some(id) = self.probe_running
-            && self.primary != Some(id)
+            && id != primary_id
+            && let Some(primary) = self.sources.get(&primary_id)
             && let Some(probe) = self.sources.get(&id)
             && probe.lockable(self.expected)
             && probe_should_stop(primary, probe, self.expected)
@@ -309,7 +274,7 @@ impl RaceState {
             if !self.reserve_open {
                 self.limit = 1;
             }
-            self.stop(id, true);
+            self.stop_slow(id, true);
         }
     }
 }
@@ -413,13 +378,14 @@ where
         if let Some(context) = &context {
             report_progress(state.progress(context, control.as_ref(), None));
         }
-        if active.is_empty() && state.locked_failed.is_none() {
-            if state.pending.is_empty() && state.parked.is_empty() {
-                return Err(state
-                    .last_error
-                    .unwrap_or_else(|| "download.noCandidate".into()));
-            }
-            continue;
+        if active.is_empty()
+            && state.locked_failed().is_none()
+            && state.pending.is_empty()
+            && state.parked.is_empty()
+        {
+            return Err(state
+                .last_error
+                .unwrap_or_else(|| "download.noCandidate".into()));
         }
         tokio::select! {
             biased;
@@ -434,8 +400,8 @@ where
                 match result {
                     Ok(Ok(mut completed)) => {
                         if is_cancelled() { return Err("download.cancelled".into()); }
-                        for other in state.sources.keys().copied().collect::<Vec<_>>() { state.stop(other, false); }
                         drop(active);
+                        state.sources.clear();
                         if let Some((session, route)) = session.zip(source.candidate.identity.as_ref()) {
                             let first = source.reporter.first_byte_at();
                             let end = source.reporter.transfer_end().unwrap_or_else(Instant::now);
@@ -461,9 +427,8 @@ where
                         row.error = (tag != "unclassified").then(|| tag.to_owned());
                         state.retired.insert(id, row);
                         state.last_error = Some(error);
-                        if state.locked == Some(id) {
-                            state.locked_failed = Some(source.candidate);
-                        } else if state.primary == Some(id) {
+                        state.retryable.insert(id, source.candidate);
+                        if state.locked != Some(id) && state.primary == Some(id) {
                             state.primary = if session.is_some() {
                                 fastest_backup(&state.sources)
                             } else {
@@ -471,7 +436,7 @@ where
                             };
                             state.switched = true;
                             state.reserve_open = true;
-                            state.pending.append(&mut state.parked);
+                            state.release_parked();
                         }
                     }
                     Err(_) => unreachable!("retiring work is removed before consuming its result"),

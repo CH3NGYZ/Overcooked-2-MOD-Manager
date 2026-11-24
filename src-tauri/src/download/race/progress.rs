@@ -34,8 +34,19 @@ impl ActiveSource {
             },
             phase,
             history_preferred: preferred == Some(id),
+            can_requeue: false,
             error: None,
         }
+    }
+}
+
+impl DownloadSourceProgress {
+    pub(super) fn mark_queued(&mut self, expected: Option<u64>) {
+        self.phase = DownloadSourcePhase::Queued;
+        self.downloaded = 0;
+        self.total = expected;
+        self.speed_bytes = None;
+        self.error = None;
     }
 }
 
@@ -72,6 +83,30 @@ impl RaceState {
         let mut progress = DownloadProgress::connecting(context.label);
         progress.set_file_name(context.file_name);
         let mut rows = self.retired.clone();
+        let may_requeue = control.is_some()
+            && winner.is_none()
+            && (!self.sources.is_empty()
+                || !self.pending.is_empty()
+                || !self.parked.is_empty()
+                || self.locked_failed().is_some());
+        let mut requeueable = Vec::new();
+        if winner.is_some() {
+            rows.retain(|_, row| row.phase != DownloadSourcePhase::Queued);
+        } else if may_requeue {
+            for id in self
+                .retryable
+                .keys()
+                .copied()
+                .chain(self.parked.iter().map(|(id, _)| *id))
+            {
+                if self.locked != Some(id)
+                    && let Some(row) = rows.get_mut(&id)
+                {
+                    row.can_requeue = true;
+                    requeueable.push(row.id);
+                }
+            }
+        }
         rows.extend(
             self.sources
                 .iter()
@@ -92,7 +127,7 @@ impl RaceState {
                 DownloadSourcePhase::Connecting if self.switched => DownloadPhase::Switching,
                 DownloadSourcePhase::Downloading => DownloadPhase::Downloading,
                 DownloadSourcePhase::Verifying => DownloadPhase::Verifying,
-                DownloadSourcePhase::Failed if self.locked_failed.is_some() => {
+                DownloadSourcePhase::Failed if self.locked_failed().is_some() => {
                     DownloadPhase::LockedFailed
                 }
                 DownloadSourcePhase::Finished => DownloadPhase::Finished,
@@ -101,7 +136,7 @@ impl RaceState {
         }
         progress.finished = winner.is_some();
         if self.total > 1 {
-            let allowed = if control.is_some()
+            let lockable = if control.is_some()
                 && winner.is_none()
                 && self.locked.is_none()
                 && self
@@ -113,9 +148,14 @@ impl RaceState {
             } else {
                 Vec::new()
             };
-            let can_lock = !allowed.is_empty();
+            let can_lock = !lockable.is_empty();
             if let Some(control) = control {
-                control.update(allowed, self.locked_failed.is_some(), self.locked.is_some());
+                control.update(
+                    lockable,
+                    requeueable,
+                    winner.is_none() && self.locked_failed().is_some(),
+                    winner.is_none() && self.locked.is_some(),
+                );
             }
             progress.race = Some(DownloadRaceProgress {
                 id: self.id.clone(),
@@ -125,7 +165,7 @@ impl RaceState {
                 waiting: if winner.is_some() {
                     0
                 } else {
-                    self.pending.len() + self.parked.len()
+                    self.pending.len()
                 },
                 elapsed_ms: self.started.elapsed().as_millis() as u64,
                 sources: rows.into_values().collect(),

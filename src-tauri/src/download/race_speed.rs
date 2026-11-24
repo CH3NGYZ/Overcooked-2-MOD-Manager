@@ -15,6 +15,22 @@ pub(super) struct SourceSpeed {
     last_advance: Option<Instant>,
 }
 
+pub(super) fn leading_source(
+    sources: &HashMap<usize, ActiveSource>,
+    previous: Option<usize>,
+) -> Option<usize> {
+    sources
+        .iter()
+        .max_by_key(|(id, source)| {
+            (
+                source.reporter.snapshot().downloaded,
+                previous == Some(**id),
+                std::cmp::Reverse(**id),
+            )
+        })
+        .map(|(id, _)| *id)
+}
+
 impl SourceSpeed {
     pub(super) fn sample(&mut self, now: Instant, transferred: u64, window: Duration) {
         // The first tick with real data is the baseline. Connection and first-byte

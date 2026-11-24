@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUpdate, onScopeDispose, onUpdated, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { NTooltip } from 'naive-ui'
-import { ChevronDownOutline, ChevronUpOutline, LockClosedOutline, LockOpenOutline, RefreshOutline } from '@vicons/ionicons5'
+import { ChevronDownOutline, ChevronUpOutline, LockClosedOutline, LockOpenOutline } from '@vicons/ionicons5'
 import type { DownloadRaceProgress, DownloadRaceSource } from '../types'
 import { t } from '../i18n'
 import { backendMessageOf } from '../locale/backend'
@@ -12,7 +12,7 @@ import DownloadRaceRow from './DownloadRaceRow.vue'
 import HeaderIconAction from './HeaderIconAction.vue'
 
 const props = defineProps<{ race: DownloadRaceProgress; interactive?: boolean }>()
-type Action = 'lock' | 'retry' | 'unlock'
+type Action = Parameters<typeof api.controlDownloadRace>[1]
 
 const rank = createDownloadRaceRanking()
 const trackRetirement = createDownloadRaceRetirement()
@@ -21,7 +21,7 @@ const retirement = shallowRef(trackRetirement(props.race, performance.now()))
 const expanded = shallowRef(false)
 const retiredExpanded = shallowRef(false)
 const layoutChanged = shallowRef(false)
-const pending = shallowRef<Action | null>(null)
+const pending = shallowRef<{ action: Action; sourceId: number } | null>(null)
 const error = shallowRef('')
 const focusedSource = shallowRef<number | null>(null)
 const panel = useTemplateRef<HTMLElement>('panel')
@@ -53,6 +53,10 @@ function updateRetirement() {
 watch(() => props.race, race => {
   ranked.value = rank(race)
   updateRetirement()
+  const request = pending.value
+  if (request?.action === 'requeue' && !race.sources.some(source => source.id === request.sourceId && source.can_requeue)) {
+    pending.value = null
+  }
 }, { immediate: true, flush: 'sync' })
 onScopeDispose(() => clearTimeout(retirementTimer))
 
@@ -73,21 +77,28 @@ watch([rows, retiredRows, retiredExpanded], ([next, nextRetired, nextOpen], [pre
 const canLock = (source: DownloadRaceSource) => props.interactive && props.race.can_lock && !locked.value
   && (source.phase === 'connecting' || source.phase === 'downloading')
 const isLocked = (source: DownloadRaceSource) => locked.value && props.race.locked_id === source.id
-const canRetry = (source: DownloadRaceSource) => props.interactive && isLocked(source) && source.phase === 'failed'
+function refreshAction(source: DownloadRaceSource) {
+  if (!props.interactive) return
+  if (source.phase === 'failed' && isLocked(source)) return 'retry'
+  if (source.can_requeue) return 'requeue'
+}
+const isRefreshing = (source: DownloadRaceSource) => pending.value?.sourceId === source.id
+  && (pending.value.action === 'retry' || pending.value.action === 'requeue')
 
 async function control(action: Action, source: DownloadRaceSource) {
   if (!props.interactive || pending.value) return
-  if (action === 'lock' ? !canLock(source) : action === 'retry' ? !canRetry(source) : !isLocked(source)) return
+  const current = props.race.sources.find(row => row.id === source.id)
+  if (!current || (action === 'lock' ? !canLock(current) : action === 'unlock' ? !isLocked(current) : refreshAction(current) !== action)) return
   const request = ++revision
-  pending.value = action
+  pending.value = { action, sourceId: source.id }
   error.value = ''
   try {
-    await api.controlDownloadRace(props.race.id, action, action === 'lock' ? source.id : undefined)
+    await api.controlDownloadRace(props.race.id, action, action === 'lock' || action === 'requeue' ? source.id : undefined)
+    if (action === 'requeue') return
   } catch (reason) {
     if (revision === request) error.value = backendMessageOf(reason)
-  } finally {
-    if (revision === request) pending.value = null
   }
+  if (revision === request) pending.value = null
 }
 
 function trackFocus(event: FocusEvent) {
@@ -119,12 +130,10 @@ onUpdated(() => {
     <TransitionGroup :id="listId" name="race-row" tag="ul" class="dl-race-list" :class="{ 'is-layout-change': layoutChanged }"
       @leave="(_row, remove) => remove()">
       <DownloadRaceRow v-for="source in rows" :key="`${race.id}:${source.id}`" :source="source"
-        :primary="race.primary_id === source.id" :locked="isLocked(source)" :show-reason="isLocked(source)">
-        <HeaderIconAction v-if="canRetry(source)" class="dl-race-retry" size="tiny" quaternary circle hover-only
-          :label="t('tools.downloadRace.retry')" :aria-disabled="!!pending" :loading="pending === 'retry'" @click="control('retry', source)">
-          <RefreshOutline aria-hidden="true" />
-        </HeaderIconAction>
-        <HeaderIconAction v-if="interactive && (canLock(source) || isLocked(source) || focusedSource === source.id)" class="dl-race-lock"
+        :primary="race.primary_id === source.id" :locked="isLocked(source)" :show-reason="isLocked(source)"
+        :refresh-action="refreshAction(source)" :refreshing="isRefreshing(source)" :controls-pending="!!pending"
+        @refresh="action => control(action, source)">
+        <HeaderIconAction v-if="interactive && (canLock(source) || isLocked(source) || (focusedSource === source.id && isActiveDownloadSource(source)))" class="dl-race-lock"
           size="tiny" quaternary circle hover-only :aria-pressed="isLocked(source)" :aria-disabled="!!pending || (!canLock(source) && !isLocked(source))"
           :label="t(isLocked(source) ? 'tools.downloadRace.unlock' : 'tools.downloadRace.lock')" @click="control(isLocked(source) ? 'unlock' : 'lock', source)">
           <LockClosedOutline v-if="isLocked(source)" aria-hidden="true" /><LockOpenOutline v-else aria-hidden="true" />
@@ -144,14 +153,16 @@ onUpdated(() => {
           <button type="button" tabindex="0" class="dl-race-retired-toggle" :aria-expanded="retiredExpanded" :aria-controls="retiredListId"
             :aria-description="retiredLabel" @click="retiredExpanded = !retiredExpanded">
             <span v-if="retirement.counts.failed" class="dl-race-retired-failed">{{ t('tools.downloadRace.failedCount', { count: retirement.counts.failed }) }}</span>
-            <span v-if="retirement.counts.stopped">{{ t('tools.downloadRace.stoppedCount', { count: retirement.counts.stopped }) }}</span>
+            <span v-if="retirement.counts.slow">{{ t('tools.downloadRace.slowCount', { count: retirement.counts.slow }) }}</span>
             <ChevronUpOutline v-if="retiredExpanded" aria-hidden="true" /><ChevronDownOutline v-else aria-hidden="true" />
           </button>
         </template>
         {{ retiredLabel }}
       </NTooltip>
       <ul :id="retiredListId" class="dl-race-list dl-race-retired-list" :hidden="!retiredExpanded">
-        <DownloadRaceRow v-for="source in retiredExpanded ? retiredRows : []" :key="source.id" :source="source" show-reason />
+        <DownloadRaceRow v-for="source in retiredExpanded ? retiredRows : []" :key="source.id" :source="source" show-reason
+          :refresh-action="refreshAction(source)" :refreshing="isRefreshing(source)" :controls-pending="!!pending"
+          @refresh="action => control(action, source)" />
       </ul>
     </div>
   </section>

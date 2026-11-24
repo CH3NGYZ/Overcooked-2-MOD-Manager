@@ -8,7 +8,7 @@ export function isActiveDownloadSource(source: DownloadRaceSource): boolean {
 }
 
 function rankGroup(source: DownloadRaceSource): number {
-  if (!isActiveDownloadSource(source)) return 2
+  if (!isActiveDownloadSource(source)) return source.phase === 'queued' ? 2 : 3
   return source.phase === 'downloading' && source.speed_bytes !== null ? 0 : 1
 }
 

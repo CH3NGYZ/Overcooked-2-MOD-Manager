@@ -383,7 +383,7 @@ export const api = {
   /** 以管理员身份重启（仅文件访问被拒时由用户主动触发）。 */
   relaunchAsAdmin: () => invoke<OperationResult>('relaunch_as_admin'),
   cancelDownload: () => invoke<OperationResult>('cancel_download'),
-  controlDownloadRace: (id: string, action: 'lock' | 'retry' | 'unlock', source?: number) =>
+  controlDownloadRace: (id: string, action: 'lock' | 'retry' | 'unlock' | 'requeue', source?: number) =>
     invoke<void>('control_download_race', { id, action, source }),
   /**
    * 安装程序在安装时写入的界面语言（`install-language.txt`）。

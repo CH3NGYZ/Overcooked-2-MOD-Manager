@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { createDownloadRaceRanking, visibleDownloadSources } from '../src/downloadRaceRanking.ts'
+import { createDownloadRaceRanking, isActiveDownloadSource, visibleDownloadSources } from '../src/downloadRaceRanking.ts'
 
 const source = (id, speed_bytes, phase = 'downloading') => ({
   id, phase, route: 'proxy', downloaded: 0, total: null, speed_bytes, history_preferred: false,
@@ -37,9 +37,9 @@ test('locked races freeze order without letting evidence accumulate for unlock',
   const rank = createDownloadRaceRanking()
   const speeds = [source(1, 100), source(2, 200)]
   assert.deepEqual(ids(rank(snapshot(0, speeds))), [1, 2])
-  assert.deepEqual(ids(rank(snapshot(1700, [source(1, null, 'stopped'), speeds[1]], { locked_id: 2 }))), [1, 2])
-  assert.deepEqual(ids(rank(snapshot(2000, speeds))), [1, 2])
-  assert.deepEqual(ids(rank(snapshot(3500, speeds))), [2, 1])
+  assert.deepEqual(ids(rank(snapshot(1700, [speeds[1]], { locked_id: 2, waiting: 1 }))), [2])
+  assert.deepEqual(ids(rank(snapshot(2000, [source(1, 200), source(2, 100)]))), [2, 1])
+  assert.deepEqual(ids(rank(snapshot(3500, [source(1, 200), source(2, 100)]))), [1, 2])
 })
 
 test('five default slots include the primary, locked and focused rows without moving them', () => {
@@ -57,6 +57,18 @@ test('backend preference stays visible regardless of the speed ranking', () => {
   const ranked = rank(preferred)
   assert.deepEqual(ids(ranked), [2, 1, 3, 4, 5, 6])
   assert.deepEqual(ids(visibleDownloadSources(ranked, false, preferred.primary_id)), [2, 1, 3, 4, 6])
+})
+
+test('a requeued route appears after live downloads and before retired routes, without counting as active', () => {
+  const rank = createDownloadRaceRanking()
+  const failed = source(2, null, 'failed')
+  const slow = source(3, null, 'slow')
+  const leader = source(1, 1024)
+  const queued = source(3, null, 'queued')
+  assert.deepEqual(ids(rank(snapshot(0, [leader, failed, slow]))), [1, 2, 3])
+  const ranking = rank(snapshot(250, [failed, queued, leader], { waiting: 1 }))
+  assert.deepEqual(ids(ranking), [1, 3, 2])
+  assert.deepEqual(ids(ranking.filter(isActiveDownloadSource)), [1])
 })
 
 test('the row badge uses backend preference, with a lock taking priority and history independent', () => {

@@ -1,12 +1,13 @@
 use super::*;
 use crate::archive::{DownloadPhase, DownloadRoute};
-use crate::download::control::request;
+use crate::download::control::{RaceAction, request};
 use crate::download::history::{DownloadHistory, HistoryPurpose, RouteIdentity};
 use crate::models::Provider;
 use std::cell::{Cell, RefCell};
 use std::time::Duration;
 
 mod progress;
+mod requeue;
 
 struct SetOnDrop<'a>(&'a Cell<bool>);
 
@@ -286,7 +287,7 @@ async fn sufficiently_sampled_slower_probe_can_return_after_primary_validation_f
     );
     assert!(events.iter().any(
         |event| event.race.as_ref().unwrap().sources.iter().any(|row| {
-            row.id == 2 && row.phase == DownloadSourcePhase::Stopped && row.downloaded >= 819_200
+            row.id == 2 && row.phase == DownloadSourcePhase::Slow && row.downloaded >= 819_200
         })
     ));
     assert_eq!(
@@ -408,6 +409,7 @@ async fn explicit_lock_pauses_on_failure_then_retries_or_unlocks_or_cancels() {
                     if race.locked_id == Some(1) {
                         assert_eq!(race.primary_id, Some(1));
                         assert!(event.downloaded <= 1);
+                        assert_eq!(race.sources.len(), 1);
                     }
                     if event.phase == DownloadPhase::LockedFailed
                         && !failed_and_paused.replace(true)
@@ -509,6 +511,8 @@ async fn immediate_unlock_waits_for_the_same_route_to_stop_but_not_other_routes(
                         lock_sent.set(true);
                     } else if race.locked_id == Some(1) && !unlock_sent.replace(true) {
                         assert!(!first_backup_dropped.get());
+                        assert_eq!(race.sources.len(), 1);
+                        assert_eq!(race.waiting, if include_waiting { 2 } else { 1 });
                         assert!(request(&race.id, RaceAction::Unlock));
                     }
                 },

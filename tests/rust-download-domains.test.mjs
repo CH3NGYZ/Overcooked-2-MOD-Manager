@@ -35,7 +35,7 @@ test('Download entrypoints, coordination, progress and speed sampling have one o
   ]) owner(files, declaration, 'download.rs')
   owner(files, 'fn race_candidates', 'download/race.rs')
   owner(files, 'struct RaceState', 'download/race.rs')
-  owner(files, 'fn leading_source', 'download/race.rs')
+  owner(files, 'fn leading_source', 'download/race_speed.rs')
   owner(files, 'fn progress_keeps_the_leader_until_another_file_overtakes_it', 'download/tests.rs')
   owner(files, 'fn cancellation_interrupts_pending_streams_and_removes_all_partial_files', 'download/tests.rs')
   owner(files, 'fn explicit_lock_pauses_on_failure_then_retries_or_unlocks_or_cancels', 'download/race/tests.rs')

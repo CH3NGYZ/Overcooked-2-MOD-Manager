@@ -91,6 +91,7 @@ pub struct DownloadSourceProgress {
     pub speed_bytes: Option<u64>,
     pub phase: DownloadSourcePhase,
     pub history_preferred: bool,
+    pub can_requeue: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -98,11 +99,12 @@ pub struct DownloadSourceProgress {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DownloadSourcePhase {
+    Queued,
     Connecting,
     Downloading,
     Verifying,
     Failed,
-    Stopped,
+    Slow,
     Finished,
 }
 

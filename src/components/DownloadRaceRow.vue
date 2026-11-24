@@ -1,16 +1,22 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { RefreshOutline } from '@vicons/ionicons5'
 import type { DownloadRaceSource } from '../types'
 import { t } from '../i18n'
 import { backendMessageOf } from '../locale/backend'
 import { downloadAmount, downloadPercent, downloadRate, downloadRoute } from '../downloadPresentation'
+import HeaderIconAction from './HeaderIconAction.vue'
 
 const props = defineProps<{
   source: DownloadRaceSource
   primary?: boolean
   locked?: boolean
   showReason?: boolean
+  refreshAction?: 'retry' | 'requeue'
+  refreshing?: boolean
+  controlsPending?: boolean
 }>()
+defineEmits<{ refresh: [action: 'retry' | 'requeue'] }>()
 
 const name = computed(() => downloadRoute(props.source))
 const percent = computed(() => downloadPercent(props.source))
@@ -19,7 +25,7 @@ const reason = computed(() => props.source.error ? backendMessageOf(props.source
 </script>
 
 <template>
-  <li class="dl-race-row" :class="{ 'is-primary': primary, 'is-failed': source.phase === 'failed' }"
+  <li class="dl-race-row" :class="{ 'is-primary': primary, 'is-failed': source.phase === 'failed', 'is-queued': source.phase === 'queued' }"
     :data-race-source="source.id" :data-race-phase="source.phase">
     <div class="dl-race-top">
       <div class="dl-race-labels">
@@ -28,14 +34,19 @@ const reason = computed(() => props.source.error ? backendMessageOf(props.source
         <span v-else-if="primary" class="dl-race-badge is-primary">{{ t('tools.downloadRace.preferred') }}</span>
         <span v-if="source.history_preferred" class="dl-race-badge">{{ t('tools.downloadRace.historyPreferred') }}</span>
       </div>
+      <HeaderIconAction v-if="refreshAction" :class="`dl-race-${refreshAction}`" size="tiny" quaternary circle hover-only
+        :label="t(`tools.downloadRace.${refreshAction}`)" :aria-disabled="controlsPending" :loading="refreshing"
+        @click="$emit('refresh', refreshAction)">
+        <RefreshOutline aria-hidden="true" />
+      </HeaderIconAction>
       <slot />
     </div>
     <div class="dl-race-meta">
-      <div class="dl-race-track" role="progressbar" :aria-label="name" :aria-valuenow="percent ?? undefined"
+      <div v-if="source.phase !== 'queued'" class="dl-race-track" role="progressbar" :aria-label="name" :aria-valuenow="percent ?? undefined"
         :aria-valuetext="downloadAmount(source)">
         <span :style="{ transform: `scaleX(${(percent ?? 0) / 100})` }" />
       </div>
-      <span class="dl-race-size">{{ downloadAmount(source) }}</span>
+      <span v-if="source.phase !== 'queued'" class="dl-race-size">{{ downloadAmount(source) }}</span>
       <span class="dl-race-status" :title="showReason ? undefined : reason || undefined">{{ status }}</span>
     </div>
     <p v-if="reason && showReason" class="dl-race-error" :role="locked ? 'alert' : undefined">{{ reason }}</p>
@@ -56,6 +67,7 @@ const reason = computed(() => props.source.error ? backendMessageOf(props.source
 .is-primary .dl-race-track span { background: var(--oc2-accent); }
 .dl-race-status { min-width: 8ch; text-align: end; }
 .is-failed .dl-race-status, .dl-race-error { color: var(--oc2-status-error); }
+.is-queued .dl-race-status { min-width: 0; text-align: start; color: var(--oc2-text-3); }
 .dl-race-error { margin: 4px 0 0; overflow-wrap: anywhere; }
 .dl-race-size { color: var(--oc2-text-3); }
 </style>

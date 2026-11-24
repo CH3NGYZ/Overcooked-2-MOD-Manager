@@ -2,7 +2,7 @@ import type { DownloadRaceProgress } from './types'
 
 const RETIRED_GRACE_MS = 3000
 
-type Retirement = { phase: 'failed' | 'stopped'; expiresAt: number }
+type Retirement = { phase: 'failed' | 'slow'; expiresAt: number }
 
 export function createDownloadRaceRetirement() {
   let raceId: string | undefined
@@ -15,11 +15,11 @@ export function createDownloadRaceRetirement() {
     }
     const nextRetirement = new Map<number, Retirement>()
     const folded = new Set<number>()
-    const counts = { failed: 0, stopped: 0 }
+    const counts = { failed: 0, slow: 0 }
     let nextExpiry = Infinity
 
     for (const { id, phase } of race.sources) {
-      if (id === race.locked_id || (phase !== 'failed' && phase !== 'stopped')) continue
+      if (id === race.locked_id || (phase !== 'failed' && phase !== 'slow')) continue
       const previous = retirement.get(id)
       const expiresAt = previous?.phase === phase ? previous.expiresAt : now + RETIRED_GRACE_MS
       nextRetirement.set(id, { phase, expiresAt })

@@ -23,6 +23,9 @@ pub fn control_download_race(
     let action = match (action.as_str(), source) {
         ("lock", Some(source)) => RaceAction::Lock(source),
         ("retry", None) => RaceAction::Retry,
+        ("requeue", Some(source)) if !archive::is_download_cancelled() => {
+            RaceAction::Requeue(source)
+        }
         ("unlock", None) => RaceAction::Unlock,
         _ => return Err("download.raceUnavailable".into()),
     };

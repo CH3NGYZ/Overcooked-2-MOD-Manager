@@ -669,8 +669,9 @@ export interface DownloadRaceSource {
   downloaded: number
   total: number | null
   speed_bytes: number | null
-  phase: 'connecting' | 'downloading' | 'verifying' | 'failed' | 'stopped' | 'finished'
+  phase: 'queued' | 'connecting' | 'downloading' | 'verifying' | 'failed' | 'slow' | 'finished'
   history_preferred: boolean
+  can_requeue: boolean
   error?: string | null
 }
 export interface DownloadRaceProgress {

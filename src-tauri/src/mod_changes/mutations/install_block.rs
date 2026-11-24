@@ -13,6 +13,25 @@ pub(crate) fn report_install_block(tag: &str, owner: &str, params: &[(&str, &str
     crate::locale_tag::with_params(tag, params)
 }
 
+pub(super) fn report_record_claim<'a>(
+    owner: &str,
+    target: &str,
+    records: impl Iterator<Item = &'a super::records::InstallRecord>,
+) -> String {
+    let locations = records
+        .map(|record| record.relative.as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .take(24)
+        .collect::<Vec<_>>()
+        .join("\n");
+    report_install_block(
+        "modChanges.installTargetClaimedWithManifests",
+        owner,
+        &[("path", target), ("manifests", &locations)],
+    )
+}
+
 pub(in crate::mod_changes) fn package_identity_conflict<'a>(
     owner: &str,
     guid: &str,
@@ -35,7 +54,6 @@ pub(in crate::mod_changes) fn package_identity_conflict<'a>(
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum InstallBlock {
     Directory,
-    BothStates,
     Unreadable,
     Unsafe,
     InstallRecord,
@@ -63,10 +81,17 @@ pub(crate) enum InstallBlock {
 }
 
 impl InstallBlock {
+    pub(crate) fn report_both_states(owner: &str, active: &str, inactive: &str) -> String {
+        report_install_block(
+            "modChanges.installTargetHasBothStates",
+            owner,
+            &[("paths", &format!("{active}\n{inactive}"))],
+        )
+    }
+
     pub(crate) fn report(self, owner: &str, relative: &str) -> String {
         let tag = match self {
             Self::Directory => "modChanges.installTargetIsDirectory",
-            Self::BothStates => "modChanges.installTargetHasBothStates",
             Self::Unreadable => "modChanges.installTargetUnreadable",
             Self::Unsafe => "modChanges.installTargetUnsafe",
             Self::InstallRecord => "modChanges.installTargetClaimed",

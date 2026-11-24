@@ -71,10 +71,16 @@ pub(crate) struct MoveChange {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct StagedTree {
+    pub path: PathBuf,
+    pub fingerprint: Fingerprint,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct TreeChange {
     pub target: TransactionPath,
     /// A complete validated tree. None removes the whole target tree.
-    pub source: Option<PathBuf>,
+    pub source: Option<StagedTree>,
     pub expected: Fingerprint,
 }
 

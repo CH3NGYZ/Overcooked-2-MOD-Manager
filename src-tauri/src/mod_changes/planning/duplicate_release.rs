@@ -78,8 +78,17 @@ pub(super) fn attach_root(
         return Ok(false);
     };
     let default_assets = candidates::for_root_asset(repo, None, &trusted.config, None);
-    let (tag, prerelease) = eligible_release(repo, &candidate, &default_assets).ok_or(AMBIGUOUS)?;
-    let proof = prove(trusted, repo, tag, prerelease, data_root)?;
+    let describe =
+        || crate::mod_changes::evidence::duplicate_replacement(trusted, repo_id, AMBIGUOUS);
+    let (tag, prerelease) =
+        eligible_release(repo, &candidate, &default_assets).ok_or_else(describe)?;
+    let proof = prove(trusted, repo, tag, prerelease, data_root).map_err(|error| {
+        if error == AMBIGUOUS {
+            describe()
+        } else {
+            error
+        }
+    })?;
     attach(trusted, repo_id, candidate, proof);
     Ok(true)
 }

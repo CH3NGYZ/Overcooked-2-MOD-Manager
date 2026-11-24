@@ -57,12 +57,21 @@ fn real_framework_mod_copies_keep_highest_version_and_ambiguity_rules() {
                 provider("mod:second", NodeKind::Mod, EXTERNAL, version),
             ],
         };
-        let expected = if ambiguous {
-            Err("framework.diyLevelAmbiguous".into())
+        let result = final_framework_package(&solved);
+        if ambiguous {
+            let error = result.unwrap_err();
+            assert_eq!(
+                crate::locale_tag::diagnostic_tag(&error),
+                "framework.diyLevelAmbiguous"
+            );
+            assert!(error.contains("mod:framework"));
+            assert!(error.contains("mod:second"));
         } else {
-            Ok(Some(("mod:framework", "bepinex/plugins/framework".into())))
-        };
-        assert_eq!(final_framework_package(&solved), expected);
+            assert_eq!(
+                result.unwrap(),
+                Some(("mod:framework", "bepinex/plugins/framework".into()))
+            );
+        }
     }
 }
 

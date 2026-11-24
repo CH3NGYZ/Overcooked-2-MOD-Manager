@@ -21,7 +21,7 @@ pub(super) use bundled::{framework_level_root, unique_framework_member};
 
 pub(crate) struct Replacement {
     pub node_id: String,
-    pub source: PathBuf,
+    pub source: StagedTree,
     pub target_dir: String,
     pub old_path: Option<String>,
     pub member_prefix: String,
@@ -177,7 +177,7 @@ pub(super) fn compose(
             .map(|previous| child(&stage, previous, &result.from))
             .transpose()?;
         let source = replacement
-            .map(|replacement| replacement.source.clone())
+            .map(|replacement| replacement.source.path.clone())
             .or_else(|| old_staged.clone())
             .or_else(|| previous.map(|previous| roots.game_root.join(previous)))
             .ok_or("modChanges.targetChanged")?;
@@ -202,7 +202,10 @@ pub(super) fn compose(
                 }
                 remove_private(&session.staging, &destination)?;
             }
-            let fingerprint = Fingerprint::capture(&source)?;
+            let fingerprint = match replacement {
+                Some(replacement) => replacement.source.fingerprint.clone(),
+                None => Fingerprint::capture(&source)?,
+            };
             stage_tree(&source, &destination, &fingerprint)?;
         }
         if let Some(previous) = previous {
@@ -249,7 +252,7 @@ pub(super) fn compose(
                 &mut targets,
                 roots,
                 &target,
-                Some(destination),
+                Some(StagedTree::capture(destination)?),
                 items,
             )?;
         }
@@ -274,7 +277,7 @@ pub(super) fn compose(
         &mut targets,
         roots,
         &result.to,
-        Some(stage),
+        Some(StagedTree::capture(stage)?),
         new_tree_items,
     )?;
     Ok(Some(result))
@@ -295,11 +298,26 @@ fn writable(path: &Path) -> Result<(), String> {
     fs::set_permissions(path, permissions).map_err(|error| error.to_string())
 }
 
-pub(crate) fn set_members(root: &Path, prefix: &str, candidate: &Candidate) -> Result<(), String> {
-    let permissions = fs::metadata(root)
-        .map_err(|error| error.to_string())?
-        .permissions();
-    writable(root)?;
+pub(super) fn stage_with_member_states(
+    source: StagedTree,
+    destination: PathBuf,
+    prefix: &str,
+    candidate: &Candidate,
+) -> Result<StagedTree, String> {
+    if member_renames(&source.path, prefix, candidate)?.is_empty() {
+        return Ok(source);
+    }
+    stage_tree(&source.path, &destination, &source.fingerprint)?;
+    set_members(&destination, prefix, candidate)?;
+    StagedTree::capture(destination)
+}
+
+fn member_renames(
+    root: &Path,
+    prefix: &str,
+    candidate: &Candidate,
+) -> Result<Vec<(PathBuf, PathBuf)>, String> {
+    let mut renames = Vec::new();
     for member in &candidate.provides {
         let key = member.member_key.as_deref().ok_or_else(|| {
             mutations::report_install_block(
@@ -308,27 +326,47 @@ pub(crate) fn set_members(root: &Path, prefix: &str, candidate: &Candidate) -> R
                 &[("name", prefix)],
             )
         })?;
-        let canonical = child(root, &crate::mods::canonical_dll_name(key), prefix)?;
+        let active_member = crate::mods::canonical_dll_name(key);
+        let canonical = child(root, &active_member, prefix)?;
         let disabled = PathBuf::from(crate::mods::disabled_dll_file(&canonical.to_string_lossy()));
         let (from, to) = match (canonical.is_file(), disabled.is_file()) {
-            (true, false) if !member.enabled => (&canonical, &disabled),
-            (false, true) if member.enabled => (&disabled, &canonical),
+            (true, false) if !member.enabled => (canonical, disabled),
+            (false, true) if member.enabled => (disabled, canonical),
             (true, false) | (false, true) => continue,
             (true, true) => {
-                return Err(mutations::InstallBlock::BothStates.report(&candidate.id, key));
+                return Err(mutations::InstallBlock::report_both_states(
+                    &candidate.id,
+                    &active_member,
+                    &crate::mods::disabled_dll_file(&active_member),
+                ));
             }
             (false, false) => {
                 return Err(mutations::InstallBlock::Missing.report(&candidate.id, key));
             }
         };
-        Fingerprint::capture(from)?;
-        Fingerprint::capture(to)?;
+        renames.push((from, to));
+    }
+    Ok(renames)
+}
+
+pub(crate) fn set_members(root: &Path, prefix: &str, candidate: &Candidate) -> Result<(), String> {
+    let renames = member_renames(root, prefix, candidate)?;
+    if renames.is_empty() {
+        return Ok(());
+    }
+    let permissions = fs::metadata(root)
+        .map_err(|error| error.to_string())?
+        .permissions();
+    writable(root)?;
+    for (from, to) in renames {
+        Fingerprint::capture(&from)?;
+        Fingerprint::capture(&to)?;
         let parent = from.parent().ok_or("archive.pathEscape")?;
         let prior = fs::metadata(parent)
             .map_err(|error| error.to_string())?
             .permissions();
         writable(parent)?;
-        let renamed = fs::rename(from, to).map_err(|error| error.to_string());
+        let renamed = fs::rename(&from, &to).map_err(|error| error.to_string());
         fs::set_permissions(parent, prior).map_err(|error| error.to_string())?;
         renamed?;
     }
@@ -452,7 +490,7 @@ pub(super) fn push_tree(
     targets: &mut BTreeSet<String>,
     roots: &TransactionRoots,
     path: &str,
-    source: Option<PathBuf>,
+    source: Option<StagedTree>,
     items: impl IntoIterator<Item = ItemKey>,
 ) -> Result<(), String> {
     if targets
@@ -478,12 +516,12 @@ pub(super) fn push_tree(
     Ok(())
 }
 
-pub(crate) fn rewrite_registry(
+pub(crate) fn remapped_registry(
     path: &Path,
     from: &str,
     to: &str,
     map_paths: &[(String, String)],
-) -> Result<bool, String> {
+) -> Result<Option<Vec<u8>>, String> {
     let registry_name = format!(
         "manifests/{}",
         path.file_name()
@@ -493,7 +531,7 @@ pub(crate) fn rewrite_registry(
     let unreadable =
         || mutations::InstallBlock::MapRecordsUnreadable.report("map-registry", &registry_name);
     if Fingerprint::capture(path).map_err(|_| unreadable())? == Fingerprint::Missing {
-        return Ok(false);
+        return Ok(None);
     }
     let mut value: serde_json::Value =
         serde_json::from_slice(&fs::read(path).map_err(|_| unreadable())?)
@@ -535,12 +573,7 @@ pub(crate) fn rewrite_registry(
         }
         entry["dll"] = next.into();
     }
-    if changed {
-        fs::write(
-            path,
-            serde_json::to_vec_pretty(&value).map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?;
-    }
-    Ok(changed)
+    changed
+        .then(|| serde_json::to_vec_pretty(&value).map_err(|error| error.to_string()))
+        .transpose()
 }

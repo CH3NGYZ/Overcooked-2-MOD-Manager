@@ -82,7 +82,7 @@ async fn hashless_release_reports_occupied_targets_without_touching_the_game() {
     for (obstacle, tag) in [
         ("directory", "modChanges.installTargetIsDirectory"),
         ("both states", "modChanges.installTargetHasBothStates"),
-        ("old record", "modChanges.installTargetClaimed"),
+        ("old record", "modChanges.installTargetClaimedWithManifests"),
     ] {
         let server = Server::new(vec![bytes.clone()], false);
         let mut repo = repository(REPO, GUID, &["2.0.0"], vec![]);
@@ -144,10 +144,17 @@ async fn hashless_release_reports_occupied_targets_without_touching_the_game() {
             ),
             before,
         );
+        let mut params = vec![("path", target.as_str())];
+        let both_paths = format!("{target}\n{}", mods::disabled_dll_file(&target));
+        if obstacle == "old record" {
+            params.push(("manifests", "manifests/AnotherRepository.toml"));
+        } else if obstacle == "both states" {
+            params = vec![("paths", both_paths.as_str())];
+        }
         assert_eq!(
             outcome.error,
-            Some(crate::locale_tag::with_params(tag, &[("path", &target)])),
-            "{obstacle}",
+            Some(crate::locale_tag::with_params(tag, &params)),
+            "{obstacle}"
         );
     }
 }

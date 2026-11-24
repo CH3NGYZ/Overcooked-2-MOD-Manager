@@ -97,7 +97,11 @@ impl Builder<'_> {
             );
             return Err(ReleaseTargetError::ForeignManifest {
                 owner: node.id.clone(),
-                message: InstallBlock::InstallRecord.report(&node.id, &target),
+                message: super::super::install_block::report_record_claim(
+                    &node.id,
+                    &target,
+                    self.records.records_for_id(&prior.repository_id),
+                ),
             });
         }
         let package = std::cell::OnceCell::new();

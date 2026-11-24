@@ -265,10 +265,12 @@ fn duplicate_retirement_does_not_change_other_explicit_roots() {
     let before = game_and_manifest_bytes(&f);
     let mut selection = request(FASTINIT, Some(TARGET), true);
     selection.roots.extend(request(DEPENDENT, None, true).roots);
+    let error = planning::create(&f.state, selection).unwrap_err();
     assert_eq!(
-        planning::create(&f.state, selection).unwrap_err(),
+        crate::locale_tag::diagnostic_tag(&error),
         "modChanges.multipleInstalledCopies"
     );
+    assert!(error.contains(OLDER) && error.contains(DISABLED_OLDER));
     assert_eq!(game_and_manifest_bytes(&f), before);
 }
 
@@ -430,8 +432,9 @@ fn enabled_and_disabled_versions_of_one_retirement_path_block_planning() {
     let twin = mods::disabled_dll_file(OLDER);
     write(&f.game.join(twin), &installed_fastinit_bytes(GUID, "1.2"));
     let before = game_and_manifest_bytes(&f);
+    let error = planning::create(&f.state, request(FASTINIT, Some(TARGET), true)).unwrap_err();
     assert_eq!(
-        planning::create(&f.state, request(FASTINIT, Some(TARGET), true)).unwrap_err(),
+        crate::locale_tag::diagnostic_tag(&error),
         "modChanges.multipleInstalledCopies"
     );
     assert_eq!(game_and_manifest_bytes(&f), before);
@@ -460,10 +463,12 @@ fn exact_release_update_explains_ambiguous_installed_copies_before_download() {
         2
     );
     assert!(!inventory.files.contains_key("mod:FastInit"));
+    let error = planning::create(&f.state, request(id, Some("v1.9.6"), true)).unwrap_err();
     assert_eq!(
-        planning::create(&f.state, request(id, Some("v1.9.6"), true)).unwrap_err(),
+        crate::locale_tag::diagnostic_tag(&error),
         "modChanges.multipleInstalledCopies"
     );
+    assert!(error.contains(&extra));
     assert_eq!(
         planning::create(&f.state, request("Missing", Some("v1.0"), true)).unwrap_err(),
         "modChanges.targetChanged"

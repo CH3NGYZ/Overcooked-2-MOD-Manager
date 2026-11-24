@@ -1,11 +1,15 @@
 //! Per-invocation preparation progress, backed by the existing download snapshots.
 use super::{
+    bundled_display::BundledDll,
     model::ChangeAction,
     session::{ChangePlan, PlanSession},
 };
 use crate::archive::DownloadProgress;
 use serde::Serialize;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -45,6 +49,8 @@ pub(crate) struct ChangePreparationProgress {
     pub stage: PreparationStage,
     pub active_node_id: Option<String>,
     pub actions: Vec<ChangeAction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundled_dlls: Option<BTreeMap<String, Vec<BundledDll>>>,
     /// The current solution, not an append-only list of abandoned candidates.
     pub items: Vec<PreparationItem>,
     pub error: Option<String>,
@@ -108,6 +114,7 @@ impl PreparationReporter {
                 stage: PreparationStage::Resolving,
                 active_node_id: None,
                 actions: vec![],
+                bundled_dlls: None,
                 items: vec![],
                 error: None,
             })),
@@ -127,6 +134,7 @@ impl PreparationReporter {
     pub(super) fn synchronize(&self, session: &PlanSession) {
         self.update(|snapshot| {
             snapshot.actions = session.plan.result.actions.clone();
+            snapshot.bundled_dlls = Some(session.plan.bundled_dlls.clone());
             let previous = std::mem::take(&mut snapshot.items);
             if let Some(solved) = &session.solved {
                 for node in &solved.nodes {

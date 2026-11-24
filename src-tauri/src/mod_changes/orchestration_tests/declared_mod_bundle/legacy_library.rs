@@ -221,7 +221,7 @@ fn missing_core_refuses_unsafe_release_residues_with_their_exact_paths() {
         ("no digest", "modChanges.installTargetNeedsVerifiedRelease"),
         ("twins", "modChanges.installTargetHasBothStates"),
         ("hard link", "modChanges.installTargetAliasesOrLink"),
-        ("manifest", "modChanges.installTargetClaimed"),
+        ("manifest", "modChanges.installTargetClaimedWithManifests"),
         ("map registry", "modChanges.installTargetMapProtected"),
         ("separate GUID", "modChanges.installTargetOwned"),
         (
@@ -298,9 +298,16 @@ fn missing_core_refuses_unsafe_release_residues_with_their_exact_paths() {
         let mut session = take(&f, &plan);
         inject_release(&f, &mut session, &preview).unwrap();
         let error = planning::resolve(&f.state, &mut session).unwrap_err();
+        let mut params = vec![("path", path)];
+        let both_paths = format!("{path}\n{}", mods::disabled_dll_file(path));
+        if case == "manifest" {
+            params.push(("manifests", "manifests/other.toml"));
+        } else if case == "twins" {
+            params = vec![("paths", both_paths.as_str())];
+        }
         assert_eq!(
             error,
-            crate::locale_tag::with_params(tag, &[("path", path)]),
+            crate::locale_tag::with_params(tag, &params),
             "{case}"
         );
         assert_eq!(Fingerprint::capture(&f.game).unwrap(), before, "{case}");

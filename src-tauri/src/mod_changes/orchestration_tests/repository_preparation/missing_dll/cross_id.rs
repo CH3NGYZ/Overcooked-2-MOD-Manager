@@ -163,7 +163,14 @@ async fn cross_id_reinstall_rejects_unproven_or_occupied_records_without_writes(
         assert!(outcome.plan.is_none(), "{case}");
         assert_eq!(test.fingerprints(), before, "{case}");
         if case.ends_with("DLL still present") {
-            assert_eq!(outcome.error.as_deref(), Some(CLAIMED), "{case}");
+            assert_eq!(
+                outcome.error,
+                Some(install_claim_error(
+                    TARGET,
+                    &format!("manifests/{OLD_ID}.toml"),
+                )),
+                "{case}"
+            );
         }
     }
 }
@@ -197,8 +204,11 @@ async fn cross_id_reinstall_does_not_remove_a_live_record_when_the_main_dll_path
 
     let outcome = test.prepare().await;
     let claimed = crate::locale_tag::with_params(
-        "modChanges.installTargetClaimed",
-        &[("path", relocated::PREVIOUS)],
+        "modChanges.installTargetClaimedWithManifests",
+        &[
+            ("path", relocated::PREVIOUS),
+            ("manifests", &format!("manifests/{OLD_ID}.toml")),
+        ],
     );
     assert_eq!(outcome.progress.stage, PreparationStage::Failed);
     assert_eq!(outcome.error.as_deref(), Some(claimed.as_str()));

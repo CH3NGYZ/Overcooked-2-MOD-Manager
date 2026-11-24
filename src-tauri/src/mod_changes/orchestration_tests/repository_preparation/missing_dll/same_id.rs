@@ -131,7 +131,7 @@ async fn same_id_reinstall_refuses_foreign_or_unverified_overwrites() {
                     repository_binding: None,
                     ..test.old_record()
                 });
-                ("modChanges.installTargetClaimed", CHANGED)
+                ("modChanges.installTargetClaimedWithManifests", CHANGED)
             }
             "modified without record" => {
                 write(&game.join(IDENTICAL), b"different unregistered file");
@@ -155,12 +155,13 @@ async fn same_id_reinstall_refuses_foreign_or_unverified_overwrites() {
             PreparationStage::Failed,
             "{obstacle}"
         );
+        let mut params = vec![("path", expected.1)];
+        if obstacle == "other record" {
+            params.push(("manifests", "manifests/OtherRepository.toml"));
+        }
         assert_eq!(
             outcome.error,
-            Some(crate::locale_tag::with_params(
-                expected.0,
-                &[("path", expected.1)]
-            )),
+            Some(crate::locale_tag::with_params(expected.0, &params)),
             "{obstacle}"
         );
         assert_eq!(test.fingerprints(), before, "{obstacle}");

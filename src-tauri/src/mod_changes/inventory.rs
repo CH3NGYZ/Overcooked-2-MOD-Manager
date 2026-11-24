@@ -72,6 +72,8 @@ pub(crate) struct NodeSummary {
     pub package_id: Option<String>,
     pub dll_files: Vec<String>,
     pub members: Vec<MemberSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle_parent_node_id: Option<String>,
     pub map_dir_name: Option<String>,
     pub map_id: Option<String>,
     pub subject_tag: Option<String>,
@@ -341,7 +343,7 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
     let manifests = archive::read_manifests(&state.config.manifests_dir());
     let frameworks = mods::plugin_target::eligible(&installed, mods::plugin_target::DIYLEVEL_GUID);
     if frameworks.len() > 1 {
-        return Err("framework.diyLevelAmbiguous".into());
+        return Err(super::evidence::framework_ambiguity(&frameworks));
     }
     let package = frameworks
         .first()
@@ -452,6 +454,7 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
                     },
                 })
                 .collect(),
+            bundle_parent_node_id: None,
             map_dir_name: None,
             map_id: None,
             subject_tag: None,
@@ -565,6 +568,7 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
                     package_id: None,
                     dll_files: vec![],
                     members: vec![],
+                    bundle_parent_node_id: None,
                     map_dir_name: None,
                     map_id: None,
                     subject_tag: None,
@@ -820,11 +824,12 @@ pub(crate) fn validate_solution(
             if node.enabled
                 && plugin.enabled
                 && !plugin.guid.trim().is_empty()
-                && let Some(error) = super::inventory_maps::runtime_conflict::duplicate_runtime(
+                && let Some(error) = super::evidence::duplicate_runtime(
+                    trusted,
                     &plugin.guid,
                     targets(solved, &plugin.guid, true)
                         .into_iter()
-                        .map(|(_, member)| member),
+                        .map(|(index, member)| (&solved.nodes[index], member)),
                 )
             {
                 return Err(error);

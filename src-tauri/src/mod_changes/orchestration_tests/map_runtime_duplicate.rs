@@ -4,7 +4,7 @@ use crate::{asset_bundle::LevelSetMetadata, level_sets};
 
 const RUNTIME_GUID: &str = "fixture.young-levels";
 const EXTERNAL: &str = "BepInEx/plugins/YoungLevelRuntimeLoader/YoungLevels.dll";
-const EMBEDDED: &str = "younglevels.dll";
+const EMBEDDED: &str = "YoungLevels.dll";
 const MAP_ID: &str = "map:young";
 
 fn setup(
@@ -109,6 +109,23 @@ fn assert_safe_runtime_switch(map_requirements: Vec<RepositoryRelation>) {
     let plan = planning::create(&f.state, enable_young()).unwrap();
     assert_eq!(plan.result.status, SolveStatus::Ready, "{:?}", plan.result);
     assert_eq!(plan.result.actions.len(), 2);
+    let provider_wire = serde_json::to_value(&plan.provider_choices).unwrap();
+    let [group] = provider_wire.as_array().unwrap().as_slice() else {
+        panic!("{provider_wire}")
+    };
+    assert_eq!(group["guid"], RUNTIME_GUID);
+    let rows = group["rows"].as_array().unwrap();
+    assert!(
+        rows.iter()
+            .any(|row| row["path"] == EXTERNAL && row["origin"] == "installed")
+    );
+    let embedded =
+        inventory::relative(&f.game, &disabled.join(mods::disabled_dll_file(EMBEDDED))).unwrap();
+    assert!(rows.iter().any(|row| row["node_id"] == MAP_ID
+        && row["origin"] == "selected"
+        && row["version"] == "1.4.2"
+        && row["path"] == embedded
+        && row["installed_enabled"] == false));
     assert!(plan.result.actions.iter().any(|action| {
         action.kind == ActionKind::Disable
             && action.node_id == format!("dll:{}", inventory::key(EXTERNAL))

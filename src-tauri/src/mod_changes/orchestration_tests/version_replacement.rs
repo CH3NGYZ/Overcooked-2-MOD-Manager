@@ -454,7 +454,7 @@ async fn precise_downgrade_cannot_claim_separate_owners_or_bypass_core_and_diges
         ),
         (
             Prohibition::OtherManifest,
-            "modChanges.installTargetClaimed",
+            "modChanges.installTargetClaimedWithManifests",
             &[RESOURCE][..],
         ),
         (
@@ -475,7 +475,13 @@ async fn precise_downgrade_cannot_claim_separate_owners_or_bypass_core_and_diges
             .error
             .unwrap_or_else(|| panic!("{case:?} was accepted"));
         assert!(
-            paths.iter().any(|path| blocked(tag, path) == error),
+            paths.iter().any(|path| {
+                let mut params = vec![("path", *path)];
+                if case == Prohibition::OtherManifest {
+                    params.push(("manifests", "manifests/OtherOwner.toml"));
+                }
+                crate::locale_tag::with_params(tag, &params) == error
+            }),
             "{case:?}: expected {tag} at {paths:?}, got {error}"
         );
         no_pending(&test.fixture);

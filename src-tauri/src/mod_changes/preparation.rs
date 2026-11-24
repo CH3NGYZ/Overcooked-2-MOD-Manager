@@ -422,9 +422,13 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
         if let Mutation::Tree(change) = &owned.mutation
             && let Some(source) = &change.source
         {
-            session
+            let fingerprint = session
                 .payload_fingerprints
-                .insert(source.clone(), Fingerprint::capture(source)?);
+                .entry(source.path.clone())
+                .or_insert_with(|| source.fingerprint.clone());
+            if *fingerprint != source.fingerprint {
+                return Err("modChanges.payloadChanged".into());
+            }
         }
     }
     verify_preparation_freshness(state, session, Some(&changes))?;

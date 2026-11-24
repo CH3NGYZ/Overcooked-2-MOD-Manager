@@ -255,11 +255,16 @@ pub(super) fn merge(
         let mut candidate = node.current.take().ok_or("modChanges.targetChanged")?;
         candidate.id = format!("map-import:{}:{id}", session.plan.plan_id);
         let mut roles = BTreeMap::new();
+        let mut member_files = BTreeMap::new();
         for member in &files.summary.members {
-            if let Some(role) = member.role {
-                let mut target_key = Some(member.key.clone());
-                remap_key(&mut target_key, &stage_path, &target_prefix)?;
-                roles.extend(target_key.map(|key| (key, role)));
+            let mut target_key = Some(member.key.clone());
+            remap_key(&mut target_key, &stage_path, &target_prefix)?;
+            if let Some(target_key) = target_key {
+                member_files.insert(
+                    target_key.clone(),
+                    remap_display_path(&member.dll_file, &stage_path, &target_prefix)?,
+                );
+                roles.extend(member.role.map(|role| (target_key, role)));
             }
         }
         for plugin in &mut candidate.provides {
@@ -303,32 +308,43 @@ pub(super) fn merge(
             files.summary.map_name_zh = None;
             files.summary.map_id = Some(map.id.clone());
         }
-        files.summary.members = candidate
-            .provides
-            .iter()
-            .filter_map(|plugin| {
-                let key = plugin.member_key.as_ref()?;
-                Some(MemberSummary {
-                    key: key.clone(),
-                    dll_file: key.clone(),
-                    enabled: plugin.enabled,
-                    guid: (!plugin.guid.is_empty()).then(|| plugin.guid.clone()),
-                    role: roles.get(key).copied(),
-                })
-            })
-            .collect();
+        let mut projected_members = Vec::new();
+        for plugin in &candidate.provides {
+            let Some(member_key) = plugin.member_key.as_ref() else {
+                continue;
+            };
+            let dll_file = member_files
+                .get(member_key)
+                .ok_or_else(|| InstallBlock::Unrecognized.report(&id, member_key))?;
+            projected_members.push(MemberSummary {
+                key: member_key.clone(),
+                dll_file: dll_file.clone(),
+                enabled: plugin.enabled,
+                guid: (!plugin.guid.is_empty()).then(|| plugin.guid.clone()),
+                role: roles.get(member_key).copied(),
+            });
+        }
+        files.summary.members = projected_members;
         batch.member_roles.insert(candidate.id.clone(), roles);
+        batch
+            .member_files
+            .insert(candidate.id.clone(), member_files);
         files.summary.dll_files = files
             .summary
             .members
             .iter()
             .map(|member| member.dll_file.clone())
             .collect();
+        let physical = super::super::mutations::game(&stage_path).resolve(&TransactionRoots {
+            game_root: batch.stage_root.clone(),
+            data_root: batch.manifests_root.clone(),
+        })?;
         let staged = StagedMap {
             node_id: id.clone(),
             candidate_id: candidate.id.clone(),
             enabled,
             stage_path,
+            stage_fingerprint: StagedTree::capture(physical)?.fingerprint,
             member_prefix: target_prefix,
             target_dir: name,
             old_path,
@@ -388,6 +404,7 @@ pub(super) fn merge(
             return Err(InstallBlock::Unrecognized.report(&node.id, &canonical));
         }
         let map_enabled = map.enabled;
+        files.summary.bundle_parent_node_id = Some(map.node_id.clone());
         if previous_registry.iter().any(|old| {
             key(&old.dll) == key(&canonical)
                 && !imported.iter().any(|metadata| {
@@ -411,6 +428,12 @@ pub(super) fn merge(
             return Err(InstallBlock::PathOwned.report(&node.id, &canonical));
         }
         let mut candidate = node.current.take().ok_or("modChanges.targetChanged")?;
+        let member_files = files
+            .summary
+            .members
+            .iter()
+            .map(|member| (member.key.clone(), member.dll_file.clone()))
+            .collect();
         let mut claimed = None;
         let id = node.id.clone();
         if let Some(owner) = owners
@@ -455,6 +478,10 @@ pub(super) fn merge(
                 .ok_or("modChanges.targetChanged")?;
             prior.summary.node_id.clone_from(&id);
             prior.summary.map_id.clone_from(&files.summary.map_id);
+            prior
+                .summary
+                .bundle_parent_node_id
+                .clone_from(&files.summary.bundle_parent_node_id);
             prior.summary.repository_id = None;
             prior.summary.candidates.clear();
             session.trusted.files.insert(id.clone(), prior);
@@ -470,6 +497,9 @@ pub(super) fn merge(
                 .filter_map(|member| Some((member.key.clone(), member.role?)))
                 .collect(),
         );
+        batch
+            .member_files
+            .insert(candidate.id.clone(), member_files);
         let mut enabled = map_enabled;
         if let Some(old) = session
             .trusted
@@ -585,6 +615,18 @@ fn remap_key(member: &mut Option<String>, from: &str, to: &str) -> Result<(), St
         *path = key(&format!("{to}{}", &path[from.len()..]));
     }
     Ok(())
+}
+
+fn remap_display_path(path: &str, from: &str, to: &str) -> Result<String, String> {
+    if !within(path, from) {
+        return Err(InstallBlock::OutsidePackage.report("map-import", path));
+    }
+    let tail = path
+        .split('/')
+        .skip(from.split('/').count())
+        .collect::<Vec<_>>()
+        .join("/");
+    Ok(format!("{to}/{tail}"))
 }
 
 fn inherit_switches(previous: &Candidate, current: &mut Candidate) -> Result<(), String> {

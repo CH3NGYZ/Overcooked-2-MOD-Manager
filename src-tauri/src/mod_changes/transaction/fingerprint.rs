@@ -1,5 +1,5 @@
 use super::paths::{MODIFIED, UNSAFE, io_at, io_error, is_link, validate_absolute};
-use super::types::{Fingerprint, PermissionsSnapshot, StagedFile};
+use super::types::{Fingerprint, PermissionsSnapshot, StagedFile, StagedTree};
 use crate::file_metadata::Stamp;
 use sha2::{Digest, Sha256};
 use std::{fs, fs::File, io::Read, path::Path};
@@ -145,6 +145,25 @@ impl StagedFile {
                 file_check::MISSING,
             )),
             Fingerprint::Directory { .. } => {
+                Err(file_check::report(check::STAGED, &path, file_check::TYPE))
+            }
+        }
+    }
+}
+
+impl StagedTree {
+    pub(crate) fn capture(path: std::path::PathBuf) -> Result<Self, String> {
+        use super::check;
+        use crate::file_check;
+        let fingerprint = check::capture(&path, check::STAGED)?;
+        match fingerprint {
+            Fingerprint::Directory { .. } => Ok(Self { path, fingerprint }),
+            Fingerprint::Missing => Err(file_check::report(
+                check::STAGED,
+                &path,
+                file_check::MISSING,
+            )),
+            Fingerprint::File { .. } => {
                 Err(file_check::report(check::STAGED, &path, file_check::TYPE))
             }
         }

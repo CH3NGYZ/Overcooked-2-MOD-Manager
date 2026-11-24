@@ -58,9 +58,10 @@ pub(in crate::mod_changes) fn solve_toggle(
         // Map enable activates every internal member, even one currently disabled on disk.
         let would_load = copies.iter().filter_map(|(index, plugin)| {
             (*index == map_index || (original.nodes[*index].enabled && plugin.enabled))
-                .then_some(*plugin)
+                .then_some((&original.nodes[*index], *plugin))
         });
-        let Some(error) = duplicate_runtime(guid, would_load) else {
+        let Some(error) = super::super::evidence::duplicate_runtime(trusted, guid, would_load)
+        else {
             continue;
         };
         duplicates.insert(guid.to_ascii_lowercase(), error);
@@ -153,7 +154,6 @@ pub(in crate::mod_changes) fn solve_toggle(
     }
     Ok(Some((result, solved)))
 }
-
 fn standalone_switchable<'a>(
     trusted: &TrustedInventory,
     roots: &TransactionRoots,
@@ -214,20 +214,4 @@ fn standalone_switchable<'a>(
     // Resolve like the eventual transaction; never trial a rename in the live tree.
     matches!(fs::symlink_metadata(inactive), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
         && fs::File::open(active).is_ok_and(|file| has_single_link(&file))
-}
-
-pub(in crate::mod_changes) fn duplicate_runtime<'a>(
-    guid: &str,
-    members: impl IntoIterator<Item = &'a ProvidedPlugin>,
-) -> Option<String> {
-    let mut members = members
-        .into_iter()
-        .map(|member| member.member_key.as_deref().unwrap_or(guid));
-    let mut paths = vec![members.next()?, members.next()?];
-    paths.extend(members);
-    paths.sort_unstable();
-    Some(crate::locale_tag::with_params(
-        "modChanges.duplicatePluginRuntime",
-        &[("guid", guid), ("paths", &paths.join(" · "))],
-    ))
 }

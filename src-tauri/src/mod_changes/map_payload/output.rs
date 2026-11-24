@@ -17,17 +17,26 @@ pub(in crate::mod_changes) fn mutations(
     let package = super::super::mutations::final_package(solved)?;
     let mut result = Vec::new();
     let mut targets = BTreeSet::new();
+    let stage_roots = TransactionRoots {
+        game_root: batch.stage_root.clone(),
+        data_root: roots.data_root.clone(),
+    };
     let replacements = batch
         .maps
         .iter()
-        .map(|map| crate::mod_changes::level_trees::Replacement {
-            node_id: map.node_id.clone(),
-            source: batch.stage_root.join(&map.stage_path),
-            target_dir: map.target_dir.clone(),
-            old_path: map.old_path.clone(),
-            member_prefix: map.member_prefix.clone(),
+        .map(|map| {
+            Ok(crate::mod_changes::level_trees::Replacement {
+                node_id: map.node_id.clone(),
+                source: StagedTree {
+                    path: game(&map.stage_path).resolve(&stage_roots)?,
+                    fingerprint: map.stage_fingerprint.clone(),
+                },
+                target_dir: map.target_dir.clone(),
+                old_path: map.old_path.clone(),
+                member_prefix: map.member_prefix.clone(),
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, String>>()?;
     let migration = crate::mod_changes::level_trees::compose(session, roots, &replacements)?;
     if let Some(migration) = &migration {
         for owned in &migration.mutations {
@@ -37,34 +46,29 @@ pub(in crate::mod_changes) fn mutations(
         }
     }
     let map_paths = crate::mod_changes::level_trees::final_map_paths(session, roots)?;
-    crate::mod_changes::level_trees::rewrite_registry(
-        &batch
-            .manifests_root
-            .join(level_sets::LEVEL_SET_PLUGIN_REGISTRY),
+    let registry = batch
+        .manifests_root
+        .join(level_sets::LEVEL_SET_PLUGIN_REGISTRY);
+    let registry_update = crate::mod_changes::level_trees::remapped_registry(
+        &registry,
         migration.as_ref().map(|m| m.from.as_str()).unwrap_or(""),
         migration.as_ref().map(|m| m.to.as_str()).unwrap_or(""),
         &map_paths,
     )?;
-    for map in &batch.maps {
+    for (map, replacement) in batch.maps.iter().zip(replacements) {
         let node = selected(solved, &map.node_id, &map.candidate_id)?;
-        let current = node.current.as_ref().ok_or("modChanges.targetChanged")?;
-        crate::mod_changes::level_trees::set_members(
-            &batch.stage_root.join(&map.stage_path),
-            &map.member_prefix,
-            current,
-        )?;
-        let target = crate::mod_changes::level_trees::map_destination(
-            &roots.game_root,
-            &map.target_dir,
-            node.enabled,
-            package.as_deref(),
-        )?;
         if migration
             .as_ref()
             .is_some_and(|composition| composition.handled_maps.contains(&map.node_id))
         {
             continue;
         }
+        let target = crate::mod_changes::level_trees::map_destination(
+            &roots.game_root,
+            &map.target_dir,
+            node.enabled,
+            package.as_deref(),
+        )?;
         if let Some(old) = &map.old_path {
             if key(old) != key(&target) {
                 push_tree(&mut result, &mut targets, roots, old, None, &map.node_id)?;
@@ -83,10 +87,14 @@ pub(in crate::mod_changes) fn mutations(
                 &[("path", &target)],
             ));
         }
-        let source = game(&map.stage_path).resolve(&TransactionRoots {
-            game_root: batch.stage_root.clone(),
-            data_root: roots.data_root.clone(),
-        })?;
+        let source = crate::mod_changes::level_trees::stage_with_member_states(
+            replacement.source,
+            session
+                .staging
+                .join(format!("map-{}", uuid::Uuid::new_v4())),
+            &map.member_prefix,
+            node.current.as_ref().ok_or("modChanges.targetChanged")?,
+        )?;
         push_tree(
             &mut result,
             &mut targets,
@@ -115,7 +123,11 @@ pub(in crate::mod_changes) fn mutations(
                     return Err(InstallBlock::Directory.report(&external.node_id, path));
                 }
             }
-            return Err(InstallBlock::BothStates.report(&external.node_id, &canonical));
+            return Err(InstallBlock::report_both_states(
+                &external.node_id,
+                &canonical,
+                &disabled,
+            ));
         }
         let owns_existing = session
             .trusted
@@ -211,8 +223,16 @@ pub(in crate::mod_changes) fn mutations(
         )?;
     }
     for name in [level_sets::LEVEL_SET_PLUGIN_REGISTRY, "map-relations.json"] {
-        let source = batch.manifests_root.join(name);
-        if source.is_file() {
+        let source = match (name, &registry_update) {
+            (level_sets::LEVEL_SET_PLUGIN_REGISTRY, Some(bytes)) => Some(
+                crate::mod_changes::mutations::generated(session, "map-plugin-registry", bytes)?,
+            ),
+            _ => {
+                let path = batch.manifests_root.join(name);
+                path.is_file().then_some(path)
+            }
+        };
+        if let Some(source) = source {
             push_file(
                 &mut result,
                 &mut targets,
@@ -302,7 +322,7 @@ pub(super) fn push_tree(
     targets: &mut BTreeSet<String>,
     roots: &TransactionRoots,
     path: &str,
-    source: Option<PathBuf>,
+    source: Option<StagedTree>,
     owner: &str,
 ) -> Result<(), String> {
     let target = game(path);

@@ -29,7 +29,7 @@ pub(crate) use tree::preserve_replaced_permissions as preserve_replaced_tree_per
 #[cfg(test)]
 pub(crate) use types::JournalState;
 pub(crate) use types::{
-    FileChange, Fingerprint, MoveChange, Mutation, RootKind, StagedFile,
+    FileChange, Fingerprint, MoveChange, Mutation, RootKind, StagedFile, StagedTree,
     TransactionPath, TransactionRoots, TreeChange,
 };
 #[cfg(windows)]

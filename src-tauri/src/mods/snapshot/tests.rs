@@ -170,10 +170,14 @@ fn equal_highest_versions_remain_ambiguous_even_when_one_dll_is_disabled() {
     );
     let published = ws.scan_and_publish();
     assert!(published.diy_level_target.is_none());
+    let error = level_roots(&ws.state, &ws.game).unwrap_err();
     assert_eq!(
-        level_roots(&ws.state, &ws.game).unwrap_err(),
+        crate::locale_tag::diagnostic_tag(&error),
         "framework.diyLevelAmbiguous"
     );
+    assert!(error.contains("LatestA/DIYLevel.dll"));
+    assert!(error.contains("LatestB/DIYLevel.dll.disabled"));
+    assert!(!error.contains("/Lower/"));
 }
 
 #[test]

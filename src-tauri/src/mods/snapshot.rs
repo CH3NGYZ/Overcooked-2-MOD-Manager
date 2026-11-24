@@ -81,7 +81,9 @@ pub(crate) fn level_roots(
     let candidates =
         super::plugin_target::eligible(&snapshot.mods, super::plugin_target::DIYLEVEL_GUID);
     if candidates.len() > 1 {
-        return Err("framework.diyLevelAmbiguous".into());
+        return Err(crate::mod_changes::evidence::framework_ambiguity(
+            &candidates,
+        ));
     }
     let package_root = candidates
         .first()

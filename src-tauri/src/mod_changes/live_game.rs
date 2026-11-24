@@ -46,7 +46,7 @@ pub(super) fn touches_mods(
                     || (change.expected != Fingerprint::Missing
                         && contains_dll(&change.target.resolve(roots)?)?)
                     || match &change.source {
-                        Some(source) => contains_dll(source)?,
+                        Some(source) => contains_dll(&source.path)?,
                         None => false,
                     }
             }

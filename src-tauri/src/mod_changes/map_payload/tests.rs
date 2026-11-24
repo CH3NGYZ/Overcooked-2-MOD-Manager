@@ -1,4 +1,5 @@
 use super::super::session::{ChangePlan, PlanRequest};
+use super::super::{planning, preparation};
 use super::*;
 use std::{collections::HashMap, io::Write, time::Instant};
 
@@ -49,6 +50,7 @@ fn loose_loader_input_never_escapes_the_graph() {
         maps: vec![],
         external: vec![],
         member_roles: Default::default(),
+        member_files: Default::default(),
         extra_files: vec![],
     };
     assert_eq!(
@@ -274,10 +276,11 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
         result: super::super::solve(&trusted.inventory, &ChangeRequest::default()),
         roots: vec![],
         nodes: vec![],
+        bundled_dlls: Default::default(),
         relation_labels: Default::default(),
-        previous_enabled_members: Default::default(),
         retired_mod_copies: Default::default(),
         untracked_overwrites: Vec::new(),
+        provider_choices: Vec::new(),
         install_notes: vec![],
         prepared: false,
     };
@@ -308,6 +311,7 @@ fn fixture_with_release(origin: Option<MapInstallOrigin>) -> Fixture {
         maps: vec![],
         external: vec![],
         member_roles: Default::default(),
+        member_files: Default::default(),
         extra_files: vec![],
     };
     projection::merge(
@@ -581,7 +585,7 @@ fn map_tree_endpoint_collisions_and_external_active_disabled_duplicates_block() 
     );
     assert_eq!(
         mutations(&fixture.roots, &fixture.session).unwrap_err(),
-        "modChanges.installTargetHasBothStates?path=BepInEx/plugins/External/Fix.dll"
+        "modChanges.installTargetHasBothStates?paths=BepInEx/plugins/External/Fix.dll%0ABepInEx/plugins/External/Fix.dll.disabled"
     );
     let mut result = Vec::new();
     let mut targets = BTreeSet::new();
@@ -685,7 +689,7 @@ fn external_map_dll_counterpart_during_apply_rolls_back_without_touching_outside
     assert!(injected);
     assert_eq!(
         error,
-        format!("modChanges.installTargetHasBothStates?path={external}")
+        format!("modChanges.installTargetHasBothStates?paths={external}%0A{external}.disabled")
     );
     assert_eq!(fs::read(active).unwrap(), b"outside active copy");
     assert_eq!(fs::read(disabled).unwrap(), original);
@@ -809,6 +813,7 @@ fn framework_directory_change_and_map_update_commit_with_all_map_and_member_swit
                     guid: Some(format!("fixture-{name}")),
                     role: None,
                 }],
+                bundle_parent_node_id: None,
                 map_dir_name: Some(name.into()),
                 map_id: None,
                 subject_tag: None,
@@ -865,6 +870,7 @@ fn framework_directory_change_and_map_update_commit_with_all_map_and_member_swit
                     guid: Some(crate::mods::plugin_target::DIYLEVEL_GUID.into()),
                     role: None,
                 }],
+                bundle_parent_node_id: None,
                 map_dir_name: None,
                 map_id: None,
                 subject_tag: None,
@@ -920,8 +926,11 @@ fn framework_directory_change_and_map_update_commit_with_all_map_and_member_swit
             )),
         },
     );
+    planning::remember_payloads(&mut fixture.session).unwrap();
+    let frozen_inputs = fixture.session.payload_fingerprints.clone();
     let mutations =
         super::super::mutations::assemble(&fixture.session, fixture.roots.clone()).unwrap();
+    preparation::verify_fingerprints(&frozen_inputs).unwrap();
     let endpoints = mutations
         .iter()
         .filter_map(|mutation| {

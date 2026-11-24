@@ -77,19 +77,19 @@ pub(crate) struct ChangePlan {
     pub result: SolveResult,
     pub roots: Vec<RootSummary>,
     pub nodes: Vec<NodeSummary>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub bundled_dlls: BTreeMap<String, Vec<super::bundled_display::BundledDll>>,
     /// Source titles for referents that may have no installed or evaluated provider.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub relation_labels: BTreeMap<String, RelationLabel>,
-    /// Member keys that were effectively enabled before a whole-node disable.
-    /// The solved node summaries describe the final state, so cannot show these.
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub previous_enabled_members: BTreeMap<String, Vec<String>>,
     /// Physical older copies consumed by a package replacement, grouped by its action's node.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub retired_mod_copies: BTreeMap<String, Vec<RetiredModCopy>>,
     /// Existing loose files covered by the prepared package replacement.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub untracked_overwrites: Vec<UntrackedOverwrite>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub provider_choices: Vec<super::evidence::ProviderEvidence>,
     pub install_notes: Vec<InstallNote>,
     pub prepared: bool,
 }
@@ -428,28 +428,6 @@ pub(crate) fn presentation(
     id: String,
     prepared: bool,
 ) -> ChangePlan {
-    let disabled_nodes: BTreeSet<_> = result
-        .actions
-        .iter()
-        .filter(|action| action.kind == ActionKind::Disable && action.member_key.is_none())
-        .map(|action| action.node_id.as_str())
-        .collect();
-    let previous_enabled_members = trusted
-        .inventory
-        .nodes
-        .iter()
-        .filter(|node| node.enabled && disabled_nodes.contains(node.id.as_str()))
-        .map(|node| {
-            let enabled_keys = node
-                .current
-                .iter()
-                .flat_map(|candidate| &candidate.provides)
-                .filter(|member| member.enabled)
-                .filter_map(|member| member.member_key.clone())
-                .collect();
-            (node.id.clone(), enabled_keys)
-        })
-        .collect();
     ChangePlan {
         plan_id: id,
         replan_scope: trusted.replan_scope.clone(),
@@ -481,9 +459,10 @@ pub(crate) fn presentation(
             })
             .collect(),
         nodes: trusted.files.values().map(|f| f.summary.clone()).collect(),
-        previous_enabled_members,
+        bundled_dlls: Default::default(),
         retired_mod_copies: BTreeMap::new(),
         untracked_overwrites: Vec::new(),
+        provider_choices: Vec::new(),
         install_notes: Vec::new(),
     }
 }

@@ -234,6 +234,12 @@ pub struct DiagnosticTarget {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     pub enabled: bool,
+    #[serde(skip)]
+    pub(super) candidate_id: Option<String>,
+    #[serde(skip)]
+    pub(super) member_key: Option<String>,
+    #[serde(skip)]
+    pub(super) source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

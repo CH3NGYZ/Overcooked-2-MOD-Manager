@@ -30,7 +30,9 @@ pub(in crate::mod_changes) fn final_framework_package(
             .collect::<Vec<_>>(),
     );
     if indices.len() > 1 {
-        return Err("framework.diyLevelAmbiguous".into());
+        return Err(crate::mod_changes::evidence::planned_framework_ambiguity(
+            indices.iter().map(|&index| members[index]),
+        ));
     }
     indices
         .first()
@@ -223,7 +225,7 @@ pub(super) fn toggle_map(
                 &mut targets,
                 &builder.roots,
                 &target,
-                Some(staged),
+                Some(StagedTree::capture(staged)?),
                 std::iter::once(ItemKey::new(&node.id, None)).chain(
                     internal
                         .iter()
@@ -267,17 +269,12 @@ pub(super) fn update_registry(
     if expected == Fingerprint::Missing {
         return Ok(());
     }
-    let staged = generated(
-        builder.session,
-        "map-plugin-registry",
-        &fs::read(&path).map_err(|error| error.to_string())?,
-    )?;
     let mut map_paths = builder.map_paths.clone();
     if let Some(migration) = migration {
         map_paths.extend(migration.map_paths.iter().cloned());
     }
-    if super::super::level_trees::rewrite_registry(
-        &staged,
+    if let Some(bytes) = super::super::level_trees::remapped_registry(
+        &path,
         migration
             .map(|migration| migration.from.as_str())
             .unwrap_or(""),
@@ -286,6 +283,7 @@ pub(super) fn update_registry(
             .unwrap_or(""),
         &map_paths,
     )? {
+        let staged = generated(builder.session, "map-plugin-registry", &bytes)?;
         builder.write(
             "map-plugin-registry",
             None,

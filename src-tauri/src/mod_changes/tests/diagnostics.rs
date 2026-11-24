@@ -67,6 +67,9 @@ fn web_runtime_upgrade_preserves_both_tried_framework_branches_to_missing_fix() 
                 node_id: DIY.into(),
                 version: Some(version.into()),
                 enabled: true,
+                candidate_id: Some(format!("{DIY}@{version}")),
+                member_key: Some(format!("{DIY}.dll")),
+                source: Some(DIY.into()),
             }]
         );
         assert_eq!(failed_edge.owner_id, DIY);
@@ -113,6 +116,9 @@ fn web_runtime_failed_traces_distinguish_installed_version_mismatch_and_unknown(
                     node_id: FIX.into(),
                     version: actual_version.map(str::to_owned),
                     enabled: true,
+                    candidate_id: Some(format!("{FIX}@0.2.2")),
+                    member_key: Some(format!("{FIX}.dll")),
+                    source: Some(FIX.into()),
                 }]
             );
         }
@@ -173,7 +179,10 @@ fn trace_uses_actual_disabled_provider_and_retains_intermediate_links() {
         [DiagnosticTarget {
             node_id: "c".into(),
             version: Some("1".into()),
-            enabled: false
+            enabled: false,
+            candidate_id: Some("c@1".into()),
+            member_key: Some("c.dll".into()),
+            source: Some("c".into()),
         }]
     );
 }

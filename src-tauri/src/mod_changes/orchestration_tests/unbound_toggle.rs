@@ -304,8 +304,6 @@ fn unbound_map_switch_ignores_own_runtime_requirement_but_still_displays_it() {
 
     let plan = planning::create(&f.state, request).unwrap();
     assert_eq!(plan_actions(&plan), [(MAP, ActionKind::Enable)]);
-    let wire = serde_json::to_value(&plan).unwrap();
-    assert!(wire.get("previous_enabled_members").is_none());
     let members = &plan
         .nodes
         .iter()
@@ -371,17 +369,13 @@ fn map_disable_preserves_only_its_previously_enabled_members_in_the_plan() {
         .members;
     assert_eq!(map_members.len(), 2);
     assert!(map_members.iter().all(|member| !member.enabled));
-    let embedded = inventory::key("BepInEx/plugins/DIYLevel/levels/Kitchen/Embedded.dll");
-    let wire = serde_json::to_value(&plan).unwrap();
-    assert_eq!(
-        wire["previous_enabled_members"],
-        serde_json::json!({ (MAP): [embedded] })
-    );
+    let [bundled] = plan.bundled_dlls[MAP].as_slice() else {
+        panic!("only the previously enabled member should appear");
+    };
+    assert!(bundled.dll_file.ends_with("/Embedded.dll"));
+    assert_eq!(bundled.kind, Some(ActionKind::Disable));
     let mut session = prepared(&f, &plan);
-    assert_eq!(
-        plan.previous_enabled_members,
-        session.plan.previous_enabled_members
-    );
+    assert_eq!(plan.bundled_dlls, session.plan.bundled_dlls);
     commit(&f, &mut session);
     let inactive = level_sets::disabled_root(&f.game).join("Kitchen");
     assert!(!active.exists());

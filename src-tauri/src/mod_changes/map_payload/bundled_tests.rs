@@ -42,6 +42,7 @@ fn same_root_framework_bundle_and_map_update_keep_disjoint_tree_endpoints() {
                     guid: Some(crate::mods::plugin_target::DIYLEVEL_GUID.into()),
                     role: None,
                 }],
+                bundle_parent_node_id: None,
                 map_dir_name: None,
                 map_id: None,
                 subject_tag: None,
@@ -94,7 +95,10 @@ fn same_root_framework_bundle_and_map_update_keep_disjoint_tree_endpoints() {
             )),
         },
     );
+    planning::remember_payloads(&mut f.session).unwrap();
+    let frozen_inputs = f.session.payload_fingerprints.clone();
     let changes = super::super::super::mutations::assemble(&f.session, f.roots.clone()).unwrap();
+    preparation::verify_fingerprints(&frozen_inputs).unwrap();
     let tree_targets = changes
         .iter()
         .filter_map(|change| match &change.mutation {

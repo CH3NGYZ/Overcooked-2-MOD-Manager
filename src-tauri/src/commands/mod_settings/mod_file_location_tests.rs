@@ -116,6 +116,24 @@ fn resolves_nested_enabled_dll_with_spaces_commas_and_unicode() {
 }
 
 #[test]
+fn evidence_reveal_never_falls_back_to_the_other_dll_state() {
+    let workspace = Workspace::new();
+    let enabled = "BepInEx/plugins/MixedCase/Example.dll";
+    let disabled = mods::disabled_dll_file(enabled);
+    workspace.file(enabled);
+    let path = workspace.file(&disabled);
+    assert_eq!(
+        resolve_mod_location(&workspace.game, &disabled, true).unwrap(),
+        fs::canonicalize(&path).unwrap()
+    );
+    fs::remove_file(&path).unwrap();
+    assert_eq!(
+        resolve_mod_location(&workspace.game, &disabled, true).unwrap_err(),
+        "mods.dllFileMissing"
+    );
+}
+
+#[test]
 fn resolves_disabled_dll_from_canonical_or_disabled_row_path() {
     let workspace = Workspace::new();
     let path = workspace.file("BepInEx/plugins/Example.dll.disabled");

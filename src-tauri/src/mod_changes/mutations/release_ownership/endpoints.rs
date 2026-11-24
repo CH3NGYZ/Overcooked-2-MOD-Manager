@@ -2,17 +2,14 @@
 use super::*;
 
 #[derive(Debug)]
-pub(super) struct EndpointError {
-    obstacle: InstallBlock,
-    relative: String,
+pub(super) enum EndpointError {
+    Blocked(InstallBlock, String),
+    BothStates { active: String, inactive: String },
 }
 
 impl EndpointError {
     fn new(obstacle: InstallBlock, relative: &str) -> Self {
-        Self {
-            obstacle,
-            relative: relative.into(),
-        }
+        Self::Blocked(obstacle, relative.into())
     }
 
     fn from_transaction(error: &str, relative: &str) -> Self {
@@ -30,7 +27,12 @@ impl EndpointError {
     }
 
     pub(super) fn report(self, owner: &str) -> String {
-        self.obstacle.report(owner, &self.relative)
+        match self {
+            Self::Blocked(obstacle, relative) => obstacle.report(owner, &relative),
+            Self::BothStates { active, inactive } => {
+                InstallBlock::report_both_states(owner, &active, &inactive)
+            }
+        }
     }
 }
 
@@ -42,7 +44,11 @@ pub(in crate::mod_changes) fn verify_missing_dll_variant(
 ) -> Result<(), String> {
     match endpoint_metadata(roots, counterpart).map_err(|error| error.report(owner))? {
         None => Ok(()),
-        Some(_) => Err(InstallBlock::BothStates.report(owner, canonical)),
+        Some(_) => Err(InstallBlock::report_both_states(
+            owner,
+            canonical,
+            &mods::disabled_dll_file(canonical),
+        )),
     }
 }
 
@@ -74,10 +80,12 @@ impl Builder<'_> {
         } else {
             None
         };
-        if active.is_some() && inactive.is_some() {
-            return Err(EndpointError::new(InstallBlock::BothStates, canonical));
+        match (active, inactive) {
+            (Some((active, _)), Some((inactive, _))) => {
+                Err(EndpointError::BothStates { active, inactive })
+            }
+            (active, inactive) => Ok(active.or(inactive)),
         }
-        Ok(active.or(inactive))
     }
 
     fn live_file(&self, relative: &str) -> Result<Option<(String, Fingerprint)>, EndpointError> {

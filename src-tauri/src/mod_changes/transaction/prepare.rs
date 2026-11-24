@@ -221,18 +221,9 @@ pub(crate) fn prepare_for_operation(
                         return Err(file_check::report(check::TARGET, &target, file_check::TYPE));
                     }
                     let (payload, after) = if let Some(source) = change.source {
-                        let expected = check::capture(&source, check::STAGED)?;
-                        if !matches!(expected, Fingerprint::Directory { .. }) {
-                            let reason = if expected == Fingerprint::Missing {
-                                file_check::MISSING
-                            } else {
-                                file_check::TYPE
-                            };
-                            return Err(file_check::report(check::STAGED, &source, reason));
-                        }
                         let relative = format!("after/{index}");
                         let stored = private_path(&directory, &relative, check::STAGED)?;
-                        super::tree::copy_tree(&source, &stored, &expected)?;
+                        super::tree::copy_tree(&source.path, &stored, &source.fingerprint)?;
                         super::tree::preserve_replaced_permissions(&target, &stored)?;
                         let after = check::capture(&stored, check::STAGED)?;
                         (Some(relative), after)

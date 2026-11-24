@@ -146,6 +146,7 @@ fn add_subject(trusted: &mut TrustedInventory, subject: EvaluationSubject) -> Re
                 package_id: None,
                 dll_files: vec![],
                 members: vec![],
+                bundle_parent_node_id: None,
                 map_dir_name: subject.map_dir_name,
                 map_id,
                 subject_tag,
@@ -234,7 +235,6 @@ fn create_inner(
             return Err("modChanges.targetChanged".into());
         }
     }
-    *step = "create_staging";
     let data = state
         .config
         .config_path()
@@ -250,6 +250,7 @@ fn create_inner(
             &state.config.mod_change_transactions_dir(),
         )?;
     }
+    *step = "create_staging";
     let staging = data.join("mod-change-staging").join(trace.op);
     super::transaction::Fingerprint::capture(&staging)?;
     fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
@@ -433,7 +434,7 @@ fn attach_exact_root(
         .iter()
         .position(|node| node.id == root.intent.node_id)
     else {
-        return Err(missing_root_error(trusted, root).into());
+        return Err(missing_root_error(trusted, root));
     };
     let node = &mut trusted.inventory.nodes[index];
     let Some(candidate_id) = &root.intent.candidate_id else {
@@ -491,7 +492,7 @@ fn attach_exact_root(
     Ok(())
 }
 
-fn missing_root_error(trusted: &TrustedInventory, root: &RootRequest) -> &'static str {
+fn missing_root_error(trusted: &TrustedInventory, root: &RootRequest) -> String {
     // Multiple installed groups intentionally have physical IDs, with no repository
     // alias. Diagnose only an otherwise valid repository request; never pick a copy.
     if let (Some(repo_id), Some(id)) = (
@@ -510,9 +511,9 @@ fn missing_root_error(trusted: &TrustedInventory, root: &RootRequest) -> &'stati
                 .any(|candidate| candidate.id == id && candidate.installable)
         })
     {
-        return MULTIPLE_INSTALLED_COPIES;
+        return super::evidence::duplicate_replacement(trusted, repo_id, MULTIPLE_INSTALLED_COPIES);
     }
-    "modChanges.targetChanged"
+    "modChanges.targetChanged".into()
 }
 
 fn attach_preview(
@@ -626,6 +627,7 @@ fn attach_preview(
                     package_id: None,
                     dll_files: vec![],
                     members: vec![],
+                    bundle_parent_node_id: None,
                     map_dir_name: None,
                     map_id: None,
                     subject_tag: None,
@@ -794,6 +796,7 @@ fn resolve_inner(
             .flat_map(|payload| payload.notices.iter().cloned()),
     );
     session.release_target_claims = claims;
+    let provider_choices = super::evidence::choices(&session.trusted, &result, solved.as_ref());
     session.plan = presentation(
         &session.trusted,
         &session.request,
@@ -802,6 +805,7 @@ fn resolve_inner(
         false,
     );
     session.plan.retired_mod_copies = retirements;
+    session.plan.provider_choices = provider_choices;
     if let Some(inventory) = &solved {
         session.plan.install_notes = super::install_notes::for_plan(
             &session.trusted.config,
@@ -831,6 +835,10 @@ fn resolve_inner(
                         .map_payload
                         .as_ref()
                         .and_then(|batch| batch.member_roles.get(&candidate.id));
+                    let staged_files = session
+                        .map_payload
+                        .as_ref()
+                        .and_then(|batch| batch.member_files.get(&candidate.id));
                     let roles = payload
                         .map(|payload| &payload.member_roles)
                         .or(staged_roles);
@@ -859,7 +867,33 @@ fn resolve_inner(
                         .iter()
                         .map(|p| MemberSummary {
                             key: p.member_key.clone().unwrap_or_default(),
-                            dll_file: p.member_key.clone().unwrap_or_default(),
+                            dll_file: p
+                                .member_key
+                                .as_ref()
+                                .and_then(|key| {
+                                    staged_files
+                                        .and_then(|files| files.get(key))
+                                        .cloned()
+                                        .or_else(|| {
+                                            payload.and_then(|payload| {
+                                                payload.files.iter().find_map(|file| {
+                                                    let canonical =
+                                                        crate::mods::canonical_dll_name(file);
+                                                    (inventory::key(&canonical) == *key)
+                                                        .then_some(canonical)
+                                                })
+                                            })
+                                        })
+                                        .or_else(|| {
+                                            summary
+                                                .members
+                                                .iter()
+                                                .find(|member| member.key == *key)
+                                                .map(|member| member.dll_file.clone())
+                                        })
+                                })
+                                .or_else(|| p.member_key.clone())
+                                .unwrap_or_default(),
                             enabled: node.enabled && p.enabled,
                             guid: (!p.guid.is_empty()).then(|| p.guid.clone()),
                             role: p.member_key.as_ref().and_then(|key| {
@@ -879,6 +913,12 @@ fn resolve_inner(
             }
         }
     }
+    session.plan.bundled_dlls = super::bundled_display::collect(
+        &session.trusted,
+        &session.plan.nodes,
+        &session.plan.result.actions,
+        solved.as_ref(),
+    );
     session.solved = solved;
     Ok(())
 }

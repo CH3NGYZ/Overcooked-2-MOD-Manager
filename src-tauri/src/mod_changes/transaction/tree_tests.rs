@@ -7,7 +7,7 @@ use std::{
 fn change(w: &Workspace, target: &str, source: Option<&str>) -> Mutation {
     Mutation::Tree(TreeChange {
         target: game(target),
-        source: source.map(|source| w.stage.join(source)),
+        source: source.map(|source| StagedTree::capture(w.stage.join(source)).unwrap()),
         expected: Fingerprint::capture(&w.roots.game_root.join(target)).unwrap(),
     })
 }
@@ -16,6 +16,22 @@ fn staged(w: &Workspace, root: &str, relative: &str, bytes: &[u8]) {
     let path = w.stage.join(root).join(relative);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, bytes).unwrap();
+}
+
+#[test]
+fn tree_changed_after_freeze_is_rejected_before_journal_is_ready() {
+    let workspace = Workspace::new();
+    workspace.write("maps/one/info", b"old");
+    staged(&workspace, "one", "info", b"new");
+    let frozen = change(&workspace, "maps/one", Some("one"));
+    staged(&workspace, "one", "info", b"edit after freeze");
+    let error = match prepare(&workspace.journal_root, &workspace.roots, vec![frozen]) {
+        Err(error) => error,
+        Ok(_) => panic!("journal accepted a tree edited after freeze"),
+    };
+    assert!(error.starts_with(check::STAGED), "{error}");
+    assert_eq!(workspace.read("maps/one/info"), b"old");
+    assert!(!has_pending(&workspace.journal_root).unwrap());
 }
 
 #[test]

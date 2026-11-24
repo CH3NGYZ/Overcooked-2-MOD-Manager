@@ -47,6 +47,7 @@ fn trusted(game: &Path, provides: Vec<ProvidedPlugin>) -> TrustedInventory {
                     package_id: Some("original-package".into()),
                     dll_files: vec![],
                     members: vec![],
+                    bundle_parent_node_id: None,
                     map_dir_name: None,
                     map_id: None,
                     subject_tag: None,

@@ -161,6 +161,30 @@ async fn force_overwrite_retries_read_only_and_never_spends_old_game_file_claims
 }
 
 #[tokio::test]
+async fn stale_record_replacement_names_the_competing_manifest_and_its_claim() {
+    let test = setup_installed();
+    let stale = stale_record(&test);
+    test.write_record(&stale);
+    let mut competing = stale.clone();
+    competing.repository_id = "AnotherRepository".into();
+    competing.repository_binding = None;
+    test.write_record(&competing);
+    let before = test.fingerprints();
+
+    let blocked = test.prepare().await;
+    assert_failed(&blocked, "old path claimed by another manifest");
+    assert_eq!(
+        blocked.error,
+        Some(install_claim_error(
+            relocated::PREVIOUS,
+            "manifests/AnotherRepository.toml"
+        )),
+    );
+    assert_eq!(overwrite_offer(&blocked), Value::Null);
+    assert_eq!(test.fingerprints(), before);
+}
+
+#[tokio::test]
 async fn stale_record_without_binding_requires_explicit_overwrite() {
     let test = setup_installed();
     let mut unbound = stale_record(&test);
@@ -383,7 +407,11 @@ async fn stale_record_recovery_rejects_unverifiable_cleanup_of_old_paths() {
                     ),
                     "{obstacle}: {error}"
                 );
-                assert_eq!(error, "modChanges.multipleInstalledCopies", "{obstacle}");
+                assert_eq!(
+                    crate::locale_tag::diagnostic_tag(&error),
+                    "modChanges.multipleInstalledCopies",
+                    "{obstacle}"
+                );
             }
         }
         assert_eq!(test.fingerprints(), before, "{obstacle}");

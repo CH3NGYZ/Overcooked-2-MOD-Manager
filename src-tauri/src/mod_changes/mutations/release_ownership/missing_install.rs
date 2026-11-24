@@ -315,22 +315,27 @@ impl Builder<'_> {
             if !within(&canonical, mods::file_state::PLUGINS_DIR) {
                 return Ok(None);
             }
-            let mut competing_records = self
+            let competing_records: Vec<_> = self
                 .records
                 .portable_claims(&canonical)
                 .filter(|claim| claim.relative != record.relative)
-                .peekable();
-            if competing_records.peek().is_some() {
+                .collect();
+            if !competing_records.is_empty() {
+                let message = super::super::install_block::report_record_claim(
+                    owner,
+                    &canonical,
+                    competing_records.iter().copied(),
+                );
                 self.diagnose_record_claim(
                     owner,
                     &canonical,
                     Some(source),
                     "reinstall_path_claimed_by_another_record",
-                    competing_records,
+                    competing_records.into_iter(),
                 );
                 return Err(ReleaseTargetError::ForeignManifest {
                     owner: owner.into(),
-                    message: InstallBlock::InstallRecord.report(owner, &canonical),
+                    message,
                 });
             }
             let key = inventory::key(&canonical);

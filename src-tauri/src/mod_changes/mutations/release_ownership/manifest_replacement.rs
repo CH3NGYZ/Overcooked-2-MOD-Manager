@@ -1,5 +1,6 @@
 use super::missing_install::endpoints;
 use super::*;
+use crate::mod_changes::mutations::install_block::report_record_claim;
 use crate::mod_changes::mutations::records::{InstallRecord, RecordStamp};
 use crate::mod_changes::progress::{ManifestOverwriteOffer, PreparationError};
 use sha2::{Digest, Sha256};
@@ -213,41 +214,40 @@ impl Builder<'_> {
         let registry = self
             .registered_map_plugins()
             .map_err(|_| InstallBlock::MapRecordsUnreadable.report(owner, &record.relative))?;
-        let check_claims =
-            |claims: &mut dyn Iterator<Item = &str>, block: InstallBlock| -> Result<(), String> {
-                for claim in claims {
-                    let physical = crate::game::resolve_existing_ancestor(
-                        &game(&mods::canonical_dll_name(claim)).resolve(&self.roots)?,
-                    )?;
-                    if let Some(path) = recorded.iter().find(|endpoint| {
-                        overlaps_claim(&endpoint.relative, claim)
-                            || overlaps_claim(
-                                &endpoint.path.to_string_lossy(),
-                                &physical.to_string_lossy(),
-                            )
-                    }) {
-                        return Err(block.report(owner, &path.relative));
-                    }
-                }
-                Ok(())
-            };
+        let find_claim = |claim: &str| -> Result<Option<&RecordedEndpoint>, String> {
+            let physical = crate::game::resolve_existing_ancestor(
+                &game(&mods::canonical_dll_name(claim)).resolve(&self.roots)?,
+            )?;
+            Ok(recorded.iter().find(|endpoint| {
+                overlaps_claim(&endpoint.relative, claim)
+                    || overlaps_claim(
+                        &endpoint.path.to_string_lossy(),
+                        &physical.to_string_lossy(),
+                    )
+            }))
+        };
         if !recorded.is_empty() {
-            check_claims(
-                &mut self
-                    .records
-                    .claimed_files()
-                    .filter(|(_, other)| other.relative != record.relative)
-                    .map(|(path, _)| path),
-                InstallBlock::InstallRecord,
-            )?;
-            check_claims(
-                &mut self
-                    .protected_maps
-                    .iter()
-                    .map(String::as_str)
-                    .chain(registry.iter().map(|entry| entry.dll.as_str())),
-                InstallBlock::MapProtected,
-            )?;
+            for (claim, other) in self.records.claimed_files() {
+                if other.relative != record.relative
+                    && let Some(path) = find_claim(claim)?
+                {
+                    return Err(report_record_claim(
+                        owner,
+                        &path.relative,
+                        std::iter::once(other),
+                    ));
+                }
+            }
+            for claim in self
+                .protected_maps
+                .iter()
+                .map(String::as_str)
+                .chain(registry.iter().map(|entry| entry.dll.as_str()))
+            {
+                if let Some(path) = find_claim(claim)? {
+                    return Err(InstallBlock::MapProtected.report(owner, &path.relative));
+                }
+            }
         }
         let intent = self
             .session

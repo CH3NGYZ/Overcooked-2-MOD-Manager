@@ -425,7 +425,9 @@ async fn real_young_info_requires_download_approval_to_adopt_disabled_standalone
                 assert!(injected);
                 assert_eq!(
                     result.unwrap_err(),
-                    format!("modChanges.installTargetHasBothStates?path={external}")
+                    format!(
+                        "modChanges.installTargetHasBothStates?paths={external}%0A{external}.disabled"
+                    )
                 );
                 assert_eq!(
                     fs::read(game.join(external)).unwrap(),

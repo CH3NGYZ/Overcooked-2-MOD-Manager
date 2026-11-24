@@ -163,6 +163,15 @@ impl FailureTraces {
                     node_id: inventory.nodes[index].id.clone(),
                     version: plugin.version.clone(),
                     enabled: inventory.nodes[index].enabled && plugin.enabled,
+                    candidate_id: inventory.nodes[index]
+                        .current
+                        .as_ref()
+                        .map(|candidate| candidate.id.clone()),
+                    member_key: plugin.member_key.clone(),
+                    source: inventory.nodes[index]
+                        .current
+                        .as_ref()
+                        .and_then(|candidate| candidate.source_id.clone()),
                 })
                 .collect(),
             state: edge.map_or(EvaluationState::Unknown, |(_, issue)| issue.state.clone()),

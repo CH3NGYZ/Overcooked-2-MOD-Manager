@@ -235,13 +235,16 @@ pub(super) fn compose_missing_maps(
         let staged = session
             .staging
             .join(format!("bundled-map-{}", uuid::Uuid::new_v4()));
-        stage_tree(&source, &staged, &Fingerprint::capture(&source)?)?;
+        let fingerprint = stage_tree(&source, &staged, &Fingerprint::capture(&source)?)?;
         push_tree(
             &mut result.mutations,
             &mut targets,
             roots,
             &format!("{destination}/{name}"),
-            Some(staged),
+            Some(StagedTree {
+                path: staged,
+                fingerprint,
+            }),
             [item],
         )?;
     }

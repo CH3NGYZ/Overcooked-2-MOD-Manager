@@ -218,24 +218,25 @@ impl Builder<'_> {
     }
 
     fn report_ownership_conflict(&self, key: &str, owner: &str, relative: &str) -> String {
-        let mut claims = self
+        let claims: Vec<_> = self
             .records
             .claims(key)
             .filter(|record| record.owner != owner)
-            .peekable();
-        let block = if claims.peek().is_some() {
+            .collect();
+        if !claims.is_empty() {
+            let message =
+                install_block::report_record_claim(owner, relative, claims.iter().copied());
             self.diagnose_record_claim(
                 owner,
                 relative,
                 Some(key),
                 "different_or_unbound_owner",
-                claims,
+                claims.into_iter(),
             );
-            InstallBlock::InstallRecord
+            message
         } else {
-            InstallBlock::PathOwned
-        };
-        block.report(owner, relative)
+            InstallBlock::PathOwned.report(owner, relative)
+        }
     }
 
     pub fn add_move(

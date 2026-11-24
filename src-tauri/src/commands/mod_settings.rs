@@ -10,13 +10,23 @@ use std::path::PathBuf;
 use tauri::State;
 
 fn resolve_mod_file_for_location(game_root: &Path, dll_file: &str) -> Result<PathBuf, String> {
-    let relative = mods::canonical_dll_name(&dll_file.replace('\\', "/"));
+    resolve_mod_location(game_root, dll_file, false)
+}
+
+fn resolve_mod_location(game_root: &Path, dll_file: &str, exact: bool) -> Result<PathBuf, String> {
+    let requested = dll_file.replace('\\', "/");
+    let relative = mods::canonical_dll_name(&requested);
     let normalized = relative.to_ascii_lowercase();
     if !normalized.starts_with("bepinex/plugins/") || !normalized.ends_with(".dll") {
         return Err("mods.onlyPluginsLocatable".into());
     }
     let plugins_root = game::safe_game_path(game_root, "BepInEx/plugins")?;
-    for candidate in [relative.clone(), mods::disabled_dll_file(&relative)] {
+    let alternatives = if exact {
+        vec![requested]
+    } else {
+        vec![relative.clone(), mods::disabled_dll_file(&relative)]
+    };
+    for candidate in alternatives {
         let path = game::safe_game_path(game_root, &candidate)?;
         if !path.starts_with(&plugins_root) {
             return Err("mods.onlyPluginsLocatable".into());
@@ -32,6 +42,7 @@ fn resolve_mod_file_for_location(game_root: &Path, dll_file: &str) -> Result<Pat
 pub fn open_mod_file_location(
     state: State<'_, AppState>,
     dll_file: String,
+    exact: Option<bool>,
 ) -> Result<OperationResult, String> {
     log::debug!("打开 MOD 文件位置：文件={}", dll_file);
     let config = {
@@ -42,7 +53,11 @@ pub fn open_mod_file_location(
         state.config.load_or_default()
     };
     let game_root = game::detect_game(&config).path.ok_or("game.notFound")?;
-    let path = resolve_mod_file_for_location(Path::new(&game_root), &dll_file)?;
+    let path = if exact == Some(true) {
+        resolve_mod_location(Path::new(&game_root), &dll_file, true)?
+    } else {
+        resolve_mod_file_for_location(Path::new(&game_root), &dll_file)?
+    };
     shell_open::reveal_in_file_manager(&path)?;
     Ok(OperationResult {
         ok: true,

@@ -151,7 +151,15 @@ impl Builder<'_> {
             let relative = match (active.is_file(), inactive.is_file()) {
                 (true, false) => canonical,
                 (false, true) => disabled,
-                (true, true) => return Err(InstallBlock::BothStates.report(owner, &canonical)),
+                (true, true) => {
+                    let actual = |relative| {
+                        crate::game::safe_game_path(&self.roots.game_root, relative)
+                            .and_then(|path| inventory::relative(&root, &path))
+                    };
+                    let active = actual(&canonical).unwrap_or_else(|_| canonical.clone());
+                    let inactive = actual(&disabled).unwrap_or(disabled);
+                    return Err(InstallBlock::report_both_states(owner, &active, &inactive));
+                }
                 (false, false) => return Err(InstallBlock::Missing.report(owner, &canonical)),
             };
             let actual = crate::game::safe_game_path(&self.roots.game_root, &relative)?;

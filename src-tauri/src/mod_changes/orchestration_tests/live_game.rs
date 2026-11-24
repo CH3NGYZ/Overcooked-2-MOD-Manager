@@ -5,6 +5,8 @@ use std::{io::Write, path::PathBuf, sync::atomic::Ordering};
 
 #[path = "live_game/identity.rs"]
 mod identity;
+#[path = "live_game/map_payload.rs"]
+mod map_payload;
 
 const MAP_NAME: &str = "LiveFixture";
 const MAP_ID: &str = "map:LiveFixture";

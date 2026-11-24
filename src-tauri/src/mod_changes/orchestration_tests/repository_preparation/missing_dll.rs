@@ -16,7 +16,12 @@ const ASSET: &str = "Selected.zip";
 const OLD_TAG: &str = "v1.0.0";
 const TARGET: &str = "BepInEx/plugins/Fixture.dll";
 const OLD_RESOURCE: &str = "BepInEx/plugins/Fixture/settings.txt";
-const CLAIMED: &str = "modChanges.installTargetClaimed?path=BepInEx/plugins/Fixture.dll";
+fn install_claim_error(path: &str, manifests: &str) -> String {
+    crate::locale_tag::with_params(
+        "modChanges.installTargetClaimedWithManifests",
+        &[("path", path), ("manifests", manifests)],
+    )
+}
 
 struct ReinstallFixture {
     fixture: Fixture,
@@ -175,11 +180,18 @@ async fn reinstall_leaves_unsafe_or_incomplete_old_records_unchanged() {
         let outcome = test.prepare().await;
         assert_eq!(outcome.progress.stage, PreparationStage::Failed, "{case}");
         assert!(outcome.plan.is_none(), "{case}");
-        if matches!(
-            case,
-            "conflicting source" | "shared path" | "duplicate record"
-        ) {
-            assert_eq!(outcome.error.as_deref(), Some(CLAIMED), "{case}");
+        let manifests = match case {
+            "conflicting source" => Some("manifests/FixtureMod.toml"),
+            "shared path" => Some("manifests/AnotherRepository.toml"),
+            "duplicate record" => Some("manifests/FixtureMod.toml\nmanifests/duplicate.toml"),
+            _ => None,
+        };
+        if let Some(manifests) = manifests {
+            assert_eq!(
+                outcome.error,
+                Some(install_claim_error(TARGET, manifests)),
+                "{case}"
+            );
         }
         assert_eq!(test.fingerprints(), before, "{case}");
     }
@@ -238,8 +250,11 @@ async fn reinstall_does_not_reclaim_a_new_member_claimed_by_another_package() {
                 ..old
             });
             crate::locale_tag::with_params(
-                "modChanges.installTargetClaimed",
-                &[("path", OTHER_TARGET)],
+                "modChanges.installTargetClaimedWithManifests",
+                &[
+                    ("path", OTHER_TARGET),
+                    ("manifests", "manifests/AnotherRepository.toml"),
+                ],
             )
         };
         let before = test.fingerprints();

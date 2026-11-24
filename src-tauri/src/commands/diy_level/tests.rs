@@ -93,7 +93,7 @@ fn pending_or_ambiguous_scans_do_not_choose_a_historical_or_first_directory() {
     );
     fixture.publish(vec![first, second]);
     assert!(
-        matches!(get_diy_level_info_blocking(&fixture.state), Err(error) if error == "framework.diyLevelAmbiguous")
+        matches!(get_diy_level_info_blocking(&fixture.state), Err(error) if crate::locale_tag::diagnostic_tag(&error) == "framework.diyLevelAmbiguous")
     );
     fixture.publish(vec![]);
     let info = get_diy_level_info_blocking(&fixture.state).unwrap();

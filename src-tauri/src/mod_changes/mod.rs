@@ -1,9 +1,11 @@
 //! Whole-chain relationship evaluation, planning, verified staging and durable file transactions.
 mod actions;
 pub(crate) mod application_progress;
+pub(crate) mod bundled_display;
 pub(crate) mod candidates;
 pub(crate) mod downloaded_source;
 pub(crate) mod evaluate;
+pub(crate) mod evidence;
 pub(crate) mod execution;
 mod freshness;
 pub(crate) mod guard;

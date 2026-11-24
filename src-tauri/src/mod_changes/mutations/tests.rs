@@ -91,10 +91,11 @@ fn fixture() -> Fixture {
             },
             roots: vec![],
             nodes: vec![],
+            bundled_dlls: Default::default(),
             relation_labels: Default::default(),
-            previous_enabled_members: Default::default(),
             retired_mod_copies: Default::default(),
             untracked_overwrites: Vec::new(),
+            provider_choices: Vec::new(),
             install_notes: vec![],
             prepared: true,
         },
@@ -177,6 +178,7 @@ fn add_mod(fixture: &mut Fixture, id: &str, provides: Vec<ProvidedPlugin>, owned
                         role: None,
                     })
                     .collect(),
+                bundle_parent_node_id: None,
                 map_dir_name: None,
                 map_id: None,
                 subject_tag: None,
@@ -309,9 +311,13 @@ fn sharing_owned_files_blocks_replacement() {
         vec![path.into()],
     );
     payload(&mut f, "one", path, true);
+    let error = assemble(&f.session, f.roots.clone()).unwrap_err();
     assert_eq!(
-        assemble(&f.session, f.roots.clone()).unwrap_err(),
-        format!("modChanges.installTargetClaimed?path={path}")
+        error,
+        crate::locale_tag::with_params(
+            "modChanges.installTargetClaimedWithManifests",
+            &[("path", path), ("manifests", "manifests/two.toml")],
+        ),
     );
     assert_eq!(fs::read(f.roots.game_root.join(path)).unwrap(), b"old");
 }
@@ -354,10 +360,15 @@ fn unbound_old_record_logs_real_claim_without_printing_manifest_notes() {
         "app_lib::mod_changes::mutations::records::diagnostics",
         path,
     );
+    let error = assemble(&fixture.session, fixture.roots.clone()).unwrap_err();
     assert_eq!(
-        assemble(&fixture.session, fixture.roots.clone()).unwrap_err(),
-        format!("modChanges.installTargetClaimed?path={path}")
+        error,
+        crate::locale_tag::with_params(
+            "modChanges.installTargetClaimedWithManifests",
+            &[("path", path), ("manifests", old_file)],
+        ),
     );
+    assert!(!error.contains(note));
     let messages = capture.messages();
     assert_eq!(messages.len(), 1, "{messages:?}");
     let message = &messages[0];
@@ -584,6 +595,7 @@ fn map_with_member(f: &mut Fixture, id: &str, path: &str, enabled: bool, member_
                     guid: Some("fixture-map".into()),
                     role: None,
                 }],
+                bundle_parent_node_id: None,
                 map_dir_name: Some(path.rsplit('/').next().unwrap().into()),
                 map_id: None,
                 subject_tag: None,

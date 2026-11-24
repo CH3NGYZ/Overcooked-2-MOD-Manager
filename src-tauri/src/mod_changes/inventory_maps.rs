@@ -61,7 +61,7 @@ pub(crate) fn append_at(
             .next()
             .is_some();
         require_framework(&mut info.relations);
-        let (internal, member_roles) =
+        let (internal, members) =
             internal_members(root, &set.path, config.mod_metadata_concurrency)?;
         let mut relationships = owned(info.relations.clone(), None);
         let mut known = set.error.is_none();
@@ -121,22 +121,12 @@ pub(crate) fn append_at(
                     enabled: set.enabled,
                     repository_id: None,
                     package_id: None,
-                    dll_files: internal
+                    dll_files: members
                         .iter()
-                        .filter_map(|plugin| plugin.member_key.clone())
+                        .map(|member| member.dll_file.clone())
                         .collect(),
-                    members: internal
-                        .into_iter()
-                        .filter_map(|plugin| {
-                            Some(MemberSummary {
-                                role: member_roles.get(plugin.member_key.as_ref()?).copied(),
-                                key: plugin.member_key.clone()?,
-                                dll_file: plugin.member_key?,
-                                enabled: plugin.enabled,
-                                guid: (!plugin.guid.is_empty()).then_some(plugin.guid),
-                            })
-                        })
-                        .collect(),
+                    members,
+                    bundle_parent_node_id: None,
                     map_dir_name: Some(set.dir_name.clone()),
                     map_id: info.map_id,
                     subject_tag: None,
@@ -166,12 +156,23 @@ pub(crate) fn append_at(
                 info.map_id
             })
             .flatten();
+        let parent_id = (owners.len() == 1)
+            .then(|| {
+                files.iter().find_map(|(id, node)| {
+                    (node.summary.kind == NodeKind::Map
+                        && node.map_path.as_deref()
+                            == relative(root, &owners[0].path).ok().as_deref())
+                    .then(|| id.clone())
+                })
+            })
+            .flatten();
         append_external(
             config,
             root,
             &entry.dll,
             owners.len() == 1,
             map_id,
+            parent_id,
             inventory,
             files,
         )?;
@@ -236,6 +237,7 @@ fn append_external(
     dll: &str,
     ownership_known: bool,
     map_id: Option<String>,
+    parent_id: Option<String>,
     inventory: &mut Inventory,
     files: &mut BTreeMap<String, NodeFiles>,
 ) -> Result<(), String> {
@@ -304,6 +306,7 @@ fn append_external(
                     guid: details.guid,
                     role: Some(details.role),
                 }],
+                bundle_parent_node_id: parent_id,
                 map_dir_name: None,
                 map_id,
                 subject_tag: None,
@@ -317,7 +320,7 @@ fn append_external(
     Ok(())
 }
 
-type InternalMembers = (Vec<ProvidedPlugin>, BTreeMap<String, DllRole>);
+type InternalMembers = (Vec<ProvidedPlugin>, Vec<MemberSummary>);
 
 fn internal_members(
     root: &Path,
@@ -351,27 +354,32 @@ fn internal_members(
         &|_, _| {},
     );
     let mut members = Vec::with_capacity(paths.len());
-    let mut roles = BTreeMap::new();
+    let mut summaries = Vec::with_capacity(paths.len());
     for (entry, outcome) in paths.iter().zip(outcomes) {
         let path = relative(root, entry.path())?;
-        let key = key(&crate::mods::canonical_dll_name(&path));
+        let canonical = crate::mods::canonical_dll_name(&path);
+        let key = key(&canonical);
         let details = outcome.mod_dll();
-        if let Some(details) = details {
-            roles.insert(key.clone(), details.role);
-        }
+        let enabled = path == canonical;
+        let guid = details.and_then(|metadata| metadata.guid.clone());
         members.push(ProvidedPlugin {
-            member_key: Some(key),
-            guid: details
-                .and_then(|metadata| metadata.guid.clone())
-                .unwrap_or_default(),
+            member_key: Some(key.clone()),
+            guid: guid.clone().unwrap_or_default(),
             version: outcome
                 .value
                 .as_ref()
                 .and_then(crate::metadata_read::MetadataValue::version)
                 .map(str::to_string),
             prerelease: None,
-            enabled: !path.to_ascii_lowercase().ends_with(".disabled"),
+            enabled,
+        });
+        summaries.push(MemberSummary {
+            role: details.map(|metadata| metadata.role),
+            key,
+            dll_file: canonical,
+            enabled,
+            guid,
         });
     }
-    Ok((members, roles))
+    Ok((members, summaries))
 }

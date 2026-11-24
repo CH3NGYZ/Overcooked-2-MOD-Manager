@@ -294,7 +294,13 @@ async fn exact_release_with_foreign_resource_is_rejected_without_trying_older_re
 
         assert_eq!(
             outcome.error,
-            Some(blocked("modChanges.installTargetClaimed", OWNED_PATH))
+            Some(crate::locale_tag::with_params(
+                "modChanges.installTargetClaimedWithManifests",
+                &[
+                    ("path", OWNED_PATH),
+                    ("manifests", &format!("manifests/{OWNER}.toml"))
+                ],
+            ))
         );
         assert!(outcome.plan.is_none());
         assert_eq!(test.newer.request_count(), 1);

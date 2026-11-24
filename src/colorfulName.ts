@@ -7,6 +7,8 @@
  */
 export const DEFAULT_COLOR = '#000000'
 export const DEFAULT_SIZE = 35
+export const MIN_NAME_SIZE = 1
+export const MAX_NAME_SIZE = 71
 /** MOD 的显示名上限（UTF-16LE 字节，不含 BOM）。 */
 export const MAX_NAME_BYTES = 238
 
@@ -14,6 +16,14 @@ export interface StyledChar {
   char: string
   color: string
   size: number
+}
+
+export function styleName(name: string, colors: readonly string[] = [], sizes: readonly number[] = []): StyledChar[] {
+  return [...name].map((char, index) => ({
+    char,
+    color: colors[index] ?? DEFAULT_COLOR,
+    size: sizes[index] ?? DEFAULT_SIZE,
+  }))
 }
 
 interface Unit {

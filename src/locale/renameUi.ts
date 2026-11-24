@@ -7,6 +7,29 @@ import type { DomainMessages } from './types'
  * camelCase 名，每条上方保留中文原文注释，便于和旧代码、截图对照。
  */
 export const renameUi: DomainMessages = {
+  nameHistory: {
+    'zh-CN': '历史名字', 'zh-TW': '歷史名字', en: 'Name history', ko: '이름 기록', ja: '名前の履歴',
+  },
+  nameHistoryEmpty: {
+    'zh-CN': '复制或推送成功的名字会显示在这里。', 'zh-TW': '複製或推送成功的名字會顯示在這裡。',
+    en: 'Names appear here after you copy or send them.', ko: '복사하거나 전송한 이름이 여기에 표시됩니다.',
+    ja: 'コピーまたは送信した名前がここに表示されます。',
+  },
+  reuseHistoryName: {
+    'zh-CN': '编辑「{name}」', 'zh-TW': '編輯「{name}」', en: 'Edit “{name}”', ko: '“{name}” 편집', ja: '「{name}」を編集',
+  },
+  removeHistoryName: {
+    'zh-CN': '从历史移除', 'zh-TW': '從歷史移除', en: 'Remove from history', ko: '기록에서 제거', ja: '履歴から削除',
+  },
+  clearNameHistory: {
+    'zh-CN': '清空历史名字', 'zh-TW': '清空歷史名字', en: 'Clear name history', ko: '이름 기록 지우기', ja: '名前の履歴を消去',
+  },
+  clearNameHistoryConfirm: {
+    'zh-CN': '清空本机的历史名字？不会更改游戏里的名字。', 'zh-TW': '清空本機的歷史名字？不會更改遊戲裡的名字。',
+    en: 'Clear the name history on this device? This won’t change your in-game name.',
+    ko: '이 기기의 이름 기록을 지울까요? 게임 속 이름은 바뀌지 않습니다.',
+    ja: 'この端末の名前の履歴を消去しますか？ゲーム内の名前は変わりません。',
+  },
   // 输入名字
   enterName: {
     'zh-CN': '输入名字',

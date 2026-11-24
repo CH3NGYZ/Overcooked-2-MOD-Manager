@@ -11,14 +11,20 @@ import {
 import { ColorWandOutline, CopyOutline, CloudUploadOutline, RefreshOutline } from '@vicons/ionicons5'
 import { useNotify } from '../useNotify'
 import {
-  DEFAULT_COLOR, DEFAULT_SIZE, MAX_NAME_BYTES, buildShortestRichText, isNameOverLimit, utf16LeBytes,
+  DEFAULT_COLOR, DEFAULT_SIZE, MAX_NAME_BYTES, MAX_NAME_SIZE, MIN_NAME_SIZE,
+  buildShortestRichText, isNameOverLimit, styleName, utf16LeBytes,
 } from '../colorfulName'
 import { api } from '../services/tauri'
 import { t } from '../i18n'
 import { setPageTitleOverride } from '../pageHeader'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
+import NameCharacters from '../rename/NameCharacters.vue'
+import NameHistory from '../rename/NameHistory.vue'
+import { nameHistory, type NameDraft } from '../rename/history'
 
 const message = useNotify()
+const minSizeStep = MIN_NAME_SIZE - DEFAULT_SIZE
+const maxSizeStep = MAX_NAME_SIZE - DEFAULT_SIZE
 
 /**
  * MOD 内置的常用调色板（与游戏内命名习惯一致）。
@@ -41,18 +47,13 @@ const sizes = ref<number[]>([])
 const selected = ref<{ start: number; end: number } | null>(null)
 const picker = ref(DEFAULT_COLOR)
 const sizeStep = ref(0)
-const pushing = ref(false)
+const { busy } = nameHistory
+const pushing = computed(() => busy.value === 'push')
 const previewEl = ref<HTMLElement | null>(null)
 
 /** 逐字符样式：颜色、字号数组与字符一一对应。 */
-const chars = computed(() => [...name.value])
-const code = computed(() =>
-  buildShortestRichText(chars.value.map((char, index) => ({
-    char,
-    color: colors.value[index] ?? DEFAULT_COLOR,
-    size: sizes.value[index] ?? DEFAULT_SIZE,
-  }))),
-)
+const chars = computed(() => styleName(name.value, colors.value, sizes.value))
+const code = computed(() => buildShortestRichText(chars.value))
 const byteLength = computed(() => utf16LeBytes(code.value))
 const overLimit = computed(() => isNameOverLimit(code.value))
 const percent = computed(() => Math.min(100, Math.round((byteLength.value / MAX_NAME_BYTES) * 100)))
@@ -81,14 +82,28 @@ const stageName = computed({
 function startEdit() {
   const text = rawName.value.trim()
   if (!text) { message.warning(t('rename.pleaseEnterAName')); return }
-  name.value = text
-  colors.value = chars.value.map(() => DEFAULT_COLOR)
-  sizes.value = chars.value.map(() => DEFAULT_SIZE)
+  const initial = styleName(text)
+  restoreDraft({ name: text, colors: initial.map(item => item.color), sizes: initial.map(item => item.size) })
+}
+
+function restoreDraft(draft: NameDraft) {
+  rawName.value = name.value = draft.name
+  colors.value = [...draft.colors]
+  sizes.value = [...draft.sizes]
   selected.value = null
+  dragAnchor = null
+  dragging.value = false
+  sizeBaseline = null
+  gestureDepth = 0
+  paletteGesture = false
+  warnedInGesture = false
   sizeStep.value = 0
   picker.value = DEFAULT_COLOR
   stage.value = 'customize'
-  void nextTick(clearNativeSelection)
+  void nextTick(() => {
+    clearNativeSelection()
+    previewEl.value?.focus()
+  })
 }
 
 function resetAll() {
@@ -311,7 +326,7 @@ function previewSize(step: number) {
   if (!sizeBaseline) sizeBaseline = [...sizes.value]
   const next = [...sizes.value]
   for (let index = range.start; index < range.end; index += 1) {
-    next[index] = Math.max(1, Math.min(71, (sizeBaseline[index] ?? DEFAULT_SIZE) + step))
+    next[index] = Math.max(MIN_NAME_SIZE, Math.min(MAX_NAME_SIZE, (sizeBaseline[index] ?? DEFAULT_SIZE) + step))
   }
   sizes.value = next
 }
@@ -337,7 +352,7 @@ function applySizeInput(target: number) {
   if (!range) { warnNoSelection(); return }
   const next = [...sizes.value]
   for (let index = range.start; index < range.end; index += 1) {
-    next[index] = Math.max(1, Math.min(71, (sizes.value[index] ?? DEFAULT_SIZE) + target))
+    next[index] = Math.max(MIN_NAME_SIZE, Math.min(MAX_NAME_SIZE, (sizes.value[index] ?? DEFAULT_SIZE) + target))
   }
   sizes.value = next
   sizeStep.value = 0
@@ -359,29 +374,17 @@ function resetSelectionStyle() {
   sizeStep.value = 0
 }
 
-async function copyCode() {
+async function submitName(action: 'copy' | 'push') {
   if (overLimit.value) { message.error(t('rename.nameCodeIsOverTheLimit')); return }
+  const draft = { name: name.value, colors: colors.value, sizes: sizes.value }
   try {
-    await api.copyText(code.value)
-    message.success(t('rename.copiedPasteItIntoHostutilitiesColorfulNameMenu'))
-  } catch (reason) {
-    // 后端可能回 tag，必须经过翻译层，不能直接显示原始 message
-    message.error(backendMessageOf(reason))
-  }
-}
-
-async function pushToMod() {
-  if (overLimit.value) { message.error(t('rename.nameCodeIsOverTheLimit')); return }
-  pushing.value = true
-  try {
-    const result = await api.pushColorfulName(code.value)
-    result.ok
-      ? message.success(result.message ? translateBackendMessage(result.message) : t('rename.pushedToHostutilities'))
-      : message.error(translateBackendMessage(result.message))
+    const result = await nameHistory.submit(action, draft, action === 'copy' ? api.copyText : api.pushColorfulName)
+    if (!result) return
+    if (!result.ok) message.error(translateBackendMessage(result.message))
+    else if (action === 'copy') message.success(t('rename.copiedPasteItIntoHostutilitiesColorfulNameMenu'))
+    else message.success(result.message ? translateBackendMessage(result.message) : t('rename.pushedToHostutilities'))
   } catch (reason) {
     message.error(backendMessageOf(reason))
-  } finally {
-    pushing.value = false
   }
 }
 
@@ -400,10 +403,10 @@ onBeforeUnmount(clearNativeSelection)
     </n-button>
   </Teleport>
   <Teleport v-if="stage === 'customize'" to="#page-header-actions" defer>
-    <n-button size="small" secondary :disabled="overLimit" @click="copyCode">
+    <n-button size="small" secondary :loading="busy === 'copy'" :disabled="overLimit || !!busy" @click="submitName('copy')">
       <CopyOutline width="14" height="14" />{{ t('rename.copyCode') }}
     </n-button>
-    <n-button size="small" type="primary" :loading="pushing" :disabled="overLimit" @click="pushToMod">
+    <n-button size="small" type="primary" :loading="pushing" :disabled="overLimit || !!busy" @click="submitName('push')">
       <CloudUploadOutline width="14" height="14" />{{ t('rename.pushToHostutilities') }}
     </n-button>
   </Teleport>
@@ -425,6 +428,7 @@ onBeforeUnmount(clearNativeSelection)
             </n-button>
           </div>
         </section>
+        <NameHistory @restore="restoreDraft" />
       </n-tab-pane>
 
       <!-- 阶段二：选字改色 + 生成代码 -->
@@ -439,16 +443,14 @@ onBeforeUnmount(clearNativeSelection)
             `select-none` 由 CSS 的 user-select: none 承担，原生高亮不再出现，
             所以字符颜色随时可见。
           -->
-          <div ref="previewEl" class="preview"
+          <div ref="previewEl" class="name-preview-surface preview" tabindex="0" :aria-label="t('rename.selectTextToEdit')"
             @pointerdown="onPreviewPointerDown"
             @pointermove="onPreviewPointerMove"
             @pointerup="onPreviewPointerUp"
             @pointercancel="onPreviewPointerUp"
             @click="clearSelectionIfBlank"
             @keyup="updateSelection">
-            <span v-for="(char, index) in chars" :key="index" :data-index="index" class="preview-char"
-              :class="{ 'is-selected': selected && index >= selected.start && index < selected.end }"
-              :style="{ color: colors[index], fontSize: `${sizes[index]}px` }">{{ char }}</span>
+            <NameCharacters :chars="chars" :selection="selected" />
           </div>
 
           <div class="controls">
@@ -483,11 +485,11 @@ onBeforeUnmount(clearNativeSelection)
                   拖动即预览；按下→拖动→抬起算一个手势，
                   未选文字时整个手势只提示一次。
                 -->
-                <n-slider :value="sizeStep" :min="-34" :max="36" :step="1" class="size-slider"
+                <n-slider :value="sizeStep" :min="minSizeStep" :max="maxSizeStep" :step="1" class="size-slider"
                   @mousedown="beginGesture"
                   @update:value="previewSize"
                   @dragend="endSizeAdjust(sizeStep)" />
-                <n-input-number :value="sizeStep" size="small" :min="-34" :max="36" class="size-input"
+                <n-input-number :value="sizeStep" size="small" :min="minSizeStep" :max="maxSizeStep" class="size-input"
                   @update:value="(value: number | null) => applySizeInput(value ?? 0)" />
                 <n-button size="small" secondary @click="resetSelectionStyle">
                   <RefreshOutline width="14" height="14" />{{ t('rename.resetStyle') }}
@@ -522,7 +524,7 @@ onBeforeUnmount(clearNativeSelection)
     放在 n-tabs 之外，避免随面板切换被卸载。
   -->
   <Teleport to="body">
-    <div v-if="pushing" class="push-mask">
+    <div v-if="pushing && stage === 'customize'" class="push-mask">
       <n-spin size="large" :description="t('rename.pushingToHostutilities')" />
     </div>
   </Teleport>
@@ -647,10 +649,7 @@ onBeforeUnmount(clearNativeSelection)
   padding: 12px 14px;
   border: 1px dashed var(--oc2-row-line);
   border-radius: 10px;
-  background: #f2f4f7;
-  white-space: pre-wrap;
   line-height: 1.5;
-  word-break: break-word;
   /*
    * 关掉原生选中：本组件自己画高亮。
    *
@@ -661,18 +660,7 @@ onBeforeUnmount(clearNativeSelection)
   user-select: none;
   cursor: text;
 }
-/*
- * 自绘选区高亮。
- *
- * 只加底色与轮廓，**不改 color** —— 字符自身的颜色必须始终可见，否则
- * 调色时看不出效果。用半透明底色而不是实心块，浅色字也读得清。
- */
-.preview-char { white-space: pre; }
-.preview-char.is-selected {
-  background: color-mix(in srgb, var(--oc2-accent) 22%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--oc2-accent) 55%, transparent);
-  border-radius: 3px;
-}
+.preview:focus-visible { outline: 2px solid var(--oc2-accent); outline-offset: 2px; }
 .controls {
   display: flex;
   flex-direction: column;

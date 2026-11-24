@@ -1,22 +1,32 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, useTemplateRef } from 'vue'
+import { computed, nextTick, onBeforeUnmount, shallowRef, useTemplateRef } from 'vue'
 import { useDialog } from 'naive-ui'
-import { ChevronForwardOutline, CloseOutline, TrashOutline } from '@vicons/ionicons5'
+import { ChevronForwardOutline, CloseOutline, CloudUploadOutline, CopyOutline, TrashOutline } from '@vicons/ionicons5'
 import HeaderIconAction from '../components/HeaderIconAction.vue'
 import { t } from '../i18n'
 import { styleName } from '../colorfulName'
-import { NAME_HISTORY_LIMIT, nameHistory, type NameDraft } from './history'
+import { NAME_HISTORY_LIMIT, nameHistory, type NameAction, type NameDraft } from './history'
 import NameCharacters from './NameCharacters.vue'
 
+const props = defineProps<{ action: NameAction; submit: (draft: NameDraft) => Promise<void> }>()
 defineEmits<{ restore: [draft: NameDraft] }>()
 const dialog = useDialog()
 const heading = useTemplateRef('heading')
 const list = useTemplateRef('list')
+const { busy } = nameHistory
 const rows = computed(() => nameHistory.entries.value.map(entry => ({
   ...entry, chars: styleName(entry.name, entry.colors, entry.sizes),
 })))
+const sendingKey = shallowRef<string>()
 let confirmation: ReturnType<typeof dialog.warning> | undefined
 onBeforeUnmount(() => confirmation?.destroy())
+
+async function submitHistory(entry: NameDraft & { key: string }) {
+  if (busy.value || sendingKey.value) return
+  sendingKey.value = entry.key
+  try { await props.submit(entry) }
+  finally { sendingKey.value = undefined }
+}
 
 async function remove(key: string, index: number) {
   nameHistory.remove(key)
@@ -61,6 +71,13 @@ function confirmClear() {
           <span class="history-name"><NameCharacters :chars="entry.chars" /></span>
           <ChevronForwardOutline class="history-chevron" aria-hidden="true" />
         </button>
+        <HeaderIconAction size="tiny" quaternary circle data-history-quick
+          :label="t(action === 'push' ? 'rename.pushHistoryName' : 'rename.copyHistoryName')"
+          :description="entry.name" :loading="sendingKey === entry.key" :disabled="!!busy"
+          @click="submitHistory(entry)">
+          <CloudUploadOutline v-if="action === 'push'" />
+          <CopyOutline v-else />
+        </HeaderIconAction>
         <HeaderIconAction size="tiny" quaternary circle :label="t('rename.removeHistoryName')"
           :description="entry.name" @click="remove(entry.key, index)">
           <CloseOutline />
@@ -83,7 +100,7 @@ function confirmClear() {
 .history-count { margin-inline-end: auto; font-size: 11.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .history-empty { margin: 6px 0 0; }
 .history-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
-.history-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center; }
+.history-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; align-items: center; }
 .history-preview {
   display: flex;
   align-items: center;

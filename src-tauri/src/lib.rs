@@ -353,6 +353,7 @@ pub fn run() {
             commands::clipboard::read_clipboard,
             commands::clipboard::copy_text,
             commands::clipboard::copy_image,
+            commands::colorful_name::colorful_name_ready,
             commands::colorful_name::push_colorful_name,
             commands::mod_repositories::preview_mod_repository_import,
             commands::mod_repositories::import_mod_repositories,

@@ -3,9 +3,13 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 
 /// 起一个只服务一次请求的本地服务，返回它的地址和收到的原始请求头。
-fn one_shot_server(status: &str, body: &str) -> (String, std::thread::JoinHandle<String>) {
+fn one_shot_server(
+    status: &str,
+    headers: &str,
+    body: &str,
+) -> (String, std::thread::JoinHandle<String>) {
     let response = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n{headers}Connection: close\r\n\r\n{body}",
         body.len()
     );
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -46,39 +50,30 @@ fn one_shot_server(status: &str, body: &str) -> (String, std::thread::JoinHandle
     (format!("http://{address}/set-name"), handle)
 }
 
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(3000))
-        .build()
-        .unwrap()
+#[tokio::test]
+async fn readiness_uses_only_empty_options_and_requires_the_mod_response() {
+    let origin = format!("Access-Control-Allow-Origin: {COLORFUL_NAME_ORIGIN}\r\n");
+    for (status, headers, ready) in [
+        ("204 No Content", origin.as_str(), true),
+        ("204 No Content", "", false),
+        ("403 Forbidden", origin.as_str(), false),
+    ] {
+        let (url, server) = one_shot_server(status, headers, "");
+        assert_eq!(probe_colorful_name(&url).await, ready);
+        let request = server.join().unwrap();
+        let (headers, body) = request.split_once("\r\n\r\n").unwrap();
+        assert!(headers.starts_with("OPTIONS /set-name HTTP/1.1\r\n"));
+        assert!(headers.contains(&format!(
+            "user-agent: {}",
+            crate::http_user_agent::app_user_agent()
+        )));
+        assert!(!headers.to_ascii_lowercase().contains("x-oc2-token"));
+        assert!(body.is_empty());
+    }
 }
 
-#[tokio::test]
-async fn sends_the_official_origin_header_the_mod_accepts() {
-    let (url, server) = one_shot_server("200 OK", r#"{"ok":true}"#);
-    let response = send_colorful_name(&client(), &url, "test-name", None)
-        .await
-        .unwrap();
-    assert!(response.status().is_success());
-    let request = server.join().unwrap();
-    let lower = request.to_ascii_lowercase();
-    // MOD 逐字节比较 Origin（忽略大小写），值必须与常量完全一致。
-    assert!(
-        request.contains(&format!("Origin: {COLORFUL_NAME_ORIGIN}"))
-            || lower.contains(&format!(
-                "origin: {}",
-                COLORFUL_NAME_ORIGIN.to_ascii_lowercase()
-            )),
-        "请求必须带官方 Origin 头，实际请求：{request}"
-    );
-    assert!(
-        lower.contains("content-type: application/json"),
-        "请求必须声明 JSON，MOD 只有在 JSON 内容类型下才解析 name 字段：{request}"
-    );
-    assert!(
-        request.contains("\"name\""),
-        "正文必须含 name 字段：{request}"
-    );
+fn client() -> reqwest::Client {
+    colorful_name_client(3000).unwrap()
 }
 
 /// 测试用假 token：32 位十六进制，形状与 MOD 的真实 token 一致。
@@ -93,34 +88,55 @@ fn fixture_token() -> String {
 }
 
 #[tokio::test]
-async fn a_handshake_token_replaces_the_origin_header() {
-    let (url, server) = one_shot_server("200 OK", r#"{"ok":true}"#);
+async fn a_push_sends_the_name_and_handshake_token_without_an_origin_override() {
+    let (url, server) = one_shot_server("200 OK", "", r#"{"ok":true}"#);
     let token = fixture_token();
-    let response = send_colorful_name(&client(), &url, "test-name", Some(&token))
-        .await
-        .unwrap();
-    assert!(response.status().is_success());
+    let response = send_colorful_name(&client(), &url, "<color=#ffa339>厨</color>", &token).await;
+    assert!(matches!(
+        classify_colorful_name(response),
+        ColorfulNameOutcome::Delivered
+    ));
     let request = server.join().unwrap();
-    let lower = request.to_ascii_lowercase();
-    assert!(
-        lower.contains(&format!("x-oc2-token: {token}")),
-        "有 token 时必须带 X-OC2-Token：{request}"
+    let (headers, body) = request.split_once("\r\n\r\n").unwrap();
+    assert!(headers.starts_with("POST /set-name HTTP/1.1\r\n"));
+    let headers = headers.to_ascii_lowercase();
+    assert!(headers.contains(&format!("x-oc2-token: {token}")));
+    assert!(headers.contains("content-type: application/json"));
+    assert!(!headers.contains("origin:"));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(body).unwrap(),
+        serde_json::json!({ "name": "<color=#ffa339>厨</color>" })
     );
-    // token 是强凭据，不需要再冒充网页来源。
-    assert!(
-        !lower.contains("origin:"),
-        "token 通道不应再带 Origin：{request}"
+}
+
+#[tokio::test]
+async fn a_push_does_not_follow_a_redirect_to_another_listener() {
+    let other = TcpListener::bind("127.0.0.1:0").unwrap();
+    other.set_nonblocking(true).unwrap();
+    let location = format!(
+        "Location: http://{}/set-name\r\n",
+        other.local_addr().unwrap()
+    );
+    let (url, server) = one_shot_server("307 Temporary Redirect", &location, "");
+    let response = send_colorful_name(&client(), &url, "test-name", &fixture_token()).await;
+    assert_eq!(
+        response.unwrap().status(),
+        reqwest::StatusCode::TEMPORARY_REDIRECT
+    );
+    server.join().unwrap();
+    assert_eq!(
+        other.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
     );
 }
 
 #[tokio::test]
 async fn a_rejected_port_is_not_reported_as_unreachable() {
-    // MOD 在缺 token / Origin 不匹配时的真实响应。
-    let (url, server) = one_shot_server("403 Forbidden", "Token 不匹配");
-    let response = send_colorful_name(&client(), &url, "test-name", None).await;
-    match classify_colorful_name(28780, response).await {
-        ColorfulNameOutcome::Rejected(port, detail) => {
-            assert_eq!(port, 28780);
+    let (url, server) = one_shot_server("403 Forbidden", "", "Token 不匹配");
+    let token = fixture_token();
+    let response = send_colorful_name(&client(), &url, "test-name", &token).await;
+    match classify_colorful_name(response) {
+        ColorfulNameOutcome::Rejected(detail) => {
             // 状态码和 MOD 的正文都要留下，才能区分「鉴权失败」和「版本不对」。
             assert!(detail.contains("403"), "拒绝详情应含状态码：{detail}");
             assert!(
@@ -128,8 +144,8 @@ async fn a_rejected_port_is_not_reported_as_unreachable() {
                 "拒绝详情应保留 MOD 正文：{detail}"
             );
         }
-        ColorfulNameOutcome::Delivered(_) => panic!("403 不能算投递成功"),
-        ColorfulNameOutcome::Unreachable(_) => {
+        ColorfulNameOutcome::Delivered => panic!("403 不能算投递成功"),
+        ColorfulNameOutcome::Unreachable => {
             panic!("连上并被拒绝不能被当成「端口无响应」")
         }
     }
@@ -140,10 +156,10 @@ async fn a_rejected_port_is_not_reported_as_unreachable() {
     let closed_port = closed.local_addr().unwrap().port();
     drop(closed);
     let unreachable = format!("http://127.0.0.1:{closed_port}/set-name");
-    let response = send_colorful_name(&client(), &unreachable, "test-name", None).await;
+    let response = send_colorful_name(&client(), &unreachable, "test-name", &token).await;
     assert!(matches!(
-        classify_colorful_name(closed_port, response).await,
-        ColorfulNameOutcome::Unreachable(port) if port == closed_port
+        classify_colorful_name(response),
+        ColorfulNameOutcome::Unreachable
     ));
 }
 
@@ -151,13 +167,11 @@ async fn a_rejected_port_is_not_reported_as_unreachable() {
 async fn a_rejected_response_redacts_an_echoed_handshake_token() {
     let token = fixture_token();
     let body = format!("凭据被拒绝，服务端回显 {token}");
-    let (url, server) = one_shot_server("403 Forbidden", &body);
-    let response = send_colorful_name(&client(), &url, "test-name", Some(&token)).await;
-    let ColorfulNameOutcome::Rejected(port, detail) = classify_colorful_name(28780, response).await
-    else {
+    let (url, server) = one_shot_server("403 Forbidden", "", &body);
+    let response = send_colorful_name(&client(), &url, "test-name", &token).await;
+    let ColorfulNameOutcome::Rejected(detail) = classify_colorful_name(response) else {
         panic!("403 must remain a rejected response");
     };
-    assert_eq!(port, 28780);
     assert!(detail.contains("403"));
     assert!(detail.contains("凭据被拒绝"));
     assert!(detail.contains("[REDACTED_SECRET]"));
@@ -167,9 +181,6 @@ async fn a_rejected_response_redacts_an_echoed_handshake_token() {
 
 /// 握手文件的接受条件：版本、端口段、token 形状三项都必须成立。
 ///
-/// 这个文件位于游戏目录，任何能写游戏目录的程序都能伪造；校验的目的
-/// 是「不把畸形或过期内容当凭据」，随即退回官方 Origin，而不是让推送
-/// 直接失败。
 #[test]
 fn handshake_is_only_accepted_with_a_known_version_port_and_token() {
     let workspace =
@@ -199,7 +210,7 @@ fn handshake_is_only_accepted_with_a_known_version_port_and_token() {
         None => panic!("合法握手应被接受"),
     }
 
-    // 版本未知（未来格式）：退回 Origin，而不是猜着用
+    // 版本未知（未来格式）不得用于改名。
     write(&format!(
         r#"{{"version":2,"port":28783,"token":"{token}"}}"#
     ));
@@ -231,8 +242,7 @@ fn handshake_is_only_accepted_with_a_known_version_port_and_token() {
 /// 握手文件必须按 `detect_game` 探测到的目录去找。
 ///
 /// 真实事故：`config.game.path` 为空（目录是运行时探测的，用户没手动填
-/// 过），读握手文件的代码却只看配置字段，于是判定「没配目录」直接走
-/// Origin 兜底；而当前街机MOD 只认 `X-OC2-Token`，用户拿到的是 403。
+/// 过），读握手文件的代码却只看配置字段，于是无法找到有效握手。
 /// 这里用源码断言把「用探测结果」这件事钉死，因为这条路径需要真实游戏
 /// 目录才能触发，纯逻辑测试覆盖不到。
 #[test]

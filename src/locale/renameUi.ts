@@ -18,6 +18,12 @@ export const renameUi: DomainMessages = {
   reuseHistoryName: {
     'zh-CN': '编辑「{name}」', 'zh-TW': '編輯「{name}」', en: 'Edit “{name}”', ko: '“{name}” 편집', ja: '「{name}」を編集',
   },
+  pushHistoryName: {
+    'zh-CN': '立即推送', 'zh-TW': '立即推送', en: 'Send now', ko: '지금 보내기', ja: '今すぐ送信',
+  },
+  copyHistoryName: {
+    'zh-CN': '复制', 'zh-TW': '複製', en: 'Copy', ko: '복사', ja: 'コピー',
+  },
   removeHistoryName: {
     'zh-CN': '从历史移除', 'zh-TW': '從歷史移除', en: 'Remove from history', ko: '기록에서 제거', ja: '履歴から削除',
   },
@@ -190,13 +196,12 @@ export const renameUi: DomainMessages = {
     ko: '{count}줄',
     ja: '{count} 行',
   },
-  // 复制代码
-  copyCode: {
-    'zh-CN': '复制代码',
-    'zh-TW': '複製代碼',
-    en: 'Copy code',
-    ko: '코드 복사',
-    ja: 'コードをコピー',
+  copyNow: {
+    'zh-CN': '立即复制',
+    'zh-TW': '立即複製',
+    en: 'Copy now',
+    ko: '지금 복사',
+    ja: '今すぐコピー',
   },
   // 已复制，可粘贴到街机MOD 的多彩名字菜单
   copiedPasteItIntoHostutilitiesColorfulNameMenu: {
@@ -208,9 +213,9 @@ export const renameUi: DomainMessages = {
   },
   // 推送到 街机MOD
   pushToHostutilities: {
-    'zh-CN': '推送到 街机MOD',
+    'zh-CN': '推送到街机MOD',
     'zh-TW': '推送到 主機實用工具',
-    en: 'Push To HostUtilities',
+    en: 'Send to HostUtilities',
     ko: '호스트 유틸리티로 보내기',
     ja: 'ホストユーティリティへ送信',
   },

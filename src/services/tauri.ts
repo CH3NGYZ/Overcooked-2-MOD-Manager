@@ -229,7 +229,8 @@ export const api = {
   switchWinhttp: (enabled: boolean) => invoke<OperationResult>('switch_winhttp', { enabled }),
   openDevtools: () => invoke<OperationResult>('open_devtools'),
   resetUi: () => invoke<OperationResult>('reset_ui'),
-  /** 把生成好的多彩名字推送给正在运行的多彩名字 MOD（后端逐个端口尝试）。 */
+  /** 只向握手文件指定的街机 MOD 端口推送多彩名字。 */
+  colorfulNameReady: () => invoke<boolean>('colorful_name_ready'),
   pushColorfulName: (name: string) => invoke<OperationResult>('push_colorful_name', { name }),
   /** 复制文本到系统剪贴板。 */
   copyImage: (png: number[]) => invoke<OperationResult>('copy_image', { png }),

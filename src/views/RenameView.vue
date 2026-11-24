@@ -14,13 +14,12 @@ import {
   DEFAULT_COLOR, DEFAULT_SIZE, MAX_NAME_BYTES, MAX_NAME_SIZE, MIN_NAME_SIZE,
   buildShortestRichText, isNameOverLimit, styleName, utf16LeBytes,
 } from '../colorfulName'
-import { api } from '../services/tauri'
 import { t } from '../i18n'
 import { setPageTitleOverride } from '../pageHeader'
-import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import NameCharacters from '../rename/NameCharacters.vue'
 import NameHistory from '../rename/NameHistory.vue'
-import { nameHistory, type NameDraft } from '../rename/history'
+import type { NameDraft } from '../rename/history'
+import { useNameSubmission } from '../rename/useNameSubmission'
 
 const message = useNotify()
 const minSizeStep = MIN_NAME_SIZE - DEFAULT_SIZE
@@ -47,7 +46,7 @@ const sizes = ref<number[]>([])
 const selected = ref<{ start: number; end: number } | null>(null)
 const picker = ref(DEFAULT_COLOR)
 const sizeStep = ref(0)
-const { busy } = nameHistory
+const { action, busy, submit } = useNameSubmission()
 const pushing = computed(() => busy.value === 'push')
 const previewEl = ref<HTMLElement | null>(null)
 
@@ -374,18 +373,9 @@ function resetSelectionStyle() {
   sizeStep.value = 0
 }
 
-async function submitName(action: 'copy' | 'push') {
-  if (overLimit.value) { message.error(t('rename.nameCodeIsOverTheLimit')); return }
-  const draft = { name: name.value, colors: colors.value, sizes: sizes.value }
-  try {
-    const result = await nameHistory.submit(action, draft, action === 'copy' ? api.copyText : api.pushColorfulName)
-    if (!result) return
-    if (!result.ok) message.error(translateBackendMessage(result.message))
-    else if (action === 'copy') message.success(t('rename.copiedPasteItIntoHostutilitiesColorfulNameMenu'))
-    else message.success(result.message ? translateBackendMessage(result.message) : t('rename.pushedToHostutilities'))
-  } catch (reason) {
-    message.error(backendMessageOf(reason))
-  }
+function submitEditor() {
+  if (overLimit.value) return
+  return submit({ name: name.value, colors: colors.value, sizes: sizes.value })
 }
 
 onBeforeUnmount(clearNativeSelection)
@@ -394,8 +384,7 @@ onBeforeUnmount(clearNativeSelection)
 <template>
   <!--
     第二阶段的操作按钮 teleport 到固定页头的右侧。
-    「重新输入」紧挨标题（放在标题补充区），「复制代码」在
-    「推送到 街机MOD」左边，最右是推送。
+    「重新输入」紧挨标题，右侧只显示当前可执行的操作。
   -->
   <Teleport v-if="stage === 'customize'" to="#page-header-title-extra" defer>
     <n-button size="small" secondary @click="resetAll">
@@ -403,11 +392,10 @@ onBeforeUnmount(clearNativeSelection)
     </n-button>
   </Teleport>
   <Teleport v-if="stage === 'customize'" to="#page-header-actions" defer>
-    <n-button size="small" secondary :loading="busy === 'copy'" :disabled="overLimit || !!busy" @click="submitName('copy')">
-      <CopyOutline width="14" height="14" />{{ t('rename.copyCode') }}
-    </n-button>
-    <n-button size="small" type="primary" :loading="pushing" :disabled="overLimit || !!busy" @click="submitName('push')">
-      <CloudUploadOutline width="14" height="14" />{{ t('rename.pushToHostutilities') }}
+    <n-button data-rename-quick size="small" type="primary" :loading="!!busy" :disabled="overLimit || !!busy" @click="submitEditor">
+      <CloudUploadOutline v-if="action === 'push'" width="14" height="14" />
+      <CopyOutline v-else width="14" height="14" />
+      {{ t(action === 'push' ? 'rename.pushToHostutilities' : 'rename.copyNow') }}
     </n-button>
   </Teleport>
 
@@ -428,7 +416,7 @@ onBeforeUnmount(clearNativeSelection)
             </n-button>
           </div>
         </section>
-        <NameHistory @restore="restoreDraft" />
+        <NameHistory :action="action" :submit="submit" @restore="restoreDraft" />
       </n-tab-pane>
 
       <!-- 阶段二：选字改色 + 生成代码 -->

@@ -11,7 +11,7 @@ export interface NameDraft {
 }
 
 interface HistoryEntry extends NameDraft { key: string }
-type NameAction = 'copy' | 'push'
+export type NameAction = 'copy' | 'push'
 
 function readDraft(value: unknown): NameDraft | undefined {
   if (!value || typeof value !== 'object' || !('name' in value) || typeof value.name !== 'string'

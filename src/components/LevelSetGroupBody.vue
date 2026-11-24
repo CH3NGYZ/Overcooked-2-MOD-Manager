@@ -9,6 +9,7 @@ import { buttonColorFor, tagColorForAny } from '../theme'
 import { levelSetDisplayName } from '../levelSetStatus'
 import { levelSetTagKey } from '../levelSetStatusSummary'
 import LocalItemCard from './LocalItemCard.vue'
+import LevelSetPluginCard from './LevelSetPluginCard.vue'
 import DependencyTable from './DependencyTable.vue'
 import RepairDependenciesButton from './RepairDependenciesButton.vue'
 import { LEVEL_SET_GROUP_CTX, TOOL_BUTTON_WIDTH, TOOL_GAP } from './levelSetGroupContext'
@@ -211,88 +212,13 @@ function actionsOf(set: LevelSetInfo) {
           </div>
         </div>
 
-        <!--
-          随包插件：与地图同处一个父目录、跟着整个集目录一起启停的 DLL。
-          它们是这张图的一部分（不是独立 MOD），所以复用 MOD 卡片的下沉
-          版本挂在这里。**没有开关**：启停由集目录的 rename 决定，单个
-          DLL 没有属于自己的开关状态，给一个会和集目录打架。点击卡片
-          展开这个 DLL 的元数据；安装侧读 ZIP 条目，这里读磁盘目录，
-          同一份 `mods::read_dll_details` 解析，只是没有 ZIP 内路径。
-          「这是随包插件」与版本号都跟在标题后面（`version` + `titleTag`），
-          不做左侧缩进：缩进只能表达从属，代价是整行往右推、右侧那列被挤窄。
-          这一节**不写分节标题**：卡片右端已经有「随包插件」标签，再加一行
-          「随包插件（N）」是把同一句话说两遍，还平白占掉一行高度。
-        -->
         <div v-if="set.plugins?.length" class="detail-section">
           <div class="plugin-list">
-            <!--
-              开关由集目录整体 rename 控制，这张卡没有开关；开关键与值照传 ——
-              卡片判定开关值只有「快照优先、回退 props」一条规则，不按是否
-              可开关分叉，页面插槽也因此统一在这里读一次快照。
-            -->
-            <LocalItemCard v-for="plugin in set.plugins" :key="plugin.file_name"
+            <LevelSetPluginCard v-for="plugin in set.plugins" :key="plugin.path ?? plugin.file_name"
+              :set="set" :plugin="plugin" :name-i18n="ctx.bindingOf(set)?.map.name_i18n"
               :data-plugin-of="set.dir_name"
-              :data-plugin-file="plugin.file_name"
-              :switchable="false"
-              :enabled="plugin.enabled"
-              :title="ctx.pluginTitle(plugin)"
-              :title-tooltip="plugin.file_name"
-              :version="formatVersion(plugin.version) || undefined"
-              :title-tag="t('levelSet.bundledPlugin')"
-              :disabled="!plugin.enabled"
-              :expanded="ctx.expansion.isInnerOpen(set.dir_name, plugin.file_name)"
-              @activate="(card: HTMLElement) => ctx.togglePlugin(set, plugin, card)">
-              <template #detail>
-                <div class="detail-grid">
-                  <div class="detail-row">
-                    <span class="detail-label">{{ t('modsLocal.name') }}</span>
-                    <span class="detail-value">{{ plugin.name || '—' }}</span>
-                  </div>
-                  <div class="detail-row">
-                    <span class="detail-label">GUID</span>
-                    <span class="detail-value mono">{{ plugin.guid || '—' }}</span>
-                  </div>
-                  <div class="detail-row">
-                    <span class="detail-label">{{ t('modsOnline.versions') }}</span>
-                    <span class="detail-value mono">{{ formatVersion(plugin.version) || '—' }}</span>
-                  </div>
-                  <div class="detail-row">
-                    <span class="detail-label">{{ t('modsLocal.title') }}</span>
-                    <span class="detail-value">{{ plugin.title || '—' }}</span>
-                  </div>
-                  <div class="detail-row">
-                    <span class="detail-label">{{ t('modsLocal.productName') }}</span>
-                    <span class="detail-value">{{ plugin.product_name || '—' }}</span>
-                  </div>
-                  <div class="detail-row">
-                    <span class="detail-label">{{ t('modsLocal.author') }}</span>
-                    <span class="detail-value">{{ plugin.company || '—' }}</span>
-                  </div>
-                  <div class="detail-row">
-                    <span class="detail-label">{{ t('modsLocal.originalFilename') }}</span>
-                    <span class="detail-value mono">{{ plugin.original_filename || '—' }}</span>
-                  </div>
-                  <div class="detail-row">
-                    <span class="detail-label">{{ t('modsLocal.role') }}</span>
-                    <span class="detail-value">
-                      {{ plugin.role === 'dependency'
-                        ? t('tools.dependency')
-                        : t('levelSet.pluginRoleMod') }}
-                    </span>
-                  </div>
-                  <div class="detail-row">
-                    <span class="detail-label">{{ t('modsLocal.enabled') }}</span>
-                    <span class="detail-value">
-                      {{ plugin.enabled ? t('modsLocal.enabled2') : t('modsLocal.disabled') }}
-                    </span>
-                  </div>
-                  <div class="detail-row">
-                    <span class="detail-label">{{ t('modsLocal.file2') }}</span>
-                    <span class="detail-value mono">{{ plugin.file_name }}</span>
-                  </div>
-                </div>
-              </template>
-            </LocalItemCard>
+              :expanded="ctx.expansion.isInnerOpen(set.dir_name, plugin.path ?? plugin.file_name)"
+              @activate="(card: HTMLElement) => ctx.togglePlugin(set, plugin, card)" />
           </div>
         </div>
 
@@ -414,6 +340,7 @@ function actionsOf(set: LevelSetInfo) {
  */
 .plugin-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   --card-bg: var(--oc2-sunken);
 }

@@ -75,7 +75,6 @@ export interface LevelSetGroupContext {
   removeSet(set: LevelSetInfo): void | Promise<void>
   openDir(set: LevelSetInfo): void | Promise<void>
   preview(set: LevelSetInfo): void | Promise<void>
-  pluginTitle(plugin: LevelSetPlugin): string
   togglePlugin(
     set: LevelSetInfo,
     plugin: LevelSetPlugin,

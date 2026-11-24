@@ -192,10 +192,6 @@ pub struct LevelSetPlugin {
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub owner_name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub owner_name_zh: Option<String>,
     #[serde(flatten)]
     pub info: DllPluginInfo,
 }

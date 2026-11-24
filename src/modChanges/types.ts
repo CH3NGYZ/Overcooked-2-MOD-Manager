@@ -85,6 +85,20 @@ export interface ChangeInstallNote {
   note_i18n: Record<string, string>
 }
 export interface RetiredModCopy { member_key: string; label: string; version: string; dll_file: string }
+export interface BundledDllDisplay {
+  parent_node_id: string
+  node_id: string
+  member_key: string
+  dll_file: string
+  status_member_key?: string | null
+  action_kind: ChangeActionKind
+  candidate_id?: string | null
+  role?: import('../types').ModPreviewRole
+  kind?: ChangeActionKind
+  from_version?: string | null
+  to_version?: string | null
+  map_name?: ChangeLabel & { name_zh?: string | null }
+}
 export interface ChangeLabel { label: string; name_i18n?: Record<string, string> }
 export interface ChangePlan {
   plan_id: string
@@ -98,9 +112,8 @@ export interface ChangePlan {
   impacts: string[]
   roots: { node_id: string; label: string; tag?: string | null }[]
   nodes: ChangeNode[]
+  bundled_dlls?: Record<string, BundledDllDisplay[]>
   relation_labels?: Record<string, ChangeLabel>
-  /** Effectively enabled members before a whole-node disable. */
-  previous_enabled_members?: Record<string, string[]>
   /** Independently installed older copies removed as part of an approved upgrade. */
   retired_mod_copies?: Record<string, RetiredModCopy[]>
   /** Existing files that require overwrite approval in the prepared plan. */
@@ -127,6 +140,7 @@ export interface ChangeNode extends ChangeLabel {
   subject_tag?: string | null
   package_id?: string | null
   members?: { key: string; dll_file: string; enabled: boolean; guid?: string | null; role?: import('../types').ModPreviewRole }[]
+  bundle_parent_node_id?: string | null
   candidates: { id: string; tag?: string | null }[]
 }
 export interface EvaluationSubject { repository_id?: string; tag?: string; map_id?: string; dll_file?: string; map_dir_name?: string }
@@ -152,6 +166,7 @@ export interface ChangePreparationProgress {
   stage: 'resolving' | 'downloading' | 'verifying' | 'finalizing' | 'ready' | 'failed'
   active_node_id?: string | null
   actions: ChangeAction[]
+  bundled_dlls?: Record<string, BundledDllDisplay[]>
   items: ChangePreparationItem[]
   error?: string | null
 }

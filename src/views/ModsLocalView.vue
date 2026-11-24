@@ -14,7 +14,8 @@ import ContentState from '../components/ContentState.vue'
 import {
   FolderOpenOutline, RefreshOutline,
 } from '@vicons/ionicons5'
-import { matchesLocalSearch, modSearchText } from '../localItemSearch'
+import { levelSetSearchText, matchesLocalSearch, modSearchText } from '../localItemSearch'
+import { mapForLevelSet } from '../levelSetStatus'
 import { api } from '../services/tauri'
 import { repositoryForMod } from '../modStatus'
 import { conflictRemovalTarget, dependencyRepairStatus, dependencyTagFor, isRelationCardKey, relationJumpTarget, type RelationStatus } from '../modRelations'
@@ -45,6 +46,7 @@ import HeaderSearch from '../components/HeaderSearch.vue'
 import HeaderBulkSwitch from '../components/HeaderBulkSwitch.vue'
 import ModGroupBody from '../components/ModGroupBody.vue'
 import ModGroupHeader from '../components/ModGroupHeader.vue'
+import LevelSetPluginCard from '../components/LevelSetPluginCard.vue'
 import {
   MOD_GROUP_CTX,
   TOOL_BUTTON_WIDTH,
@@ -65,10 +67,14 @@ import { useModsLocalCardExpansion } from '../composables/useModsLocalCardExpans
 import { useLocalGroupExpansion } from '../composables/useLocalGroupExpansion'
 import type { InstalledMod, ModRepository } from '../types'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
+import { useLevelSetScan } from '../composables/useLevelSetScan'
+import { useMapSources } from '../composables/useMapSources'
 
 const message = useNotify()
 const dialog = useDialog()
 const { load, ensureLoaded, modsLoading: realLoading, modsGeneration, mods: scannedMods, game: realGame, config: realConfig } = useDashboard()
+const { levelSets } = useLevelSetScan()
+const { maps } = useMapSources()
 const loading = computed(() => !demoActive.value && realLoading.value && !modsGeneration.value)
 const game = computed(() => withDemoGame(realGame.value))
 const config = computed(() => withDemoConfig(realConfig.value))
@@ -244,7 +250,7 @@ const busy = ref<Record<string, boolean>>({})
  * 独立卡与包外壳必须落在同一个键空间里，互斥才覆盖得到两者；拆成两个实例时
  * 一张独立卡与一个包可以同时摊开，用户分不清自己点开的是哪一个。
  */
-const { expansion, modCardKey, onCardClick, togglePackage } = useModsLocalCardExpansion()
+const { expansion, modCardKey, onCardClick, togglePackage, toggleReadOnlyCard } = useModsLocalCardExpansion()
 // 切页面复用已有 Dashboard；整链成功由全局监听读取，普通卸载仍自行回读。
 onMounted(() => {
   if (demoActive.value) return
@@ -307,6 +313,19 @@ const visibility = useListVisibility(query, {
   noQueryMatch: () => t('modsLocal.noMatchMods'),
   noStatusMatch: () => t('common.noStatusMatch'),
 })
+const MAP_BUNDLE_GROUP = 'map-bundled-dlls'
+const mapBundleCards = computed(() => demoActive.value ? [] : levelSets.value.flatMap(set => {
+  if (!set.plugins?.length) return []
+  const binding = mapForLevelSet(set, maps.value)
+  return set.plugins.map(plugin => {
+    const identity = JSON.stringify([MAP_BUNDLE_GROUP, set.path, plugin.path ?? plugin.file_name])
+    return { set, plugin, nameI18n: binding?.name_i18n, identity, key: modCardKey(identity) }
+  })
+}))
+const visibleMapBundleCards = computed(() => visibility.activeStatus.value ? [] : mapBundleCards.value.filter(({ set, plugin, nameI18n }) =>
+  matchesLocalSearch(query.value, levelSetSearchText({ ...set, plugins: [plugin], levels: [] }), ...Object.values(nameI18n ?? {})),
+))
+const mapBundleCount = computed(() => visibility.activeStatus.value ? 0 : mapBundleCards.value.length)
 
 /** 卡片标题可能来自绑定仓库名或包名快照，纯模块看不到，作为额外文字拼进来。 */
 function searchExtra(mod: InstalledMod) {
@@ -332,7 +351,8 @@ const searchMatchedDllFiles = computed(() => {
 
 /** 三种空态的判定在共享的可见性规则里。 */
 const emptyDescription = computed(() =>
-  visibility.emptyText(effectiveMods.value.length > 0, visibleGroups.value.length),
+  visibility.emptyText(effectiveMods.value.length + mapBundleCards.value.length > 0,
+    visibleGroups.value.length + visibleMapBundleCards.value.length),
 )
 
 /* ===== 全部启用 / 全部禁用 =====
@@ -462,7 +482,10 @@ const groups = computed<ModGroupNode[]>(() => buildLocalModGroups({
   displayTitle,
 }))
 
-const allGroupKeys = computed(() => visibleGroups.value.map((node) => node.key))
+const allGroupKeys = computed(() => [
+  ...visibleGroups.value.map((node) => node.key),
+  ...(visibleMapBundleCards.value.length ? [MAP_BUNDLE_GROUP] : []),
+])
 const {
   expandedKeys: groupsExpanded,
   onExpanded: onGroupsExpanded,
@@ -1106,7 +1129,7 @@ visibility.reconcileStatuses(computed(() => [...statusTagsPrimary.value, ...stat
       一次操作锁、作用于全部本地 MOD，搜索期间先收起，避免把筛选结果
       误当成它的作用范围。
     -->
-    <span v-if="visibility.filtering" class="header-count muted">{{ visibility.countLabel(visibleUnitCount, statusUnitNodes.length) }}</span>
+    <span v-if="visibility.filtering" class="header-count muted">{{ visibility.countLabel(visibleUnitCount + visibleMapBundleCards.length, statusUnitNodes.length + mapBundleCount) }}</span>
     <HeaderSearch v-model:value="search" />
     <!--
       批量开关：一个二选一分段控件（与发布详情面板「说明 / 下载安装」同款），
@@ -1150,7 +1173,7 @@ visibility.reconcileStatuses(computed(() => [...statusTagsPrimary.value, ...stat
   -->
   <PageLoading :show="loading">
     <template #status>{{ t('common.loading') }}</template>
-    <ContentState v-if="!loading && !visibleGroups.length" :description="emptyDescription" />
+    <ContentState v-if="!loading && !allGroupKeys.length" :description="emptyDescription" />
 
     <!-- 按安装时绑定仓库的分类折叠：同一分类的 MOD 归在一起 -->
     <n-collapse v-else :expanded-names="groupsExpanded" class="group-collapse"
@@ -1165,6 +1188,14 @@ visibility.reconcileStatuses(computed(() => [...statusTagsPrimary.value, ...stat
           <ModGroupHeader :group-key="node.key" />
         </template>
         <ModGroupBody :group-key="node.key" />
+      </n-collapse-item>
+      <n-collapse-item v-if="visibleMapBundleCards.length" :name="MAP_BUNDLE_GROUP" :title="t('modsLocal.mapBundledDlls')">
+        <div class="map-bundled-cards" data-map-bundled-group>
+          <LevelSetPluginCard v-for="{ key, identity, set, plugin, nameI18n } in visibleMapBundleCards" :key="key"
+            :data-map-owned="set.dir_name" :data-expand-key="key" :data-dll-file="identity"
+            :set="set" :plugin="plugin" :name-i18n="nameI18n" :expanded="expansion.isOuterOpen(key)"
+            @activate="(card: HTMLElement) => toggleReadOnlyCard(key, card)" />
+        </div>
       </n-collapse-item>
     </n-collapse>
   </PageLoading>
@@ -1190,6 +1221,7 @@ visibility.reconcileStatuses(computed(() => [...statusTagsPrimary.value, ...stat
 
 /* 分类折叠：分类标题行 + 内部单列 MOD 卡片 */
 .group-collapse { width: 100%; }
+.map-bundled-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin: 2px 0 6px 14px; --card-bg: var(--oc2-sunken); }
 
 /* 可点标签的手型与悬停反馈由 global.css 的 .state-tag--link 统一提供 */
 

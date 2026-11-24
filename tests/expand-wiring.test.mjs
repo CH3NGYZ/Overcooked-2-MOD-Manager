@@ -27,6 +27,7 @@ const readBody = (name) =>
 const modGroupBody = readBody('ModGroupBody.vue')
 const modPackageBody = readBody('ModPackageBody.vue')
 const levelGroupBody = readBody('LevelSetGroupBody.vue')
+const levelPluginCard = readBody('LevelSetPluginCard.vue')
 
 /** 抓出某个函数体（从 `function 名(` 到与函数声明缩进相同的 `}`），用来判断顺序。 */
 function bodyOf(source, name) {
@@ -147,9 +148,11 @@ test('地图页：点空白先认领二级卡，命中只收这一张、不动�
   assert.ok(doc.indexOf('nestedPluginCard(target)') < doc.indexOf('levelExpansion.closeOuter(dirName)'),
     '必须先在点空白里认领插件卡，否则点插件详情会把整张集收掉')
   assert.match(levelGroupBody, /:data-plugin-of="set\.dir_name"/)
-  assert.match(levelGroupBody, /:data-plugin-file="plugin\.file_name"/)
+  assert.match(levelGroupBody, /LevelSetPluginCard v-for="plugin in set\.plugins"/)
+  assert.match(levelPluginCard, /:data-plugin-key="plugin\.path \?\? plugin\.file_name"/)
+  assert.match(levels, /card\.dataset\.pluginKey/)
   const collapse = bodyOf(levels, 'collapsePluginCard')
-  assert.match(collapse, /levelExpansion\.closeInner\(dirName, fileName\)/)
+  assert.match(collapse, /levelExpansion\.closeInner\(dirName, pluginKey\)/)
   assert.doesNotMatch(collapse, /closeOuter/)
 })
 

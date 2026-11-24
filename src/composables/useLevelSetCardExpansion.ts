@@ -84,8 +84,9 @@ export function useLevelSetCardExpansion() {
     // 这次点击已经由插件卡片处理；不设标记的话，document 上「点空白收起」
     // 会顺手把外层的集卡片一起收掉，用户就看不到刚展开的插件详情了。
     cardClickHandled = true
-    const close = () => levelExpansion.closeInner(set.dir_name, plugin.file_name)
-    if (levelExpansion.isInnerOpen(set.dir_name, plugin.file_name)) {
+    const key = plugin.path ?? plugin.file_name
+    const close = () => levelExpansion.closeInner(set.dir_name, key)
+    if (levelExpansion.isInnerOpen(set.dir_name, key)) {
       if (!card) {
         close()
         return
@@ -93,7 +94,7 @@ export function useLevelSetCardExpansion() {
       collapseCardWithScroll({ card, body: card.querySelector('.card-detail') }, close)
       return
     }
-    levelExpansion.openInner(set.dir_name, plugin.file_name)
+    levelExpansion.openInner(set.dir_name, key)
     if (!card) return
     const anchor = card.querySelector('.card-row')
     if (!anchor) return
@@ -117,16 +118,16 @@ export function useLevelSetCardExpansion() {
   /**
    * 收起某张随包插件卡片。
    *
-   * 卡片只带 `data-plugin-of` / `data-plugin-file` 两个原始字段（内层键里的 NUL
+   * 卡片带 `data-plugin-of` / `data-plugin-key` 两个定位字段（内层键里的 NUL
    * 写不进 HTML 属性），拼键规则仍只有 `useCardExpansion` 一处实现。
    */
   function collapsePluginCard(card: HTMLElement) {
     const dirName = card.dataset.pluginOf
-    const fileName = card.dataset.pluginFile
-    if (!dirName || !fileName) return
-    if (!levelExpansion.isInnerOpen(dirName, fileName)) return
+    const pluginKey = card.dataset.pluginKey
+    if (!dirName || !pluginKey) return
+    if (!levelExpansion.isInnerOpen(dirName, pluginKey)) return
     collapseCardWithScroll({ card, body: card.querySelector('.card-detail') }, () => {
-      levelExpansion.closeInner(dirName, fileName)
+      levelExpansion.closeInner(dirName, pluginKey)
     })
   }
 

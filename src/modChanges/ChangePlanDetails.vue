@@ -112,7 +112,9 @@ function describeCondition(reason: Reason) {
         <tr v-for="row in rows" :key="row.key" :class="{ 'is-child': row.bundled || row.retired, 'diagnostic-start': row.diagnostic?.start }"
           :data-diagnostic-path="row.diagnostic?.path" :data-diagnostic-depth="row.diagnostic?.depth"
           :data-change-node="row.bundled || row.retired ? undefined : row.nodeId"
-          :data-change-parent="row.bundled || row.retired ? row.nodeId : undefined" :data-change-retired="row.retired">
+          :data-change-parent="row.bundled || row.retired ? row.nodeId : undefined"
+          :data-change-bundled-parent="row.bundled ? row.bundledParentId : undefined"
+          :data-change-bundled-node="row.bundled ? row.nodeId : undefined" :data-change-retired="row.retired">
           <td class="details-operation">
             <NTag v-if="row.kind" size="small" :type="row.kind === 'retire' ? 'error' : row.kind === 'disable' ? 'warning' : 'info'">{{ t(`modChanges.action.${row.kind}`) }}</NTag>
           </td>
@@ -136,6 +138,9 @@ function describeCondition(reason: Reason) {
           </th>
           <td class="details-version oc2-table-version">{{ row.version ? `${row.version.from ? `${row.version.from} → ` : ''}${row.version.to || '—'}` : row.diagnostic?.edge && !row.diagnostic.providers?.length ? '—' : '' }}</td>
           <td class="details-reason">
+            <span v-if="row.mapName" class="map-name-tags">
+              <NTag size="small" :bordered="false">{{ row.mapName }}</NTag>
+            </span>
             <template v-if="row.diagnostic">
               <strong v-if="row.diagnostic.path" class="diagnostic-path">{{ t('modChanges.diagnostic.path', { number: row.diagnostic.path }) }}<template v-if="row.selected"> · {{ t('modChanges.detailsSelection') }}</template></strong>
               <template v-if="row.diagnostic.edge">
@@ -184,9 +189,11 @@ function describeCondition(reason: Reason) {
 .details-table :is(.details-operation, .details-category, .plan-row-status) { white-space: nowrap; text-align: center; padding-inline: 8px; }
 .details-category-label { color: var(--oc2-text-2); font-size: 12px; }
 .details-version { color: var(--oc2-text-2); }
+.map-name-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-inline-end: 6px; vertical-align: middle; }
 .details-member { color: var(--oc2-text-2); font-weight: 400; }
 .details-item strong + .details-member { margin-inline-start: 8px; }
 .details-table .is-child .details-item { padding-inline-start: 24px; }
+.details-table .is-child :is(.details-operation, .details-category, .plan-row-status, .details-item, .details-version, .details-reason) { padding-block: 3px; }
 .is-child .details-item, .is-child .details-reason { color: var(--oc2-text-2); }
 .row-status-icon { display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; min-height: 16px; color: var(--oc2-accent); }
 .row-status-icon[data-change-icon='error'], .diagnostic-blocked { color: var(--oc2-danger, #e5484d); }

@@ -130,6 +130,15 @@ export function useModsLocalCardExpansion() {
     scrollAfterExpand(card, '.card-row', '.card-detail')
   }
 
+  function toggleReadOnlyCard(key: string, card: HTMLElement) {
+    cardClickHandled = true
+    if (expansion.isOuterOpen(key)) {
+      collapseWithScroll(card, '.card-detail', () => expansion.closeOuter(key))
+      return
+    }
+    expandWithScroll(card, key, '.card-row', '.card-detail', () => expansion.openOuter(key))
+  }
+
   /**
    * 点击详情之外的空白收起已展开的 MOD。
    *
@@ -209,5 +218,5 @@ export function useModsLocalCardExpansion() {
     document.removeEventListener('click', onDocumentClick)
   })
 
-  return { expansion, modCardKey, onCardClick, togglePackage }
+  return { expansion, modCardKey, onCardClick, togglePackage, toggleReadOnlyCard }
 }

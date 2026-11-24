@@ -159,13 +159,15 @@ test('a terminal and a continuing prefix stay separate even when their evidence 
   ])
 })
 
-test('bundle rows follow their map, merge explicit member actions and exclude external map DLLs', () => {
+test('bundle rows preserve independent execution keys and group only verified map DLLs', () => {
   const member = (key, dllFile, enabled = true) => ({ key, dll_file: dllFile, enabled })
   const internal = 'BepInEx/plugins/OC2DIYLevel/Levels/Map/Addon.dll'
   const second = 'BepInEx/plugins/OC2DIYLevel/Levels/Map/Guard.dll'
   const alreadyDisabled = 'BepInEx/plugins/OC2DIYLevel/Levels/Map/Preserved.dll.disabled'
   const external = 'BepInEx/plugins/External.dll'
   const externalId = `map-dll:${external.toLowerCase()}`
+  const registered = 'BepInEx/plugins/MapLibrary.dll'
+  const registeredId = `map-dll:${registered.toLowerCase()}`
   const { rows } = changePlanDetails({ ...plan, nodes: [
     { ...node('map', '地图合集'), kind: 'map', map_id: 'test-map', members: [member('addon', internal), member('guard', second), member('preserved', alreadyDisabled, false)] },
     { ...node(externalId, '外置插件'), kind: 'mod', map_id: 'test-map', members: [member('external', external)] },
@@ -174,11 +176,16 @@ test('bundle rows follow their map, merge explicit member actions and exclude ex
     action('map', 'disable'), action('web', 'downgrade', { to_tag: 'v3.10.2' }),
     action('map', 'disable', { member_key: 'guard', reason_details: [{ kind: 'requested', related_node_ids: [] }] }),
     action(externalId, 'disable', { member_key: 'external' }),
-  ] })
+    action(registeredId, 'disable'),
+  ], bundled_dlls: { map: [
+    { parent_node_id: 'map', node_id: 'map', member_key: 'addon', dll_file: internal, action_kind: 'disable', kind: 'disable' },
+    { parent_node_id: 'map', node_id: 'map', member_key: 'guard', dll_file: second, status_member_key: 'guard', action_kind: 'disable', kind: 'disable' },
+    { parent_node_id: 'map', node_id: registeredId, member_key: registered, dll_file: registered, action_kind: 'disable', kind: 'disable', role: 'dependency' },
+  ] } })
   const children = rows.filter(row => row.bundled)
   assert.equal(rows[0].label, '地图合集')
   assert.deepEqual(rows.slice(1, 1 + children.length), children)
-  assert.deepEqual(children.map(row => row.member.path).sort(), [internal, second].sort())
+  assert.deepEqual(children.map(row => row.member.path).sort(), [internal, second, registered].sort())
   assert.ok(children.every(row => row.kind === 'disable' && row.version === undefined))
   const explicit = children.find(row => row.member.path === second)
   assert.equal(explicit.statusKey, changeStatusKey('map', 'guard'))
@@ -188,4 +195,21 @@ test('bundle rows follow their map, merge explicit member actions and exclude ex
   assert.equal(implicit.bundleReason, 'disabled')
   assert.equal(rows.filter(row => row.member?.path === second).length, 1)
   assert.equal(rows.filter(row => row.member?.path === external && !row.bundled).length, 1)
+  assert.equal(children.find(row => row.member.path === registered).statusKey, changeStatusKey(registeredId))
+})
+
+test('verified member versions follow the active candidate and clear when a new solve has no actions', () => {
+  const oldAction = action('web', 'upgrade', { to_candidate_id: 'old', from_tag: 'v1', to_tag: 'v4' })
+  const newAction = action('web', 'upgrade', { to_candidate_id: 'new', from_tag: 'v1', to_tag: 'v3' })
+  const child = { parent_node_id: 'web', node_id: 'web', member_key: 'member', dll_file: 'Old.dll', role: 'mod',
+    candidate_id: 'old', action_kind: 'upgrade', kind: 'upgrade', from_version: '1.0', to_version: '2.0' }
+  const activePlan = { ...plan, actions: [oldAction], bundled_dlls: { web: [child] } }
+  const newRows = changePlanDetails(activePlan, { actions: [newAction], items: [], bundled_dlls: { web: [
+    { ...child, candidate_id: 'new', dll_file: 'Current.dll', kind: 'downgrade', from_version: '1.0', to_version: '0.8' },
+  ] } }).rows
+  assert.deepEqual(newRows.map(({ member, kind, version }) => [member?.name, kind, version]), [
+    [undefined, 'upgrade', { from: 'v1', to: 'v3' }], ['Current.dll', 'downgrade', { from: '1.0', to: '0.8' }],
+  ])
+  assert.deepEqual(changePlanDetails(activePlan, { actions: [newAction], items: [], bundled_dlls: {} }).rows.map(row => row.member), [undefined])
+  assert.deepEqual(changePlanDetails(activePlan, { actions: [], items: [], bundled_dlls: {} }).rows, [])
 })

@@ -711,13 +711,6 @@ export const levelSet: DomainMessages = {
     ja: '更新を確認できません',
   },
   // 单张随包插件卡片右侧的角色标签：说明「这不是独立 MOD，是这张图自带的」
-  bundledPlugin: {
-    'zh-CN': '随包插件',
-    'zh-TW': '隨包插件',
-    en: 'Bundled',
-    ko: '동봉',
-    ja: '同梱',
-  },
   // 插件文件被单独改成 `.dll.disabled` 时的标记（正常情况跟着地图整目录启停）
   pluginDisabled: {
     'zh-CN': '未启用',

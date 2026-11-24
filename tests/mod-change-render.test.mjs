@@ -416,7 +416,8 @@ test('the rows for a bundled DLL stay with its map and show the map transaction 
   const activePlan = { ...plan, prepared: true, nodes: [
     { ...plan.nodes[0], kind: 'map', members: [{ key: 'addon', dll_file: 'Map/Addon.dll', enabled: true }] },
     plan.nodes[1],
-  ], actions: [action('web', 'disable'), action('level', 'upgrade', { from_tag: 'v0.10', to_tag: 'v0.11.1' })] }
+  ], actions: [action('web', 'disable'), action('level', 'upgrade', { from_tag: 'v0.10', to_tag: 'v0.11.1' })],
+  bundled_dlls: { web: [{ parent_node_id: 'web', node_id: 'web', member_key: 'addon', dll_file: 'Map/Addon.dll', action_kind: 'disable', kind: 'disable' }] } }
   fixture.state.value = { phase: 'executing', plan: activePlan, error: null }
   fixture.execution.set(changeStatusKey('web'), 'processed')
   await nextTick()
@@ -489,7 +490,9 @@ test('verified package roles distinguish bundled DLLs from other MODs in the dep
   const activePlan = { ...plan, nodes: [pack, other, map], actions: [
     action('web', 'upgrade'), action('level', 'enable', { reason_details: [{ kind: 'required_by', related_node_ids: ['web'] }] }),
     action('map', 'enable'),
-  ] }
+  ], bundled_dlls: { web: pack.members.map(({ key, dll_file, role }) => ({
+    parent_node_id: 'web', node_id: 'web', member_key: key, dll_file, role, action_kind: 'upgrade', kind: 'install',
+  })) } }
   fixture.state.value = { phase: 'executing', plan: activePlan, error: null }
   fixture.execution.set(changeStatusKey('web'), 'applying')
   await nextTick()

@@ -68,7 +68,7 @@ import {
   type LevelSetCardAction,
   type LevelSetCardTag,
 } from '../levelSetStatus.ts'
-import type { LevelSetInfo, LevelSetPlugin, MapInfo, ModRepository } from '../types'
+import type { LevelSetInfo, MapInfo, ModRepository } from '../types'
 import { demoActive, withDemoConfig, withDemoGame, withDemoLevelSets, withDemoMaps, withDemoMods } from '../tutorial/demo'
 
 /**
@@ -539,11 +539,6 @@ function dependencyRow(status: RelationStatus): DependencyRow {
     translate: t, pickName: pickI18n, jumpToRepository: true })
 }
 
-/** 插件卡片标题：BepInPlugin 名优先，读不到就用文件名去掉 `.dll` / `.dll.disabled`。 */
-function pluginTitle(plugin: LevelSetPlugin) {
-  return plugin.name?.trim() || plugin.file_name.replace(/\.dll(\.disabled)?$/i, '')
-}
-
 /** 单张开关沿用后端的整链校验；成功事件发布同一份共享扫描结果。 */
 async function toggle(set: LevelSetInfo, enabled: boolean) {
   if (busy.value[set.dir_name]) return
@@ -810,7 +805,6 @@ provide(
     removeSet: remove,
     openDir: openDirectory,
     preview: set => levelPreview.value?.open(set),
-    pluginTitle,
     togglePlugin,
     dependencyRows,
     openDependencyJump,

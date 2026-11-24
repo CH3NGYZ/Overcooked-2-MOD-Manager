@@ -163,7 +163,7 @@ function onToggle(value: boolean) {
         -->
         <span v-if="version || titleTag" class="card-title-meta">
           <span v-if="version" class="card-version mono">{{ version }}</span>
-          <n-tag v-if="titleTag" size="tiny" :bordered="false" :color="tagColorFor('muted')">
+          <n-tag v-if="titleTag" size="tiny" :bordered="false" :color="tagColorFor('muted')" :title="titleTag">
             {{ titleTag }}
           </n-tag>
         </span>

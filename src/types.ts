@@ -378,8 +378,8 @@ export interface LevelSetInfo {
   /**
    * 目录里随地图一起落盘的插件 DLL（作者随包的修复/运行库）。
    *
-   * 它们是这个地图集的一部分：与地图同处一个父目录、跟着整目录一起启停，
-   * 不进本地 MOD 列表（否则同一份文件会有「MOD 开关」和「地图开关」两套状态）。
+   * 包含地图目录内部 DLL 与登记在 BepInEx 的外置 DLL。MOD 管理页只读展示，
+   * 普通 MOD 列表与批量开关不会使用这里的成员。
    */
   plugins?: LevelSetPlugin[]
 }
@@ -482,6 +482,7 @@ export interface ZipLevelSetPlugin extends DllPluginInfo {
 export interface LevelSetPlugin extends DllPluginInfo {
   file_name: string
   enabled: boolean
+  path?: string
 }
 
 /** 关卡集目录的落盘形态（与后端 `LevelSetLayout` 同名字面量）。 */

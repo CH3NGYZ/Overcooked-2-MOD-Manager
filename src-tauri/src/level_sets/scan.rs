@@ -275,8 +275,6 @@ pub(super) fn scan_level_sets_inner(
                             file_name,
                             enabled: *enabled,
                             path: Some(crate::display_path::display_path(path)),
-                            owner_name: metadata.name.clone(),
-                            owner_name_zh: metadata.name_zh.clone(),
                             info,
                         })
                     })
@@ -434,8 +432,6 @@ pub(super) fn assemble_level_set(
             file_name: file_name.clone(),
             enabled: *enabled,
             path: Some(crate::display_path::display_path(&target.plugins[index].0)),
-            owner_name: String::new(),
-            owner_name_zh: None,
             info: plugins
                 .get(index)
                 .and_then(|outcome| outcome.as_ref())

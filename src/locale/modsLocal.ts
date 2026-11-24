@@ -390,6 +390,15 @@ export const modsLocal: DomainMessages = {
     ko: '동봉 의존성',
     ja: '同梱依存',
   },
+  mapBundledPlugin: {
+    'zh-CN': '地图插件', 'zh-TW': '地圖外掛', en: 'Map plugin', ko: '맵 플러그인', ja: 'マッププラグイン',
+  },
+  mapBundledDependency: {
+    'zh-CN': '地图依赖', 'zh-TW': '地圖依賴', en: 'Map dependency', ko: '맵 의존성', ja: 'マップ依存',
+  },
+  mapBundledDlls: {
+    'zh-CN': '地图随包 DLL', 'zh-TW': '地圖隨包 DLL', en: 'DLLs bundled with maps', ko: '맵에 포함된 DLL', ja: 'マップ同梱 DLL',
+  },
   // 作者
   author: {
     'zh-CN': '作者',

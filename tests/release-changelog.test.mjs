@@ -183,8 +183,11 @@ function signedFixture({ failHistory = false, corruptPackage = false, corruptSig
 
 test('real manifest aggregation verifies all signed packages before adding Release history', async () => {
   const fixture = signedFixture()
+  fixture.assets.push({ id: 100, name: `OC2ModManager_${fixture.version}_x64.msix`, size: 1024 })
   const result = await aggregateManifest(fixture.github, fixture.release, fixture.assets, fixture.version, fixture.publicKey)
+  assert.equal(Object.keys(result.platforms).length, 4)
   assert.deepEqual(Object.keys(result.platforms).sort(), [...PLATFORM_KEYS].sort())
+  assert.doesNotMatch(serializeUpdateManifest(result).toString('utf8'), /\.msix/)
   assert.equal(result.notes, fixture.release.body)
   assert.deepEqual(result.changelog, [
     { version: '2.0.9', notes: '- Previous changes' }, { version: '2.10.0', notes: '- Target changes' },

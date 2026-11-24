@@ -38,6 +38,7 @@ jobs:
     outputs:
       release_id: ${{ steps.release.outputs.release_id }}
       tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -193,6 +194,20 @@ jobs:
           includeUpdaterJson: false
           tauriScript: node scripts/build-release.mjs
           args: --target ${{ matrix.target }}
+
+      - name: Attach unsigned Microsoft Store MSIX to the release draft
+        if: inputs.mode != 'test' && matrix.target == 'x86_64-pc-windows-msvc' && needs.prepare.result == 'success'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          $targetRoot = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { 'src-tauri/target' }
+          $binary = (Get-Item -LiteralPath (Join-Path $targetRoot 'x86_64-pc-windows-msvc/release/OC2ModManager.exe')).FullName
+          $output = Join-Path $env:RUNNER_TEMP "oc2-msix-$([guid]::NewGuid().ToString('N'))"
+          $package = & ./scripts/package-msix.ps1 -BinaryPath $binary -Version $env:RELEASE_VERSION -OutputDirectory $output
+          node scripts/release.mjs msix $env:RELEASE_ID $package
 
   updater-manifest:
     needs: [prepare, build]

@@ -9,7 +9,7 @@ export class GitHubRelease {
     this.fetcher = fetcher
   }
 
-  async request(path, { method = 'GET', body, binary = false, upload = false } = {}) {
+  async request(path, { method = 'GET', body, binary = false, upload = false, contentType = 'application/json' } = {}) {
     const response = await this.fetcher(`https://${upload ? 'uploads' : 'api'}.github.com${repositoryPath}${path}`, {
       method,
       headers: {
@@ -17,10 +17,10 @@ export class GitHubRelease {
         Accept: binary ? 'application/octet-stream' : 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28',
         'User-Agent': 'OC2ModManager-release',
-        ...(body ? { 'Content-Type': upload ? 'application/json' : 'application/json' } : {}),
+        ...(body ? { 'Content-Type': contentType } : {}),
       },
       body: body ? (upload ? body : JSON.stringify(body)) : undefined,
-      signal: AbortSignal.timeout(binary ? 180_000 : 30_000),
+      signal: AbortSignal.timeout(binary || upload ? 180_000 : 30_000),
     })
     if (!response.ok) throw new Error(`GitHub Releases request failed: ${method} ${path} (HTTP ${response.status})`)
     if (binary) return Buffer.from(await response.arrayBuffer())
@@ -49,6 +49,7 @@ export class GitHubRelease {
     const assets = []
     for (let page = 1; ; page++) {
       const batch = await this.request(`/releases/${checkedId(id)}/assets?per_page=100&page=${page}`)
+      if (!Array.isArray(batch)) throw new Error('Invalid GitHub release asset list')
       assets.push(...batch)
       if (batch.length < 100) return assets
       if (page >= 100) throw new Error('Too many release assets')
@@ -58,8 +59,12 @@ export class GitHubRelease {
   release(id) { return this.request(`/releases/${checkedId(id)}`) }
   download(id) { return this.request(`/releases/assets/${checkedId(id)}`, { binary: true }) }
   deleteAsset(id) { return this.request(`/releases/assets/${checkedId(id)}`, { method: 'DELETE' }) }
-  uploadManifest(id, bytes) {
-    return this.request(`/releases/${checkedId(id)}/assets?name=latest.json`, { method: 'POST', body: bytes, upload: true })
+  uploadAsset(id, name, bytes, { contentType, label } = {}) {
+    const query = new URLSearchParams({ name })
+    if (label) query.set('label', label)
+    return this.request(`/releases/${checkedId(id)}/assets?${query}`, {
+      method: 'POST', body: bytes, upload: true, contentType,
+    })
   }
 }
 

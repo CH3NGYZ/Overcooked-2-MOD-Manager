@@ -3,7 +3,7 @@ import { requestToggleChanges, requestAllToggleChanges } from '../modChanges/req
 import { useGameOperationGate } from '../composables/useGameOperationGate'
 import { computed, onMounted, provide, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { NCollapse, NCollapseItem, NFloatButton, NTag, useDialog } from 'naive-ui'
+import { NCollapse, NCollapseItem, NTag, useDialog } from 'naive-ui'
 import ContentState from '../components/ContentState.vue'
 import ChangeEvidenceList from '../modChanges/ChangeEvidenceList.vue'
 import { changeErrorEvidence, providerEvidenceAdvice } from '../modChanges/evidence'
@@ -86,8 +86,8 @@ import { demoActive, withDemoConfig, withDemoGame, withDemoLevelSets, withDemoMa
  * ## 与 MOD 管理页的关系
  *
  * 卡片外壳直接复用 `LocalItemCard`（与 MOD 管理页同一份），页头动作的顺序
- * 与语义也照它排：批量开关 → 检测更新 → 打开目录；右下角浮动按钮是「重新扫描
- * 本地地图」。批量开关做成二选一分段控件而不是两个按钮：它回答的是「全体现在
+ * 与语义也照它排：批量开关 → 检测更新 → 打开目录。批量开关做成二选一分段控件，
+ * 回答的是「全体现在
  * 处于哪一档」，部分开启时两边都不选中才是真实状态。
  *
  * 数据模型仍然完全不同：MOD 是 BepInEx 插件（身份是 GUID），地图是
@@ -100,8 +100,8 @@ import { demoActive, withDemoConfig, withDemoGame, withDemoLevelSets, withDemoMa
  * **同一份**：同一张地图不能在两页得出相反的版本结论，刷新态也必须熬得过
  * 一次切页（挂在页面上的 ref 会随组件卸载一起消失）。
  *
- * 本地关卡集由 App 按游戏上下文与提交/目录事件统一刷新；本页只发起手动扫描，
- * 以及删除、整理后的本地回读。在线列表交给 `loadMaps()`；「检测更新」只查已装图的 Release。
+ * 本地关卡集由 App 按游戏上下文与提交/目录事件统一刷新，本页在删除、整理后回读。
+ * 在线列表交给 `loadMaps()`，「检测更新」只查已装图的 Release。
  */
 
 const message = useNotify()
@@ -112,7 +112,7 @@ const config = computed(() => withDemoConfig(realConfig.value))
 const game = computed(() => withDemoGame(realGame.value))
 const mods = computed(() => withDemoMods(realMods.value))
 const { progress: scanProgress, scanLevelSets, levelSets: realSets, hasResult,
-  error: scanError, scanning } = useLevelSetScan()
+  error: scanError } = useLevelSetScan()
 const localReadError = computed(() => scanError.value ? backendMessageOf(scanError.value) : '')
 const localReadEvidence = computed(() => changeErrorEvidence(scanError.value))
 const localReadAdvice = computed(() => providerEvidenceAdvice(localReadEvidence.value.providers))
@@ -281,7 +281,7 @@ watch([highlightId, groups], expandGroupForHighlight, { immediate: true })
 /**
  * 只重读关卡集。
  *
- * 本页用于手动扫描、删除和整理。整链成功及外部变化由全局监听重读，
+ * 本页用于删除和整理后的回读。整链成功及外部变化由全局监听重读，
  * 两者共用扫描结果；在线地图加载也不阻塞本地发布。
  */
 async function reloadSets() {
@@ -943,14 +943,6 @@ visibility.reconcileStatuses(computed(() => [...statusSummary.value, ...toggleSu
     </n-collapse>
   </PageLoading>
 
-  <!--
-    浮动按钮：重新扫描本地地图（只读磁盘，不碰地图源 Release）。
-    「检测更新」在页头，两者职责分开：一个读本地，一个看线上。
-  -->
-  <n-float-button position="fixed" bottom="28" right="32" :tooltip="t('levelSet.rescanLocal')"
-    :disabled="loading || scanning" @click="reloadSets">
-    <RefreshOutline width="17" height="17" :class="{ 'spin-icon': loading || scanning }" />
-  </n-float-button>
 </template>
 
 <style scoped>
@@ -963,21 +955,6 @@ visibility.reconcileStatuses(computed(() => [...statusSummary.value, ...toggleSu
 }
 
 /* 可点标签的手型与悬停反馈由 global.css 的 .state-tag--link 统一提供 */
-
-/* 浮动刷新按钮转圈：与 MOD 两页同一套观感（各自页面作用域） */
-.spin-icon {
-  flex: 0 0 auto;
-  color: var(--oc2-accent);
-  animation: oc2-map-spin .8s linear infinite;
-}
-
-@keyframes oc2-map-spin {
-  to { transform: rotate(360deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .spin-icon { animation: none; }
-}
 
 /*
  * 加载遮罩里「正在读取的文件夹」那一行。

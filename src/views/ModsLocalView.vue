@@ -8,7 +8,7 @@ import { computed, onBeforeUnmount, onMounted, provide, reactive, ref, watch } f
 import { useDialog } from 'naive-ui'
 import { useNotify } from '../useNotify'
 import {
-  NCollapse, NCollapseItem, NFloatButton, NTag,
+  NCollapse, NCollapseItem, NTag,
 } from 'naive-ui'
 import ContentState from '../components/ContentState.vue'
 import {
@@ -234,13 +234,6 @@ const { linkToModRepository } = useModRepositoryLink()
 const { highlightId } = useFocusHighlight()
 /* 页头聚合标签现在切换列表可见性（见下方 `visibility`）；跨页定位只保留 `useFocusHighlight`。 */
 
-/*
- * 固定按名称排序。
- *
- * 原来的「排序」切换入口是右下角浮动按钮，现在该位置改成了「重新扫描
- * 本地 MOD」，排序已无切换入口，所以把配置一起去掉 —— 留一个永远不变的
- * sortBy 只会误导后续维护者。
- */
 const busy = ref<Record<string, boolean>>({})
 /*
  * 卡片展开状态只有一套，规则都在 `useCardExpansion` 里：
@@ -260,26 +253,6 @@ onMounted(() => {
   if (pending) void handleInstallSourceSelect({ kind: 'local', value: pending }, 'routed')
 })
 watch(demoActive, active => { if (!active) void ensureLoaded() })
-
-/**
- * 本地刷新：重新读取 Dashboard，重扫 BepInEx/plugins 并重算标签。
- *
- * 只碰本地磁盘，不刷新任何仓库 Release —— 仓库刷新在 MOD 安装页。
- * 用户在游戏外手动增删或改名插件后，点这个就能看到最新结果。
- */
-const refreshingLocal = ref(false)
-async function refreshLocal() {
-  if (refreshingLocal.value) return
-  refreshingLocal.value = true
-  try {
-    await load()
-    message.success(t('tools.localModsRescanned'))
-  } catch (reason) {
-    message.error(backendMessageOf(reason))
-  } finally {
-    refreshingLocal.value = false
-  }
-}
 
 /**
  * 每个 MOD 的运行期状态（合成后端扫描结果 + 当前仓库缓存 + 刷新状态）。
@@ -1200,17 +1173,6 @@ visibility.reconcileStatuses(computed(() => [...statusTagsPrimary.value, ...stat
     </n-collapse>
   </PageLoading>
 
-  <!-- 只保留排序切换（卡片已是唯一布局） -->
-  <!--
-    浮动按钮：重新扫描本地 MOD（只读磁盘，不碰仓库 Release）。
-    「重新读取 Dashboard」会重扫 BepInEx/plugins 并重算标签，等同用户手动
-    改过文件后的一次本地刷新；仓库刷新在 MOD 安装页，两者职责分开。
-  -->
-  <n-float-button position="fixed" bottom="28" right="32" :tooltip="t('tools.rescanLocalMods')"
-    :disabled="refreshingLocal" @click="refreshLocal">
-    <RefreshOutline width="17" height="17" :class="{ 'spin-icon': refreshingLocal }" />
-  </n-float-button>
-
   <!-- 配置编辑器：编辑该 MOD 在 BepInEx/config 下的 .cfg（Naive 文本域） -->
   <ModConfigEditor v-if="configTarget" v-model:show="configOpen"
     :dll-file="configTarget.dll_file" :title="modTitle(configTarget)" />
@@ -1224,16 +1186,6 @@ visibility.reconcileStatuses(computed(() => [...statusTagsPrimary.value, ...stat
 .map-bundled-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin: 2px 0 6px 14px; --card-bg: var(--oc2-sunken); }
 
 /* 可点标签的手型与悬停反馈由 global.css 的 .state-tag--link 统一提供 */
-
-/* 本地刷新进行中：图标自转（类由刷新按钮绑定） */
-.spin-icon { animation: oc2-local-spin .8s linear infinite; }
-@keyframes oc2-local-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .spin-icon { animation: none; }
-}
 
 /* 页头批量分段控件的样式在 src/styles/global.css 的 `.bulk-switch`。 */
 </style>

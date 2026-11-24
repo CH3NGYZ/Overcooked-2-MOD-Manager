@@ -196,22 +196,6 @@ export const toolsUiRepository: DomainMessages = {
     ko: '정렬',
     ja: '並び替え',
   },
-  // 重新扫描本地 MOD
-  rescanLocalMods: {
-    'zh-CN': '重新扫描本地 MOD',
-    'zh-TW': '重新掃描本機 MOD',
-    en: 'Rescan local MODs',
-    ko: '로컬 MOD 다시 검사',
-    ja: 'ローカル MOD を再スキャン',
-  },
-  // 已重新扫描本地 MOD
-  localModsRescanned: {
-    'zh-CN': '已重新扫描本地 MOD',
-    'zh-TW': '已重新掃描本機 MOD',
-    en: 'Local MODs rescanned',
-    ko: '로컬 MOD를 다시 검사했습니다',
-    ja: 'ローカル MOD を再スキャンしました',
-  },
   // 准备中
   preparing: {
     'zh-CN': '准备中',

@@ -270,13 +270,6 @@ export const levelSet: DomainMessages = {
     ko: '활성화하면 levels, 비활성화하면 폴더 전체(함께 포함된 플러그인 포함)가 cache/modmanager_disabled_maps로 이동합니다(게임 실행 중에는 지원되지 않음)',
     ja: '有効時は levels、無効時はフォルダ全体（同梱プラグインを含む）を cache/modmanager_disabled_maps へ移動します（ゲーム実行中は切り替えできません）',
   },
-  rescanLocal: {
-    'zh-CN': '重新扫描本地地图',
-    'zh-TW': '重新掃描本機地圖',
-    en: 'Rescan local maps',
-    ko: '로컬 지도 다시 검사',
-    ja: 'ローカルマップを再スキャン',
-  },
   checkUpdatesHint: {
     'zh-CN': '只刷新本地已装地图绑定的仓库，检查有没有新版本',
     'zh-TW': '只重新整理本機已裝地圖綁定的倉庫，檢查有沒有新版本',

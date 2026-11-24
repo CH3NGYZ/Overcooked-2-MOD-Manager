@@ -15,10 +15,10 @@ export const tutorialMaps: DomainMessages = {
     'zh-CN': '管理已安装的地图', 'zh-TW': '管理已安裝的地圖', en: 'Manage installed maps', ko: '설치한 지도 관리', ja: '導入したマップを管理',
   },
   'maps.local.body': {
-    'zh-CN': '本地地图按作者分组，卡片开关控制整张地图集，展开可查看关卡与随包插件。上方标签可筛选，右下角重读本地目录；操作方式与 MOD 管理一致。',
-    'zh-TW': '本機地圖依作者分組，卡片開關控制整個地圖集，展開可查看關卡與隨包外掛。上方標籤可篩選，右下角重讀本機目錄；操作方式與 MOD 管理一致。',
-    en: 'Local maps are grouped by author. Each switch controls a whole level set; expand its card to see levels and bundled plugins. Filter with the tags above or rescan at the bottom-right, just as in MOD manager.',
-    ko: '로컬 지도는 제작자별로 묶입니다. 스위치는 레벨 세트 전체를 제어하며 카드를 펼치면 레벨과 동봉 플러그인을 볼 수 있습니다. 위 태그로 필터링하고 오른쪽 아래에서 다시 읽을 수 있으며 MOD 관리와 같은 방식입니다.',
-    ja: 'ローカルマップは作者ごとにまとまります。スイッチはセット全体に作用し、カードを開くとレベルや同梱プラグインを確認できます。上のタグで絞り込み、右下で再読み込みできます。操作は MOD 管理と共通です。',
+    'zh-CN': '本地地图按作者分组，卡片开关控制整张地图集，展开可查看关卡与随包插件。上方标签可筛选；本地目录变化会自动检测并重新读取。操作方式与 MOD 管理一致。',
+    'zh-TW': '本機地圖依作者分組，卡片開關控制整個地圖集，展開可查看關卡與隨包外掛。上方標籤可篩選；本機目錄變動時會自動偵測並重新讀取。操作方式與 MOD 管理一致。',
+    en: 'Local maps are grouped by author. Each switch controls a whole level set; expand its card to see levels and bundled plugins. Filter with the tags above; changes to local folders are detected and reloaded automatically.',
+    ko: '로컬 지도는 제작자별로 묶입니다. 스위치는 레벨 세트 전체를 제어하며 카드를 펼치면 레벨과 동봉 플러그인을 볼 수 있습니다. 위 태그로 필터링할 수 있으며, 로컬 폴더의 변경 사항은 자동으로 감지해 다시 읽습니다.',
+    ja: 'ローカルマップは作者ごとにまとまります。スイッチはセット全体に作用し、カードを開くとレベルや同梱プラグインを確認できます。上のタグで絞り込めます。ローカルフォルダの変更は自動で検出し、再読み込みします。',
   },
 }

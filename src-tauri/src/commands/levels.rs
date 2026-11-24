@@ -3,7 +3,10 @@ use crate::archive;
 use crate::game;
 use crate::level_sets::view::bind_map_relation_snapshot;
 use crate::level_sets::view::level_set_to_info;
-use crate::models::{LevelSetFlattenReport, LevelSetInfo, LevelSetScanProgress, OperationResult};
+use crate::models::{
+    LevelCompressionRecovery, LevelSetFlattenReport, LevelSetInfo, LevelSetScanProgress,
+    OperationResult,
+};
 use crate::shell_open;
 use std::path::PathBuf;
 use tauri::AppHandle;
@@ -338,4 +341,63 @@ pub async fn get_level_preview_detail(
 #[tauri::command]
 pub fn get_level_compression_progress() -> crate::level_sets::recompress::Progress {
     crate::level_sets::recompress::snapshot()
+}
+
+#[tauri::command]
+pub fn get_level_compression_recoveries(
+    state: State<'_, AppState>,
+) -> Result<Vec<LevelCompressionRecovery>, String> {
+    let _operation = state
+        .operation
+        .lock()
+        .map_err(|_| "lock.poisoned".to_string())?;
+    let config = state.config.load_or_default();
+    let Some(game_root) = game::detect_game(&config).path else {
+        return Ok(Vec::new());
+    };
+    Ok(crate::level_sets::recompress::list_recoveries(
+        &PathBuf::from(game_root),
+    ))
+}
+
+#[tauri::command]
+pub async fn retry_level_compression_recovery(
+    state: State<'_, AppState>,
+    recovery_id: String,
+) -> Result<Vec<LevelCompressionRecovery>, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _operation = state
+            .operation
+            .lock()
+            .map_err(|_| "lock.poisoned".to_string())?;
+        crate::mod_changes::guard::ensure_recovered(&state)?;
+        let config = state.config.load_or_default();
+        let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
+        crate::level_sets::recompress::retry_recovery(&game_root, &recovery_id)?;
+        Ok(crate::level_sets::recompress::list_recoveries(&game_root))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn ignore_level_compression_recovery(
+    state: State<'_, AppState>,
+    recovery_id: String,
+) -> Result<Vec<LevelCompressionRecovery>, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _operation = state
+            .operation
+            .lock()
+            .map_err(|_| "lock.poisoned".to_string())?;
+        let config = state.config.load_or_default();
+        let game_root = PathBuf::from(game::detect_game(&config).path.ok_or("game.notFound")?);
+        game::ensure_game_stopped(&game_root)?;
+        crate::level_sets::recompress::ignore_recovery(&game_root, &recovery_id)?;
+        Ok(crate::level_sets::recompress::list_recoveries(&game_root))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }

@@ -201,17 +201,20 @@ fn cancelled_elevation_and_failed_file_recovery_leave_the_previous_instance_runn
 
 fn cancel_relaunch(directory: &Path) {
     use crate::{archive, commands::system, level_sets::recompress};
+    let state = crate::app_state::AppState::with_config(crate::config::ConfigService::for_test(
+        directory.join("manager"),
+    ));
     recompress::set_game_running(false);
     // An active update rejects elevation without touching the native launch.
     let update = archive::begin_app_update().unwrap();
     assert_eq!(
-        system::relaunch_with(|| panic!("must not start during update"))
+        system::relaunch_with(&state, || panic!("must not start during update"))
             .err()
             .unwrap(),
         "update.inProgress"
     );
     drop(update);
-    let result = system::relaunch_with(|| {
+    let result = system::relaunch_with(&state, || {
         assert!(
             matches!(archive::begin_app_update(), Err(reason) if reason == "update.inProgress")
         );
@@ -227,21 +230,23 @@ fn cancel_relaunch(directory: &Path) {
     assert!(recompress::take_rescan_request());
     assert!(!recompress::take_rescan_request());
 
-    let blocked_parent = directory.join("pending-map");
+    let map = directory.join("pending-map");
     let backup = directory.join("retained-backup");
+    std::fs::write(&map, b"interrupted conversion").unwrap();
     std::fs::write(&backup, b"original").unwrap();
-    let map = blocked_parent.join("map");
-    let _failed_write = recompress::PendingRecoveryFixture::new(map.clone(), backup.clone());
+    let _failed_write = recompress::PendingRecoveryFixture::new(directory, &map, &backup);
+    std::fs::write(&backup, b"damaged backup").unwrap();
     assert_eq!(
-        system::relaunch_with(|| panic!("must restore before launching"))
+        system::relaunch_with(&state, || panic!("must restore before launching"))
             .err()
             .unwrap(),
         "assetBundle.recoveryPending"
     );
-    assert_eq!(std::fs::read(&backup).unwrap(), b"original");
+    assert_eq!(std::fs::read(&map).unwrap(), b"interrupted conversion");
+    assert_eq!(std::fs::read(&backup).unwrap(), b"damaged backup");
     assert!(archive::begin_app_update().is_ok());
-    std::fs::create_dir(&blocked_parent).unwrap();
-    let result = system::relaunch_with(|| Err(io::ErrorKind::BrokenPipe.into())).unwrap();
+    std::fs::write(&backup, b"original").unwrap();
+    let result = system::relaunch_with(&state, || Err(io::ErrorKind::BrokenPipe.into())).unwrap();
     assert!(!result.ok);
     assert_eq!(std::fs::read(map).unwrap(), b"original");
     assert!(recompress::take_rescan_request());

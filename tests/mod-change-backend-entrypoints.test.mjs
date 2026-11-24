@@ -50,3 +50,12 @@ test('recovery gate protects write and game handoff commands while holding their
   assert.match(guard, /!report\.blocked\.is_empty\(\)/)
   assert.doesNotMatch(guard, /state\.operation\.lock\(/)
 })
+
+test('compression recovery IPC uses the generated Tauri argument names', () => {
+  const commands = read('commands/levels.rs')
+  const service = readText(resolve('src/services/tauri.ts'))
+  for (const name of ['retry', 'ignore']) {
+    assert.match(commands, new RegExp(`pub async fn ${name}_level_compression_recovery\\([\\s\\S]*?recovery_id: String`))
+    assert.match(service, new RegExp(`${name}LevelCompressionRecovery: \\(id: string\\) => invoke<LevelCompressionRecovery\\[]>\\('${name}_level_compression_recovery', \\{ recoveryId: id \\}\\)`))
+  }
+})

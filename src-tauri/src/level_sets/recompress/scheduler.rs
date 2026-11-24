@@ -228,7 +228,6 @@ mod tests {
                 .map(|i| PathBuf::from(format!("{name}/{i}")))
                 .collect(),
             signature: vec![],
-            operation: Arc::new(Mutex::new(())),
         }
     }
 

@@ -9,6 +9,7 @@ import { useModChangesLifecycle } from './useModChangesLifecycle'
 import { changeReasonText } from './messages'
 import ChangePlanDetails from './ChangePlanDetails.vue'
 import ChangeEvidenceList from './ChangeEvidenceList.vue'
+import ChangeRecoveryPanel from './ChangeRecoveryPanel.vue'
 import { changeErrorEvidence, providerEvidenceAdvice, providerRows } from './evidence'
 import ModInstallNoteDialog from './ModInstallNoteDialog.vue'
 import { changePlanLabels, preparationCompletion } from './presentation'
@@ -150,6 +151,7 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
         <ChangeEvidenceList :rows="failureEvidence.rows" :guid="failureEvidence.providers?.guid"
           :truncated="failureEvidence.providers?.truncated" :names="names?.nodes" />
       </NAlert>
+      <ChangeRecoveryPanel v-if="state?.phase === 'failed' && state.error === 'levelSet.recoveryRequired'" />
       <NAlert v-if="manifestOverwrite" type="warning" :bordered="false" data-manifest-overwrite
         :title="t(state?.phase === 'failed' ? 'modChanges.manifestOverwrite.conflict' : 'modChanges.manifestOverwrite.title')">
         <ChangeEvidenceList :rows="[{ path: manifestOverwrite.manifestPath }]" />

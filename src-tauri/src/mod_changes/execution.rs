@@ -115,7 +115,7 @@ fn commit_inner(
     let recovered = guard::ensure_recovered(state)?;
     let (root, config) = freshness::current_target(state)?;
     if crate::level_sets::recompress::has_pending_recovery(&root) {
-        return Err("modChanges.recoveryRequired".into());
+        return Err("levelSet.recoveryRequired".into());
     }
     *step = "verify_game_root";
     let solved = session.solved.as_ref().ok_or("modChanges.notPrepared")?;

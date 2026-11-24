@@ -259,6 +259,12 @@ export interface LevelSetCompressionProgress {
   percent: number
   current: string
 }
+export interface LevelCompressionRecovery {
+  id: string
+  source_path: string
+  backup_path: string
+  restore_error?: string | null
+}
 export interface LevelSetScanProgress {
   /** 已经解析完的份数。 */
   done: number

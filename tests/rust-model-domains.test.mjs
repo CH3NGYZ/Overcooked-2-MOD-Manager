@@ -11,7 +11,7 @@ const owners = {
   chef_preview: ['ChefPreviewBounds', 'ChefPreviewMesh', 'ChefPreviewScene'],
   diychef: ['LocalModSnapshot', 'ChefTarget', 'ChefSource', 'ChefItem', 'ChefHat', 'ChefReference', 'HatReference', 'ChefEntry', 'ChefSelection', 'ChefDocumentRow', 'ChefDiagnostic', 'ChefChange', 'ChefValidation', 'ChefDraft', 'ChefEditorSnapshot', 'ChefEditorOpen'],
   game: ['BepInExInfo', 'DiyLevelInfo', 'GameConfig', 'GameInfo', 'GameRuntime', 'WinhttpState'],
-  levels: ['LevelSetFlattenCandidate', 'LevelSetFlattenReport', 'LevelSetImportResult', 'LevelSetInfo', 'LevelSetLayout', 'LevelSetPlugin', 'LevelSetScanProgress', 'LevelSetZipProgress', 'MapInstallOrigin', 'StagedMapSource', 'ZipLevelSet', 'ZipLevelSetPlugin'],
+  levels: ['LevelCompressionRecovery', 'LevelSetFlattenCandidate', 'LevelSetFlattenReport', 'LevelSetImportResult', 'LevelSetInfo', 'LevelSetLayout', 'LevelSetPlugin', 'LevelSetScanProgress', 'LevelSetZipProgress', 'MapInstallOrigin', 'StagedMapSource', 'ZipLevelSet', 'ZipLevelSetPlugin'],
   maps: ['AssetVersionEntry', 'MapInfo', 'MapRelationSnapshot', 'MapRelationSnapshots', 'MapRepositoryConfig', 'RequiredFramework'],
   mod_repositories: ['ModDownloadMode', 'ModRepositoryBinding', 'ModRepositoryConfig', 'ModRepositoryExport', 'ModRepositoryBundle', 'ModRepositoryPatch'],
   mods: ['DllPluginInfo', 'DllRole', 'InstalledMod', 'InstalledModStatusLabel', 'ModNote', 'ModRecycleEntry', 'RepositoryIdentityMatch', 'UninstallLocalModResult'],

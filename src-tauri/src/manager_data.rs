@@ -368,13 +368,7 @@ fn change_and_exit(
         "等待原生辅助进程就绪",
         handoff::PreparedHelper::start(&paths, &executable),
     )?;
-    crate::level_sets::recompress::shutdown().map_err(|error| {
-        log::error!(
-            "[data] 地图资源恢复未完成，保留管理器数据：原因={}",
-            notice::diagnostic_reason(&error)
-        );
-        "assetBundle.recoveryPending".to_string()
-    })?;
+    let compression = crate::level_sets::recompress::quiesce_for_exit();
     let _operation = check_step(
         "交接前重新获取数据写入门禁",
         state.operation.try_lock().map_err(|_| BUSY.to_owned()),
@@ -394,6 +388,13 @@ fn change_and_exit(
         log::warn!("[data] 仍有待恢复的安装事务，未交接：原因=modChanges.recoveryRequired");
         return Err("modChanges.recoveryRequired".into());
     }
+    compression.restore(state).map_err(|error| {
+        log::error!(
+            "[data] 地图资源恢复未完成，保留管理器数据：原因={}",
+            notice::diagnostic_reason(&error)
+        );
+        "assetBundle.recoveryPending".to_string()
+    })?;
     // Helper preparation/shutdown may take time. Re-read both game-path sources
     // under operation so a settings change cannot bypass the final handoff gate.
     validate_protected_paths(&paths, state, &executable)?;

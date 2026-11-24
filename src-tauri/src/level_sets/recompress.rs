@@ -26,7 +26,12 @@ pub(crate) struct Progress {
     pub files_done: usize,
     pub files_total: usize,
 }
+mod recovery;
+mod replacement;
 mod scheduler;
+use recovery::blocks_conversion;
+pub(crate) use recovery::{has_pending_recovery, ignore_recovery, list_recoveries, retry_recovery};
+use replacement::{MAX_BUNDLE_BYTES, hash, replace};
 use scheduler::Lifecycle;
 static LIFECYCLE: OnceLock<(Mutex<Lifecycle>, std::sync::Condvar)> = OnceLock::new();
 static GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -65,40 +70,11 @@ pub(crate) fn take_rescan_request() -> bool {
         .take_rescan()
 }
 
-/// The caller holds the game operation lock, excluding new failed replacements.
-/// Normal conversion work is cancelled by scan leases and does not block a plan.
-pub(crate) fn has_pending_recovery(game_root: &Path) -> bool {
-    let root = game_root.to_string_lossy().replace('\\', "/");
-    #[cfg(windows)]
-    let root = root.to_lowercase();
-    let prefix = format!("{}/", root.trim_end_matches('/'));
-    recovery()
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .iter()
-        .any(|item| {
-            let source = item.source.to_string_lossy().replace('\\', "/");
-            #[cfg(windows)]
-            let source = source.to_lowercase();
-            source == root || source.starts_with(&prefix)
-        })
-}
-
-/// Called on a blocking exit worker, never on the window event thread.
-pub(crate) fn shutdown() -> Result<(), String> {
-    let mut guard = quiesce_for_exit()?;
-    guard.0 = false; // Commit the stop for callers that will now exit.
-    Ok(())
-}
-
 /// Let a failed relaunch leave the current window's compression queue usable.
-pub(crate) struct ExitPause(bool);
+pub(crate) struct ExitPause(());
 
 impl Drop for ExitPause {
     fn drop(&mut self) {
-        if !self.0 {
-            return;
-        }
         let (lock, wake) = lifecycle();
         let mut state = lock.lock().unwrap_or_else(|e| e.into_inner());
         if state.resume_after_exit() {
@@ -108,10 +84,10 @@ impl Drop for ExitPause {
     }
 }
 
-/// Prevent new writes, join workers and verify recovery before attempting a handoff.
-pub(crate) fn quiesce_for_exit() -> Result<ExitPause, String> {
+/// Join workers before taking operation, which an active worker may still need.
+pub(crate) fn quiesce_for_exit() -> ExitPause {
     let (lock, wake) = lifecycle();
-    let guard = ExitPause(true);
+    let guard = ExitPause(());
     let mut state = lock.lock().unwrap_or_else(|e| e.into_inner());
     state.pause_for_exit();
     GENERATION.store(state.generation, Ordering::SeqCst);
@@ -122,15 +98,25 @@ pub(crate) fn quiesce_for_exit() -> Result<ExitPause, String> {
     while state.running {
         state = wake.wait(state).unwrap_or_else(|e| e.into_inner());
     }
-    let mut pending = recovery().lock().unwrap_or_else(|e| e.into_inner());
-    pending.retain(|item| restore(&item.source, &item.backup, &item.hash).is_err());
-    if !pending.is_empty() {
-        return Err(format!(
-            "{} map files still require recovery; backups retained",
-            pending.len()
-        ));
+    guard
+}
+
+/// The caller holds operation and keeps the pause alive through handoff.
+impl ExitPause {
+    pub(crate) fn restore(&self, state: &crate::app_state::AppState) -> Result<(), String> {
+        if !recovery::any_pending() {
+            return Ok(());
+        }
+        crate::mod_changes::guard::ensure_recovered(state)?;
+        let pending_count = recovery::restore_all();
+        if pending_count > 0 {
+            return Err(format!(
+                "{} map files still require recovery; backups retained",
+                pending_count
+            ));
+        }
+        Ok(())
     }
-    Ok(guard)
 }
 
 struct Job {
@@ -140,7 +126,6 @@ struct Job {
     set: PathBuf,
     files: Vec<PathBuf>,
     signature: Vec<(PathBuf, u64, Option<std::time::SystemTime>)>,
-    operation: Arc<Mutex<()>>,
 }
 
 fn fingerprint(
@@ -288,6 +273,9 @@ pub(crate) fn enqueue_installed(
                 .iter()
                 .map(|(path, _, _)| path.clone())
                 .filter(|path| {
+                    if blocks_conversion(path) {
+                        return false;
+                    }
                     let mut magic = [0u8; 8];
                     fs::File::open(path)
                         .and_then(|mut file| file.read_exact(&mut magic))
@@ -303,7 +291,6 @@ pub(crate) fn enqueue_installed(
                     set,
                     files,
                     signature: signature.clone(),
-                    operation: state.operation.clone(),
                 },
                 signature,
             ))
@@ -328,6 +315,7 @@ pub(crate) fn enqueue_installed(
     queue.progress.running = !queue.paused;
     drop(queue);
     let app = app.clone();
+    let state = state.clone();
     tauri::async_runtime::spawn_blocking(move || {
         use tauri::Emitter;
         struct Finish(bool);
@@ -345,7 +333,7 @@ pub(crate) fn enqueue_installed(
         }
         let mut finish = Finish(true);
         loop {
-            run_workers(workers, &|progress| {
+            run_workers(&state, workers, &|progress| {
                 let _ = app.emit("level-set-compression-progress", progress);
             });
             let mut queue = lifecycle().0.lock().unwrap_or_else(|e| e.into_inner());
@@ -365,72 +353,38 @@ pub(crate) fn enqueue_installed(
     });
 }
 
-struct Recovery {
-    source: PathBuf,
-    backup: PathBuf,
-    hash: Vec<u8>,
-}
-static RECOVERY: OnceLock<Mutex<Vec<Recovery>>> = OnceLock::new();
-fn recovery() -> &'static Mutex<Vec<Recovery>> {
-    RECOVERY.get_or_init(Default::default)
-}
-
 #[cfg(test)]
 pub(crate) struct PendingRecoveryFixture {
-    source: PathBuf,
+    id: String,
 }
 
 #[cfg(test)]
 impl PendingRecoveryFixture {
-    pub(crate) fn new(source: PathBuf, backup: PathBuf) -> Self {
-        let hash = hash(&backup).unwrap();
-        recovery()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .push(Recovery {
-                source: source.clone(),
-                backup,
-                hash,
-            });
-        Self { source }
+    pub(crate) fn new(game_root: &Path, source: &Path, backup: &Path) -> Self {
+        let game_root = game_root.canonicalize().unwrap();
+        let source = source.canonicalize().unwrap();
+        let identity = crate::file_metadata::FileIdentity::capture(&source)
+            .unwrap()
+            .unwrap();
+        let id = recovery::register(
+            (&game_root, &source),
+            backup,
+            identity,
+            &hash(backup).unwrap(),
+            hash(&source).ok(),
+            "fixture rollback failure",
+        );
+        Self { id }
     }
 }
 
 #[cfg(test)]
 impl Drop for PendingRecoveryFixture {
     fn drop(&mut self) {
-        recovery()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .retain(|item| item.source != self.source);
+        recovery::remove_fixture(&self.id);
     }
 }
 
-fn restore(path: &Path, backup: &Path, expected: &[u8]) -> Result<(), String> {
-    fs::copy(backup, path).map_err(|e| e.to_string())?;
-    fs::OpenOptions::new()
-        .write(true)
-        .open(path)
-        .and_then(|f| f.sync_all())
-        .map_err(|e| e.to_string())?;
-    if hash(path)? != expected {
-        return Err("rollback hash mismatch".into());
-    }
-    Ok(())
-}
-fn hash(path: &Path) -> Result<Vec<u8>, String> {
-    let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
-    let mut digest = Sha256::new();
-    let mut buf = [0u8; 65536];
-    loop {
-        let n = file.read(&mut buf).map_err(|e| e.to_string())?;
-        if n == 0 {
-            break;
-        }
-        digest.update(&buf[..n]);
-    }
-    Ok(digest.finalize().to_vec())
-}
 fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut file = fs::OpenOptions::new()
         .write(true)
@@ -442,73 +396,18 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// Data-root staging may be on another volume: copy under the operation lock,
-/// verify destination bytes, and retain the verified backup until commit.
-fn replace(
-    path: &Path,
-    output: &Path,
-    backup: &Path,
-    source_hash: &[u8],
-    output_hash: &[u8],
-    should_continue: &dyn Fn() -> bool,
-) -> Result<bool, String> {
-    if !should_continue() {
-        return Ok(false);
-    }
-    if hash(path)? != source_hash {
-        return Err("source changed before replacement".into());
-    }
-    if !should_continue() {
-        return Ok(false);
-    }
-    let result: Result<(), String> = (|| {
-        let mut input = fs::File::open(output).map_err(|e| e.to_string())?;
-        let mut target = fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(path)
-            .map_err(|e| e.to_string())?;
-        std::io::copy(&mut input, &mut target)
-            .and_then(|_| target.sync_all())
-            .map_err(|e| e.to_string())?;
-        drop(target);
-        if hash(path)? != output_hash {
-            return Err("replacement hash mismatch".into());
-        }
-        Ok(())
-    })();
-    if let Err(error) = result {
-        let rollback = restore(path, backup, source_hash);
-        if rollback.is_err() {
-            recovery()
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push(Recovery {
-                    source: path.to_owned(),
-                    backup: backup.to_owned(),
-                    hash: source_hash.to_vec(),
-                });
-        }
-        return Err(format!(
-            "{error}; rollback={rollback:?}; backup={}",
-            backup.display()
-        ));
-    }
-    Ok(true)
-}
-
 fn convert(
     path: &Path,
     roots: &super::LevelSetRoots,
     valid_scan: &AtomicBool,
     cache: &Path,
-    operation: &Mutex<()>,
+    state: &crate::app_state::AppState,
     progress: &dyn Fn(usize, usize),
     generation: u64,
 ) -> Result<Option<bool>, String> {
     let game = roots.game_root();
     let may_convert = || may_convert(generation) && valid_scan.load(Ordering::SeqCst);
-    if !may_convert() {
+    if !may_convert() || blocks_conversion(path) {
         return Ok(None);
     }
     let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
@@ -517,7 +416,7 @@ fn convert(
         return Ok(Some(false));
     }
     drop(file);
-    if fs::metadata(path).map_err(|e| e.to_string())?.len() > 512 * 1024 * 1024 {
+    if fs::metadata(path).map_err(|e| e.to_string())?.len() > MAX_BUNDLE_BYTES {
         return Err("bundle size limit".into());
     }
     if !crate::asset_bundle::bundle_needs_conversion(path).map_err(|e| e.to_string())? {
@@ -537,18 +436,20 @@ fn convert(
     fs::write(work.join("source.txt"), path.to_string_lossy().as_bytes())
         .map_err(|e| e.to_string())?;
     write_new(&backup, &bytes)?;
-    if hash(&backup)? != source_hash {
+    if hash(&backup).map_err(|error| error.to_string())? != source_hash {
         return Err("backup hash mismatch".into());
     }
     let output = crate::asset_bundle::recompress::to_lz4hc3(&bytes, progress, &may_convert)
         .map_err(|e| e.to_string())?;
+    drop(bytes);
     let Some(output) = output else {
         fs::remove_dir_all(&work).map_err(|e| e.to_string())?;
         return Ok(None);
     };
     write_new(&output_path, &output)?;
     let output_hash = Sha256::digest(&output).to_vec();
-    if hash(&output_path)? != output_hash {
+    drop(output);
+    if hash(&output_path).map_err(|error| error.to_string())? != output_hash {
         return Err("staging hash mismatch".into());
     }
     // Shutdown can discard work before replacement; once copying begins rollback must finish.
@@ -560,7 +461,15 @@ fn convert(
         return Ok(None);
     }
     {
-        let _guard = operation.lock().map_err(|_| "lock.poisoned")?;
+        let _guard = state.operation.lock().map_err(|_| "lock.poisoned")?;
+        if crate::mod_changes::guard::ensure_recovered(state).is_err() {
+            fs::remove_dir_all(&work).map_err(|error| error.to_string())?;
+            return Ok(None);
+        }
+        if blocks_conversion(path) {
+            fs::remove_dir_all(&work).map_err(|error| error.to_string())?;
+            return Ok(None);
+        }
         // Installation may have held this lock while shutdown was requested.
         if !may_convert() {
             let _ = fs::remove_file(&output_path);
@@ -591,7 +500,7 @@ fn convert(
             return Ok(None);
         }
         if !replace(
-            path,
+            (game, path),
             &output_path,
             &backup,
             &source_hash,
@@ -609,7 +518,11 @@ fn convert(
     Ok(Some(true))
 }
 
-fn run_workers(workers: usize, emit: &(dyn Fn(Progress) + Sync)) {
+fn run_workers(
+    state: &crate::app_state::AppState,
+    workers: usize,
+    emit: &(dyn Fn(Progress) + Sync),
+) {
     crate::concurrency::run_queue(
         workers,
         || (),
@@ -635,7 +548,7 @@ fn run_workers(workers: usize, emit: &(dyn Fn(Progress) + Sync)) {
                     &job.roots,
                     &job.valid_scan,
                     &job.cache,
-                    &job.operation,
+                    state,
                     &|done, total| {
                         let progress = {
                             let mut queue = lifecycle().0.lock().unwrap_or_else(|e| e.into_inner());
@@ -736,7 +649,6 @@ mod tests {
                 set: PathBuf::from(set),
                 files: (0..count).map(|i| PathBuf::from(i.to_string())).collect(),
                 signature: vec![],
-                operation: Arc::new(Mutex::new(())),
             }
         }
         let mut queue = Lifecycle::default();
@@ -770,14 +682,53 @@ mod tests {
         fs::write(&output, b"corrupt").unwrap();
         let old = hash(&path).unwrap();
         let expected = Sha256::digest(b"expected").to_vec();
-        assert!(replace(&path, &output, &backup, &old, &expected, &|| true).is_err());
+        assert!(replace((&dir, &path), &output, &backup, &old, &expected, &|| true).is_err());
         assert_eq!(fs::read(&path).unwrap(), b"original");
         assert!(backup.exists());
         fs::write(&output, b"expected").unwrap();
-        assert!(!replace(&path, &output, &backup, &old, &expected, &|| false).unwrap());
+        assert!(!replace((&dir, &path), &output, &backup, &old, &expected, &|| false).unwrap());
         assert_eq!(fs::read(&path).unwrap(), b"original");
-        replace(&path, &output, &backup, &old, &expected, &|| true).unwrap();
+        replace((&dir, &path), &output, &backup, &old, &expected, &|| true).unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"expected");
+        fs::remove_file(path).unwrap();
+        fs::remove_file(backup).unwrap();
+        fs::remove_file(output).unwrap();
+        fs::remove_dir(dir).unwrap();
+    }
+    #[test]
+    fn target_open_failure_does_not_attempt_rollback_or_create_recovery() {
+        let dir = workspace();
+        let path = dir.join("source");
+        let backup = dir.join("backup");
+        let output = dir.join("output");
+        fs::write(&path, b"original").unwrap();
+        fs::write(&backup, b"original").unwrap();
+        fs::write(&output, b"converted").unwrap();
+        let source_hash = hash(&path).unwrap();
+        let output_hash = hash(&output).unwrap();
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&path, permissions).unwrap();
+        let result = replace(
+            (&dir, &path),
+            &output,
+            &backup,
+            &source_hash,
+            &output_hash,
+            &|| true,
+        );
+        assert!(result.is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"original");
+        assert!(!has_pending_recovery(&dir));
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        #[cfg(windows)]
+        permissions.set_readonly(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            permissions.set_mode(0o600);
+        }
+        fs::set_permissions(&path, permissions).unwrap();
         fs::remove_file(path).unwrap();
         fs::remove_file(backup).unwrap();
         fs::remove_file(output).unwrap();
@@ -794,7 +745,7 @@ mod tests {
         fs::write(&output, b"converted").unwrap();
         assert!(
             replace(
-                &path,
+                (&dir, &path),
                 &output,
                 &backup,
                 &Sha256::digest(b"old"),
@@ -808,6 +759,31 @@ mod tests {
         fs::remove_file(backup).unwrap();
         fs::remove_file(output).unwrap();
         fs::remove_dir(dir).unwrap();
+    }
+    #[test]
+    fn pending_recovery_blocks_automatic_replacement() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().canonicalize().unwrap();
+        let path = dir.join("source");
+        let backup = dir.join("backup");
+        let output = dir.join("output");
+        fs::write(&path, b"interrupted conversion").unwrap();
+        fs::write(&backup, b"original").unwrap();
+        fs::write(&output, b"next conversion").unwrap();
+        let _pending = PendingRecoveryFixture::new(&dir, &path, &backup);
+        assert!(
+            !replace(
+                (&dir, &path),
+                &output,
+                &backup,
+                &hash(&path).unwrap(),
+                &hash(&output).unwrap(),
+                &|| true
+            )
+            .unwrap()
+        );
+        assert_eq!(fs::read(&path).unwrap(), b"interrupted conversion");
+        assert_eq!(fs::read(&backup).unwrap(), b"original");
     }
     #[test]
     #[ignore = "requires installed map fixtures; writes only a temporary copy"]
@@ -824,13 +800,16 @@ mod tests {
         let path = set.join("scene");
         fs::write(&path, &bytes).unwrap();
         let cache = dir.join("cache");
+        let state = crate::app_state::AppState::with_config(
+            crate::config::ConfigService::for_test(dir.join("manager")),
+        );
         assert_eq!(
             convert(
                 &path,
                 &roots,
                 &AtomicBool::new(true),
                 &cache,
-                &Mutex::new(()),
+                &state,
                 &|_, _| {
                     set_game_running(true);
                     // Even a rapid exit must not revive this old conversion.
@@ -850,7 +829,7 @@ mod tests {
                 &roots,
                 &AtomicBool::new(true),
                 &cache,
-                &Mutex::new(()),
+                &state,
                 &|_, _| {},
                 GENERATION.load(Ordering::SeqCst)
             )
@@ -868,7 +847,7 @@ mod tests {
                 &roots,
                 &AtomicBool::new(true),
                 &cache,
-                &Mutex::new(()),
+                &state,
                 &|_, _| {},
                 GENERATION.load(Ordering::SeqCst)
             )

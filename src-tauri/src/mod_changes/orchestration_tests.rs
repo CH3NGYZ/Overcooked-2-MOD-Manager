@@ -622,11 +622,11 @@ fn pending_recompression_recovery_blocks_prepared_commit_without_any_live_write(
     let before = Fingerprint::capture(&f.game).unwrap();
     let manifests = Fingerprint::capture(&f.state.config.manifests_dir()).unwrap();
     let pending =
-        crate::level_sets::recompress::PendingRecoveryFixture::new(scene.clone(), backup.clone());
+        crate::level_sets::recompress::PendingRecoveryFixture::new(&f.game, &scene, &backup);
     assert!(crate::level_sets::recompress::has_pending_recovery(&f.game));
     assert_eq!(
         super::execution::commit(&f.state, &mut session, |_| {}).unwrap_err(),
-        "modChanges.recoveryRequired"
+        "levelSet.recoveryRequired"
     );
     assert_eq!(Fingerprint::capture(&f.game).unwrap(), before);
     assert_eq!(

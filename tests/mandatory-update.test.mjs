@@ -117,7 +117,7 @@ test('both recovery choices use the guarded backend exit and wait for the system
   assert.match(update, /Destination::Website => recovery_links::website_recovery_url\(&locale\),\s*Destination::Alternate => recovery\.alternate_link/)
   assert.match(update, /super::system::request_user_exit\([\s\S]*?ExitAction::OpenRecoveryPage\(url\)/)
   const system = source('src-tauri/src/commands/system.rs')
-  assert.match(system, /pause_map_compression_for_exit\(\)\?;[\s\S]*?closing\.wait_for_download\(UPDATE_DOWNLOAD_EXIT_TIMEOUT\)\?[\s\S]*?ExitAction::OpenRecoveryPage\(url\) => \{\s*crate::shell_open::open_web_page\(&url, crate::shell_open::WebPageKind::Release\)\?;[\s\S]*?exit_process\(&app\)/)
+  assert.match(system, /quiesce_for_exit\(\);[\s\S]*?state\.operation\.lock\(\)[\s\S]*?restore_map_compression_for_exit\(&compression, &state\)\?;[\s\S]*?closing\.wait_for_download\(UPDATE_DOWNLOAD_EXIT_TIMEOUT\)\?[\s\S]*?ExitAction::OpenRecoveryPage\(url\) => \{\s*crate::shell_open::open_web_page\(&url, crate::shell_open::WebPageKind::Release\)\?;[\s\S]*?exit_process\(&app\)/)
   const shell = source('src-tauri/src/shell_open.rs')
   assert.match(shell, /execute_association\("open", std::ffi::OsStr::new\(target\), None, None, false\)/)
   assert.match(shell, /info\.fMask = SEE_MASK_NOASYNC \| SEE_MASK_FLAG_NO_UI;[\s\S]*?ShellExecuteExW\(&mut info\)/)

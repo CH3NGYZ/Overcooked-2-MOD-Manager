@@ -26,7 +26,7 @@ registerHooks({
     if (url === 'change-render:naive') return fake(`import{h}from'vue';
       const leaf=tag=>({props:['percentage','showIndicator','processing','disabled','type'],setup:(p,{slots})=>()=>h(tag,{...p},slots.default?.())});
       export const NButton=leaf('button'),NProgress=leaf('progress'),NTag=leaf('tag'),NAlert=leaf('alert'),NSpin=leaf('spin'),NIcon=leaf('i');
-      export const NTooltip=(_, { slots }) => slots.trigger?.()`)
+      export const NTooltip=(_, { slots }) => slots.trigger?.();export const useDialog=()=>({warning:()=>({})})`)
     if (url.endsWith('/src/useNotify.ts')) return fake('export const useNotify=()=>({success(){},error(){}})')
     if (/\/modChanges\/[^/]+\.vue$|\/components\/(?:MarkdownBody|HeaderIconAction)\.vue$/.test(url)) {
       const { descriptor } = parse(readFileSync(new URL(url), 'utf8'))

@@ -456,7 +456,7 @@ fn verify_preparation_freshness(
     let (root, config) = freshness::current_target(state)?;
     let scope = freshness::check_scope(state, session, &root, &config)?;
     if crate::level_sets::recompress::has_pending_recovery(&root) {
-        return Err("modChanges.recoveryRequired".into());
+        return Err("levelSet.recoveryRequired".into());
     }
     verify_fingerprints(&session.payload_fingerprints)?;
     freshness::check_revision(state, session, &root, &scope, recovered, frozen)

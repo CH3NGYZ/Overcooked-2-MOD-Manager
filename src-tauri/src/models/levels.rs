@@ -18,6 +18,14 @@ pub struct LevelSetScanProgress {
     pub current: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LevelCompressionRecovery {
+    pub id: String,
+    pub source_path: String,
+    pub backup_path: String,
+    pub restore_error: Option<String>,
+}
+
 /// ZIP 识别 / 导入进度（事件 `level-set-zip-progress` 的载荷）。
 ///
 /// 这里和 `LevelSetScanProgress` 的区别是「读的是哪个 ZIP」：扫描读的是

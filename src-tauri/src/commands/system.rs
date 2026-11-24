@@ -65,8 +65,9 @@ pub(super) async fn request_user_exit(
     tauri::async_runtime::spawn_blocking(move || {
         let _exit = archive::begin_app_update()?;
         let closing = state.app_updates.closing()?;
-        let _compression = pause_map_compression_for_exit()?;
+        let compression = crate::level_sets::recompress::quiesce_for_exit();
         let _operation = state.operation.lock().map_err(|_| "lock.poisoned")?;
+        restore_map_compression_for_exit(&compression, &state)?;
         if !closing.wait_for_download(UPDATE_DOWNLOAD_EXIT_TIMEOUT)? {
             log::warn!("更新暂存取消未在退出期限内完成，继续退出");
         }
@@ -103,8 +104,11 @@ fn exit_process(app: &AppHandle) -> ! {
     std::process::exit(0)
 }
 
-fn pause_map_compression_for_exit() -> Result<crate::level_sets::recompress::ExitPause, String> {
-    crate::level_sets::recompress::quiesce_for_exit().map_err(|error| {
+fn restore_map_compression_for_exit(
+    pause: &crate::level_sets::recompress::ExitPause,
+    state: &AppState,
+) -> Result<(), String> {
+    pause.restore(state).map_err(|error| {
         log::error!("地图资源恢复未完成，拒绝退出：{error}");
         "assetBundle.recoveryPending".into()
     })
@@ -211,7 +215,7 @@ mod permission_diagnostics_tests {
 /// 只在文件访问真的被拒时由用户主动触发 —— 应用平时以普通权限运行，
 /// 这样拖放可用、启动不弹 UAC、更新时能正常关闭自己。
 #[tauri::command]
-pub async fn relaunch_as_admin() -> Result<OperationResult, String> {
+pub async fn relaunch_as_admin(state: State<'_, AppState>) -> Result<OperationResult, String> {
     if archive::app_update_in_progress() {
         return Err("update.inProgress".into());
     }
@@ -231,6 +235,7 @@ pub async fn relaunch_as_admin() -> Result<OperationResult, String> {
      */
     #[cfg(not(windows))]
     {
+        let _ = state;
         log::info!("当前平台不需要也不支持提权重启");
         Ok(OperationResult {
             ok: false,
@@ -239,19 +244,25 @@ pub async fn relaunch_as_admin() -> Result<OperationResult, String> {
     }
     #[cfg(windows)]
     {
-        tauri::async_runtime::spawn_blocking(|| relaunch_with(crate::elevation::launch))
-            .await
-            .map_err(|error| error.to_string())?
+        let state = state.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            relaunch_with(&state, crate::elevation::launch)
+        })
+        .await
+        .map_err(|error| error.to_string())?
     }
 }
 
 #[cfg(windows)]
 pub(crate) fn relaunch_with(
+    state: &AppState,
     launch: impl FnOnce() -> std::io::Result<()>,
 ) -> Result<OperationResult, String> {
     // Share the updater/data-migration gate while Windows is waiting for UAC.
     let _handoff = archive::begin_app_update()?;
-    let _compression = pause_map_compression_for_exit()?;
+    let compression = crate::level_sets::recompress::quiesce_for_exit();
+    let _operation = state.operation.lock().map_err(|_| "lock.poisoned")?;
+    restore_map_compression_for_exit(&compression, state)?;
     match launch() {
         Ok(()) => {
             log::info!("管理员实例已确认接手，退出当前进程以交接单实例锁");

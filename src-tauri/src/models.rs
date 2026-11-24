@@ -37,9 +37,9 @@ pub use diychef::{
 };
 pub use game::{BepInExInfo, DiyLevelInfo, GameConfig, GameInfo, GameRuntime, WinhttpState};
 pub use levels::{
-    LevelSetFlattenCandidate, LevelSetFlattenReport, LevelSetImportResult, LevelSetInfo,
-    LevelSetLayout, LevelSetPlugin, LevelSetScanProgress, LevelSetZipProgress, MapInstallOrigin,
-    StagedMapSource, ZipLevelSet, ZipLevelSetPlugin,
+    LevelCompressionRecovery, LevelSetFlattenCandidate, LevelSetFlattenReport,
+    LevelSetImportResult, LevelSetInfo, LevelSetLayout, LevelSetPlugin, LevelSetScanProgress,
+    LevelSetZipProgress, MapInstallOrigin, StagedMapSource, ZipLevelSet, ZipLevelSetPlugin,
 };
 pub use maps::{
     AssetVersionEntry, MapInfo, MapRelationSnapshot, MapRelationSnapshots, MapRepositoryConfig,

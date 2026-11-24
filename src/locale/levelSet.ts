@@ -31,6 +31,27 @@ export const levelSet: DomainMessages = {
     ko: '레벨 세트가 예상 위치에 없습니다. 새로 고친 후 다시 시도하세요.',
     ja: 'レベルセットが想定の場所にありません。更新してから再試行してください。',
   },
+  recoveryNotFound: {
+    'zh-CN': '找不到待恢复的地图文件记录，请刷新后重试。',
+    'zh-TW': '找不到待復原的地圖檔案記錄，請重新整理後再試。',
+    en: 'The pending map file recovery record was not found. Refresh and try again.',
+    ko: '대기 중인 지도 파일 복구 기록을 찾을 수 없습니다. 새로 고친 후 다시 시도하세요.',
+    ja: '復元待ちのマップファイル記録が見つかりません。更新してから再試行してください。',
+  },
+  recoveryRequired: {
+    'zh-CN': '地图文件恢复尚未完成，请完成恢复或明确忽略后再试。',
+    'zh-TW': '地圖檔案復原尚未完成，請完成復原或明確忽略後再試。',
+    en: 'Map file recovery is still pending. Complete or explicitly ignore it before retrying.',
+    ko: '지도 파일 복구가 아직 완료되지 않았습니다. 복구를 완료하거나 명시적으로 무시한 후 다시 시도하세요.',
+    ja: 'マップファイルの復元が未完了です。復元を完了するか明示的に無視してから再試行してください。',
+  },
+  recoverySourceChanged: {
+    'zh-CN': '待恢复的地图文件已被删除或修改。为避免覆盖新内容，管理器保留了原件备份和恢复记录。',
+    'zh-TW': '待復原的地圖檔案已遭刪除或修改。為避免覆蓋新內容，管理器保留了原件備份與復原記錄。',
+    en: 'The map file awaiting recovery was deleted or changed. The original backup and recovery record were kept to avoid overwriting newer contents.',
+    ko: '복구 대기 중인 지도 파일이 삭제되었거나 변경되었습니다. 새 내용을 덮어쓰지 않도록 원본 백업과 복구 기록을 보존했습니다.',
+    ja: '復元待ちのマップファイルが削除または変更されました。新しい内容を上書きしないよう、元のバックアップと復元記録を保持しました。',
+  },
   targetExists: {
     'zh-CN': '已存在同名关卡集「{name}」，请先处理它',
     'zh-TW': '已存在同名關卡集「{name}」，請先處理它',

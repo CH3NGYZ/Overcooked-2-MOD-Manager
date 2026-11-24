@@ -1,5 +1,7 @@
 use super::download::VerifiedInstallerDownload;
-use super::receipt::{Attempt, Outcome};
+use super::receipt::Attempt;
+#[cfg(windows)]
+use super::receipt::Outcome;
 use crate::models::AppUpdateInfo;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};

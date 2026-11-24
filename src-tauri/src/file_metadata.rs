@@ -4,6 +4,10 @@ use std::path::Path;
 
 mod stamp;
 pub(crate) use stamp::{FileIdentity, NativeStamp, Stamp};
+#[cfg(windows)]
+mod volume;
+#[cfg(windows)]
+pub(crate) use volume::{WriteVolumeError, write_volume};
 
 /// BepInEx and MOD assemblies remain PE files even for native Unix games.
 pub fn read_file_version(path: &Path) -> Option<String> {

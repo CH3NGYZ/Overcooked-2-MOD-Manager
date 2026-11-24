@@ -131,24 +131,32 @@ impl NativeStamp {
             file: self.file,
         })
     }
+
+    pub(super) fn checked_volume(&self) -> io::Result<u64> {
+        self.identity().map(|identity| identity.volume)
+    }
 }
 
 #[cfg(windows)]
-fn native_stamp(path: &Path) -> io::Result<NativeStamp> {
+pub(super) fn open_native_entry(path: &Path) -> io::Result<fs::File> {
     use std::os::windows::fs::OpenOptionsExt;
     use winapi::um::winbase::{FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT};
     use winapi::um::winnt::FILE_READ_ATTRIBUTES;
     // The handle doesn't follow a replacement reparse point and can inspect a
     // directory without reading any of the assets in it.
-    let entry = fs::OpenOptions::new()
+    fs::OpenOptions::new()
         .access_mode(FILE_READ_ATTRIBUTES)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
-        .open(path)?;
-    stamp_file(&entry)
+        .open(path)
 }
 
 #[cfg(windows)]
-fn stamp_file(file: &fs::File) -> io::Result<NativeStamp> {
+fn native_stamp(path: &Path) -> io::Result<NativeStamp> {
+    stamp_file(&open_native_entry(path)?)
+}
+
+#[cfg(windows)]
+pub(super) fn stamp_file(file: &fs::File) -> io::Result<NativeStamp> {
     use std::mem::{MaybeUninit, size_of};
     use std::os::windows::io::AsRawHandle;
     use winapi::um::fileapi::{FILE_BASIC_INFO, FILE_ID_INFO};

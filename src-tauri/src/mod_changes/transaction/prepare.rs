@@ -72,8 +72,21 @@ pub(crate) fn prepare_for_operation(
         );
     };
     validate_roots(transaction_root, roots).inspect_err(|error| failed("validate_roots", error))?;
+    #[cfg(windows)]
+    super::volume::check_write_roots(&roots.game_root, &roots.data_root, transaction_root)
+        .inspect_err(|error| failed("verify_write_volumes", error))?;
     validate_mutations(&mutations, transaction_root, roots)
         .inspect_err(|error| failed("validate_mutations", error))?;
+    #[cfg(windows)]
+    super::volume::check_targets(
+        roots,
+        mutations.iter().map(|mutation| match mutation {
+            Mutation::File(change) => (&change.target, None),
+            Mutation::Tree(change) => (&change.target, None),
+            Mutation::Move(change) => (&change.from, Some(&change.to)),
+        }),
+    )
+    .inspect_err(|error| failed("verify_write_volumes", error))?;
     if mutations.is_empty() {
         return Err("recycle.noMovableFiles".into());
     }

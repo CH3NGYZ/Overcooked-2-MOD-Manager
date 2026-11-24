@@ -12,6 +12,8 @@ mod publication;
 mod recovery;
 mod tree;
 mod types;
+#[cfg(windows)]
+mod volume;
 
 pub(super) use check::needs_recovery;
 pub(crate) use durable::rename as durable_rename;
@@ -27,9 +29,11 @@ pub(crate) use tree::preserve_replaced_permissions as preserve_replaced_tree_per
 #[cfg(test)]
 pub(crate) use types::JournalState;
 pub(crate) use types::{
-    FileChange, Fingerprint, MoveChange, Mutation, RootKind, StagedFile, TransactionPath,
-    TransactionRoots, TreeChange,
+    FileChange, Fingerprint, MoveChange, Mutation, RootKind, StagedFile,
+    TransactionPath, TransactionRoots, TreeChange,
 };
+#[cfg(windows)]
+pub(super) use volume::check_write_roots;
 
 pub(crate) struct PreparedTransaction {
     directory: std::path::PathBuf,
@@ -46,3 +50,5 @@ mod publication_tests;
 mod tests;
 #[cfg(test)]
 mod tree_tests;
+#[cfg(all(test, windows))]
+mod volume_tests;

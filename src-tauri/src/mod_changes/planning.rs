@@ -241,6 +241,15 @@ fn create_inner(
         .parent()
         .ok_or("archive.pathEscape")?
         .to_path_buf();
+    #[cfg(windows)]
+    {
+        *step = "verify_write_volumes";
+        super::transaction::check_write_roots(
+            &trusted.game_root,
+            &data,
+            &state.config.mod_change_transactions_dir(),
+        )?;
+    }
     let staging = data.join("mod-change-staging").join(trace.op);
     super::transaction::Fingerprint::capture(&staging)?;
     fs::create_dir_all(&staging).map_err(|e| e.to_string())?;

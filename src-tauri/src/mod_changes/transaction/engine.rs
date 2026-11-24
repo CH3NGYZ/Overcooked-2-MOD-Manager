@@ -239,6 +239,22 @@ impl PreparedTransaction {
             return Err("download.cancelled".into());
         }
         before_apply()?;
+        #[cfg(windows)]
+        {
+            let roots = &self.journal.roots;
+            super::volume::check_write_roots(&roots.game_root, &roots.data_root, &self.directory)?;
+            super::volume::check_targets(
+                roots,
+                self.journal
+                    .records
+                    .iter()
+                    .map(|record| match &record.operation {
+                        RecordedMutation::File { target, .. }
+                        | RecordedMutation::Tree { target, .. } => (target, None),
+                        RecordedMutation::Move { from, to, .. } => (from, Some(to)),
+                    }),
+            )?;
+        }
         self.journal.state = JournalState::Applying;
         self.persist()?;
         for index in 0..self.journal.records.len() {

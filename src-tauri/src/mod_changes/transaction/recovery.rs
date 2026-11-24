@@ -1,24 +1,35 @@
 use super::types::RecoveryReport;
 use super::{PreparedTransaction, check, diagnostics, durable, engine, paths, types::*};
-use std::{fs, path::Path};
+use std::{fs, io::ErrorKind, path::Path};
 use uuid::Uuid;
+
+fn directories(transaction_root: &Path) -> Result<Option<fs::ReadDir>, String> {
+    match fs::read_dir(transaction_root) {
+        Ok(entries) => Ok(Some(entries)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(paths::io_at(transaction_root, "list_journals", error)),
+    }
+}
+
+fn journal_present(path: &Path) -> Result<bool, String> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(paths::io_at(path, "check_journal", error)),
+    }
+}
 
 pub(crate) fn has_pending(transaction_root: &Path) -> Result<bool, String> {
     paths::validate_absolute(transaction_root)?;
-    if !transaction_root.exists() {
-        return Ok(false);
-    }
-    for entry in fs::read_dir(transaction_root).map_err(paths::io_error)? {
+    for entry in directories(transaction_root)?.into_iter().flatten() {
         let entry = entry.map_err(paths::io_error)?;
-        let metadata = fs::symlink_metadata(entry.path()).map_err(paths::io_error)?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path).map_err(paths::io_error)?;
         if paths::is_link(&metadata) {
             return Err(paths::UNSAFE.into());
         }
-        if metadata.is_dir() {
-            let journal = entry.path().join("journal.json");
-            if journal.exists() {
-                return Ok(true);
-            }
+        if metadata.is_dir() && journal_present(&path.join("journal.json"))? {
+            return Ok(true);
         }
     }
     Ok(false)
@@ -32,11 +43,10 @@ pub(crate) fn recover_all(
 ) -> Result<RecoveryReport, String> {
     paths::validate_roots(transaction_root, roots)?;
     let mut report = RecoveryReport::default();
-    if !transaction_root.exists() {
+    let Some(entries) = directories(transaction_root)? else {
         return Ok(report);
-    }
-    let mut entries = fs::read_dir(transaction_root)
-        .map_err(paths::io_error)?
+    };
+    let mut entries = entries
         .collect::<Result<Vec<_>, _>>()
         .map_err(paths::io_error)?;
     entries.sort_by_key(|entry| entry.file_name());
@@ -51,7 +61,7 @@ pub(crate) fn recover_all(
         }
         let id = entry.file_name().to_string_lossy().into_owned();
         let journal_path = directory.join("journal.json");
-        if !journal_path.exists() {
+        if !journal_present(&journal_path)? {
             // A preparation interrupted before publication touched no live targets.
             // Keep its staging for diagnosis; it must never be guessed into a rollback.
             continue;

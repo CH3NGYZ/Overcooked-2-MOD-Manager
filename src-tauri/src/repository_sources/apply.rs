@@ -382,9 +382,13 @@ pub(crate) async fn import_repository_source_into_config(
         log::error!("仓库源刷新后保存配置失败：源={}，原因={}", source_id, error);
         error.to_string()
     })?;
-    // 配置已经是本次源文档的最新内容：此时才同步安装清单里的分组快照。
-    // 只有分组确实变化才写文件，避免每次刷新都重写全部清单。
-    sync_manifest_groups(&state, &config);
+    match crate::mod_changes::transaction::has_pending(&state.config.mod_change_transactions_dir()) {
+        Ok(false) => sync_manifest_groups(&state, &config),
+        Ok(true) => log::info!("源已刷新，保留待恢复事务的安装清单：源={source_id}"),
+        Err(error) => log::warn!(
+            "源已刷新，无法确认事务状态，未同步安装清单：源={source_id}，原因={error}"
+        ),
+    }
     log::info!(
         "仓库源刷新应用完成：源={}，仓库={}，新增={}，重复={}，冲突={}，子源声明={}，移除旧子源={}，结果有效={}",
         source_id,
@@ -436,8 +440,8 @@ fn sync_manifest_groups(state: &AppState, config: &AppConfig) {
          * 会更新，但包名停在上次安装时的旧翻译，两边对不上。
          * 只在仓库确实提供了 name_i18n 时才覆盖，避免把手工补的名字抹掉。
          */
-        let name_changed =
-            !repository.name_i18n.is_empty() && manifest.package_name_i18n != repository.name_i18n;
+        let package_names = archive::repository_package_names(repository);
+        let name_changed = !package_names.is_empty() && manifest.package_name_i18n != package_names;
         // 旧清单没有版本绑定：能用 release_tag 重建就补上
         let binding_missing = manifest.repository_binding.is_none()
             && !manifest.release_tag.trim().is_empty()
@@ -484,7 +488,7 @@ fn sync_manifest_groups(state: &AppState, config: &AppConfig) {
             manifest.group_i18n = repository.group_i18n.clone();
         }
         if name_changed {
-            manifest.package_name_i18n = repository.name_i18n.clone();
+            manifest.package_name_i18n = package_names;
             log::info!(
                 "更新安装清单仓库名快照：仓库={}，语言数={}",
                 manifest.repository_id,

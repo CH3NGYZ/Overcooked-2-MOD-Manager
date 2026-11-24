@@ -136,7 +136,11 @@ fn manifest_sync_preserves_local_provenance_when_a_repository_id_is_reused() {
                 "{id}"
             );
             assert!(restored.prerelease, "{id}");
-            assert_eq!(restored.package_name_i18n, repo.name_i18n, "{id}");
+            assert_eq!(
+                restored.package_name_i18n,
+                archive::single_language("Online package - GitHub"),
+                "{id}"
+            );
             assert_eq!(restored.group_i18n, repo.group_i18n, "{id}");
         }
         std::fs::remove_dir_all(root).unwrap();

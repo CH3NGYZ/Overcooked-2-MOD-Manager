@@ -207,6 +207,91 @@ pub(super) fn serve_documents(
 }
 
 #[tokio::test]
+async fn pending_or_unreadable_transaction_state_does_not_prevent_source_refresh() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = AppState::with_config(ConfigService::for_test(temp.path().join("data")));
+    let repository = |name: &str| {
+        format!(
+            "[[repositories]]\nname_i18n.zh-CN = \"{name}\"\ngroup_i18n.zh-CN = \"Tools\"\nnote_i18n.zh-CN = \"\"\nprovider = \"github\"\nusername = \"example\"\nrepository = \"mod\"\ninstall_target = \"BepInEx/plugins\"\nenabled = true\nasset_rules = [{{type = \"glob\", value = \"*.dll\"}}]\n"
+        )
+    };
+    let (address, server) = serve_documents(
+        ["Original", "Pending", "Unclear", "Unclear", "Renamed"]
+            .into_iter()
+            .map(|name| ("/mods.toml", "200 OK", repository(name)))
+            .collect(),
+    );
+    let source = RepositorySource {
+        id: "live-manifest-sync".into(),
+        nickname: "Source".into(),
+        url: format!("http://{address}/mods.toml"),
+        note_i18n: Default::default(),
+        network_plan: Default::default(),
+        nickname_i18n: Default::default(),
+        region: None,
+        builtin: false,
+        parent_id: None,
+    };
+    let mut config = state.config.load().unwrap();
+    config.repository_sources.push(source.clone());
+    state.config.save(&config).unwrap();
+    refresh(&state, &source).await.unwrap();
+    let repo = state.config.load().unwrap().repositories.remove(0);
+    let mut manifest = archive::new_manifest(
+        &repo.id,
+        "v1.0.0",
+        archive::single_language("Original - GitHub"),
+        Default::default(),
+        vec!["BepInEx/plugins/Example.dll".into()],
+        Vec::new(),
+    );
+    manifest.repository_binding = ModRepositoryBinding::from_release(&repo, &manifest.release_tag);
+    manifest.group_i18n = repo.group_i18n;
+    let manifests = state.config.manifests_dir();
+    archive::write_manifest(&manifests, &manifest).unwrap();
+    let manifest_path = manifests.join(format!("{}.toml", repo.id));
+    let original = fs::read(&manifest_path).unwrap();
+    let transaction_root = temp.path().join("data/mod-change-transactions");
+    let journal = transaction_root.join("pending/journal.json");
+    fs::create_dir_all(journal.parent().unwrap()).unwrap();
+    fs::write(&journal, b"unparsed journal must remain byte-identical").unwrap();
+
+    assert!(refresh(&state, &source).await.unwrap().valid);
+    assert_eq!(state.config.load().unwrap().repositories[0].name, "Pending");
+    assert_eq!(fs::read(&manifest_path).unwrap(), original);
+    assert_eq!(
+        fs::read(&journal).unwrap(),
+        b"unparsed journal must remain byte-identical"
+    );
+
+    fs::remove_file(&journal).unwrap();
+    fs::remove_dir(journal.parent().unwrap()).unwrap();
+    fs::remove_dir(&transaction_root).unwrap();
+    fs::write(&transaction_root, b"not a directory").unwrap();
+    assert!(refresh(&state, &source).await.unwrap().valid);
+    assert_eq!(state.config.load().unwrap().repositories[0].name, "Unclear");
+    assert_eq!(fs::read(&manifest_path).unwrap(), original);
+    assert_eq!(fs::read(&transaction_root).unwrap(), b"not a directory");
+
+    fs::remove_file(&transaction_root).unwrap();
+    manifest.package_name_i18n = archive::single_language("Unclear - GitHub");
+    archive::write_manifest(&manifests, &manifest).unwrap();
+    let mut bytes = fs::read(&manifest_path).unwrap();
+    bytes.extend_from_slice(b"\n# harmless formatting survives an unchanged refresh\n");
+    fs::write(&manifest_path, &bytes).unwrap();
+    refresh(&state, &source).await.unwrap();
+    assert_eq!(fs::read(&manifest_path).unwrap(), bytes);
+    refresh(&state, &source).await.unwrap();
+    assert_eq!(
+        archive::read_manifest(&manifests, &repo.id)
+            .unwrap()
+            .package_name_i18n,
+        archive::single_language("Renamed - GitHub")
+    );
+    server.join().unwrap();
+}
+
+#[tokio::test]
 async fn live_index_changes_replace_children_and_failure_keeps_trusted_snapshots() {
     let declaration = |id, nickname: &str| {
         format!(

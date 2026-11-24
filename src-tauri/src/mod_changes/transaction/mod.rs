@@ -36,6 +36,8 @@ pub(crate) struct PreparedTransaction {
     journal: types::Journal,
 }
 
+pub(crate) const DIRECTORY_NAME: &str = "mod-change-transactions";
+
 #[cfg(test)]
 mod application_progress_tests;
 #[cfg(test)]

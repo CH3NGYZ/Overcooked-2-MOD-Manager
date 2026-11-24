@@ -235,17 +235,21 @@ pub fn read_manifests(manifest_dir: &Path) -> Vec<InstallManifest> {
     manifests
 }
 
-/// 安装包显示名的统一格式：`{仓库名} - {平台}`。
-///
-/// 抽成函数是因为「安装时写清单」和「扫描时补快照」两处都要生成它，
-/// 各写一份迟早出现 `A - GitHub` 与 `A - Github` 这种不一致。
-pub fn package_display_name(repository_name: &str, provider: &crate::models::Provider) -> String {
-    let platform = match provider {
+/// 生成清单的本地化包名快照，安装、扫描与在线刷新保持同一格式。
+pub fn repository_package_names(
+    repository: &crate::models::ModRepositoryConfig,
+) -> BTreeMap<String, String> {
+    let platform = match repository.provider {
         crate::models::Provider::Github => "GitHub",
         crate::models::Provider::Gitee => "Gitee",
         crate::models::Provider::Gitcode => "GitCode",
     };
-    format!("{repository_name} - {platform}")
+    repository
+        .name_i18n
+        .iter()
+        .filter(|(_, value)| !value.trim().is_empty())
+        .map(|(language, value)| (language.clone(), format!("{value} - {platform}")))
+        .collect()
 }
 
 /// 只有一个语言版本的文案（手动安装的包名、备注等）。

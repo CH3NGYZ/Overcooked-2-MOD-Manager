@@ -24,16 +24,16 @@ pub(super) fn ensure_game_stopped(_state: &AppState, game_root: &Path) -> Result
 
 /// Call only while holding AppState.operation. This function never acquires it.
 pub(crate) fn ensure_recovered(state: &AppState) -> Result<bool, String> {
+    let transaction_root = state.config.mod_change_transactions_dir();
+    if !transaction::has_pending(&transaction_root).map_err(|_| REQUIRED.to_string())? {
+        return Ok(false);
+    }
     let data_root = state
         .config
         .config_path()
         .parent()
         .ok_or(REQUIRED)?
         .to_path_buf();
-    let transaction_root = data_root.join("mod-change-transactions");
-    if !transaction::has_pending(&transaction_root).map_err(|_| REQUIRED.to_string())? {
-        return Ok(false);
-    }
     let result = (|| {
         let config = state.config.load_or_default();
         let detected = game::detect_game(&config).path.ok_or(REQUIRED)?;

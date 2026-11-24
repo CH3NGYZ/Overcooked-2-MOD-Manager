@@ -33,8 +33,8 @@ pub(crate) use integrity::{
     validate_download_size, validate_zip, validate_zip_with_cancel,
 };
 pub(crate) use manifests::{
-    InstallManifest, new_manifest, package_display_name, primary_translation, read_manifest,
-    read_manifests, single_language, write_manifest,
+    InstallManifest, new_manifest, primary_translation, read_manifest, read_manifests,
+    repository_package_names, single_language, write_manifest,
 };
 pub(crate) use map_snapshots::{read_map_relation_snapshots, write_map_relation_snapshots};
 pub(crate) use paths::{clear_readonly, prune_empty_parent_dirs, validate_asset_file_name};

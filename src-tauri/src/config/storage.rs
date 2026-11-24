@@ -78,6 +78,11 @@ impl ConfigService {
         self.root.join("manifests")
     }
 
+    pub(crate) fn mod_change_transactions_dir(&self) -> PathBuf {
+        self.root
+            .join(crate::mod_changes::transaction::DIRECTORY_NAME)
+    }
+
     pub fn mod_recycle_bin_dir(&self) -> PathBuf {
         self.root.join("recycle-bin")
     }

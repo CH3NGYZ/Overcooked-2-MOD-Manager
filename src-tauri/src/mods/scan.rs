@@ -16,7 +16,6 @@ use crate::archive;
 use crate::archive::InstallManifest;
 use crate::models::AppConfig;
 use crate::models::InstalledMod;
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -310,19 +309,8 @@ fn inspect_dll(
                 .repositories
                 .iter()
                 .find(|repo| repo.id == repository_id)
-                .map(|repo| {
-                    repo.name_i18n
-                        .iter()
-                        .filter(|(_, value)| !value.trim().is_empty())
-                        .map(|(key, value)| {
-                            (
-                                key.clone(),
-                                crate::archive::package_display_name(value, &repo.provider),
-                            )
-                        })
-                        .collect::<BTreeMap<_, _>>()
-                })
-                .filter(|map: &BTreeMap<String, String>| !map.is_empty())
+                .map(crate::archive::repository_package_names)
+                .filter(|map| !map.is_empty())
         })
         .unwrap_or_default();
     /*

@@ -385,7 +385,11 @@ fn change_and_exit(
     )?;
     if check_step(
         "检查待恢复安装事务",
-        crate::mod_changes::transaction::has_pending(&paths.root.join("mod-change-transactions")),
+        crate::mod_changes::transaction::has_pending(
+            &paths
+                .root
+                .join(crate::mod_changes::transaction::DIRECTORY_NAME),
+        ),
     )? {
         log::warn!("[data] 仍有待恢复的安装事务，未交接：原因=modChanges.recoveryRequired");
         return Err("modChanges.recoveryRequired".into());

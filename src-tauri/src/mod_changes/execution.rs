@@ -213,7 +213,7 @@ fn commit_inner(
         let transaction_started = std::time::Instant::now();
         let op = trace.op;
         let transaction = prepare_for_operation(
-            &roots.data_root.join("mod-change-transactions"),
+            &state.config.mod_change_transactions_dir(),
             &roots,
             changes,
             Some(op),

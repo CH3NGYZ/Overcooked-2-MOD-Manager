@@ -133,17 +133,7 @@ pub(crate) fn install_downloaded_mod_repository(
          * zh-CN 回填到它们）。清单再存一份单语副本属于冗余双写，
          * 两者迟早不一致。所以这里直接把 i18n 交给 `new_manifest`。
          */
-        let package_name_i18n = repo
-            .name_i18n
-            .iter()
-            .filter(|(_, value)| !value.trim().is_empty())
-            .map(|(key, value)| {
-                (
-                    key.clone(),
-                    archive::package_display_name(value, &repo.provider),
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
+        let package_name_i18n = archive::repository_package_names(repo);
         let note_i18n = repo
             .note_i18n
             .iter()

@@ -655,18 +655,7 @@ fn create_manifest(
             SourceOrigin::Repository { id, .. } => (*id).to_owned(),
         });
     let names = repo
-        .map(|repo| {
-            repo.name_i18n
-                .iter()
-                .filter(|(_, value)| !value.trim().is_empty())
-                .map(|(language, value)| {
-                    (
-                        language.clone(),
-                        archive::package_display_name(value, &repo.provider),
-                    )
-                })
-                .collect()
-        })
+        .map(archive::repository_package_names)
         .unwrap_or_else(|| BTreeMap::from([("zh-CN".into(), mods::file_stem_name(file_name))]));
     let notes = repo.map(|repo| repo.note_i18n.clone()).unwrap_or_default();
     let mut manifest = archive::new_manifest(

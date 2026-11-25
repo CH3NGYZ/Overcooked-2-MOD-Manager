@@ -251,3 +251,31 @@ fn history_cannot_bypass_platform_url_signature_or_newer_version_checks() {
         );
     }
 }
+
+#[test]
+fn selected_package_normalizes_signature_and_requires_matching_release_tag() {
+    let mut document = fixture(Provider::Github);
+    let channel = direct(Provider::Github);
+    let target = target();
+    let key = target.manifest_key();
+    let package = &mut document["platforms"][&key];
+    let url = package["url"].as_str().unwrap().to_owned();
+    let signature = package["signature"].as_str().unwrap().to_owned();
+    package["signature"] = format!(" {signature}\n").into();
+    let info = inspect(&document, "1.0.0").unwrap().unwrap();
+    assert_eq!(info.installer_signature, signature);
+    crate::app_update::validate_update_metadata(
+        "9.0.0",
+        &url::Url::parse(&url).unwrap(),
+        &format!(" {signature}\n"),
+        &info,
+    )
+    .unwrap();
+
+    document["platforms"][&key]["url"] = url.replace("/v9.0.0/", "/v8.0.0/").into();
+    assert_eq!(
+        inspect_installer_manifest(&channel, &document, target, &semver::Version::new(1, 0, 0))
+            .unwrap_err(),
+        "update.manifestPlatformMismatch"
+    );
+}

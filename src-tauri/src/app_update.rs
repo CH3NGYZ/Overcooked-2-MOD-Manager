@@ -246,7 +246,7 @@ pub(crate) fn validate_update_metadata(
     let file_matches = downloaded_name == Some(expected_name);
     let signature_present = !signature.trim().is_empty();
     let url_matches = info.installer_url.as_deref() == Some(download_url.as_str());
-    let signature_matches = signature == info.installer_signature;
+    let signature_matches = signature.trim() == info.installer_signature;
     if !(version_matches && file_matches && signature_present && url_matches && signature_matches) {
         log::warn!(
             "安装器更新清单复核未通过：version_matches={version_matches}，file_matches={file_matches}，signature_present={signature_present}，url_matches={url_matches}，signature_matches={signature_matches}"

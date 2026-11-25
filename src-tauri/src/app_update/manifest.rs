@@ -1,7 +1,3 @@
-use crate::app_update::channels::INSTALLER_GITEE_OWNER;
-use crate::app_update::channels::INSTALLER_GITEE_REPO;
-use crate::app_update::channels::INSTALLER_GITHUB_OWNER;
-use crate::app_update::channels::INSTALLER_GITHUB_REPO;
 use crate::app_update::channels::INSTALLER_PROVIDERS;
 use crate::app_update::channels::InstallerChannel;
 use crate::app_update::channels::InstallerRegion;
@@ -9,14 +5,12 @@ use crate::app_update::channels::emit_installer_channel_status;
 use crate::app_update::channels::emit_installer_phase;
 use crate::app_update::channels::installer_candidate;
 use crate::app_update::channels::installer_channel_status;
-use crate::app_update::channels::{INSTALLER_GITCODE_OWNER, INSTALLER_GITCODE_REPO};
 use crate::archive;
 use crate::download::DownloadContext;
 use crate::download::try_download_candidates_with_progress;
 use crate::http_diagnostics::HttpRequestExt;
 use crate::models::{
     AppConfig, AppUpdateChannelStatus, AppUpdateCheckResult, AppUpdateInfo, AppUpdateInstallMode,
-    Provider,
 };
 use crate::releases;
 use futures_util::StreamExt;
@@ -25,6 +19,7 @@ use std::sync::Mutex;
 use tauri::AppHandle;
 
 mod changelog;
+mod package;
 
 pub(crate) fn inspect_installer_manifest(
     channel: &InstallerChannel,
@@ -37,60 +32,10 @@ pub(crate) fn inspect_installer_manifest(
     if !manifest.version.pre.is_empty() {
         return Err("update.manifestNotStable".into());
     }
-    let key = target.manifest_key();
-    let url = manifest
-        .download_url(&key)
-        .map_err(|_| "update.noMatchingPackage")?;
-    let signature = manifest
-        .signature(&key)
-        .map_err(|_| "update.manifestOrSignatureUnavailable")?
-        .clone();
-    let name = url
-        .path_segments()
-        .and_then(|mut parts| parts.next_back())
-        .unwrap_or_default()
-        .to_string();
-    // Official mirrors may publish the same manifest with package URLs hosted
-    // by another official mirror. Plan the download using the asset's provider.
-    let reference =
-        crate::providers::release_asset_reference(url).ok_or("update.manifestPlatformMismatch")?;
-    let (host, owner, repositories): (_, _, &[&str]) = match reference.provider {
-        Provider::Github => (
-            "github.com",
-            INSTALLER_GITHUB_OWNER,
-            &[INSTALLER_GITHUB_REPO],
-        ),
-        Provider::Gitee => ("gitee.com", INSTALLER_GITEE_OWNER, &[INSTALLER_GITEE_REPO]),
-        Provider::Gitcode => (
-            "gitcode.com",
-            INSTALLER_GITCODE_OWNER,
-            &[INSTALLER_GITCODE_REPO, "Overcooked-2-MOD-Manager"],
-        ),
-    };
-    if url.scheme() != "https"
-        || url.host_str() != Some(host)
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.port().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || reference.username != owner
-        || !repositories.contains(&reference.repository.as_str())
-        || reference.asset != name
-        || url.path()
-            != format!(
-                "/{owner}/{}/releases/download/{}/{name}",
-                reference.repository, reference.tag
-            )
-        || !target.matches_name(&name, &manifest.version)
-        || signature.trim().is_empty()
-    {
-        return Err("update.manifestPlatformMismatch".into());
-    }
+    let package = package::select(&manifest, target)?;
     if manifest.version <= *current_version {
         return Ok(None);
     }
-    let direct_url = url.to_string();
     Ok(Some(AppUpdateInfo {
         version: manifest.version.to_string(),
         current_version: current_version.to_string(),
@@ -104,11 +49,11 @@ pub(crate) fn inspect_installer_manifest(
         date: document["pub_date"].as_str().map(str::to_string),
         download_size: None,
         manifest_url: channel.endpoint.clone(),
-        installer_url: Some(direct_url),
-        installer_signature: signature.clone(),
-        installer_name: name,
+        installer_url: Some(package.url),
+        installer_signature: package.signature,
+        installer_name: package.name,
         installer_type: target.kind.into(),
-        provider: Some(reference.provider),
+        provider: Some(package.provider),
         source_channel: Some(channel.id.clone()),
         install_mode: AppUpdateInstallMode::Manual,
     }))

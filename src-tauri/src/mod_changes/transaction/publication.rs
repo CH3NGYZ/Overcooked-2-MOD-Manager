@@ -1,6 +1,9 @@
 use super::{PreparedTransaction, check, durable, engine, paths, types::*};
 use crate::{file_check, file_metadata::FileIdentity};
-use std::{fs::File, path::Path};
+use std::{
+    fs::File,
+    path::{Path, PathBuf},
+};
 
 impl PreparedTransaction {
     pub(super) fn publish_file(
@@ -157,6 +160,88 @@ pub(super) fn prepare_file(
         .map_err(|error| check::writing(path, &error))?;
     check::expect(path, check::STAGED, fingerprint)?;
     check_identity()
+}
+
+pub(super) struct HeldRemoval<'a> {
+    target: &'a TransactionPath,
+    temporary: &'a TransactionPath,
+    before: &'a Fingerprint,
+    identity: &'a FileIdentity,
+}
+
+impl<'a> HeldRemoval<'a> {
+    pub(super) fn from_operation(operation: &'a RecordedMutation) -> Option<Self> {
+        let RecordedMutation::File {
+            target,
+            temporary,
+            before,
+            original_identity: Some(identity),
+            payload: None,
+            after: Fingerprint::Missing,
+            ..
+        } = operation
+        else {
+            return None;
+        };
+        Some(Self {
+            target,
+            temporary,
+            before,
+            identity,
+        })
+    }
+
+    pub(super) fn apply(&self, target: &Path, temporary: &Path) -> Result<(), String> {
+        engine::verify_file_before(target, self.before, true)?;
+        expect_identity(target, check::TARGET, self.identity)?;
+        durable::rename_checked(target, temporary, false, check::WRITE)
+    }
+
+    pub(super) fn verify_applied(&self, roots: &TransactionRoots) -> Result<(), String> {
+        let held = check::resolve(self.temporary, roots, check::BACKUP)?;
+        check::expect(&held, check::BACKUP, self.before)?;
+        self.verify_identity(&held)
+    }
+
+    fn verify_identity(&self, held: &Path) -> Result<(), String> {
+        paths::guard_single_link(held)?;
+        expect_identity(held, check::BACKUP, self.identity)
+    }
+
+    fn held_file(&self, roots: &TransactionRoots) -> Result<Option<PathBuf>, String> {
+        let held = check::resolve(self.temporary, roots, check::BACKUP)?;
+        let actual = check::capture(&held, check::BACKUP)?;
+        if actual == Fingerprint::Missing {
+            return Ok(None);
+        }
+        check::compare(&held, check::BACKUP, &actual, self.before, false)?;
+        self.verify_identity(&held)?;
+        Ok(Some(held))
+    }
+
+    pub(super) fn revert(&self, roots: &TransactionRoots) -> Result<(), String> {
+        let target = check::resolve(self.target, roots, check::TARGET)?;
+        if let Some(held) = self.held_file(roots)? {
+            check::expect(&target, check::TARGET, &Fingerprint::Missing)?;
+            durable::rename_checked(&held, &target, false, check::BACKUP)?;
+            expect_identity(&target, check::RESULT, self.identity)?;
+            check::expect(&target, check::RESULT, self.before)?;
+        } else if check::capture(&target, check::TARGET)? == Fingerprint::Missing {
+            return Err(file_check::report(
+                check::BACKUP,
+                &target,
+                file_check::MISSING,
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn cleanup(&self, roots: &TransactionRoots) -> Result<(), String> {
+        if let Some(held) = self.held_file(roots)? {
+            durable::remove_file_checked(&held, self.before, true)?;
+        }
+        Ok(())
+    }
 }
 
 pub(super) fn restore_unpublished_permissions(

@@ -103,6 +103,139 @@ fn replacing_an_approved_target_with_identical_bytes_aborts_and_rolls_back_earli
     }
 }
 
+fn prepare_guarded_removal(workspace: &Workspace) -> (PreparedTransaction, PathBuf, FileIdentity) {
+    workspace.write("prior.dll", b"old");
+    workspace.write("manifest.toml", b"old manifest");
+    let mut removal = workspace.file("manifest.toml", None);
+    let Mutation::File(change) = &mut removal else {
+        unreachable!();
+    };
+    change.require_single_link = true;
+    let target = change.target.resolve(&workspace.roots).unwrap();
+    let original = FileIdentity::capture(&target).unwrap().unwrap();
+    let guards = vec![(change.target.clone(), original.clone())];
+    let pending = prepare_for_operation(
+        &workspace.journal_root,
+        &workspace.roots,
+        vec![workspace.file("prior.dll", Some(b"new")), removal],
+        None,
+        guards,
+    )
+    .unwrap();
+    (pending, target, original)
+}
+
+#[test]
+fn guarded_removal_preserves_an_identical_external_file_and_rolls_back_prior_writes() {
+    let workspace = Workspace::new();
+    let (pending, target, original) = prepare_guarded_removal(&workspace);
+    let before = Fingerprint::capture(&target).unwrap();
+    let external = target.with_extension("external");
+    fs::write(&external, b"old manifest").unwrap();
+    before.permissions().unwrap().restore(&external).unwrap();
+    let external_identity = FileIdentity::capture(&external).unwrap().unwrap();
+    assert_ne!(original, external_identity);
+
+    let result = pending.apply_with_cancel(
+        || false,
+        |event| {
+            if matches!(event, RecordProgress::Applying(1)) {
+                assert_eq!(workspace.read("prior.dll"), b"new");
+                fs::rename(&target, target.with_extension("original")).unwrap();
+                fs::rename(&external, &target).unwrap();
+                assert_eq!(Fingerprint::capture(&target).unwrap(), before);
+            }
+        },
+    );
+
+    assert!(result.is_err());
+    assert_eq!(
+        FileIdentity::capture(&target).unwrap(),
+        Some(external_identity)
+    );
+    assert_eq!(workspace.read("prior.dll"), b"old");
+    assert_eq!(workspace.read("manifest.toml"), b"old manifest");
+    assert!(!has_pending(&workspace.journal_root).unwrap());
+}
+
+#[test]
+fn guarded_removal_restores_the_original_file_when_cancelled_after_removal() {
+    let workspace = Workspace::new();
+    let (pending, target, original) = prepare_guarded_removal(&workspace);
+    let cancelled = Cell::new(false);
+
+    let result = pending.apply_with_cancel(
+        || cancelled.get(),
+        |event| {
+            if matches!(event, RecordProgress::Processed(1)) {
+                assert!(!target.exists());
+                cancelled.set(true);
+            }
+        },
+    );
+
+    assert_eq!(result.unwrap_err(), "download.cancelled");
+    assert_eq!(FileIdentity::capture(&target).unwrap(), Some(original));
+    assert_eq!(workspace.read("prior.dll"), b"old");
+    assert_eq!(workspace.read("manifest.toml"), b"old manifest");
+    assert!(!has_pending(&workspace.journal_root).unwrap());
+}
+
+#[test]
+fn guarded_removal_preserves_original_until_recovery_can_restore_it() {
+    let workspace = Workspace::new();
+    let (pending, target, original) = prepare_guarded_removal(&workspace);
+    let id = pending.id().to_owned();
+    let occupied = b"external file after removal";
+    let result = pending.apply_with_cancel(
+        || false,
+        |event| {
+            if matches!(event, RecordProgress::Processed(1)) {
+                assert!(!target.exists());
+                fs::write(&target, occupied).unwrap();
+            }
+        },
+    );
+    assert!(result.is_err());
+    assert_eq!(fs::read(&target).unwrap(), occupied);
+    assert_eq!(workspace.read("prior.dll"), b"old");
+    assert!(has_pending(&workspace.journal_root).unwrap());
+
+    let other = target.with_extension("external");
+    fs::rename(&target, &other).unwrap();
+    let recovered = recover_all(&workspace.journal_root, &workspace.roots).unwrap();
+    assert_eq!(recovered.recovered, [id]);
+    assert_eq!(FileIdentity::capture(&target).unwrap(), Some(original));
+    assert_eq!(workspace.read("manifest.toml"), b"old manifest");
+    assert_eq!(fs::read(other).unwrap(), occupied);
+    assert!(!has_pending(&workspace.journal_root).unwrap());
+}
+
+#[test]
+fn guarded_removal_cleans_the_held_original_after_commit() {
+    let workspace = Workspace::new();
+    let (pending, target, _) = prepare_guarded_removal(&workspace);
+    let types::RecordedMutation::File { temporary, .. } = &pending.journal.records[1].operation
+    else {
+        unreachable!();
+    };
+    let held = temporary.resolve(&workspace.roots).unwrap();
+    pending
+        .apply_with_cancel(
+            || false,
+            |event| {
+                if matches!(event, RecordProgress::Processed(1)) {
+                    assert_eq!(fs::read(&held).unwrap(), b"old manifest");
+                }
+            },
+        )
+        .unwrap();
+    assert!(!target.exists());
+    assert!(!held.exists());
+    assert_eq!(workspace.read("prior.dll"), b"new");
+    assert!(!has_pending(&workspace.journal_root).unwrap());
+}
+
 fn prepare_guarded_manifest_update(workspace: &Workspace) -> (PreparedTransaction, PathBuf) {
     workspace.write("prior.dll", b"old");
     let target = workspace.roots.data_root.join("manifest.toml");

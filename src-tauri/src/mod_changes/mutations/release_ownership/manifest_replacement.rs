@@ -2,32 +2,31 @@ use super::missing_install::endpoints;
 use super::*;
 use crate::mod_changes::mutations::install_block::report_record_claim;
 use crate::mod_changes::mutations::records::{InstallRecord, RecordStamp};
-use crate::mod_changes::progress::{ManifestOverwriteOffer, PreparationError};
+use crate::mod_changes::progress::{ManifestOverwriteOffer, PreparationError, SourceSwitch};
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::mod_changes::mutations) struct ManifestReplacement {
     pub relative: String,
     pub stamp: RecordStamp,
-    offer: Option<Offer>,
-    approved: bool,
-    recorded_paths: Vec<String>,
+    pub(super) confirmation: Option<OverwriteConfirmation>,
+    pub(super) recorded_paths: Vec<String>,
     vacant_paths: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Offer {
-    repository_id: String,
-    fingerprint: String,
+pub(super) struct OverwriteConfirmation {
+    offer: ManifestOverwriteOffer,
+    pub(super) approved: bool,
 }
 
-struct RecordedEndpoint {
-    relative: String,
-    path: PathBuf,
-    missing: bool,
+pub(super) struct RecordedEndpoint {
+    pub(super) relative: String,
+    pub(super) path: PathBuf,
+    pub(super) missing: bool,
 }
 
-fn overlaps_claim(left: &str, right: &str) -> bool {
+pub(super) fn overlaps_claim(left: &str, right: &str) -> bool {
     let normalizer = icu_normalizer::ComposingNormalizer::new_nfc();
     let left = mods::manifest_dll_key(left);
     let right = mods::manifest_dll_key(right);
@@ -42,7 +41,7 @@ fn vacant(roots: &TransactionRoots, root: &Path, relative: &str) -> bool {
     })
 }
 
-fn recorded_endpoints(
+pub(super) fn recorded_endpoints(
     roots: &TransactionRoots,
     owner: &str,
     files: &[String],
@@ -88,6 +87,74 @@ fn recorded_endpoints(
         seen.insert(key);
     }
     Ok(result)
+}
+
+pub(super) fn overlapping_endpoint<'a>(
+    roots: &TransactionRoots,
+    recorded: &'a [RecordedEndpoint],
+    claim: &str,
+) -> Result<Option<&'a RecordedEndpoint>, String> {
+    let physical = crate::game::resolve_existing_ancestor(
+        &game(&mods::canonical_dll_name(claim)).resolve(roots)?,
+    )?;
+    Ok(recorded.iter().find(|endpoint| {
+        overlaps_claim(&endpoint.relative, claim)
+            || overlaps_claim(
+                &endpoint.path.to_string_lossy(),
+                &physical.to_string_lossy(),
+            )
+    }))
+}
+
+impl OverwriteConfirmation {
+    pub(super) fn new(
+        builder: &Builder<'_>,
+        owner: &str,
+        repository_id: &str,
+        record: &InstallRecord,
+        proof: impl serde::Serialize,
+        source_switch: Option<SourceSwitch>,
+    ) -> Result<Self, String> {
+        let session = builder.session;
+        let bytes = serde_json::to_vec(&(
+            repository_id,
+            &builder.roots,
+            &session.trusted.replan_scope,
+            &record.relative,
+            &source_switch,
+            proof,
+        ))
+        .map_err(|_| "modChanges.targetChanged")?;
+        let fingerprint = format!("{:x}", Sha256::digest(bytes));
+        let intent = session
+            .wire_request
+            .manifest_overwrite
+            .as_ref()
+            .filter(|intent| intent.repository_id == repository_id);
+        let approved = intent.is_some_and(|intent| intent.fingerprint == fingerprint);
+        if intent.is_some() && !approved {
+            return Err(InstallBlock::VerificationChanged.report(owner, &record.relative));
+        }
+        Ok(Self {
+            offer: ManifestOverwriteOffer {
+                repository_id: repository_id.into(),
+                manifest_path: crate::display_path::display_path(
+                    &builder.roots.data_root.join(&record.relative),
+                ),
+                recorded_paths: record.manifest.files.clone(),
+                fingerprint,
+                source_switch,
+            },
+            approved,
+        })
+    }
+
+    pub(super) fn failure(&self, message: String, expose_offer: bool) -> PreparationError {
+        PreparationError {
+            message,
+            manifest_overwrite: expose_offer.then(|| Box::new(self.offer.clone())),
+        }
+    }
 }
 
 impl ManifestReplacement {
@@ -147,31 +214,6 @@ impl ManifestReplacement {
         }
         Ok(())
     }
-
-    pub(super) fn confirmation_required(&self) -> bool {
-        self.offer.is_some() && !self.approved
-    }
-
-    pub(super) fn offer_error(&self, owner: &str, roots: &TransactionRoots) -> PreparationError {
-        let offer = self.offer.as_ref().filter(|_| !self.approved);
-        PreparationError {
-            message: InstallBlock::RecordExists.report(owner, &self.relative),
-            manifest_overwrite: offer.map(|offer| {
-                Box::new(ManifestOverwriteOffer {
-                    repository_id: offer.repository_id.clone(),
-                    manifest_path: crate::display_path::display_path(
-                        &roots.data_root.join(&self.relative),
-                    ),
-                    recorded_paths: self.recorded_paths.clone(),
-                    fingerprint: offer.fingerprint.clone(),
-                })
-            }),
-        }
-    }
-
-    pub(super) fn fulfills_intent(&self) -> bool {
-        self.approved
-    }
 }
 
 impl Builder<'_> {
@@ -214,18 +256,7 @@ impl Builder<'_> {
         let registry = self
             .registered_map_plugins()
             .map_err(|_| InstallBlock::MapRecordsUnreadable.report(owner, &record.relative))?;
-        let find_claim = |claim: &str| -> Result<Option<&RecordedEndpoint>, String> {
-            let physical = crate::game::resolve_existing_ancestor(
-                &game(&mods::canonical_dll_name(claim)).resolve(&self.roots)?,
-            )?;
-            Ok(recorded.iter().find(|endpoint| {
-                overlaps_claim(&endpoint.relative, claim)
-                    || overlaps_claim(
-                        &endpoint.path.to_string_lossy(),
-                        &physical.to_string_lossy(),
-                    )
-            }))
-        };
+        let find_claim = |claim| overlapping_endpoint(&self.roots, &recorded, claim);
         if !recorded.is_empty() {
             for (claim, other) in self.records.claimed_files() {
                 if other.relative != record.relative
@@ -260,43 +291,33 @@ impl Builder<'_> {
                 .iter()
                 .all(|path| path.missing && within(&path.relative, mods::file_state::PLUGINS_DIR))
             && self.can_reclaim_orphan(owner, payload, record, &registry);
-        let (offer, approved, vacant_paths) = if automatic {
+        let (confirmation, vacant_paths) = if automatic {
             (
                 None,
-                false,
                 recorded.into_iter().map(|path| path.relative).collect(),
             )
         } else {
-            let bytes = serde_json::to_vec(&(
-                &repo.id,
-                binding,
-                &payload.candidate.id,
-                &payload.stage_fingerprint,
-                &self.roots.game_root,
-                &self.roots.data_root,
-                &record.relative,
-                &stamp,
-            ))
-            .map_err(|_| "modChanges.targetChanged")?;
-            let fingerprint = format!("{:x}", Sha256::digest(bytes));
-            let approved = intent.is_some_and(|intent| intent.fingerprint == fingerprint);
-            if intent.is_some() && !approved {
-                return Err(InstallBlock::VerificationChanged.report(owner, &record.relative));
-            }
             (
-                Some(Offer {
-                    repository_id: repo.id.clone(),
-                    fingerprint,
-                }),
-                approved,
+                Some(OverwriteConfirmation::new(
+                    self,
+                    owner,
+                    &repo.id,
+                    record,
+                    (
+                        binding,
+                        &payload.candidate.id,
+                        &payload.stage_fingerprint,
+                        &stamp,
+                    ),
+                    None,
+                )?),
                 BTreeSet::new(),
             )
         };
         Ok(Some(ManifestReplacement {
             relative: record.relative.clone(),
             stamp,
-            offer,
-            approved,
+            confirmation,
             recorded_paths: record.manifest.files.clone(),
             vacant_paths,
         }))

@@ -10,7 +10,7 @@ import { changeReasonText } from './messages'
 import ChangePlanDetails from './ChangePlanDetails.vue'
 import ChangeEvidenceList from './ChangeEvidenceList.vue'
 import ChangeRecoveryPanel from './ChangeRecoveryPanel.vue'
-import { changeErrorEvidence, providerEvidenceAdvice, providerRows } from './evidence'
+import { changeErrorEvidence, formatEvidenceRepository, providerEvidenceAdvice, providerRows } from './evidence'
 import ModInstallNoteDialog from './ModInstallNoteDialog.vue'
 import { changePlanLabels, preparationCompletion } from './presentation'
 import { activeDownloadProgress } from '../downloadTask'
@@ -40,6 +40,9 @@ const recoveryBlocked = computed(() => recoveryBlockedPlan(plan.value))
 const recoveryProofMissing = computed(() => missingRecoveryApproval(plan.value))
 const recoveryEntry = computed(() => needsRecoveryApproval(plan.value) || recoveryBlocked.value
   || isTransactionRecoveryError(backendPayloadOf(state.value?.error)?.tag))
+const offerOverwrite = computed(() => state.value?.phase === 'failed' && !!manifestOverwrite.value && !recoveryEntry.value)
+const overwriteReview = computed(() => !!applyReview.value && !!manifestOverwrite.value)
+const sourceSwitch = computed(() => manifestOverwrite.value?.sourceSwitch)
 const overwriteGroups = computed(() => {
   const verified = plan.value
   if (state.value?.phase !== 'reconfirming' || !applyReview.value || verified?.status !== 'ready' || !verified.prepared) return []
@@ -52,7 +55,8 @@ const overwriteGroups = computed(() => {
   return [...groups]
 })
 const needsPreparation = computed(() => !applyReview.value && plan.value?.actions.some(isPackageAction))
-const confirmLabel = computed(() => applyReview.value === 'changed' && plan.value?.prepared ? 'modChanges.reconfirm'
+const confirmLabel = computed(() => overwriteReview.value ? 'modChanges.manifestOverwrite.confirm'
+  : applyReview.value === 'changed' && plan.value?.prepared ? 'modChanges.reconfirm'
   : needsPreparation.value ? 'modChanges.confirmPreparation' : 'modChanges.confirm')
 const names = computed(() => plan.value && changePlanLabels(plan.value, currentProgress.value, pickI18n, locale.value))
 const diagnostics = computed(() => {
@@ -123,7 +127,7 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
     :notes="installNotes" :apply-on-read="!!state?.noteOnlyReview"
     @continue="changes.acceptInstallNotes" @cancel="changes.cancel" />
   <AppModal v-else :key="applyReview ? 'apply-review' : 'prepare-review'"
-    :show="!!state && !state.silent" :title="t(applyReview ? 'modChanges.applyTitle' : 'modChanges.title')" :z-index="2599" max-width="90%" max-height="90%"
+    :show="!!state && !state.silent" :title="t(overwriteReview ? 'modChanges.manifestOverwrite.confirm' : applyReview ? 'modChanges.applyTitle' : 'modChanges.title')" :z-index="2599" max-width="90%" max-height="90%"
     :closable="canCancel" :mask-closable="false" :auto-focus="!applyReview" card-class="mod-changes-modal"
     @update:show="(show: boolean) => { if (!show) void changes.cancel() }">
     <template #header-extra>
@@ -154,7 +158,7 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
         <p v-if="diagnostics.hasPaths" class="diagnostic-note">{{ t('modChanges.diagnostic.note') }}</p>
         <p v-if="diagnostics.truncated" class="diagnostic-note">{{ t('modChanges.diagnostic.truncated') }}</p>
       </NAlert>
-      <NAlert v-if="error && !manifestOverwrite" type="error" :bordered="false">
+      <NAlert v-if="error && !offerOverwrite" type="error" :bordered="false">
         <span class="plan-error plan-message">{{ error }}</span>
         <p v-if="nextStep" class="diagnostic-note">{{ t(nextStep) }}</p>
         <ChangeEvidenceList :rows="failureEvidence.rows" :guid="failureEvidence.providers?.guid"
@@ -173,13 +177,33 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
         <NButton size="small" secondary :disabled="transactionRecoveryUnavailable()" data-plan-action="open-transaction-recovery"
           @click="openTransactionRecovery">{{ t('modChanges.transactionRecovery.title') }}</NButton>
       </NAlert>
-      <NAlert v-if="manifestOverwrite" type="warning" :bordered="false" data-manifest-overwrite
-        :title="t(state?.phase === 'failed' ? 'modChanges.manifestOverwrite.conflict' : 'modChanges.manifestOverwrite.title')">
-        <ChangeEvidenceList :rows="[{ path: manifestOverwrite.manifestPath }]" />
-        <p class="manifest-copy plan-message">{{ t('modChanges.manifestOverwrite.description') }}</p>
-        <template v-if="manifestOverwrite.recordedPaths.length">
-          <div>{{ t('modChanges.manifestOverwrite.paths') }}</div>
-          <ChangeEvidenceList :rows="manifestOverwrite.recordedPaths.map(path => ({ path }))" />
+      <NAlert v-if="manifestOverwrite && (offerOverwrite || overwriteReview)" type="warning" :bordered="false" data-manifest-overwrite
+        :title="t(sourceSwitch ? 'modChanges.manifestOverwrite.sourceSwitch' : offerOverwrite ? 'modChanges.manifestOverwrite.conflict' : 'modChanges.manifestOverwrite.title')">
+        <p v-if="offerOverwrite" class="manifest-copy plan-message">{{ t('modChanges.manifestOverwrite.recheck') }}</p>
+        <template v-if="sourceSwitch">
+          <p class="manifest-copy plan-message">{{ t(sourceSwitch.installedPath ? 'modChanges.manifestOverwrite.replaceInstalled' : 'modChanges.manifestOverwrite.installMissing') }}</p>
+          <dl class="source-switch-evidence plan-message">
+            <dt>{{ t('modChanges.manifestOverwrite.previousSource') }}</dt>
+            <dd>{{ formatEvidenceRepository(sourceSwitch.previousSource) }} · {{ sourceSwitch.previousSource.tag }}</dd>
+            <dt>{{ t('modChanges.manifestOverwrite.nextSource') }}</dt>
+            <dd>{{ formatEvidenceRepository(sourceSwitch.nextSource) }} · {{ sourceSwitch.nextSource.tag }}</dd>
+            <dt>{{ t('modChanges.manifestOverwrite.title') }}</dt>
+            <dd><ChangeEvidenceList :rows="[{ path: manifestOverwrite.manifestPath }]" /></dd>
+            <template v-if="sourceSwitch.installedPath">
+              <dt>{{ t('modChanges.manifestOverwrite.installedPath') }}</dt>
+              <dd><ChangeEvidenceList :rows="[{ path: sourceSwitch.installedPath }]" /></dd>
+            </template>
+            <dt>{{ t('modChanges.manifestOverwrite.targetPath') }}</dt>
+            <dd><ChangeEvidenceList :rows="[{ path: sourceSwitch.targetPath }]" /></dd>
+          </dl>
+        </template>
+        <template v-else>
+          <ChangeEvidenceList :rows="[{ path: manifestOverwrite.manifestPath }]" />
+          <p class="manifest-copy plan-message">{{ t('modChanges.manifestOverwrite.description') }}</p>
+          <template v-if="manifestOverwrite.recordedPaths.length">
+            <div>{{ t('modChanges.manifestOverwrite.paths') }}</div>
+            <ChangeEvidenceList :rows="manifestOverwrite.recordedPaths.map(path => ({ path }))" />
+          </template>
         </template>
       </NAlert>
       <ul v-if="diagnostics.notes.length" class="plan-notes">
@@ -216,14 +240,14 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
           <NButton v-if="showDownloadFallback" :loading="changes.cancellingDownload.value"
             :disabled="!changes.canCancelDownload.value" @click="changes.cancelPreparationDownload">{{ t('common.cancelDownload') }}</NButton>
           <NButton data-plan-action="cancel" :disabled="!canCancel" @click="changes.cancel">{{ t('common.action.cancel') }}</NButton>
-          <NButton v-if="state?.phase === 'failed' || recoveryBlocked || recoveryProofMissing" data-plan-action="retry" type="primary"
+          <NButton v-if="offerOverwrite" data-plan-action="overwrite-manifest" type="warning"
+            @click="changes.forceOverwriteManifest">{{ t('modChanges.manifestOverwrite.action') }}</NButton>
+          <NButton v-else-if="state?.phase === 'failed' || recoveryBlocked || recoveryProofMissing" data-plan-action="retry" type="primary"
             @click="changes.retry">{{ t('modChanges.retry') }}</NButton>
           <TransactionConflictConfirmation v-else-if="recoveryReview && plan && !showTransactionRecovery"
             :plan="plan" @approve="changes.confirmRecovery" />
-          <NButton v-else data-plan-action="confirm" type="primary" :loading="working" :disabled="working || completedPreparation || plan?.status !== 'ready' || recoveryReview"
+          <NButton v-else data-plan-action="confirm" :type="overwriteReview ? 'warning' : 'primary'" :loading="working" :disabled="working || completedPreparation || plan?.status !== 'ready' || recoveryReview"
             @click="changes.confirm">{{ t(confirmLabel) }}</NButton>
-          <NButton v-if="state?.phase === 'failed' && manifestOverwrite" data-plan-action="overwrite-manifest"
-            type="warning" @click="changes.forceOverwriteManifest">{{ t('modChanges.manifestOverwrite.action') }}</NButton>
         </div>
       </div>
     </template>
@@ -245,6 +269,9 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
 .overwrite-groups { margin: 8px 0 0; padding: 0; list-style: none; overflow-wrap: anywhere; }
 .overwrite-groups > li + li { margin-block-start: 8px; }
 .manifest-copy { margin: 4px 0 6px; }
+.source-switch-evidence { margin: 8px 0 0; }
+.source-switch-evidence dt { font-weight: 600; }
+.source-switch-evidence dd { margin: 0 0 6px; }
 .provider-choices { min-width: 0; }
 .provider-choices summary { cursor: pointer; }
 .diagnostic-note { margin: 3px 0 0; font-size: 12px; overflow-wrap: anywhere; }

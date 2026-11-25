@@ -114,7 +114,7 @@ pub(crate) fn prepare_for_operation(
                         .position(|(path, _)| path == &change.target)
                     {
                         if !matches!(change.expected, Fingerprint::File { .. })
-                            || change.source.is_none()
+                            || !change.require_single_link
                         {
                             return Err(super::paths::INVALID.into());
                         }

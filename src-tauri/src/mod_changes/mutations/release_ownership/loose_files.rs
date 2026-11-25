@@ -68,11 +68,14 @@ impl Builder<'_> {
             current.tag.is_some() && !current.raw && payload.candidate.source_id.is_some();
         if scoped_release
             && let Some(prior) = old.manifests.iter().find(|prior| {
-                let explicitly_retired = retirement.is_some_and(|copies| {
-                    copies
-                        .iter()
-                        .any(|copy| copy.manifest_id.as_ref() == Some(&prior.repository_id))
-                });
+                let explicitly_retired = result
+                    .missing_record(&node.id)
+                    .is_some_and(|record| record.retired_id.as_ref() == Some(&prior.repository_id))
+                    || retirement.is_some_and(|copies| {
+                        copies
+                            .iter()
+                            .any(|copy| copy.manifest_id.as_ref() == Some(&prior.repository_id))
+                    });
                 let rewritten = payload
                     .manifest
                     .as_ref()

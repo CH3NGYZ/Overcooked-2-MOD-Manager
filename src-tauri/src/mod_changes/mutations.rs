@@ -24,6 +24,7 @@ pub(super) use install_block::{InstallBlock, package_identity_conflict, report_i
 use records::{InstallRecords, install_record_path};
 pub(super) use release_ownership::LooseReleaseSearch;
 pub(super) use release_ownership::ReleaseTargetClaims;
+pub(super) use release_ownership::related_release_source;
 pub(super) use release_ownership::{prove_loose_dll, verify_missing_dll_variant};
 pub(super) use roots::{final_framework_package, final_package};
 
@@ -419,7 +420,17 @@ impl Builder<'_> {
             self.retire_copy(&node.id, copy, migration)?;
         }
         let old_files = self.session.trusted.files.get(&node.id);
-        if let Some(old) = old_files {
+        let installed_switch = reinstall.and_then(|record| record.installed_source_file());
+        if let Some((path, expected)) = installed_switch {
+            if migration.is_some_and(|migration| within(path, &migration.from)) {
+                return Err(InstallBlock::MapProtected.report(&node.id, path));
+            }
+            self.ensure_owner(path, &node.id)?;
+            self.remove_retired_file(&node.id, None, game(path), expected)?;
+        }
+        if let Some(old) =
+            old_files.filter(|_| !reinstall.is_some_and(|record| record.switches_source()))
+        {
             let old = old.clone();
             let mut files = old
                 .manifests
@@ -571,7 +582,11 @@ impl Builder<'_> {
                 .release_files
                 .as_ref()
                 .and_then(|files| files.get(&path_key(Path::new(source_relative))));
-            let (target, expected, guarded) = if restoring_missing {
+            let (target, expected, guarded) = if let Some((path, expected)) =
+                installed_switch.filter(|(path, _)| *path == destination)
+            {
+                (game(path), expected.clone(), true)
+            } else if restoring_missing {
                 (game(&destination), Fingerprint::Missing, false)
             } else if let Some(loose) = loose {
                 let expected = if !is_dll

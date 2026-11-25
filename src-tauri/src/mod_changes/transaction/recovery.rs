@@ -95,10 +95,14 @@ impl PreparedTransaction {
     }
 
     fn revert_record(&mut self, index: usize) -> Result<(), String> {
-        if self.journal.records[index].operation.creates_file() {
+        let operation = &self.journal.records[index].operation;
+        if let Some(removal) = super::publication::HeldRemoval::from_operation(operation) {
+            return removal.revert(&self.journal.roots);
+        }
+        if operation.creates_file() {
             return self.revert_new_file(index);
         }
-        let guarded = self.journal.records[index].operation.guards_original();
+        let guarded = operation.guards_original();
         let unpublished = guarded && self.discard_unpublished_file(index)?;
         let record = self.journal.records[index].clone();
         match &record.operation {
@@ -264,10 +268,23 @@ impl PreparedTransaction {
             return Err(paths::INVALID.into());
         }
         for index in 0..self.journal.records.len() {
-            if matches!(
-                self.journal.records[index].operation,
-                RecordedMutation::Tree { .. }
-            ) {
+            let record = &self.journal.records[index];
+            if self.journal.state == JournalState::Committed
+                && let Some(removal) =
+                    super::publication::HeldRemoval::from_operation(&record.operation)
+            {
+                let _step = diagnostics::step(index, "clean_guarded_removal");
+                removal.cleanup(&self.journal.roots).inspect_err(|error| {
+                    diagnostics::record(
+                        &self.journal,
+                        &self.directory,
+                        index,
+                        "clean_guarded_removal",
+                        error,
+                    );
+                })?;
+            }
+            if matches!(record.operation, RecordedMutation::Tree { .. }) {
                 let _step = diagnostics::step(index, "cleanup_record");
                 let phase = self.journal.records[index].phase;
                 if phase == RecordPhase::Pending {

@@ -240,7 +240,7 @@ fn commit_inner(
             &roots,
             mutations,
             Some(op),
-            session.release_target_claims.orphan_original_files(),
+            session.release_target_claims.guarded_original_files(),
         )
         .inspect_err(|_| guard::notify(state, false))?;
         let transaction_id = transaction.id().to_owned();

@@ -5,6 +5,10 @@ use std::path::PathBuf;
 
 #[path = "missing_dll/cross_id.rs"]
 mod cross_id;
+#[path = "missing_dll/hostutilities_replay.rs"]
+mod hostutilities_replay;
+#[path = "missing_dll/regional_mirror.rs"]
+mod regional_mirror;
 #[path = "missing_dll/relocated.rs"]
 mod relocated;
 #[path = "missing_dll/same_id.rs"]

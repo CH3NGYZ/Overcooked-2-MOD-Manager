@@ -1,6 +1,7 @@
 //! Recover MOD release records with no installed primary DLL.
 use super::claims::ReleaseTargetError;
 use super::loose_files::LooseFile;
+use super::source_switch::SourceReplacement;
 use super::*;
 use crate::mod_changes::mutations::records::{InstallRecord, install_record_path};
 
@@ -10,9 +11,10 @@ pub(in crate::mod_changes::mutations) struct MissingInstallRecord {
     pub replacement: TransactionPath,
     pub expected: Fingerprint,
     pub retired_id: Option<String>,
-    previous_paths: BTreeSet<String>,
-    vacant_paths: BTreeSet<String>,
+    pub(super) previous_paths: BTreeSet<String>,
+    pub(super) vacant_paths: BTreeSet<String>,
     pub(super) retired_map_paths: Vec<String>,
+    pub(super) source_switch: Option<SourceReplacement>,
 }
 
 pub(super) struct RecordRecovery {
@@ -21,6 +23,17 @@ pub(super) struct RecordRecovery {
 }
 
 impl MissingInstallRecord {
+    pub(in crate::mod_changes::mutations) fn switches_source(&self) -> bool {
+        self.source_switch.is_some()
+    }
+
+    pub(in crate::mod_changes::mutations) fn installed_source_file(
+        &self,
+    ) -> Option<(&str, &Fingerprint)> {
+        let (path, stamp) = self.source_switch.as_ref()?.installed.as_ref()?;
+        Some((path, &stamp.fingerprint))
+    }
+
     pub(in crate::mod_changes::mutations) fn owns_previous_path(&self, key: &str) -> bool {
         self.previous_paths.contains(key)
     }
@@ -68,7 +81,7 @@ impl MissingInstallRecord {
     }
 }
 
-pub(super) fn endpoints(canonical: &str) -> impl Iterator<Item = String> {
+pub(super) fn endpoints(canonical: &str) -> impl Iterator<Item = String> + use<> {
     std::iter::once(canonical.into()).chain(
         mods::file_state::is_mod_file(Path::new(canonical))
             .then(|| mods::disabled_dll_file(canonical)),
@@ -469,6 +482,7 @@ impl Builder<'_> {
                 previous_paths,
                 vacant_paths,
                 retired_map_paths,
+                source_switch: None,
             },
         }))
     }

@@ -84,6 +84,9 @@ fn check_after(
     roots: &TransactionRoots,
     mut capture: impl FnMut(&Path, RootKind, bool) -> Result<Fingerprint, String>,
 ) -> Result<(), String> {
+    if let Some(removal) = publication::HeldRemoval::from_operation(&record.operation) {
+        removal.verify_applied(roots)?;
+    }
     let mut verify = |target: &TransactionPath, tree: bool, expected: &Fingerprint| {
         let path = check::resolve(target, roots, check::RESULT)?;
         let observed = capture(&path, target.root, tree)
@@ -92,7 +95,7 @@ fn check_after(
         if let Some(FilePublication::Staged(identity)) = &record.publication {
             publication::expect_identity(&path, check::RESULT, identity)?;
         }
-        if record.operation.guards_original() {
+        if record.operation.guards_original() && !record.operation.guards_removal() {
             paths::guard_single_link(&path)?;
         }
         Ok(())
@@ -463,6 +466,10 @@ impl PreparedTransaction {
                             .map_err(|error| check::writing(&target, &error))?;
                         durable::rename_checked(&temporary, &target, true, check::WRITE)?;
                     }
+                } else if let Some(removal) =
+                    publication::HeldRemoval::from_operation(&record.operation)
+                {
+                    removal.apply(&target, &temporary)?;
                 } else {
                     durable::remove_file_checked(&target, before, *require_single_link)?;
                 }

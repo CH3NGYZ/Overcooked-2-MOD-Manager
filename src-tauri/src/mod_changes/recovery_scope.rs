@@ -166,6 +166,9 @@ fn read_paths(
     paths: &mut BTreeSet<PathBuf>,
 ) -> Result<(), String> {
     paths.extend(session.payload_fingerprints.keys().cloned());
+    for target in session.release_target_claims.proof_read_paths() {
+        add_endpoint(paths, roots, &target)?;
+    }
     // The ownership index reads all install manifests as well as both shared map records.
     paths.insert(state.config.manifests_dir());
     paths.insert(state.config.config_path());

@@ -306,6 +306,12 @@ fn stage_asset(
         let retiring = trusted
             .duplicate_releases
             .copies_for(node_id, &candidate.id);
+        let replaced = retiring.or_else(|| {
+            trusted
+                .duplicate_releases
+                .source_switch(node_id, &candidate.id)
+                .map(std::slice::from_ref)
+        });
         let primary = repo.map(|repo| repo.plugin_guid.as_str());
         let (mut provides, member_roles) = read_members(
             trusted,
@@ -313,7 +319,7 @@ fn stage_asset(
             stage_root,
             &mut files,
             repo.map(|_| prerelease),
-            retiring.zip(primary),
+            replaced.zip(primary),
         )?;
         if provides.is_empty() {
             return Err("archive.noInstallableContent".into());
@@ -485,6 +491,8 @@ fn stage_asset(
             stage_root: stage_root.to_path_buf(),
             stage_fingerprint,
             release_files,
+            release_zip_sha256: (downloaded && is_zip && release_asset.is_some())
+                .then(|| sha256.clone()),
             downloaded,
             files,
             manifest: Some(manifest),
@@ -534,7 +542,7 @@ fn read_members(
     stage_root: &Path,
     files: &mut [String],
     prerelease: Option<bool>,
-    retirement: Option<(&[inventory::RetiredModCopy], &str)>,
+    replacement: Option<(&[inventory::RetiredModCopy], &str)>,
 ) -> Result<VerifiedMembers, String> {
     let indices = files
         .iter()
@@ -557,7 +565,7 @@ fn read_members(
         crate::concurrency::workers_from(trusted.config.mod_metadata_concurrency),
         &|_, _| {},
     );
-    let (retiring, primary) = retirement.unzip();
+    let (retiring, primary) = replacement.unzip();
     let previous = trusted
         .inventory
         .nodes
@@ -580,7 +588,6 @@ fn read_members(
         }
         let guid = details.guid.clone().unwrap_or_default();
         let enabled = if primary.is_some_and(|primary| super::evaluate::same_guid(primary, &guid)) {
-            // A confirmed upgrade explicitly keeps its current core enabled.
             true
         } else {
             let exact = previous
@@ -648,12 +655,22 @@ fn create_manifest(
         .files
         .get(node_id)
         .and_then(|files| files.summary.package_id.as_deref());
-    let id = package_id
-        .map(str::to_owned)
-        .unwrap_or_else(|| match origin {
-            SourceOrigin::Manual(preview_id) => format!("manual-{preview_id}"),
-            SourceOrigin::Repository { id, .. } => (*id).to_owned(),
-        });
+    let id = match origin {
+        SourceOrigin::Manual(preview_id) => package_id
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("manual-{preview_id}")),
+        SourceOrigin::Repository { id, .. } => {
+            if trusted
+                .duplicate_releases
+                .source_switch(node_id, &candidate.id)
+                .is_some()
+            {
+                (*id).to_owned()
+            } else {
+                package_id.unwrap_or(id).to_owned()
+            }
+        }
+    };
     let names = repo
         .map(archive::repository_package_names)
         .unwrap_or_else(|| BTreeMap::from([("zh-CN".into(), mods::file_stem_name(file_name))]));

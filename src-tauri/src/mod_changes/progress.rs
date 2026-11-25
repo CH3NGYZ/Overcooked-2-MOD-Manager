@@ -67,13 +67,25 @@ pub(crate) struct PreparationOutcome {
     pub progress: ChangePreparationProgress,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ManifestOverwriteOffer {
     pub repository_id: String,
     pub manifest_path: String,
     pub recorded_paths: Vec<String>,
     pub fingerprint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_switch: Option<SourceSwitch>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SourceSwitch {
+    pub previous_source: crate::models::ModRepositoryBinding,
+    pub next_source: crate::models::ModRepositoryBinding,
+    pub target_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installed_path: Option<String>,
 }
 
 #[derive(Debug)]

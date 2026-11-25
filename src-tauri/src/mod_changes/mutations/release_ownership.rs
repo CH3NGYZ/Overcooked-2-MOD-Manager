@@ -99,10 +99,12 @@ mod loose_files;
 mod manifest_replacement;
 mod missing_install;
 mod search;
+mod source_switch;
 pub(in crate::mod_changes) use claims::ReleaseTargetClaims;
 pub(in crate::mod_changes) use endpoints::verify_missing_dll_variant;
 use loose_files::AllowedClaim;
 pub(in crate::mod_changes) use search::LooseReleaseSearch;
+pub(in crate::mod_changes) use source_switch::related_release_source;
 
 struct ReleaseCore<'repo, 'payload> {
     repo: &'repo ModRepositoryConfig,

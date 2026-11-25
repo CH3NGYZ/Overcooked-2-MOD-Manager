@@ -1,10 +1,14 @@
-import type { DownloadProgress, MapInstallOrigin, Provider, RepositoryRelation } from '../types'
+import type { DownloadProgress, MapInstallOrigin, ModRepositoryBinding, Provider, RepositoryRelation } from '../types'
 
 /** Rust mod_changes/model.rs is the authority for relation and action semantics. */
 export interface RootIntent { node_id: string; candidate_id?: string; enabled: boolean; member_key?: string; asset_name?: string }
 export type DependencyRepairTarget = Pick<RootIntent, 'node_id' | 'candidate_id'>
 export interface ManifestOverwriteIntent { repositoryId: string; fingerprint: string }
-export interface ManifestOverwriteOffer extends ManifestOverwriteIntent { manifestPath: string; recordedPaths: string[] }
+export interface ManifestOverwriteOffer extends ManifestOverwriteIntent {
+  manifestPath: string
+  recordedPaths: string[]
+  sourceSwitch?: { previousSource: ModRepositoryBinding; nextSource: ModRepositoryBinding; targetPath: string; installedPath?: string | null } | null
+}
 export type ChangeRequest = { manifestOverwrite?: ManifestOverwriteIntent } & ({
   roots: RootIntent[]
   repair_dependencies_of?: never

@@ -1,6 +1,6 @@
 use super::loose_files::{LooseFile, exact_replacement};
 use super::manifest_replacement::ManifestReplacement;
-use super::missing_install::{MissingInstallRecord, repository_id_is_configured};
+use super::missing_install::{MissingInstallRecord, endpoints, repository_id_is_configured};
 use super::*;
 use crate::mod_changes::progress::PreparationError;
 use crate::mod_changes::session::UntrackedOverwrite;
@@ -38,6 +38,26 @@ impl ReleaseTargetClaims {
         self.loose.is_empty() && self.missing_records.is_empty() && self.orphan_records.is_empty()
     }
 
+    pub(in crate::mod_changes) fn proof_read_paths(&self) -> impl Iterator<Item = TransactionPath> {
+        self.loose
+            .values()
+            .flat_map(|file| endpoints(&mods::canonical_dll_name(&file.relative)))
+            .chain(self.missing_records.values().flat_map(|record| {
+                record
+                    .vacant_paths
+                    .iter()
+                    .chain(&record.retired_map_paths)
+                    .cloned()
+            }))
+            .chain(self.orphan_records.values().flat_map(|record| {
+                record
+                    .recorded_paths
+                    .iter()
+                    .flat_map(|path| endpoints(&mods::canonical_dll_name(path)))
+            }))
+            .map(|relative| game(&relative))
+    }
+
     pub fn overwrites(&self) -> Vec<UntrackedOverwrite> {
         self.loose
             .iter()
@@ -71,34 +91,48 @@ impl ReleaseTargetClaims {
         self.orphan_records.get(owner)
     }
 
-    pub fn check_orphan_replacements(
+    pub fn check_manifest_replacements(
         &self,
         session: &PlanSession,
         roots: &TransactionRoots,
         changes: &[OwnedMutation],
     ) -> Result<(), PreparationError> {
         let intent = session.wire_request.manifest_overwrite.is_some();
+        let confirmations = self
+            .orphan_records
+            .iter()
+            .filter_map(|(owner, record)| {
+                Some((owner, &record.relative, None, record.confirmation.as_ref()?))
+            })
+            .chain(self.missing_records.iter().filter_map(|(owner, record)| {
+                let switch = record.source_switch.as_ref()?;
+                Some((
+                    owner,
+                    &record.relative,
+                    Some(&switch.target),
+                    &switch.confirmation,
+                ))
+            }));
         if intent
-            && !self
-                .orphan_records
-                .values()
-                .any(ManifestReplacement::fulfills_intent)
+            && !confirmations
+                .clone()
+                .any(|(_, _, _, confirmation)| confirmation.approved)
         {
             return Err("modChanges.targetChanged".into());
         }
-        let mut pending = self
-            .orphan_records
-            .iter()
-            .filter(|(_, record)| record.confirmation_required());
+        let mut pending = confirmations.filter(|(_, _, _, confirmation)| !confirmation.approved);
         self.verify_orphan_game_writes(roots, changes)?;
-        if let Some((owner, record)) = pending.next() {
-            return if !intent && pending.next().is_none() {
-                Err(record.offer_error(owner, roots))
+        if let Some((owner, relative, target, confirmation)) = pending.next() {
+            let message = if let Some(target) = target {
+                report_install_block(
+                    "modChanges.installTargetClaimedWithManifests",
+                    owner,
+                    &[("path", target), ("manifests", relative)],
+                )
             } else {
-                Err(InstallBlock::RecordExists
-                    .report(owner, &record.relative)
-                    .into())
+                InstallBlock::RecordExists.report(owner, relative)
             };
+            return Err(confirmation.failure(message, !intent && pending.next().is_none()));
         }
         Ok(())
     }
@@ -114,12 +148,29 @@ impl ReleaseTargetClaims {
         Ok(())
     }
 
-    pub fn orphan_original_files(
+    pub fn guarded_original_files(
         &self,
     ) -> Vec<(TransactionPath, crate::file_metadata::FileIdentity)> {
         self.orphan_records
             .values()
             .map(|record| (data(&record.relative), record.stamp.identity.clone()))
+            .chain(
+                self.missing_records
+                    .values()
+                    .filter_map(|record| Some((record, record.source_switch.as_ref()?)))
+                    .flat_map(|(record, switch)| {
+                        std::iter::once((
+                            data(&record.relative),
+                            switch.manifest_stamp.identity.clone(),
+                        ))
+                        .chain(
+                            switch
+                                .installed
+                                .iter()
+                                .map(|(path, stamp)| (game(path), stamp.identity.clone())),
+                        )
+                    }),
+            )
             .collect()
     }
 
@@ -205,15 +256,16 @@ impl ReleaseTargetClaims {
         let config = self
             .missing_records
             .values()
-            .any(|record| record.retired_id.is_some())
+            .any(|record| record.retired_id.is_some() && record.source_switch.is_none())
             .then(|| state.config.load())
             .transpose()
             .map_err(|_| "modChanges.targetChanged")?;
         for (owner, record) in &self.missing_records {
             if let Some(id) = &record.retired_id
-                && (config
-                    .as_ref()
-                    .is_some_and(|config| repository_id_is_configured(config, id))
+                && ((record.source_switch.is_none()
+                    && config
+                        .as_ref()
+                        .is_some_and(|config| repository_id_is_configured(config, id)))
                     || Fingerprint::capture(&data(&record.relative).resolve(roots)?)?
                         != Fingerprint::Missing)
             {
@@ -253,10 +305,25 @@ impl ReleaseTargetClaims {
             let levels = crate::mod_changes::level_trees::selected_bundled_level_root(
                 &node.id, solved, current, payload,
             )?;
-            if node.kind == NodeKind::Mod
-                && let Some(recovery) =
-                    builder.missing_install_record(&node.id, payload, levels.as_deref())?
-            {
+            let recovery = if node.kind == NodeKind::Mod {
+                match builder.source_switch_record(&node.id, payload, levels.as_deref())? {
+                    Some(record) => Some(record),
+                    None if session
+                        .trusted
+                        .duplicate_releases
+                        .source_switch(&node.id, &payload.candidate.id)
+                        .is_some() =>
+                    {
+                        return Err(InstallBlock::VerificationChanged
+                            .report(&node.id, &node.id)
+                            .into());
+                    }
+                    None => builder.missing_install_record(&node.id, payload, levels.as_deref())?,
+                }
+            } else {
+                None
+            };
+            if let Some(recovery) = recovery {
                 let record = recovery.record;
                 if !reserved_records.insert(path_key(Path::new(&record.relative))) {
                     return Err(InstallBlock::InstallRecord

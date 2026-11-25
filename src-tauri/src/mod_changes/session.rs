@@ -236,6 +236,7 @@ pub(crate) struct Payload {
     pub stage_fingerprint: Fingerprint,
     /// Exact files in a Release ZIP verified against its cached SHA-256.
     pub release_files: Option<Arc<HashMap<String, Fingerprint>>>,
+    pub release_zip_sha256: Option<String>,
     pub downloaded: bool,
     pub files: Vec<String>,
     pub manifest: Option<crate::archive::InstallManifest>,

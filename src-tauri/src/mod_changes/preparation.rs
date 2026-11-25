@@ -430,9 +430,6 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
     if live_game::touches_mods(session, &roots, &changes)? {
         guard::ensure_game_stopped(state, &roots.game_root)?;
     }
-    session
-        .release_target_claims
-        .check_orphan_replacements(session, &roots, &changes)?;
     session.plan.untracked_overwrites = session.release_target_claims.overwrites();
     if let Some(batch) = &session.map_payload {
         session.plan.untracked_overwrites.extend(batch.overwrites());
@@ -442,6 +439,9 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
         .lock()
         .map_err(|_| "lock.poisoned".to_string())?;
     let review = recovery_scope::review(state, session, &roots, &changes, None)?;
+    session
+        .release_target_claims
+        .check_manifest_replacements(session, &roots, &changes)?;
     session.plan.recovery_conflicts = review.conflicts;
     session.plan.recovery_approval = review.approval;
     session.mutations = Some(changes);

@@ -251,7 +251,19 @@ impl RecordedMutation {
     }
 
     pub(super) fn tracks_publication(&self) -> bool {
-        self.creates_file() || self.guards_original()
+        self.creates_file() || (self.guards_original() && !self.guards_removal())
+    }
+
+    pub(super) fn guards_removal(&self) -> bool {
+        matches!(
+            self,
+            Self::File {
+                original_identity: Some(_),
+                after: Fingerprint::Missing,
+                payload: None,
+                ..
+            }
+        )
     }
 
     pub(super) fn creates_file(&self) -> bool {

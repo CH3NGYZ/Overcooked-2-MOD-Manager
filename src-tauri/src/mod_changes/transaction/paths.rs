@@ -205,8 +205,9 @@ pub(super) fn validate_records(
             } => {
                 if original_identity.is_some()
                     && (!matches!(before, super::types::Fingerprint::File { .. })
-                        || !matches!(after, super::types::Fingerprint::File { .. })
-                        || payload.is_none()
+                        || (!record.operation.guards_removal()
+                            && (!matches!(after, super::types::Fingerprint::File { .. })
+                                || payload.is_none()))
                         || backup.is_none()
                         || !require_single_link)
                 {

@@ -917,6 +917,7 @@ fn framework_directory_change_and_map_update_commit_with_all_map_and_member_swit
             stage_fingerprint: Fingerprint::capture(&payload_root).unwrap(),
             stage_root: payload_root,
             release_files: None,
+            release_zip_sha256: None,
             downloaded: false,
             files: vec![new_dll.into()],
             manifest: Some(archive::new_manifest(

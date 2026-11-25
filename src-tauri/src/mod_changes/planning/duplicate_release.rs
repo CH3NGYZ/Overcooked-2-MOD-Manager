@@ -18,6 +18,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod source_switch;
+
 fn installed_groups(trusted: &TrustedInventory) -> impl Iterator<Item = (&str, &NodeFiles)> {
     trusted.files.values().filter_map(|files| {
         (files.summary.kind == NodeKind::Mod && !files.summary.dll_files.is_empty())
@@ -59,6 +61,9 @@ pub(super) fn attach_root(
     if !root.intent.enabled || root.intent.member_key.is_some() {
         return Ok(false);
     }
+    if source_switch::attach_root(trusted, root, repo_id, data_root)? {
+        return Ok(true);
+    }
     let Some(repo) = trusted.config.repositories.iter().find(|r| r.id == repo_id) else {
         return Ok(false);
     };
@@ -89,7 +94,7 @@ pub(super) fn attach_root(
             error
         }
     })?;
-    attach(trusted, repo_id, candidate, proof);
+    attach(trusted, repo_id, candidate, proof, None);
     Ok(true)
 }
 
@@ -156,7 +161,7 @@ pub(super) fn attach_dependencies(
             }
         }
         if let Some((candidate, proof)) = upgrade {
-            attach(trusted, &repo_id, candidate, proof);
+            attach(trusted, &repo_id, candidate, proof, None);
         } else {
             if let Some(node) = trusted
                 .inventory
@@ -341,6 +346,7 @@ fn attach(
     repo_id: &str,
     candidate: Candidate,
     proof: Consolidation,
+    source_switch: Option<RetiredModCopy>,
 ) {
     let Consolidation {
         node: mut combined,
@@ -354,6 +360,9 @@ fn attach(
     let candidate_id = candidate.id.clone();
     files.summary.node_id.clone_from(&id);
     files.summary.enabled = combined.enabled;
+    if source_switch.is_some() {
+        files.summary.repository_id = Some(repo_id.into());
+    }
     files.summary.candidates.clear();
     files.summary.candidates.push(inventory::CandidateSummary {
         id: candidate.id.clone(),
@@ -372,6 +381,7 @@ fn attach(
         DuplicateReleaseUpgrade {
             candidate_id,
             copies: retired,
+            source_switch,
         },
     );
 }

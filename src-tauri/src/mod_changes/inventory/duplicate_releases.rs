@@ -13,18 +13,34 @@ pub(in crate::mod_changes) struct DuplicateReleases {
 pub(in crate::mod_changes) struct DuplicateReleaseUpgrade {
     pub(in crate::mod_changes) candidate_id: String,
     pub(in crate::mod_changes) copies: Vec<RetiredModCopy>,
+    pub(in crate::mod_changes) source_switch: Option<RetiredModCopy>,
 }
 
 impl DuplicateReleases {
+    fn upgrade_for(&self, node_id: &str, candidate_id: &str) -> Option<&DuplicateReleaseUpgrade> {
+        self.upgrades
+            .get(node_id)
+            .filter(|upgrade| upgrade.candidate_id == candidate_id)
+    }
+
     pub(in crate::mod_changes) fn copies_for(
         &self,
         node_id: &str,
         candidate_id: &str,
     ) -> Option<&[RetiredModCopy]> {
-        self.upgrades
-            .get(node_id)
-            .filter(|upgrade| upgrade.candidate_id == candidate_id)
+        self.upgrade_for(node_id, candidate_id)
+            .filter(|upgrade| upgrade.source_switch.is_none())
             .map(|upgrade| upgrade.copies.as_slice())
+    }
+
+    pub(in crate::mod_changes) fn source_switch(
+        &self,
+        node_id: &str,
+        candidate_id: &str,
+    ) -> Option<&RetiredModCopy> {
+        self.upgrade_for(node_id, candidate_id)?
+            .source_switch
+            .as_ref()
     }
 
     pub(in crate::mod_changes) fn selected(
@@ -33,7 +49,7 @@ impl DuplicateReleases {
         solved: &Inventory,
     ) -> Result<BTreeMap<String, Vec<RetiredModCopy>>, String> {
         let mut selected = BTreeMap::new();
-        for id in self.upgrades.keys() {
+        for (id, upgrade) in &self.upgrades {
             let before = original.nodes.iter().find(|node| &node.id == id);
             let after = solved.nodes.iter().find(|node| &node.id == id);
             let (Some(before), Some(after)) = (before, after) else {
@@ -42,13 +58,14 @@ impl DuplicateReleases {
             if before.current == after.current && before.enabled == after.enabled {
                 continue;
             }
-            let copies = after
+            after
                 .current
                 .as_ref()
-                .filter(|_| after.enabled)
-                .and_then(|candidate| self.copies_for(id, &candidate.id))
+                .filter(|candidate| after.enabled && candidate.id == upgrade.candidate_id)
                 .ok_or(MULTIPLE_INSTALLED_COPIES)?;
-            selected.insert(id.clone(), copies.to_vec());
+            if upgrade.source_switch.is_none() {
+                selected.insert(id.clone(), upgrade.copies.clone());
+            }
         }
         Ok(selected)
     }

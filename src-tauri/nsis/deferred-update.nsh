@@ -1,4 +1,5 @@
 Var OC2DeferredUpdate
+Var OC2AdminDeferredUpdate
 Var OC2RestartAfterUpdate
 Var OC2StagedMain
 Var OC2UpdateOutcome
@@ -46,8 +47,22 @@ FunctionEnd
 
 Function OC2WaitForUpdateOwner
   ${GetParameters} $R0
+  ${GetOptions} $R0 "/OC2AdminDeferred" $R2
+  ${IfNot} ${Errors}
+  !ifdef OC2_ADMIN_DEFERRED_UPDATE
+    ${If} $R2 != ""
+      Goto oc2_update_wait_failed
+    ${EndIf}
+    StrCpy $OC2AdminDeferredUpdate 1
+  !else
+    Goto oc2_update_wait_failed
+  !endif
+  ${EndIf}
   ${GetOptions} $R0 "/OC2WaitForPid" $R1
   ${If} ${Errors}
+    ${If} $OC2AdminDeferredUpdate = 1
+      Goto oc2_update_wait_failed
+    ${EndIf}
     Return
   ${EndIf}
   StrCpy $OC2DeferredUpdate 1
@@ -96,6 +111,7 @@ Function OC2WaitForUpdateOwner
   ${GetOptions} $R0 "/OC2AutoLaunch" $R2
   ${IfNot} ${Errors}
     ${If} $R2 != ""
+    ${OrIf} $OC2AdminDeferredUpdate = 1
       Goto oc2_update_wait_failed
     ${EndIf}
     StrCpy $OC2RestartAfterUpdate 1

@@ -24,8 +24,14 @@ test('blocked and busy plans cannot confirm; failure can only replan; preparatio
 })
 test('the shared plan dialog alternates between the first-install note and plan confirmation',()=>{
  assert.match(dialog,/<ModInstallNoteDialog v-if="installNotes\.length && plan" :key="plan\.plan_id" :plan-id="plan\.plan_id"\s+:notes="installNotes" :apply-on-read="!!state\?\.noteOnlyReview"\s+@continue="changes\.acceptInstallNotes" @cancel="changes\.cancel"\s*\/>\s*<AppModal v-else/)
- assert.match(dialog,/<AppModal v-else [^>]*max-width="90%" max-height="90%" fill/)
  assert.doesNotMatch(dialog,/v-html|setInterval|readingSeconds/)
+})
+test('the plan modal keeps the shared content sizing and scroll with 90% caps',()=>{
+ const modal=dialog.match(/<AppModal v-else[^>]*>/)?.[0] ?? ''
+ assert.match(modal,/\smax-width="90%"/)
+ assert.match(modal,/\smax-height="90%"/)
+ assert.doesNotMatch(modal,/\s:?fill(?:\s|=|>)/)
+ assert.doesNotMatch(modal,/\s:?scrollable(?:\s|=|>)/)
 })
 test('map selection and manual preview never pre-uninstall or execute individual rows',()=>{
  const map=read('src/composables/useLevelSetImport.ts'),manual=read('src/composables/useModInstallFlow.ts')

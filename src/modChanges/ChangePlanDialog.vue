@@ -123,7 +123,7 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
     :notes="installNotes" :apply-on-read="!!state?.noteOnlyReview"
     @continue="changes.acceptInstallNotes" @cancel="changes.cancel" />
   <AppModal v-else :key="applyReview ? 'apply-review' : 'prepare-review'"
-    :show="!!state && !state.silent" :title="t(applyReview ? 'modChanges.applyTitle' : 'modChanges.title')" :z-index="2599" max-width="90%" max-height="90%" fill
+    :show="!!state && !state.silent" :title="t(applyReview ? 'modChanges.applyTitle' : 'modChanges.title')" :z-index="2599" max-width="90%" max-height="90%"
     :closable="canCancel" :mask-closable="false" :auto-focus="!applyReview" card-class="mod-changes-modal"
     @update:show="(show: boolean) => { if (!show) void changes.cancel() }">
     <template #header-extra>

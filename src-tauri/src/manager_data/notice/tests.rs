@@ -40,8 +40,16 @@ fn supported_languages_render_stage_paths_and_decode_target_reason() {
         "tools.migrateDataTargetExists",
         &[("path", encoded_target)],
     ));
-    for locale in ["zh-CN", "zh-TW", "en", "ko", "ja"] {
-        let text = format_failure(&record, Some(source), locale);
+    let marker_dir = tempfile::tempdir().unwrap();
+    let marker = marker_dir.path().join("install-language.txt");
+    assert!(read_install_language(marker_dir.path()).is_none());
+    for locale in SUPPORTED_LANGUAGES {
+        std::fs::write(&marker, format!("{locale}\r\n")).unwrap();
+        let preference = read_install_language(marker_dir.path()).unwrap();
+        assert_eq!(preference, locale);
+        let selected = language(Some(&preference));
+        assert_eq!(selected, locale);
+        let text = format_failure(&record, Some(source), &selected);
         for line in [
             message("dataOperationCopying", locale).to_owned(),
             path_line("dataOperationSource", locale, source),
@@ -53,7 +61,30 @@ fn supported_languages_render_stage_paths_and_decode_target_reason() {
             assert!(text.lines().any(|actual| actual == line));
         }
         assert!(!text.contains("tools.migrateDataTargetExists"));
-        assert_eq!(language(Some(locale)), locale);
+    }
+    for invalid in ["", "de-DE", "pt-br", "unsupported"] {
+        std::fs::write(&marker, invalid).unwrap();
+        assert!(read_install_language(marker_dir.path()).is_none());
+    }
+}
+
+#[test]
+fn native_messages_cover_every_supported_language_and_path_parameter() {
+    for (key, translations) in MESSAGES.as_object().unwrap() {
+        assert_eq!(
+            translations.as_object().unwrap().len(),
+            SUPPORTED_LANGUAGES.len(),
+            "{key}"
+        );
+        for locale in SUPPORTED_LANGUAGES {
+            let value = message(key, locale);
+            assert!(!value.trim().is_empty(), "{key} {locale}");
+            assert_eq!(
+                value.matches("{path}").count(),
+                message(key, "en").matches("{path}").count(),
+                "{key} {locale}"
+            );
+        }
     }
 }
 
@@ -151,14 +182,24 @@ fn stale_token_cannot_claim_or_replace_new_failure() {
 #[test]
 fn system_codes_map_to_supported_translations() {
     for (code, expected) in [
-        ("zh-Hant", Some("zh-TW")),
+        ("ZH-hAnT-HK", Some("zh-TW")),
         ("zh-HK", Some("zh-TW")),
+        ("zh-Hans-TW", Some("zh-CN")),
         ("zh_CN.UTF-8", Some("zh-CN")),
-        ("en-GB", Some("en")),
-        ("ko-KR", Some("ko")),
+        ("en-GB-u-ca-iso8601", Some("en")),
+        ("de_DE.UTF-8", Some("de")),
+        (" fr-CA ", Some("fr")),
+        ("IT-ch", Some("it")),
+        ("KO-kr", Some("ko")),
+        ("es_419.UTF-8", Some("es-ES")),
+        ("ru-RU", Some("ru")),
         ("ja_JP", Some("ja")),
-        ("de-DE", None),
+        ("pl_PL", Some("pl")),
+        ("pt_PT@euro", Some("pt-BR")),
+        ("C.UTF-8", None),
+        ("nl-NL", None),
+        ("", None),
     ] {
-        assert_eq!(system_code(code), expected);
+        assert_eq!(system_code(code), expected, "{code}");
     }
 }

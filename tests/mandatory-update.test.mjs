@@ -103,7 +103,7 @@ test('app and settings use one updater, with modal actions distinct from quit an
   assert.match(app, /initializeAppUpdates\(\)/)
   assert.match(source('src/views/SettingsView.vue'), /await checkForAppUpdate\(\)/)
   assert.match(app, /<AppCloseGuard v-slot="\{ applyUpdate, recoverUpdate, confirmingClose \}">\s*<AppTitleBar[^>]+@apply-update="applyUpdate"\s*\/>\s*<UpdatePrompt :confirming-close="confirmingClose" @apply-update="applyUpdate" @recover-update="recoverUpdate"/)
-  assert.match(app, /:inert="appUpdateBlocksOperations\(\)"/)
+  assert.match(app, /:inert="choosingLanguage \|\| appUpdateBlocksOperations\(\)"/)
   const prompt = source('src/components/UpdatePrompt.vue')
   assert.match(prompt, /:closable="!recovery && !applying" :mask-closable="false"/)
   assert.match(prompt, /<MarkdownBody v-if="notes"[^>]+:source="notes"/)

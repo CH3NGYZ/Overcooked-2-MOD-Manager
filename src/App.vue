@@ -10,6 +10,7 @@ import AppCloseGuard from './components/AppCloseGuard.vue'
 import AppWebLinks from './components/AppWebLinks.vue'
 import DownloadStrip from './components/DownloadStrip.vue'
 import UpdatePrompt from './components/UpdatePrompt.vue'
+import StartupLanguageDialog from './components/StartupLanguageDialog.vue'
 import StartupPreflightDialog from './components/StartupPreflightDialog.vue'
 import GameOperationDialog from './components/GameOperationDialog.vue'
 import DependencyNavigationDialog from './components/DependencyNavigationDialog.vue'
@@ -26,14 +27,15 @@ import { endNavigation, expectPageScroll, pageAnimation } from './pageTransition
 import { pageTitleOverride, resetPageHeader } from './pageHeader'
 import { api, watchDataProvider } from './services/tauri'
 import { isTauri } from './runtime'
-import type { PublicConfig } from './types'
 import { appUpdateBlocksOperations } from './appUpdateState'
 import { initializeAppUpdates } from './composables/useAppUpdates'
 import { naiveTheme, themeOverrides } from './theme'
 import { naiveDateLocale, naiveLocale, t } from './i18n'
+import { hasStoredLocale } from './locale/state'
 import { setTutorialProgressSink, onTutorialSettled, startTutorialIfFirstRun } from './tutorial/engine'
 
 const version = ref('')
+const choosingLanguage = ref(!hasStoredLocale())
 
 /** 页头标题：阶段覆盖值优先，否则用路由 meta；两者都过翻译表。 */
 const route = useRoute()
@@ -60,8 +62,7 @@ const dropHintText = computed(
  * 安装器启动后的首次仓库刷新：与手动整源刷新走同一引擎。
  * 放在 App 层而不是 MOD 安装页，切换页面不会重复触发。
  *
- * 门控在下面的 `onMounted` 里：先注册 `onTutorialSettled`，再决定是否启动
- * 教程，刷新总在教程之后发生，不会在遮罩底下转圈。
+ * 语言确认后先启动教程，再等待教程结算；刷新不会在遮罩底下转圈。
  */
 const repositoryRefresh = useModRepositoryRefresh()
 const startupPreflight = useStartupPreflight(() => {
@@ -122,6 +123,21 @@ function onPageBeforeEnter() {
 let providerUnlisten: (() => void) | undefined
 let providerDisposed = false
 onBeforeUnmount(() => { providerDisposed = true; providerUnlisten?.() })
+
+async function startOnboarding() {
+  const desktop = isTauri()
+  const config = desktop ? await api.config().catch(() => null) : null
+  if (providerDisposed) return
+  startTutorialIfFirstRun(config?.tutorial_watched_steps ?? [])
+  onTutorialSettled(() => { void startupPreflight.start() })
+  if (desktop) initializeAppUpdates()
+}
+
+function finishLanguageSelection() {
+  choosingLanguage.value = false
+  void startOnboarding()
+}
+
 onMounted(() => {
   startGameWatch()
   if (isTauri()) void watchDataProvider(() => { void useDashboard().reloadConfig() })
@@ -134,43 +150,8 @@ onMounted(() => {
   setTutorialProgressSink((ids) => {
     api.saveSettings({ tutorial_watched_steps: ids }).catch(() => undefined)
   })
-  /*
-   * 启动刷新推迟到教程结束（讲完或跳过）：教程期间满屏刷新转圈会盖住
-   * 要讲的卡片，用户读卡片时数据还在跳。没在教程里时 onTutorialSettled
-   * 立刻回调，行为与没有教程时一致。
-   *
-   * 注意顺序：必须先注册这个回调、再启动教程。否则 `api.config()` 还没
-   * 回来时 onTutorialSettled 会因为「当前没在教程里」直接放行刷新。
-   */
-  const settleRefresh = () => {
-    onTutorialSettled(() => {
-      void startupPreflight.start()
-    })
-  }
-  // 浏览器预览没有 Tauri IPC：跳过版本读取与启动更新检查，避免控制台噪音。
-  if (!isTauri()) {
-    startTutorialIfFirstRun()
-    settleRefresh()
-    return
-  }
-  getVersion().then((value) => { version.value = value }).catch(() => undefined)
-  initializeAppUpdates()
-  void (async () => {
-    /*
-     * 配置读取只服务教程进度（只播没看过的步骤）。
-     *
-     * 读不到配置也要让教程按「都没看过」跑：不能因为一次 IPC 失败，
-     * 让首启用户永远看不到教程。
-     */
-    let config: PublicConfig | null = null
-    try {
-      config = await api.config()
-    } catch {
-      // 按首次启动处理
-    }
-    startTutorialIfFirstRun(config?.tutorial_watched_steps ?? [])
-    settleRefresh()
-  })()
+  if (isTauri()) getVersion().then((value) => { version.value = value }).catch(() => undefined)
+  if (!choosingLanguage.value) void startOnboarding()
 })
 </script>
 
@@ -189,10 +170,10 @@ onMounted(() => {
         <AppWebLinks />
         <div class="app-shell">
           <AppCloseGuard v-slot="{ applyUpdate, recoverUpdate, confirmingClose }">
-            <AppTitleBar :version="version" @apply-update="applyUpdate" />
+            <AppTitleBar :version="version" :choosing-language="choosingLanguage" @apply-update="applyUpdate" />
             <UpdatePrompt :confirming-close="confirmingClose" @apply-update="applyUpdate" @recover-update="recoverUpdate" />
           </AppCloseGuard>
-          <div class="app-body" :inert="appUpdateBlocksOperations()">
+          <div class="app-body" :inert="choosingLanguage || appUpdateBlocksOperations()">
             <AppSidebar />
             <main class="app-main">              <header class="page-header">
                 <div class="page-header-title">
@@ -215,7 +196,7 @@ onMounted(() => {
                 <Transition :name="pageAnimation" mode="out-in" @before-enter="onPageBeforeEnter"
                   @after-enter="endNavigation">
                   <div class="page-body" :key="String($route.name)">
-                    <router-view />
+                    <router-view v-if="!choosingLanguage" />
                   </div>
                 </Transition>
               </n-scrollbar>
@@ -237,7 +218,8 @@ onMounted(() => {
         <ChangePlanDialog />
         <TransactionRecoveryDialog />
         <StartupPreflightDialog :state="startupPreflightState" :gate="startupPreflight" />
-        <TutorialOverlay v-if="!appUpdateBlocksOperations()" />
+        <StartupLanguageDialog v-if="choosingLanguage" @confirmed="finishLanguageSelection" />
+        <TutorialOverlay v-else-if="!appUpdateBlocksOperations()" />
       </n-dialog-provider>
     </n-message-provider>
   </n-config-provider>

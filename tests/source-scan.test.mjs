@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import test from 'node:test'
+import { LOCALE_CODES } from '../src/locale/types.ts'
 import { collectRustTags, sourceFiles } from './helpers/source-scan.mjs'
 import { auditLocaleSources, readLocaleTables } from './helpers/locale-tables.mjs'
 
@@ -14,7 +15,7 @@ function fixture(t) {
   return dir
 }
 
-const entry = { 'zh-CN': '{name}', 'zh-TW': '{name}', en: '{name}', ko: '{name}', ja: '{name}' }
+const entry = Object.fromEntries(LOCALE_CODES.map(locale => [locale, '{name}']))
 
 test('Rust 递归扫描保留嵌套路径并发现未登记 tag', t => {
   const dir = fixture(t)

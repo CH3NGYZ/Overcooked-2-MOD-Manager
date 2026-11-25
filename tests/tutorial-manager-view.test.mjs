@@ -4,6 +4,7 @@ import { registerHooks } from 'node:module'
 import test from 'node:test'
 import { compileScript, parse } from '@vue/compiler-sfc'
 import { createRenderer, h, nextTick, shallowRef } from 'vue'
+import { LOCALE_CODES } from '../src/locale/types.ts'
 
 // Compile the production SFC setup and mount it with the real Vue lifecycle.
 // Only application boundaries vary; Node does not emulate modal animations.
@@ -215,13 +216,12 @@ test('tools retain direct replay and wire the manager through the unified modal 
   assert.doesNotMatch(manager, /\{\{\s*(?:step|section)\.id\s*\}\}|v-html|api\.(?:save|update|set)/)
 })
 
-test('manager strings retain all five languages with matching placeholders', () => {
-  const locales = ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']
+test('manager strings retain all supported languages with matching placeholders', () => {
   for (const [key, messages] of Object.entries(tutorialManager)) {
     assert.ok(key.startsWith('manager.'))
-    assert.deepEqual(Object.keys(messages).sort(), [...locales].sort(), key)
+    assert.deepEqual(Object.keys(messages).sort(), [...LOCALE_CODES].sort(), key)
     const placeholders = text => [...text.matchAll(/\{(\w+)\}/g)].map(match => match[1]).sort()
-    for (const locale of locales) {
+    for (const locale of LOCALE_CODES) {
       assert.ok(messages[locale].trim(), `${key}:${locale}`)
       assert.deepEqual(placeholders(messages[locale]), placeholders(messages.en), `${key}:${locale}`)
     }

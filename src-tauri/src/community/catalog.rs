@@ -98,6 +98,22 @@ pub fn source(provider: &Provider) -> RepositorySource {
             ("en".into(), format!("{name} community repositories")),
             ("ko".into(), format!("{name} 커뮤니티 저장소")),
             ("ja".into(), format!("{name} コミュニティリポジトリ")),
+            ("de".into(), format!("Community-Repositories auf {name}")),
+            ("fr".into(), format!("Dépôts de la communauté sur {name}")),
+            ("it".into(), format!("Repository della community su {name}")),
+            (
+                "es-ES".into(),
+                format!("Repositorios de la comunidad en {name}"),
+            ),
+            ("ru".into(), format!("Репозитории сообщества на {name}")),
+            (
+                "pl".into(),
+                format!("Repozytoria społeczności w serwisie {name}"),
+            ),
+            (
+                "pt-BR".into(),
+                format!("Repositórios da comunidade no {name}"),
+            ),
         ]
         .into(),
         url: match provider {

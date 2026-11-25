@@ -18,10 +18,11 @@ const updates = readFileSync(new URL('../src/composables/useAppUpdates.ts', impo
 const commands = readFileSync(new URL('../src-tauri/src/app_update/cache.rs', import.meta.url), 'utf8')
 
 test('启动更新检查恒开，不再有开关门控', () => {
-  const mountBlock = app.slice(app.indexOf('onMounted('), app.indexOf('</script>'))
+  const startup = app.slice(app.indexOf('async function startOnboarding('), app.indexOf('</script>'))
   assert.equal(app.includes('check_updates_on_start'), false, 'App.vue 仍在读已删除的开关')
-  assert.match(mountBlock, /api\.config\(\)/, '启动路径要先读配置（教程进度也用它）')
-  assert.match(mountBlock, /initializeAppUpdates\(\)/, '启动路径必须无条件发起一次检查')
+  assert.match(startup, /api\.config\(\)/, '启动路径要读配置中的教程进度')
+  assert.match(startup, /initializeAppUpdates\(\)/, '启动流程始终发起一次检查')
+  assert.match(startup, /onMounted\(\(\) => \{[\s\S]*if \(!choosingLanguage\.value\) void startOnboarding\(\)/)
   assert.match(updates, /void checkForAppUpdate\(false\)/)
 })
 

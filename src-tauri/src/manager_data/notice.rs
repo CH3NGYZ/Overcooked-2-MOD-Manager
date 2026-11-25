@@ -9,11 +9,20 @@ static MESSAGES: LazyLock<serde_json::Value> = LazyLock::new(|| {
     .expect("bundled data operation translations")
 });
 
-pub(crate) fn supported_language(value: &str) -> Option<&str> {
-    match value.trim() {
-        value @ ("zh-CN" | "zh-TW" | "en" | "ko" | "ja") => Some(value),
-        _ => None,
-    }
+const SUPPORTED_LANGUAGES: [&str; 12] = [
+    "en", "de", "fr", "it", "ko", "es-ES", "zh-CN", "zh-TW", "ru", "ja", "pl", "pt-BR",
+];
+
+pub(super) fn supported_language(value: &str) -> Option<&'static str> {
+    let value = value.trim();
+    SUPPORTED_LANGUAGES
+        .into_iter()
+        .find(|language| *language == value)
+}
+
+fn read_install_language(root: &Path) -> Option<String> {
+    let value = std::fs::read_to_string(root.join("install-language.txt")).ok()?;
+    supported_language(&value).map(str::to_owned)
 }
 
 pub(crate) fn install_language() -> Option<String> {
@@ -21,14 +30,11 @@ pub(crate) fn install_language() -> Option<String> {
         .ok()
         .into_iter()
         .chain(crate::user_paths::root().ok())
-        .find_map(|root| {
-            let value = std::fs::read_to_string(root.join("install-language.txt")).ok()?;
-            supported_language(&value).map(str::to_owned)
-        })
+        .find_map(|root| read_install_language(&root))
 }
 
 #[cfg(windows)]
-fn system_language() -> Option<String> {
+fn system_language() -> Option<&'static str> {
     use winapi::um::winnls::{
         GetUserDefaultLocaleName, GetUserDefaultUILanguage, LCIDToLocaleName,
     };
@@ -51,12 +57,11 @@ fn system_language() -> Option<String> {
         .filter(|(_, length)| *length > 1)
         .find_map(|(buffer, length)| {
             system_code(&String::from_utf16_lossy(&buffer[..length as usize - 1]))
-                .map(str::to_owned)
         })
 }
 
 #[cfg(target_os = "macos")]
-fn system_language() -> Option<String> {
+fn system_language() -> Option<&'static str> {
     use std::ffi::{CStr, c_char, c_void};
 
     #[link(name = "CoreFoundation", kind = "framework")]
@@ -94,7 +99,6 @@ fn system_language() -> Option<String> {
                 .to_str()
                 .ok()
                 .and_then(system_code)
-                .map(str::to_owned)
         });
         CFRelease(languages);
         result
@@ -102,31 +106,31 @@ fn system_language() -> Option<String> {
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-fn system_language() -> Option<String> {
+fn system_language() -> Option<&'static str> {
     ["LC_ALL", "LC_MESSAGES", "LANG"]
         .into_iter()
         .find_map(|key| std::env::var(key).ok().filter(|value| !value.is_empty()))
+        .as_deref()
+        .and_then(system_code)
 }
 
 fn system_code(value: &str) -> Option<&'static str> {
-    let value = value
-        .split('.')
-        .next()?
-        .replace('_', "-")
-        .to_ascii_lowercase();
-    match value.split('-').next()? {
-        "zh" if value
-            .split('-')
-            .any(|part| matches!(part, "tw" | "hk" | "mo" | "hant")) =>
-        {
-            Some("zh-TW")
-        }
-        "zh" => Some("zh-CN"),
-        "en" => Some("en"),
-        "ko" => Some("ko"),
-        "ja" => Some("ja"),
-        _ => None,
+    let value = value.trim().split(['.', '@']).next()?;
+    let mut parts = value.split(['-', '_']);
+    let primary = parts.next()?;
+    if primary.eq_ignore_ascii_case("zh") {
+        let script_or_region = parts.next().unwrap_or_default();
+        let traditional = ["Hant", "TW", "HK", "MO"]
+            .iter()
+            .any(|part| script_or_region.eq_ignore_ascii_case(part));
+        return supported_language(if traditional { "zh-TW" } else { "zh-CN" });
     }
+    SUPPORTED_LANGUAGES.into_iter().find(|language| {
+        language
+            .split('-')
+            .next()
+            .is_some_and(|base| base.eq_ignore_ascii_case(primary))
+    })
 }
 
 fn language(requested: Option<&str>) -> String {
@@ -134,12 +138,7 @@ fn language(requested: Option<&str>) -> String {
         .and_then(supported_language)
         .map(str::to_owned)
         .or_else(install_language)
-        .or_else(|| {
-            system_language()
-                .as_deref()
-                .and_then(system_code)
-                .map(str::to_owned)
-        })
+        .or_else(|| system_language().map(str::to_owned))
         .unwrap_or_else(|| "zh-CN".into())
 }
 

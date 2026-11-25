@@ -1,5 +1,8 @@
 import { computed } from 'vue'
-import { dateEnUS, dateJaJP, dateKoKR, dateZhCN, dateZhTW, enUS, jaJP, koKR, zhCN, zhTW } from 'naive-ui'
+import {
+  dateDeDE, dateEnUS, dateEsES, dateFrFR, dateItIT, dateJaJP, dateKoKR, datePlPL, datePtBR, dateRuRU,
+  dateZhCN, dateZhTW, deDE, enUS, esES, frFR, itIT, jaJP, koKR, plPL, ptBR, ruRU, zhCN, zhTW,
+} from 'naive-ui'
 
 /**
  * 界面文案的取词入口。
@@ -26,24 +29,12 @@ import { dateEnUS, dateJaJP, dateKoKR, dateZhCN, dateZhTW, enUS, jaJP, koKR, zhC
  * `locale` 是独立模块（`src/locale/state.ts`），让纯逻辑能被 Node 测试
  * 直接引用；vue-i18n 监听同一个 ref，切换语言时两边同一帧生效。
  */
-import {
-  applyInstallLanguage,
-  hasStoredLocale,
-  locale,
-  localeOptions,
-  SUPPORTED_LOCALES,
-  type Locale,
-} from './locale/state'
+import { locale } from './locale/state.ts'
+import { LOCALE_LABELS } from './locale/types.ts'
 import { i18n } from './locale/index.ts'
 
-export {
-  applyInstallLanguage,
-  hasStoredLocale,
-  locale,
-  localeOptions,
-  SUPPORTED_LOCALES,
-  type Locale,
-}
+export { locale, setLocale } from './locale/state.ts'
+export { localeOptions, type Locale } from './locale/types.ts'
 
 /**
  * 取翻译；支持 `{placeholder}` 替换。
@@ -59,20 +50,15 @@ export function t(key: string, params?: Record<string, string | number>): string
 
 /** Naive UI 组件文案。 */
 export const naiveLocale = computed(() => ({
-  'zh-CN': zhCN, 'zh-TW': zhTW, en: enUS, ko: koKR, ja: jaJP,
+  en: enUS, de: deDE, fr: frFR, it: itIT, ko: koKR, 'es-ES': esES,
+  'zh-CN': zhCN, 'zh-TW': zhTW, ru: ruRU, ja: jaJP, pl: plPL, 'pt-BR': ptBR,
 }[locale.value]))
 export const naiveDateLocale = computed(() => ({
-  'zh-CN': dateZhCN, 'zh-TW': dateZhTW, en: dateEnUS, ko: dateKoKR, ja: dateJaJP,
+  en: dateEnUS, de: dateDeDE, fr: dateFrFR, it: dateItIT, ko: dateKoKR, 'es-ES': dateEsES,
+  'zh-CN': dateZhCN, 'zh-TW': dateZhTW, ru: dateRuRU, ja: dateJaJP, pl: datePlPL, 'pt-BR': datePtBR,
 }[locale.value]))
 
-/** v2 语言选择器标签（随当前语言显示本族名）。 */
-export const currentLocaleLabel = computed(() => ({
-  'zh-CN': '简体中文', 'zh-TW': '繁體中文', en: 'English', ko: '한국어', ja: '日本語',
-}[locale.value]))
-
-export function setLocale(value: Locale) {
-  locale.value = value
-}
+export const currentLocaleLabel = computed(() => LOCALE_LABELS[locale.value])
 
 /**
  * 从多语言映射里按当前界面语言取文案，缺失时回退。

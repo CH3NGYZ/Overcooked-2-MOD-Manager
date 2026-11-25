@@ -7,63 +7,63 @@ import type { DomainMessages } from './types'
  * camelCase 名，每条上方保留中文原文注释，便于和旧代码、截图对照。
  */
 export const renameUi: DomainMessages = {
-  nameHistory: { 'zh-CN': '历史名字', 'zh-TW': '歷史名字', en: 'Name history', ko: '이름 기록', ja: '名前の履歴' },
-  nameHistoryEmpty: { 'zh-CN': '复制或推送成功的名字会显示在这里。', 'zh-TW': '複製或推送成功的名字會顯示在這裡。', en: 'Names appear here after you copy or send them.', ko: '복사하거나 전송한 이름이 여기에 표시됩니다.', ja: 'コピーまたは送信した名前がここに表示されます。' },
-  reuseHistoryName: { 'zh-CN': '编辑「{name}」', 'zh-TW': '編輯「{name}」', en: 'Edit “{name}”', ko: '“{name}” 편집', ja: '「{name}」を編集' },
-  pushHistoryName: { 'zh-CN': '立即推送', 'zh-TW': '立即推送', en: 'Send now', ko: '지금 보내기', ja: '今すぐ送信' },
-  copyHistoryName: { 'zh-CN': '复制', 'zh-TW': '複製', en: 'Copy', ko: '복사', ja: 'コピー' },
-  removeHistoryName: { 'zh-CN': '从历史移除', 'zh-TW': '從歷史移除', en: 'Remove from history', ko: '기록에서 제거', ja: '履歴から削除' },
-  clearNameHistory: { 'zh-CN': '清空历史名字', 'zh-TW': '清空歷史名字', en: 'Clear name history', ko: '이름 기록 지우기', ja: '名前の履歴を消去' },
-  clearNameHistoryConfirm: { 'zh-CN': '清空本机的历史名字？不会更改游戏里的名字。', 'zh-TW': '清空本機的歷史名字？不會更改遊戲裡的名字。', en: 'Clear the name history on this device? This won’t change your in-game name.', ko: '이 기기의 이름 기록을 지울까요? 게임 속 이름은 바뀌지 않습니다.', ja: 'この端末の名前の履歴を消去しますか？ゲーム内の名前は変わりません。' },
+  nameHistory: { 'zh-CN': '历史名字', 'zh-TW': '歷史名字', en: 'Name history', ko: '이름 기록', ja: '名前の履歴', de: "Name Historie", fr: "Historique des noms", it: "Storia del nome", 'es-ES': "Historia del nombre", ru: "История имени", pl: "Nazwa historii", 'pt-BR': "Histórico de nomes" },
+  nameHistoryEmpty: { 'zh-CN': '复制或推送成功的名字会显示在这里。', 'zh-TW': '複製或推送成功的名字會顯示在這裡。', en: 'Names appear here after you copy or send them.', ko: '복사하거나 전송한 이름이 여기에 표시됩니다.', ja: 'コピーまたは送信した名前がここに表示されます。', de: "Namen erscheinen hier, nachdem Sie sie kopieren oder senden.", fr: "Les noms apparaissent ici après que vous les avez copiés ou envoyés.", it: "I nomi appaiono qui dopo averli copiati o inviati.", 'es-ES': "Los nombres aparecen aquí después de copiarlos o enviarlos.", ru: "Имена появляются здесь после того, как вы их копируете или отправляете.", pl: "Nazwiska pojawiają się tutaj po skopiowaniu lub wysłaniu.", 'pt-BR': "Os nomes aparecem aqui depois de você copiar ou enviá- los." },
+  reuseHistoryName: { 'zh-CN': '编辑「{name}」', 'zh-TW': '編輯「{name}」', en: 'Edit “{name}”', ko: '“{name}” 편집', ja: '「{name}」を編集', de: "Bearbeiten ‚{name}‘", fr: "Modifier « {name} »", it: "Modificare “{name}”", 'es-ES': "Editar “{name}”", ru: "Редактировать «{name}»", pl: "Edycja \"{name}\"", 'pt-BR': "Editar “{name}”" },
+  pushHistoryName: { 'zh-CN': '立即推送', 'zh-TW': '立即推送', en: 'Send now', ko: '지금 보내기', ja: '今すぐ送信', de: "Jetzt senden", fr: "Envoyer maintenant", it: "Invia ora", 'es-ES': "Envía ahora", ru: "Отправить сейчас", pl: "Wyślij teraz", 'pt-BR': "Enviar agora" },
+  copyHistoryName: { 'zh-CN': '复制', 'zh-TW': '複製', en: 'Copy', ko: '복사', ja: 'コピー', de: "Kopieren", fr: "Copier", it: "Copia", 'es-ES': "Copiar", ru: "Копировать", pl: "Kopiuj", 'pt-BR': "Copiar" },
+  removeHistoryName: { 'zh-CN': '从历史移除', 'zh-TW': '從歷史移除', en: 'Remove from history', ko: '기록에서 제거', ja: '履歴から削除', de: "Aus der Geschichte entfernen", fr: "Supprimer de l'historique", it: "Rimuovi dalla storia", 'es-ES': "Quitar de la historia", ru: "Удалить из истории", pl: "Usuń z historii", 'pt-BR': "Remover do histórico" },
+  clearNameHistory: { 'zh-CN': '清空历史名字', 'zh-TW': '清空歷史名字', en: 'Clear name history', ko: '이름 기록 지우기', ja: '名前の履歴を消去', de: "Klare Namensgeschichte", fr: "Effacer l'historique des noms", it: "Storia del nome chiaro", 'es-ES': "Historial de nombres claros", ru: "Ясная история имён", pl: "Wyczyść historię nazwy", 'pt-BR': "Limpar o histórico de nomes" },
+  clearNameHistoryConfirm: { 'zh-CN': '清空本机的历史名字？不会更改游戏里的名字。', 'zh-TW': '清空本機的歷史名字？不會更改遊戲裡的名字。', en: 'Clear the name history on this device? This won’t change your in-game name.', ko: '이 기기의 이름 기록을 지울까요? 게임 속 이름은 바뀌지 않습니다.', ja: 'この端末の名前の履歴を消去しますか？ゲーム内の名前は変わりません。', de: "Löschen Sie den Namensverlauf auf diesem Gerät? Dies wird Ihren Namen im Spiel nicht ändern.", fr: "Effacer l'historique des noms sur cet appareil ? Ceci ne changera pas votre nom dans le jeu.", it: "Cancella la cronologia dei nomi su questo dispositivo? Questo non cambierà il tuo nome in gioco.", 'es-ES': "¿Despejar el historial de nombres en este dispositivo? Esto no cambiará tu nombre en el juego.", ru: "Очистите историю имен на этом устройстве? Это не изменит ваше имя в игре.", pl: "Oczyść historię nazw tego urządzenia? To nie zmieni nazwy gry.", 'pt-BR': "Limpar o histórico de nomes neste dispositivo? Isto não vai mudar o seu nome no jogo." },
   // 输入名字
-  enterName: { 'zh-CN': '输入名字', 'zh-TW': '輸入名字', en: 'Enter name', ko: '이름 입력', ja: '名前を入力' },
+  enterName: { 'zh-CN': '输入名字', 'zh-TW': '輸入名字', en: 'Enter name', ko: '이름 입력', ja: '名前を入力', de: "Name des Eintrags", fr: "Saisissez le nom", it: "Inserisci il nome", 'es-ES': "Nombre", ru: "Введите имя", pl: "Wpisz nazwę", 'pt-BR': "Digite o nome" },
   // 支持任意字符，例如中文、英文与符号
-  anyCharactersEGChineseEnglishSymbols: { 'zh-CN': '支持任意字符，例如中文、英文与符号', 'zh-TW': '支援任意字元，例如中文、英文與符號', en: 'Any characters, e.g. Chinese, English, symbols', ko: '모든 문자 사용 가능 (예: 중국어, 영어, 기호)', ja: '任意の文字（中文・英字・記号）に対応' },
+  anyCharactersEGChineseEnglishSymbols: { 'zh-CN': '支持任意字符，例如中文、英文与符号', 'zh-TW': '支援任意字元，例如中文、英文與符號', en: 'Any characters, e.g. Chinese, English, symbols', ko: '모든 문자 사용 가능 (예: 중국어, 영어, 기호)', ja: '任意の文字（中文・英字・記号）に対応', de: "Alle Zeichen, z. B. Chinesisch, Englisch, Symbole", fr: "Tous les caractères, par exemple chinois, anglais, symboles", it: "Qualsiasi personaggio, ad esempio cinese, inglese, simboli", 'es-ES': "Cualquier personaje, por ejemplo, chino, inglés, símbolos", ru: "Любые символы, например, китайский, английский, символы", pl: "Wszelkie znaki, np. chiński, angielski, symbole", 'pt-BR': "Quaisquer caracteres, por exemplo, chinês, inglês, símbolos" },
   // 在这里输入要修改的名字
-  enterTheNameYouWantToRestyle: { 'zh-CN': '在这里输入要修改的名字', 'zh-TW': '在這裡輸入要修改的名字', en: 'Enter the name you want to restyle', ko: '꾸밀 이름을 입력하세요', ja: '装飾したい名前を入力' },
+  enterTheNameYouWantToRestyle: { 'zh-CN': '在这里输入要修改的名字', 'zh-TW': '在這裡輸入要修改的名字', en: 'Enter the name you want to restyle', ko: '꾸밀 이름을 입력하세요', ja: '装飾したい名前を入力', de: "Geben Sie den Namen ein, den Sie restylen möchten", fr: "Saisissez le nom que vous voulez remodeler", it: "Inserisci il nome che vuoi ridisegnare", 'es-ES': "Introduzca el nombre que desea reestilo", ru: "Введите имя, которое вы хотите переделать", pl: "Podaj nazwę, którą chcesz zmienić styl", 'pt-BR': "Digite o nome que deseja reestilar" },
   // 请输入名字
-  pleaseEnterAName: { 'zh-CN': '请输入名字', 'zh-TW': '請輸入名字', en: 'Please enter a name', ko: '이름을 입력하세요', ja: '名前を入力してください' },
+  pleaseEnterAName: { 'zh-CN': '请输入名字', 'zh-TW': '請輸入名字', en: 'Please enter a name', ko: '이름을 입력하세요', ja: '名前を入力してください', de: "Bitte geben Sie einen Namen ein", fr: "Veuillez saisir un nom", it: "Inserisci un nome", 'es-ES': "Por favor, ingrese un nombre", ru: "Пожалуйста, введите имя", pl: "Proszę podać nazwę", 'pt-BR': "Introduza um nome" },
   // 改多彩名
-  colorfulName: { 'zh-CN': '改多彩名', 'zh-TW': '改多彩名', en: 'Colorful name', ko: '다채로운 이름', ja: 'カラフル名' },
+  colorfulName: { 'zh-CN': '改多彩名', 'zh-TW': '改多彩名', en: 'Colorful name', ko: '다채로운 이름', ja: 'カラフル名', de: "Bunte Bezeichnung", fr: "Nom coloré", it: "Nome colorato", 'es-ES': "Nombre colorido", ru: "Красочное имя", pl: "Kolorowa nazwa", 'pt-BR': "Nome colorido" },
   // 开始自定义
-  startCustomizing: { 'zh-CN': '开始自定义', 'zh-TW': '開始自訂', en: 'Start customizing', ko: '커스터마이즈 시작', ja: 'カスタマイズ開始' },
+  startCustomizing: { 'zh-CN': '开始自定义', 'zh-TW': '開始自訂', en: 'Start customizing', ko: '커스터마이즈 시작', ja: 'カスタマイズ開始', de: "Anpassen starten", fr: "Commencer à personnaliser", it: "Inizia a personalizzare", 'es-ES': "Inicio de la personalización", ru: "Начать настраивать", pl: "Zacznij dostosowywać", 'pt-BR': "Iniciar a personalização" },
   // 重新输入
-  startOver: { 'zh-CN': '重新输入', 'zh-TW': '重新輸入', en: 'Start over', ko: '다시 입력', ja: '入力し直す' },
+  startOver: { 'zh-CN': '重新输入', 'zh-TW': '重新輸入', en: 'Start over', ko: '다시 입력', ja: '入力し直す', de: "Start überstürzt", fr: "Recommencer", it: "Avvicinati", 'es-ES': "Empieza de nuevo", ru: "Начинай сначала", pl: "Rozpocznij od początku", 'pt-BR': "Começar de novo" },
   // 选择要修改的文字
-  selectTextToEdit: { 'zh-CN': '选择要修改的文字', 'zh-TW': '選擇要修改的文字', en: 'Select text to edit', ko: '수정할 텍스트 선택', ja: '編集する文字を選択' },
+  selectTextToEdit: { 'zh-CN': '选择要修改的文字', 'zh-TW': '選擇要修改的文字', en: 'Select text to edit', ko: '수정할 텍스트 선택', ja: '編集する文字を選択', de: "Wählen Sie Text zum Bearbeiten", fr: "Sélectionnez le texte à modifier", it: "Selezionare il testo per modificare", 'es-ES': "Seleccione texto para editar", ru: "Выберите текст для редактирования", pl: "Wybierz tekst do edycji", 'pt-BR': "Seleccione o texto a editar" },
   // 拖动选中预览里的字符，再应用颜色或字号
-  dragSelectCharactersInThePreviewThenApplyColorOrSize: { 'zh-CN': '拖动选中预览里的字符，再应用颜色或字号', 'zh-TW': '拖曳選取預覽裡的字符，再套用顏色或字號', en: 'Drag-select characters in the preview, then apply color or size', ko: '미리보기에서 글자를 드래그해 선택한 뒤 색상이나 크기를 적용하세요', ja: 'プレビュー内の文字をドラッグ選択して色やサイズを適用します' },
+  dragSelectCharactersInThePreviewThenApplyColorOrSize: { 'zh-CN': '拖动选中预览里的字符，再应用颜色或字号', 'zh-TW': '拖曳選取預覽裡的字符，再套用顏色或字號', en: 'Drag-select characters in the preview, then apply color or size', ko: '미리보기에서 글자를 드래그해 선택한 뒤 색상이나 크기를 적용하세요', ja: 'プレビュー内の文字をドラッグ選択して色やサイズを適用します', de: "Drag-select Zeichen in der Vorschau, dann Farbe oder Größe anwenden", fr: "Faire glisser-sélectionner les caractères dans l'aperçu, puis appliquer la couleur ou la taille", it: "I caratteri di selezione del trascinamento in anteprima, quindi applicare il colore o la dimensione", 'es-ES': "Arrastre-seleccionar caracteres en la vista previa, luego aplicar color o tamaño", ru: "Перетаскивайте выбранные символы в предварительном просмотре, затем применяйте цвет или размер", pl: "Drag- select znaków w podglądzie, a następnie zastosować kolor lub rozmiar", 'pt-BR': "Selecione caracteres na antevisão e, em seguida, aplique cor ou tamanho" },
   // 请先选择要修改的文字
-  selectSomeTextFirst: { 'zh-CN': '请先选择要修改的文字', 'zh-TW': '請先選擇要修改的文字', en: 'Select some text first', ko: '먼저 텍스트를 선택하세요', ja: '先に文字を選択してください' },
+  selectSomeTextFirst: { 'zh-CN': '请先选择要修改的文字', 'zh-TW': '請先選擇要修改的文字', en: 'Select some text first', ko: '먼저 텍스트를 선택하세요', ja: '先に文字を選択してください', de: "Wählen Sie zuerst einen Text aus", fr: "Sélectionner d'abord du texte", it: "Seleziona un testo prima", 'es-ES': "Seleccione un texto primero", ru: "Сначала выберите текст", pl: "Wybierz najpierw jakiś tekst", 'pt-BR': "Seleccionar primeiro algum texto" },
   // 选择颜色
-  chooseColor: { 'zh-CN': '选择颜色', 'zh-TW': '選擇顏色', en: 'Choose color', ko: '색상 선택', ja: '色を選択' },
+  chooseColor: { 'zh-CN': '选择颜色', 'zh-TW': '選擇顏色', en: 'Choose color', ko: '색상 선택', ja: '色を選択', de: "Wählen Sie Farbe", fr: "Choisir la couleur", it: "Scegli il colore", 'es-ES': "Elija color", ru: "Выберите цвет", pl: "Wybierz kolor", 'pt-BR': "Escolher cor" },
   // 更多颜色
-  moreColors: { 'zh-CN': '更多颜色', 'zh-TW': '更多顏色', en: 'More colors', ko: '추가 색상', ja: 'その他の色' },
+  moreColors: { 'zh-CN': '更多颜色', 'zh-TW': '更多顏色', en: 'More colors', ko: '추가 색상', ja: 'その他の色', de: "Mehr Farben", fr: "Plus de couleurs", it: "Più colori", 'es-ES': "Más colores", ru: "Больше цветов", pl: "Więcej kolorów", 'pt-BR': "Mais cores" },
   // 字号增量
-  sizeDelta: { 'zh-CN': '字号增量', 'zh-TW': '字號增量', en: 'Size delta', ko: '글자 크기 증감', ja: 'サイズ増分' },
+  sizeDelta: { 'zh-CN': '字号增量', 'zh-TW': '字號增量', en: 'Size delta', ko: '글자 크기 증감', ja: 'サイズ増分', de: "Größendelta", fr: "Taille delta", it: "Dimensione delta", 'es-ES': "Tamaño de lata", ru: "Размер дельты", pl: "Rozmiar delta", 'pt-BR': "Tamanho delta" },
   // 重置样式
-  resetStyle: { 'zh-CN': '重置样式', 'zh-TW': '重設樣式', en: 'Reset style', ko: '스타일 초기화', ja: 'スタイルをリセット' },
+  resetStyle: { 'zh-CN': '重置样式', 'zh-TW': '重設樣式', en: 'Reset style', ko: '스타일 초기화', ja: 'スタイルをリセット', de: "Reset-Stil", fr: "Réinitialiser le style", it: "Reimpostare lo stile", 'es-ES': "Reiniciar estilo", ru: "Стиль сброса", pl: "Resetuj styl", 'pt-BR': "Repor o estilo" },
   // 生成的名字代码
-  generatedNameCode: { 'zh-CN': '生成的名字代码', 'zh-TW': '生成的名字代碼', en: 'Generated name code', ko: '생성된 이름 코드', ja: '生成された名前コード' },
+  generatedNameCode: { 'zh-CN': '生成的名字代码', 'zh-TW': '生成的名字代碼', en: 'Generated name code', ko: '생성된 이름 코드', ja: '生成された名前コード', de: "Erzeugter Namenscode", fr: "Code nominatif généré", it: "Codice nome generato", 'es-ES': "Código de nombre generado", ru: "Сгенерированный код имени", pl: "Kod nazwy wygenerowanej", 'pt-BR': "Código de nome gerado" },
   // 名字代码超过限制
-  nameCodeIsOverTheLimit: { 'zh-CN': '名字代码超过限制', 'zh-TW': '名字代碼超過限制', en: 'Name code is over the limit', ko: '이름 코드가 제한을 초과했습니다', ja: '名前コードが上限を超えています' },
+  nameCodeIsOverTheLimit: { 'zh-CN': '名字代码超过限制', 'zh-TW': '名字代碼超過限制', en: 'Name code is over the limit', ko: '이름 코드가 제한을 초과했습니다', ja: '名前コードが上限を超えています', de: "Name Code ist über dem Limit", fr: "Le code du nom dépasse la limite", it: "Il codice del nome è oltre il limite", 'es-ES': "El código de nombre está por encima del límite", ru: "Код имени превышает лимит", pl: "Kod nazwy przekracza limit", 'pt-BR': "O código do nome está acima do limite" },
   // 超出 238 字节限制
-  exceedsThe238ByteLimit: { 'zh-CN': '超出 238 字节限制', 'zh-TW': '超出 238 位元組限制', en: 'Exceeds the 238-byte limit', ko: '238바이트 제한 초과', ja: '238 バイト上限を超過' },
+  exceedsThe238ByteLimit: { 'zh-CN': '超出 238 字节限制', 'zh-TW': '超出 238 位元組限制', en: 'Exceeds the 238-byte limit', ko: '238바이트 제한 초과', ja: '238 バイト上限を超過', de: "Überschreitet das 238-Byte-Limit", fr: "Dépasse la limite de 238 octets", it: "Eccessiva il limite di 238 byte", 'es-ES': "Excede el límite de 238 bytes", ru: "Превышает лимит в 238 байт", pl: "Przewyższa limit 238- bajtów", 'pt-BR': "Ultrapassa o limite de 238-byte" },
   // 正在推送到 街机MOD
-  pushingToHostutilities: { 'zh-CN': '正在推送到 街机MOD', 'zh-TW': '正在推送到 主機實用工具', en: 'Pushing to HostUtilities', ko: '호스트 유틸리티로 보내는 중', ja: 'ホストユーティリティへ送信中' },
+  pushingToHostutilities: { 'zh-CN': '正在推送到 街机MOD', 'zh-TW': '正在推送到 主機實用工具', en: 'Pushing to HostUtilities', ko: '호스트 유틸리티로 보내는 중', ja: 'ホストユーティリティへ送信中', de: "Pushing nach HostUtilities", fr: "Pousser vers HostUtilities", it: "Spingere a HostUtilities", 'es-ES': "Empujando a HostUtilities", ru: "Скачать HostUtilities", pl: "Przesunięcie do HostUtilities", 'pt-BR': "Empurrando para HostUtilities" },
   // 全部等级
-  allLevels: { 'zh-CN': '全部等级', 'zh-TW': '全部等級', en: 'All levels', ko: '모든 레벨', ja: 'すべてのレベル' },
+  allLevels: { 'zh-CN': '全部等级', 'zh-TW': '全部等級', en: 'All levels', ko: '모든 레벨', ja: 'すべてのレベル', de: "Alle Ebenen", fr: "Tous niveaux", it: "Tutti i livelli", 'es-ES': "Todos los niveles", ru: "Все уровни", pl: "Wszystkie poziomy", 'pt-BR': "Todos os níveis" },
   // {count} 行
-  lines: { 'zh-CN': '{count} 行', 'zh-TW': '{count} 行', en: '{count} lines', ko: '{count}줄', ja: '{count} 行' },
-  copyNow: { 'zh-CN': '立即复制', 'zh-TW': '立即複製', en: 'Copy now', ko: '지금 복사', ja: '今すぐコピー' },
+  lines: { 'zh-CN': '{count} 行', 'zh-TW': '{count} 行', en: '{count} lines', ko: '{count}줄', ja: '{count} 行', de: "Linien {count}", fr: "Lignes {count}", it: "Linee {count}", 'es-ES': "{count} líneas", ru: "Линия {count}", pl: "Linie {count}", 'pt-BR': "Linhas {count}" },
+  copyNow: { 'zh-CN': '立即复制', 'zh-TW': '立即複製', en: 'Copy now', ko: '지금 복사', ja: '今すぐコピー', de: "Jetzt kopieren", fr: "Copier maintenant", it: "Copia ora", 'es-ES': "Copiado ahora", ru: "Копировать сейчас", pl: "Kopiuj teraz", 'pt-BR': "Copiar agora" },
   // 已复制，可粘贴到街机MOD 的多彩名字菜单
-  copiedPasteItIntoHostutilitiesColorfulNameMenu: { 'zh-CN': '已复制，可粘贴到街机MOD 的多彩名字菜单', 'zh-TW': '已複製，可貼到主機實用工具的多彩名字選單', en: 'Copied. Paste it into HostUtilities\\\' colorful-name menu.', ko: '복사되었습니다. 호스트 유틸리티의 다채로운 이름 메뉴에 붙여넣으세요', ja: 'コピーしました。ホストユーティリティのカラフルネームメニューに貼り付けられます' },
+  copiedPasteItIntoHostutilitiesColorfulNameMenu: { 'zh-CN': '已复制，可粘贴到街机MOD 的多彩名字菜单', 'zh-TW': '已複製，可貼到主機實用工具的多彩名字選單', en: 'Copied. Paste it into HostUtilities\\\' colorful-name menu.', ko: '복사되었습니다. 호스트 유틸리티의 다채로운 이름 메뉴에 붙여넣으세요', ja: 'コピーしました。ホストユーティリティのカラフルネームメニューに貼り付けられます', de: "Kopiert. Fügen Sie es in HostUtilities' bunten Namen Menü.", fr: "Copied. Collez-le dans le menu HostUtilities' nom coloré.", it: "Copied. Incollalo nel menu a colori HostUtilities'.", 'es-ES': "Copiado. Pruébalo en el menú HostUtilities' colorido.", ru: "Вставьте его в цветное меню HostUtilities.", pl: "Kopiowane. Wklej go do menu HostUtilities\\ 'colorfull-name.", 'pt-BR': "Copiado. Cola-o no menu de nomes coloridos HostUtilities." },
   // 推送到 街机MOD
-  pushToHostutilities: { 'zh-CN': '推送到街机MOD', 'zh-TW': '推送到 主機實用工具', en: 'Send to HostUtilities', ko: '호스트 유틸리티로 보내기', ja: 'ホストユーティリティへ送信' },
+  pushToHostutilities: { 'zh-CN': '推送到街机MOD', 'zh-TW': '推送到 主機實用工具', en: 'Send to HostUtilities', ko: '호스트 유틸리티로 보내기', ja: 'ホストユーティリティへ送信', de: "Senden an HostUtilities", fr: "Envoyer à HostUtilities", it: "Invia a HostUtilities", 'es-ES': "Enviar a HostUtilities", ru: "Отправить в HostUtilities", pl: "Wyślij do HostUtilities", 'pt-BR': "Enviar a HostUtilities" },
   // 已推送到 街机MOD
-  pushedToHostutilities: { 'zh-CN': '已推送到 街机MOD', 'zh-TW': '已推送到 主機實用工具', en: 'Pushed to HostUtilities', ko: '호스트 유틸리티로 보냈습니다', ja: 'ホストユーティリティに送信しました' },
+  pushedToHostutilities: { 'zh-CN': '已推送到 街机MOD', 'zh-TW': '已推送到 主機實用工具', en: 'Pushed to HostUtilities', ko: '호스트 유틸리티로 보냈습니다', ja: 'ホストユーティリティに送信しました', de: "Geschieht nach HostUtilities", fr: "Poussé à HostUtilities", it: "Spinta a HostUtilities", 'es-ES': "Empujado a HostUtilities", ru: "Выпущено: HostUtilities", pl: "HostUtilities", 'pt-BR': "Empurrado para HostUtilities" },
   // 复制后粘贴到游戏内街机MOD 的多彩名字菜单，或直接推送
-  copyAndPasteIntoHostutilitiesColorfulNameMenuInGameOrPushDirectly: { 'zh-CN': '复制后粘贴到游戏内街机MOD 的多彩名字菜单，或直接推送', 'zh-TW': '複製後貼到遊戲內主機實用工具的多彩名字選單，或直接推送', en: 'Copy and paste into HostUtilities\\\' colorful-name menu in game, or push directly', ko: '복사해 게임 내 호스트 유틸리티의 다채로운 이름 메뉴에 붙여넣거나 바로 보내세요', ja: 'コピーしてゲーム内ホストユーティリティのカラフルネームメニューに貼り付けるか、直接送信します' },
+  copyAndPasteIntoHostutilitiesColorfulNameMenuInGameOrPushDirectly: { 'zh-CN': '复制后粘贴到游戏内街机MOD 的多彩名字菜单，或直接推送', 'zh-TW': '複製後貼到遊戲內主機實用工具的多彩名字選單，或直接推送', en: 'Copy and paste into HostUtilities\\\' colorful-name menu in game, or push directly', ko: '복사해 게임 내 호스트 유틸리티의 다채로운 이름 메뉴에 붙여넣거나 바로 보내세요', ja: 'コピーしてゲーム内ホストユーティリティのカラフルネームメニューに貼り付けるか、直接送信します', de: "Kopieren und Einfügen in HostUtilities' buntes Namensmenü im Spiel oder drücken Sie direkt", fr: "Copiez et collez dans le menu de nom coloré de HostUtilities' dans le jeu, ou poussez directement", it: "Copiare e incollare nel menu colorato HostUtilities' in gioco, o spingere direttamente", 'es-ES': "Copiar y pegar en HostUtilities' menú colorido en el juego, o empujar directamente", ru: "Копировать и вставлять в меню с красочными именами HostUtilities в игре или нажимать напрямую", pl: "Kopiuj i wklej do menu HostUtilities\\ 'colorful- name w grze, lub naciśnij bezpośrednio", 'pt-BR': "Copie e cole no menu HostUtilities' colorido-nome no jogo, ou push diretamente" },
   // {count} 个
-  text: { 'zh-CN': '{count} 个', 'zh-TW': '{count} 個', en: '{count}', ko: '{count}개', ja: '{count} 件' },
+  text: { 'zh-CN': '{count} 个', 'zh-TW': '{count} 個', en: '{count}', ko: '{count}개', ja: '{count} 件', de: "{count}", fr: "{count}", it: "{count}", 'es-ES': "{count}", ru: "{count}", pl: "{count}", 'pt-BR': "{count}" },
 }

@@ -5,19 +5,14 @@ import test from 'node:test'
 import { compileScript, parse } from '@vue/compiler-sfc'
 import { createRenderer, h, nextTick, shallowRef } from 'vue'
 
-// Render the production SFC with the real pickI18n and locale state. Naive's
-// unrelated component locale objects are the only browser package boundary.
 registerHooks({
   resolve(specifier, context, next) {
-    if (specifier === 'naive-ui') return { url: 'source-title:naive', shortCircuit: true }
     if (specifier.startsWith('.') && !/\.(?:[cm]?[jt]s|vue)$/.test(specifier)) {
       try { return next(`${specifier}.ts`, context) } catch { /* normal resolution */ }
     }
     return next(specifier, context)
   },
   load(url, context, next) {
-    if (url === 'source-title:naive') return { format: 'module', shortCircuit: true,
-      source: 'export const dateEnUS={},dateJaJP={},dateKoKR={},dateZhCN={},dateZhTW={},enUS={},jaJP={},koKR={},zhCN={},zhTW={}' }
     if (url.endsWith('/src/components/SourceTitle.vue')) {
       const { descriptor } = parse(readFileSync(new URL(url), 'utf8'))
       return { format: 'module-typescript', shortCircuit: true,
@@ -52,9 +47,13 @@ function find(node, predicate) {
 const noteNode = root => find(root, node => node.props?.class === 'source-note')
 const textOf = node => (node?.text ?? '') + (node?.children?.map(textOf).join('') ?? '')
 
-test('production source titles react to all five locales and source-note replacement, fallback and removal', async () => {
+test('production source titles react to all twelve locales and source-note replacement, fallback and removal', async () => {
   const originalLocale = locale.value
-  const translations = { 'zh-CN': '源说明', 'zh-TW': '來源說明', en: 'Source note', ko: '소스 설명', ja: 'ソース説明' }
+  const translations = {
+    en: 'Source note', de: 'Hinweis zur Quelle', fr: 'Note sur la source', it: 'Nota sulla fonte',
+    ko: '소스 설명', 'es-ES': 'Nota de la fuente', 'zh-CN': '源说明', 'zh-TW': '來源說明',
+    ru: 'Описание источника', ja: 'ソース説明', pl: 'Opis źródła', 'pt-BR': 'Nota sobre a fonte',
+  }
   const note = shallowRef(translations)
   const root = { children: [] }
   const app = renderer.createApp({ setup: () => () => h(SourceTitle, { label: 'Source title', noteI18n: note.value }) })
@@ -68,10 +67,10 @@ test('production source titles react to all five locales and source-note replace
       assert.equal(find(root, node => node.tag === 'a'), undefined)
     }
     for (const [messages, expected] of [
-      [{ ja: ' ', en: 'English fallback', 'zh-CN': '中文' }, 'English fallback'],
+      [{ 'pt-BR': ' ', en: 'English fallback', 'zh-CN': '中文' }, 'English fallback'],
       [{ 'zh-CN': '中文回退' }, '中文回退'],
       [{ ko: '첫 번째 값' }, '첫 번째 값'],
-      [{ ja: '  replacement  ' }, 'replacement'],
+      [{ 'pt-BR': '  replacement  ' }, 'replacement'],
     ]) {
       note.value = messages
       await nextTick()

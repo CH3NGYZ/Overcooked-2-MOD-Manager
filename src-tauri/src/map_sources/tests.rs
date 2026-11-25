@@ -38,20 +38,42 @@ fn community_map_repositories_are_declared_as_release_tag_sources() {
 }
 
 #[test]
-fn community_map_labels_share_one_source_per_platform_with_five_languages() {
-    let github = community_map_label(&Provider::Github);
-    let gitee = community_map_label(&Provider::Gitee);
-    assert_eq!(github.id, GITHUB_COMMUNITY_MAP_SOURCE_ID);
-    assert_eq!(gitee.id, GITEE_COMMUNITY_MAP_SOURCE_ID);
-    for label in [github, gitee] {
-        for locale in ["zh-CN", "zh-TW", "en", "ko", "ja"] {
-            let name = label
-                .name_i18n
-                .get(locale)
-                .unwrap_or_else(|| panic!("缺少 {locale} 的源名"));
-            assert!(!name.trim().is_empty());
+fn community_sources_share_one_label_per_platform_and_select_exact_languages() {
+    for (provider, brand, map_id) in [
+        (Provider::Github, "GitHub", GITHUB_COMMUNITY_MAP_SOURCE_ID),
+        (Provider::Gitee, "Gitee", GITEE_COMMUNITY_MAP_SOURCE_ID),
+        (Provider::Gitcode, "GitCode", "gitcode-map-community"),
+    ] {
+        let map_label = community_map_label(&provider);
+        let mod_source = crate::community::source(&provider);
+        assert_eq!(map_label.id, map_id);
+        assert_eq!(mod_source.id, crate::community::source_id(&provider));
+        assert!(!map_label.name.trim().is_empty());
+        assert!(!mod_source.nickname.trim().is_empty());
+        assert_eq!(map_label.name_i18n.len(), 12);
+        assert_eq!(mod_source.nickname_i18n.len(), 12);
+        for locale in [
+            "zh-CN", "zh-TW", "en", "ko", "ja", "de", "fr", "it", "es-ES", "ru", "pl", "pt-BR",
+        ] {
+            assert!(map_label.name_i18n[locale].contains(brand), "{locale}");
+            assert!(mod_source.nickname_i18n[locale].contains(brand), "{locale}");
         }
-        assert!(!label.name.trim().is_empty());
+        assert_eq!(
+            map_label.name_i18n["es-ES"],
+            format!("Mapas de la comunidad ({brand})")
+        );
+        assert_eq!(
+            map_label.name_i18n["pt-BR"],
+            format!("Mapas da comunidade ({brand})")
+        );
+        assert_eq!(
+            mod_source.nickname_i18n["es-ES"],
+            format!("Repositorios de la comunidad en {brand}")
+        );
+        assert_eq!(
+            mod_source.nickname_i18n["pt-BR"],
+            format!("Repositórios da comunidade no {brand}")
+        );
     }
 }
 

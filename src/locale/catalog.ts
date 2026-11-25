@@ -5,6 +5,7 @@ import { modChangeRecovery } from './modChangeRecovery.ts'
 import { mapVersion } from './mapVersion.ts'
 import { diychef } from './diychef/index.ts'
 import { startup } from './startup.ts'
+import { startupLanguage } from './startupLanguage.ts'
 import { common } from './common.ts'
 import { config } from './config.ts'
 import { error } from './error.ts'
@@ -64,12 +65,12 @@ import type { Domain, DomainMessages, Localized, Locale } from './types.ts'
  *
  * ## 结构
  *
- * 源文件按域拆分，每个域是 `{ 'tag 末段': 五语 }`。这里把它们**按语言倒排**
+ * 源文件按域拆分，每个域是 `{ 'tag 末段': 12 语 }`。这里把它们**按语言倒排**
  * 成 vue-i18n 需要的 `{ locale: { domain: { key: 文案 } } }`。
  *
  * 为什么源文件按域、而不是直接写 vue-i18n 的嵌套结构：
- * 加一条文案时要同时写五种语言，五语并排最容易发现缺项；如果按语言分文件
- * （`zh.ts` / `en.ts`），新增文案得在五个文件里各找一遍位置，漏一个就是
+ * 加一条文案时要同时写全所有语言，并排最容易发现缺项；如果按语言分文件
+ * （`zh.ts` / `en.ts`），新增文案得在多个文件里各找一遍位置，漏一个就是
  * 静默回退。
  *
  * ## tag 形态
@@ -118,6 +119,7 @@ export const TABLES: DomainTable[] = [
   { domain: 'levelPreview', messages: levelPreview },
   { domain: 'mapVersion', messages: mapVersion },
   { domain: 'startup', messages: startup },
+  { domain: 'startup', messages: startupLanguage },
   { domain: 'common', messages: common },
   { domain: 'config', messages: config },
   { flat: true, messages: error },
@@ -181,7 +183,7 @@ export const TABLES: DomainTable[] = [
   { domain: 'refresh', messages: refresh },
 ]
 
-/** 把一条五语文案按语言摊平。 */
+/** 把一条文案按语言摊平。 */
 function pick(entry: Localized, code: Locale): string {
   return entry[code]
 }

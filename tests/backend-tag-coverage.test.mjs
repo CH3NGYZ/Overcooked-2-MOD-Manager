@@ -1,6 +1,7 @@
 /** 直接读取运行时语言表登记；递归审计源文件，防止拆分后的表静默漏装。 */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { baseCompile } from '@intlify/message-compiler'
 import { ALL_ENTRIES, TEMPLATE_PARAMS } from '../scripts/backend-tag-map.mjs'
 import { TABLES, buildMessages } from '../src/locale/catalog.ts'
 import { LOCALE_CODES } from '../src/locale/types.ts'
@@ -31,8 +32,19 @@ test('后端 tag 全部在语言表登记', () => {
   assert.deepEqual(missing, [], `以下后端 tag 没有语言表条目：\n${missing.join('\n')}`)
 })
 
-test('每条文案五种语言齐全、非空且占位符一致', () => {
+test('每条文案十二语齐全、非空且占位符一致', () => {
   assert.deepEqual(errors, [])
+})
+
+test('登记的所有翻译都能被 vue-i18n 消息编译器解析', () => {
+  const failures = []
+  for (const [tag, entry] of REGISTERED) {
+    for (const code of LOCALE_CODES) {
+      if (typeof entry[code] !== 'string') continue
+      baseCompile(entry[code], { onError: error => failures.push(`${tag}/${code}: ${error.message}`) })
+    }
+  }
+  assert.deepEqual(failures, [])
 })
 
 test('模板 tag 的占位符与后端参数名一致', () => {
@@ -59,7 +71,7 @@ test('拆分不得增加历史兼容表之外的重复 key', () => {
   assert.deepEqual(duplicates, LEGACY_OVERLAPS)
 })
 
-test('测试消费的完整 tag 与运行时五语嵌套树一致', () => {
+test('测试消费的完整 tag 与运行时十二语嵌套树一致', () => {
   for (const code of LOCALE_CODES) {
     const messages = buildMessages(code)
     for (const [tag, entry] of REGISTERED) {

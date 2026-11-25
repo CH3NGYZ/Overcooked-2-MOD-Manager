@@ -1,57 +1,92 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { LOCALE_CODES, LOCALE_LABELS, localeOptions } from '../src/locale/types.ts'
 
-/**
- * 首启语言优先级：安装程序写入的语言只作为「用户还没选过」时的默认值。
- *
- * 语言状态已从 `i18n.ts` 抽到 `src/locale/state.ts`（与文案表分离，
- * 让纯逻辑能被 Node 直接引用）—— 这里的断言跟着源码走。
- * 行为本身另由 CDP 实测覆盖（见 PLAN.md 第 1 步的验收记录）。
- */
-const i18n = readFileSync(new URL('../src/locale/state.ts', import.meta.url), 'utf8')
-const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8')
+const read = path => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
+const storageKey = 'oc2-locale'
+let instance = 0
 
-test('locale 初始化优先 localStorage', () => {
-  // 必须「localStorage 有合法值则用它」，否则会覆盖用户的选择
-  assert.match(
-    i18n,
-    /export const locale = ref<Locale>\(\s*hasStorage\(\) && LOCALES\.includes\(localStorage\.getItem\(LOCALE_KEY\) as Locale\)/,
-  )
+function fixture(t, existing) {
+  const store = new Map(existing ? [[storageKey, existing]] : [])
+  const writes = []
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+    getItem: key => store.get(key) ?? null,
+    setItem: (key, value) => { writes.push([key, value]); store.set(key, value) },
+  } })
+  t.after(() => {
+    if (original) Object.defineProperty(globalThis, 'localStorage', original)
+    else delete globalThis.localStorage
+  })
+  return { writes, launch: () => import(`../src/locale/state.ts?run=${++instance}`) }
+}
+
+test('语言选择器与管理器语言目录共用 12 种语言及本族语标签', () => {
+  const codes = ['en', 'de', 'fr', 'it', 'ko', 'es-ES', 'zh-CN', 'zh-TW', 'ru', 'ja', 'pl', 'pt-BR']
+  assert.deepEqual(LOCALE_CODES, codes)
+  assert.deepEqual(localeOptions.map(option => option.value), codes)
+  assert.equal(new Set(localeOptions.map(option => option.label)).size, codes.length)
+  assert.equal(LOCALE_LABELS['es-ES'], 'Español (España)')
+  assert.equal(LOCALE_LABELS['pt-BR'], 'Português (Brasil)')
 })
 
-test('applyInstallLanguage 在已有用户选择时直接返回', () => {
-  const body = i18n.slice(i18n.indexOf('export function applyInstallLanguage'))
-  assert.match(body, /if \(hasStoredLocale\(\)\) return false/, '必须先检查是否已有用户选择')
-  // 检查要排在赋值之前，否则会覆盖用户选择
-  const guardAt = body.indexOf('hasStoredLocale()')
-  const assignAt = body.indexOf('locale.value =')
-  assert.ok(guardAt >= 0 && assignAt > guardAt, '守卫必须在赋值之前')
+test('安装和界面预览均不写入，关闭重进仍是首启；确认不变的值也会持久化', async t => {
+  const { writes, launch } = fixture(t)
+  const first = await launch()
+  for (const language of LOCALE_CODES) {
+    first.preselectLocale(language, ['en-US'])
+    assert.equal(first.locale.value, language)
+    assert.equal(first.hasStoredLocale(), false)
+  }
+  first.locale.value = 'pl'
+  assert.deepEqual(writes, [])
+  const reopened = await launch()
+  assert.equal(reopened.hasStoredLocale(), false)
+  reopened.preselectLocale('pt-BR', ['it-IT'])
+  reopened.setLocale(reopened.locale.value)
+  assert.deepEqual(writes, [[storageKey, 'pt-BR']])
+  const confirmed = await launch()
+  confirmed.preselectLocale('de', ['zh-TW'])
+  assert.equal(confirmed.locale.value, 'pt-BR')
+  assert.equal(confirmed.hasStoredLocale(), true)
 })
 
-test('未知语言不会被应用', () => {
-  const body = i18n.slice(i18n.indexOf('export function applyInstallLanguage'))
-  assert.match(body, /LOCALES\.includes\(value as Locale\)/, '必须校验取值在支持列表内')
-  // 非法值走 else 分支：落盘默认语言，但不采纳该值
-  assert.match(body, /localStorage\.setItem\(LOCALE_KEY, locale\.value\)/, '首启应把默认语言落盘一次')
-  // 命中才赋值
-  assert.match(body, /if \(applied\)[\s\S]*?locale\.value = value as Locale/)
+test('原有用户的存储值优先，标题栏改语言继续使用同一键', async t => {
+  const { writes, launch } = fixture(t, 'ko')
+  const state = await launch()
+  state.preselectLocale('ru', ['en-GB'])
+  assert.equal(state.locale.value, 'ko')
+  assert.deepEqual(writes, [])
+  state.setLocale('es-ES')
+  assert.deepEqual(writes, [[storageKey, 'es-ES']])
+  assert.equal((await launch()).locale.value, 'es-ES')
 })
 
-test('首次启动后不再被安装语言覆盖', () => {
-  const body = i18n.slice(i18n.indexOf('export function applyInstallLanguage'))
-  // 两条路径都会写 localStorage，所以第二次启动 hasStoredLocale() 为真
-  assert.match(body, /if \(hasStoredLocale\(\)\) return false/)
+test('无有效安装语言时按系统语言预选，缺失或不支持时仍可启动', async t => {
+  const { writes, launch } = fixture(t, 'invalid')
+  const state = await launch()
+  for (const [input, expected] of [
+    [['nl-NL', 'DE-de'], 'de'], [['pt-PT'], 'pt-BR'], [['zh-Hant-HK'], 'zh-TW'],
+    [['zh-Hans-TW'], 'zh-CN'], [['es-MX'], 'es-ES'], [['ru-RU-u-ca-gregory'], 'ru'],
+    [['invalid_tag', 'pl-PL'], 'pl'], [[], 'zh-CN'],
+  ]) {
+    state.preselectLocale('constructor', input)
+    assert.equal(state.locale.value, expected)
+    assert.equal(state.hasStoredLocale(), false)
+  }
+  assert.deepEqual(writes, [])
 })
 
-test('main 在 mount 之前应用安装语言', () => {
-  const applyAt = main.indexOf('applyInstallLanguage')
-  const mountAt = main.indexOf('.mount(')
-  assert.ok(applyAt >= 0, 'main.ts 应调用 applyInstallLanguage')
-  assert.ok(mountAt > applyAt, '必须在挂载前完成，否则会先渲染默认语言再切换')
-})
-
-test('安装语言读取失败不影响启动', () => {
-  // 浏览器预览、无文件、IPC 拒绝都会抛错，必须被吞掉
-  assert.match(main, /try\s*\{[\s\S]*?api\.installLanguage\(\)[\s\S]*?\}\s*catch\s*\{/)
+test('首启完成模态框退场再启动教程和更新，教程结束前不触发启动刷新', () => {
+  const main = read('main.ts')
+  const app = read('App.vue')
+  const dialog = read('components/StartupLanguageDialog.vue')
+  assert.match(main, /if \(!hasStoredLocale\(\)\) \{\s*const installLanguage = isTauri\(\) \? await api\.installLanguage\(\)\.catch\(\(\) => null\) : null\s+preselectLocale\(installLanguage, navigator\.languages\)/)
+  assert.ok(main.indexOf('preselectLocale(installLanguage') < main.indexOf('.mount('))
+  assert.match(app, /<StartupLanguageDialog v-if="choosingLanguage" @confirmed="finishLanguageSelection"/)
+  assert.match(app, /startTutorialIfFirstRun\(config\?\.tutorial_watched_steps \?\? \[\]\)\s+onTutorialSettled\(\(\) => \{ void startupPreflight\.start\(\) \}\)\s+if \(desktop\) initializeAppUpdates\(\)/)
+  assert.match(dialog, /setLocale\(locale\.value\)\s+show\.value = false/)
+  assert.match(dialog, /@after-leave="emit\('confirmed'\)"/)
+  assert.match(dialog, /:closable="false"/)
 })

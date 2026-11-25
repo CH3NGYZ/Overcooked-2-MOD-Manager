@@ -3,7 +3,7 @@ import { t } from '../i18n'
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton } from 'naive-ui'
-import { BookOutline, BuildOutline, ChatbubblesOutline, CloudOfflineOutline, CloudUploadOutline, DocumentTextOutline, MapOutline, PersonOutline, RefreshOutline, ServerOutline, TerminalOutline, TrashOutline } from '@vicons/ionicons5'
+import { BookOutline, BuildOutline, ChatbubblesOutline, CloudOfflineOutline, CloudUploadOutline, DocumentTextOutline, LogoDiscord, MapOutline, PersonOutline, RefreshOutline, ServerOutline, TerminalOutline, TrashOutline } from '@vicons/ionicons5'
 import sponsorImage from '../assets/collectionCode.jpg'
 import LogHistoryDialog from '../components/LogHistoryDialog.vue'
 import { useNotify } from '../useNotify'
@@ -25,6 +25,7 @@ const feedbackChannels = [
   { title: 'tools.arcadeModFeedbackGroup1', url: 'https://qm.qq.com/q/Uo7nhlbWiA' },
   { title: 'tools.arcadeModFeedbackGroup2', url: 'https://qm.qq.com/q/7CpekB9FYc' },
   { title: 'tools.modManagerFeedbackGroup', url: 'https://qm.qq.com/q/LN93oZTyUg' },
+  { title: 'tools.modManagerFeedbackDiscord', url: 'https://discord.gg/rYx75pWERN', discord: true },
 ]
 const tutorialManagerOpen = ref(false)
 const logKind = ref<LogKind | null>(null)
@@ -130,8 +131,9 @@ const { managerDataDescription, managerDataBusy, clearingConfig, migratingData, 
   </SettingsGroup>
 
   <SettingsGroup :title="t('tools.feedbackChannels')" data-testid="feedback-channels-group" data-tutorial="tools-feedback">
-    <SettingsRow v-for="channel in feedbackChannels" :key="channel.url" :icon="ChatbubblesOutline"
-      :title="t(channel.title)" :description="t('tools.qqFeedbackGroupDescription')" clickable role="link" tabindex="0"
+    <SettingsRow v-for="channel in feedbackChannels" :key="channel.url" :icon="channel.discord ? LogoDiscord : ChatbubblesOutline"
+      :title="t(channel.title)" :description="t(channel.discord ? 'tools.discordFeedbackDescription' : 'tools.qqFeedbackGroupDescription')"
+      clickable role="link" tabindex="0"
       @click="api.openReleasePage(channel.url).catch(fail)"
       @keydown.enter.prevent="api.openReleasePage(channel.url).catch(fail)"
       @keydown.space.prevent="api.openReleasePage(channel.url).catch(fail)" />

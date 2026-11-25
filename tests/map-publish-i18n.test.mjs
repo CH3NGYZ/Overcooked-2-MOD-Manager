@@ -9,7 +9,6 @@ import test from 'node:test'
  * 以及「整张表为空不算填了、填了就必须有 zh-CN 与 en」这条必填口径。
  */
 const {
-  MAP_I18N_LANGUAGES,
   REQUIRED_I18N_LANGUAGES,
   blankI18nField,
   defaultI18nValues,
@@ -22,8 +21,7 @@ const {
 
 const defaults = { levelSetName: 'GAODA', levelSetNameZh: '高达', author: 'gaoda' }
 
-test('五种语言按固定顺序给出，必填只有 zh-CN 与 en', () => {
-  assert.deepEqual([...MAP_I18N_LANGUAGES], ['zh-CN', 'zh-TW', 'en', 'ko', 'ja'])
+test('地图资料必填仍只有 zh-CN 与 en', () => {
   assert.deepEqual([...REQUIRED_I18N_LANGUAGES], ['zh-CN', 'en'])
 })
 
@@ -89,10 +87,9 @@ test('整张表为空不算填了，填了就必须有 zh-CN 与 en', () => {
   )
 })
 
-test('空白值不写进块，五种之外的语言原样保留', () => {
-  const draft = i18nDraftFrom('noteI18n', { 'zh-CN': '   ', fr: 'Un peu' }, defaults)
-  assert.deepEqual(i18nTableOf(draft), { fr: 'Un peu' })
-  assert.deepEqual(extraLanguages(draft), ['fr'])
-  // 五种语言里的空值只是没填，不该算「未知语言」。
+test('空白值不写进块，新语言可编辑，其他语言原样保留', () => {
+  const draft = i18nDraftFrom('noteI18n', { 'zh-CN': '   ', fr: 'Un peu', nl: 'Een beetje', 'pt-BR': 'Um pouco' }, defaults)
+  assert.deepEqual(i18nTableOf(draft), { fr: 'Un peu', nl: 'Een beetje', 'pt-BR': 'Um pouco' })
+  assert.deepEqual(extraLanguages(draft), ['nl'])
   assert.deepEqual(extraLanguages({ values: { en: '' }, touched: {} }), [])
 })

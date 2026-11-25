@@ -3,6 +3,7 @@ import test from 'node:test'
 import { registerHooks } from 'node:module'
 import { i18n } from '../src/locale/index.ts'
 import { LOCALE_CODES } from '../src/locale/types.ts'
+import { error } from '../src/locale/error.ts'
 import { toolsUiDownloadRace } from '../src/locale/tools/downloadRace.ts'
 
 // Resolve the app's Vite-style locale import without replacing the real message catalog.
@@ -34,14 +35,18 @@ test('statistics carry only reported data, including a known stalled rate', () =
   assert.equal(downloadRoute({ source: 'github.example' }), 'github.example')
 })
 
-test('unknown totals, source states and lock rejection render in all five languages', () => {
+test('unknown totals, source states and lock rejection render in all supported languages', () => {
   const original = i18n.global.locale.value
-  const received = ['已下载 {amount}', '已下載 {amount}', 'Downloaded {amount}', '{amount} 다운로드됨', '{amount} ダウンロード済み']
+  const received = {
+    'zh-CN': '已下载 {amount}', 'zh-TW': '已下載 {amount}', en: 'Downloaded {amount}', ko: '{amount} 다운로드됨', ja: '{amount} ダウンロード済み',
+    de: 'Heruntergeladen: {amount}', fr: 'Téléchargé {amount}', it: 'Scaricato {amount}', 'es-ES': 'Descargado {amount}',
+    ru: 'Скачано {amount}', pl: 'Pobrano {amount}', 'pt-BR': 'Baixado: {amount}',
+  }
   try {
-    for (const [i, language] of LOCALE_CODES.entries()) {
+    for (const language of LOCALE_CODES) {
       i18n.global.locale.value = language
-      assert.equal(downloadAmount({ downloaded: 0, total: null }), received[i].replace('{amount}', '0 B'))
-      assert.equal(downloadAmount({ downloaded: 2 * 1024 * 1024 }), received[i].replace('{amount}', '2.0 MB'))
+      assert.equal(downloadAmount({ downloaded: 0, total: null }), received[language].replace('{amount}', '0 B'), language)
+      assert.equal(downloadAmount({ downloaded: 2 * 1024 * 1024 }), received[language].replace('{amount}', '2.0 MB'), language)
       assert.equal(downloadRoute({ route: 'proxy', source: 'mirror.example' }), `${i18n.global.t('common.proxy')} · mirror.example`)
       assert.equal(downloadRate({ speed_bytes: null, phase: 'downloading' }), toolsUiDownloadRace['downloadRace.measuring'][language])
       for (const [key, copy] of Object.entries(toolsUiDownloadRace)) {
@@ -49,7 +54,10 @@ test('unknown totals, source states and lock rejection render in all five langua
         const message = i18n.global.t(`tools.${key}`, { count: 5 })
         assert.equal(message, copy[language].replace('{count}', '5'))
       }
-      assert.notEqual(translateBackendMessage('download.raceUnavailable', language), 'download.raceUnavailable')
+      const unavailable = error['download.raceUnavailable'][language]
+      assert.ok(unavailable?.trim(), language)
+      assert.notEqual(unavailable, 'download.raceUnavailable')
+      assert.equal(translateBackendMessage('download.raceUnavailable', language), unavailable, language)
     }
   } finally { i18n.global.locale.value = original }
 })

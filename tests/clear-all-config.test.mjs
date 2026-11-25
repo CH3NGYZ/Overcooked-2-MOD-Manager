@@ -4,6 +4,7 @@ import { registerHooks } from 'node:module'
 import test from 'node:test'
 import { compileScript, parse } from '@vue/compiler-sfc'
 import { createRenderer, h, nextTick } from 'vue'
+import { LOCALE_CODES } from '../src/locale/types.ts'
 
 // Execute the production view setup; only IPC, dialogs and unrelated services
 // are replaced. No cleanup command reaches Tauri or the user's data directory.
@@ -17,7 +18,6 @@ const boundary = globalThis.__clearAllConfigBoundary = {
 registerHooks({
   resolve(specifier, context, next) {
     if (specifier === 'naive-ui') return { url: 'clear-config-test:naive', shortCircuit: true }
-    if (specifier === '@vicons/ionicons5') return { url: 'clear-config-test:icons', shortCircuit: true }
     if (specifier === 'vue-router') return { url: 'clear-config-test:router', shortCircuit: true }
     if (specifier.startsWith('.') && !/\.(?:[cm]?[jt]s|vue|jpg)$/.test(specifier)) {
       try { return next(`${specifier}.ts`, context) } catch { /* normal resolution */ }
@@ -34,9 +34,6 @@ registerHooks({
         return instance
       }
       export const useDialog=()=>({error:show,warning:show})`)
-    if (url === 'clear-config-test:icons') return fake(`
-      export const BookOutline={},BuildOutline={},ChatbubblesOutline={},CloudOfflineOutline={},CloudUploadOutline={},
-        DocumentTextOutline={},MapOutline={},PersonOutline={},RefreshOutline={},ServerOutline={},TerminalOutline={},TrashOutline={}`)
     if (url === 'clear-config-test:router') return fake('export const useRouter=()=>({push(){}})')
     if (url.endsWith('/src/views/ToolsView.vue')) {
       const { descriptor } = parse(readFileSync(new URL(url), 'utf8'))
@@ -339,10 +336,9 @@ test('unmount while native selection waits cannot open a late migration confirma
   assert.equal(boundary.calls.filter(([name]) => name === 'migrate').length, 0)
 })
 
-test('the reset domain has complete five-language irreversible-data and exit wording', () => {
-  const locales = ['zh-CN', 'zh-TW', 'en', 'ko', 'ja']
+test('the reset domain covers every supported locale and retains irreversible-data and exit wording', () => {
   for (const [key, translations] of Object.entries(toolsUiDataReset)) {
-    assert.deepEqual(Object.keys(translations).sort(), [...locales].sort(), key)
+    assert.deepEqual(Object.keys(translations).sort(), [...LOCALE_CODES].sort(), key)
     for (const text of Object.values(translations)) assert.ok(text.trim(), key)
   }
   for (const text of Object.values(toolsUiDataReset.clearAllConfigFailed)) assert.match(text, /\{reason\}/)

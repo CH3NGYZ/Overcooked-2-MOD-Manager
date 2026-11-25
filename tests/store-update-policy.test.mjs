@@ -6,11 +6,16 @@ const source = path => readFileSync(new URL(`../src-tauri/src/${path}`, import.m
 const commands = source('commands/update.rs')
 const distribution = source('app_update/distribution.rs')
 
-test('About reads the same native package identity at startup without waiting for the update check', () => {
+test('About reads the native version at startup while update initialization waits for first-run language confirmation', () => {
   assert.match(commands, /#\[tauri::command\]\s*pub fn get_app_distribution\(\) -> Result<AppDistribution, String> \{\s*distribution::current\(\)\s*\}/)
   const app = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
-  const mount = app.slice(app.indexOf('onMounted(() => {'))
-  assert.match(mount, /initializeAppUpdates\(\)/)
+  const onboarding = app.slice(app.indexOf('async function startOnboarding()'), app.indexOf('function finishLanguageSelection()'))
+  assert.match(onboarding, /if \(desktop\) initializeAppUpdates\(\)/)
+  const mount = app.slice(app.indexOf('onMounted(() => {'), app.indexOf('</script>'))
+  assert.match(mount, /if \(isTauri\(\)\) getVersion\(\)\.then\([^\n]*\n\s*if \(!choosingLanguage\.value\) void startOnboarding\(\)/)
+  assert.doesNotMatch(mount, /initializeAppUpdates\(\)|checkForAppUpdate\(/)
+  assert.match(app, /function finishLanguageSelection\(\) \{\s*choosingLanguage\.value = false\s*void startOnboarding\(\)\s*\}/)
+  assert.match(app, /<StartupLanguageDialog v-if="choosingLanguage" @confirmed="finishLanguageSelection" \/>/)
   const service = readFileSync(new URL('../src/composables/useAppUpdates.ts', import.meta.url), 'utf8')
   const startup = service.slice(service.indexOf('export function initializeAppUpdates()'))
   assert.match(startup, /void api\.getAppDistribution\(\)\.then\(setAppDistribution\)[^]*?void checkForAppUpdate\(false\)/)

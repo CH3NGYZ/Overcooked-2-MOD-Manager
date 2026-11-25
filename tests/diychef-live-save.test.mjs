@@ -1,16 +1,20 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { LOCALE_CODES } from '../src/locale/types.ts'
 import { setup, snapshot, tick, deferred, valid, shallowRef, useDashboard } from './fixtures/diychef-editor.mjs'
 
 const liveTarget = { version: '2.4.0', compatibility: 'editable', supports_live_save: true }
 const gameEvent = running => globalThis.__chefGameEvent({ path: 'fixture', kitchen_running: running })
 
-test('live-save confirmation only reports saved in all five languages', async () => {
+test('live-save confirmation only reports saved in all supported languages', async () => {
   const { diychefEditor } = await import('../src/locale/diychef/editor.ts')
-  assert.deepEqual(diychefEditor.savedLive, {
+  const expected = {
     'zh-CN': '已保存', 'zh-TW': '已儲存', en: 'Saved', ko: '저장했습니다', ja: '保存しました',
-  })
+    de: 'Gespeichert', fr: 'Enregistré', it: 'Salvato', 'es-ES': 'Guardado', ru: 'Сохранено', pl: 'Zapisano', 'pt-BR': 'Salvo',
+  }
+  assert.deepEqual(Object.keys(diychefEditor.savedLive).sort(), [...LOCALE_CODES].sort())
+  for (const locale of LOCALE_CODES) assert.equal(diychefEditor.savedLive[locale], expected[locale], locale)
 })
 
 for (const version of ['2.4', '2.4.0', '2.4.7', '2.4.7.9']) {

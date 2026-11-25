@@ -8,6 +8,7 @@ import { createRenderer, nextTick } from 'vue'
 // Mount the production setup with real tutorial data, stores and grouping/tag
 // calculations. Replace only IPC, navigation and UI boundaries, not watchers.
 const boundary = { dataCalls: [], subscriptions: [], notices: [], dialogs: [] }
+const naiveUi = import.meta.resolve('naive-ui')
 globalThis.__tutorialLevelsSetupBoundary = boundary
 registerHooks({
   resolve(specifier, context, next) {
@@ -32,9 +33,8 @@ registerHooks({
     if (url.endsWith('.vue')) return { format: 'module', shortCircuit: true, source: 'export default {}' }
     const modules = {
       'tutorial-levels:naive-ui': `
+        export * from ${JSON.stringify(naiveUi)}
         export const NCollapse = {}, NCollapseItem = {}, NEmpty = {}, NFloatButton = {}, NTag = {}
-        export const dateEnUS = {}, dateJaJP = {}, dateKoKR = {}, dateZhCN = {}, dateZhTW = {}
-        export const enUS = {}, jaJP = {}, koKR = {}, zhCN = {}, zhTW = {}
         export const useDialog = () => ({warning: (...args) => {
           globalThis.__tutorialLevelsSetupBoundary.dialogs.push(args)
           return {}

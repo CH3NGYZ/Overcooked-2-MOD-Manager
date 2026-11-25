@@ -20,21 +20,17 @@
  * 每个域一个文件，按使用它的界面区域归属，而不是按控件类型。
  * 新增文案时先找它「在哪个页面出现」，再加到对应域文件。
  */
-export type Locale = 'zh-CN' | 'zh-TW' | 'en' | 'ko' | 'ja'
+export const LOCALE_LABELS = { en: 'English', de: 'Deutsch', fr: 'Français', it: 'Italiano', ko: '한국어', 'es-ES': 'Español (España)', 'zh-CN': '简体中文', 'zh-TW': '繁體中文', ru: 'Русский', ja: '日本語', pl: 'Polski', 'pt-BR': 'Português (Brasil)' } as const
 
-/** 全部语言代码（顺序即 `Localized` 字段顺序之外的另一份清单，供组装用）。 */
-export const LOCALE_CODES: readonly Locale[] = ['zh-CN', 'zh-TW', 'en', 'ko', 'ja'] as const
+export type Locale = keyof typeof LOCALE_LABELS
+export const LOCALE_CODES: readonly Locale[] = Object.keys(LOCALE_LABELS) as Locale[]
+export const localeOptions = LOCALE_CODES.map(value => ({ value, label: LOCALE_LABELS[value] }))
 
-/** 单条文案在五种语言下的取值。顺序固定，与 `Locale` 一一对应。 */
-export interface Localized {
-  'zh-CN': string
-  'zh-TW': string
-  en: string
-  ko: string
-  ja: string
+export function isLocale(value: unknown): value is Locale {
+  return typeof value === 'string' && Object.hasOwn(LOCALE_LABELS, value)
 }
 
-/** 一个域的全部文案：tag 的末段 → 五语。 */
+export type Localized = Record<Locale, string>
 export type DomainMessages = Record<string, Localized>
 
 /**

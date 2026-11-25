@@ -25,7 +25,7 @@ import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { demoActive, withDemoGame } from '../tutorial/demo'
 import { openTransactionRecovery, transactionRecoveries, transactionRecoveryReadError, transactionRecoveryUnavailable } from '../modChanges/transactionRecovery'
 
-const props = defineProps<{ version: string }>()
+const props = defineProps<{ version: string; choosingLanguage: boolean }>()
 const emit = defineEmits<{ 'apply-update': [] }>()
 const appUpdatePromptMode = useAppUpdatePromptMode()
 
@@ -145,7 +145,7 @@ const gameHover = ref(false)
 /** 游戏是否在运行：来自后端游戏状态观察器，前端不自己探测。 */
 const kitchenRunning = computed(() => !!game.value?.kitchen_running)
 /** 有游戏目录才允许启动。 */
-const canLaunch = computed(() => !!game.value?.path && !appUpdateBlocksOperations())
+const canLaunch = computed(() => !!game.value?.path && !props.choosingLanguage && !appUpdateBlocksOperations())
 
 /**
  * 切换厨房运行状态。
@@ -238,7 +238,7 @@ defineExpose({ onUnmountedCleanup })
       显示与外观：缩放 / 语言 / 明暗 / 主题色。
       整组包一层，macOS 上靠 `order` 提到左侧、跟在窗控后面（右侧留给身份与主操作）。
     -->
-    <div class="toolbar-group" :inert="appUpdatePromptMode !== null || updateBusy">
+    <div class="toolbar-group" :inert="props.choosingLanguage || appUpdatePromptMode !== null || updateBusy">
       <AppUpdateStatus :prompt-open="appUpdatePromptMode !== null" @apply-update="emit('apply-update')" />
       <LevelCompressionStatus />
       <RecycleBinStatus />

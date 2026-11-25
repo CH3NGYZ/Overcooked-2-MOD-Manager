@@ -167,7 +167,7 @@ zh-CN = "G_U_A"
 | 字段 | 是否必填 | 说明 |
 | --- | --- | --- |
 | `id` | 是 | 源的唯一标识，同一源文件中不能重复。建议使用字母、数字、点、短横线和下划线，首字符使用字母或数字。 |
-| `nickname_i18n` | 新文档必填 | 多语言昵称表，建议明确包含非空 `zh-CN`；旧声明的兼容规则见下文。支持 `zh-CN`、`zh-TW`、`en`、`ko`、`ja`。 |
+| `nickname_i18n` | 新文档必填 | 多语言昵称表，建议明确包含非空 `zh-CN`；旧声明的兼容规则见下文。使用[支持的 12 种语言键](#多语言名称分组和简介)。 |
 | `note_i18n` | 否 | 安装页源标题旁的多语言说明；与昵称采用同一语言回退顺序，省略或内容为空时不显示，不从仓库地址生成说明。 |
 | `url` | 是 | 完整 HTTP(S) 直链，或相对于当前源所在仓库的文件路径。 |
 | `region` | 否 | `cn` 仅中国大陆，`global` 仅国际地区；省略时对所有地区显示。 |
@@ -452,13 +452,20 @@ value = "HostUtilities.zip"
 
 名称、分组、简介、**以及仓库源昵称**使用同一套多语言规则：只写多语言表，`zh-CN` 是强制兜底。
 
-支持的语言键是：
+管理器与数据源支持以下 12 种语言键（TOML 区分大小写）：
 
-- `zh-CN`：简体中文（**必填，且不能为空**）
-- `zh-TW`：繁體中文
 - `en`：English
+- `de`：Deutsch
+- `fr`：Français
+- `it`：Italiano
 - `ko`：한국어
+- `es-ES`：Español (España)
+- `zh-CN`：简体中文（仓库 `name_i18n` 必填且不能为空）
+- `zh-TW`：繁體中文
+- `ru`：Русский
 - `ja`：日本語
+- `pl`：Polski
+- `pt-BR`：Português (Brasil)
 
 取值顺序：当前界面语言 → `zh-CN` → 表里第一个非空值。因为表里一定会有 `zh-CN`，所以最终一定拿得到文本。
 
@@ -717,7 +724,7 @@ Cloudflare、EdgeOne 与其他官方来源使用同一源码包格式。官方�
 
 - 索引文件是 `maps.toml`，整个文件只放 `[[map_sources]]` 源声明；`mode` 决定这个源怎么取条目：
   - `mode = "repository"`：一个仓库一张图，条目内联在 `[map_sources.map]`，字段与老的 `[[maps]]` 完全一致，离线可用；
-  - `mode = "release-tags"`：一个 Release = 一张地图，地图元数据写在该 Release note 的隐藏 `<!-- oc2-map -->` 块里（身份、五语 name/note、`asset` 模板、`latest_mapset_version`（旧名 `latest_version` 仍认）与 `latest_info_version`、`requires`/`compatible`/`conflicts`）；管理器按页（默认 50 条）读完整个仓库的 Release，整份组合成一个地图源；
+  - `mode = "release-tags"`：一个 Release = 一张地图，地图元数据写在该 Release note 的隐藏 `<!-- oc2-map -->` 块里（身份、12 语 `name_i18n` / `note_i18n`、`asset` 模板、`latest_mapset_version`（旧名 `latest_version` 仍认）与 `latest_info_version`、`requires`/`compatible`/`conflicts`）；管理器按页（默认 50 条）读完整个仓库的 Release，整份组合成一个地图源；
   - `mode = "document"`（缺省，老形态）：`url` 指向一份 `[[maps]]` 子源文档；子源 `url` 既可以是相对路径、内置资源名，也可以是 **Release 资产地址**（第三方源把自己的 `map-sources.toml` 发布在 Release 里时用这种写法：先向 API 取 size/sha256，再竞速下载并校验）；
 - 绑定身份是 `author` + `level_set_name`（与 ZIP 里 `info` 的值一致，忽略大小写）；
 - 卡片说明取元数据块里的 `note_i18n`（按界面语言选，缺失退回单语言 `note`，两者都没有才显示「此地图暂无说明」；`repository` / `document` 形态的条目走同一套回退）；块外面的正文是这个版本的更新日志，显示在版本详情的「提交日志」里；

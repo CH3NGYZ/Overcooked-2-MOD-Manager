@@ -32,7 +32,7 @@ export const i18n = createI18n({
  */
 watch(appLocale, (value) => {
   i18n.global.locale.value = value
-}, { immediate: true })
+}, { flush: 'sync' })
 
 /** 运行期自检：所有域都在组装结果里出现。 */
 export function missingDomains(): Domain[] {

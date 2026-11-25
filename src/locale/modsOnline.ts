@@ -8,106 +8,106 @@ import { common } from './common.ts'
  * camelCase 名，每条上方保留中文原文注释，便于和旧代码、截图对照。
  */
 export const modsOnline: DomainMessages = {
-  goToInstall: { 'zh-CN': '前往 MOD 安装', 'zh-TW': '前往 MOD 安裝', en: 'Go to MOD installation', ko: 'MOD 설치로 이동', ja: 'MODのインストールへ' },
+  goToInstall: { 'zh-CN': '前往 MOD 安装', 'zh-TW': '前往 MOD 安裝', en: 'Go to MOD installation', ko: 'MOD 설치로 이동', ja: 'MODのインストールへ', de: "Gehen Sie zur MOD-Installation", fr: "Aller à l'installation du MOD", it: "Vai all'installazione MOD", 'es-ES': "Vaya a la instalación de MOD", ru: "Перейти к установке MOD", pl: "Przejdź do instalacji MOD", 'pt-BR': "Ir para a instalação do MOD" },
   // 共 {count} 个仓库
-  repositories: { 'zh-CN': '共 {count} 个仓库', 'zh-TW': '共 {count} 個倉庫', en: '{count} repositories', ko: '저장소 {count}개', ja: 'リポジトリ {count} 件' },
+  repositories: { 'zh-CN': '共 {count} 个仓库', 'zh-TW': '共 {count} 個倉庫', en: '{count} repositories', ko: '저장소 {count}개', ja: 'リポジトリ {count} 件', de: "{count}-Repositorys", fr: "Dépôts de {count}", it: "repository {count}", 'es-ES': "Repositorios {count}", ru: "Репозитории {count}", pl: "{count} repozytoria", 'pt-BR': "Repositórios {count}" },
   // 正在读取仓库源（整页加载遮罩文案）
-  readingRepositorySources: { 'zh-CN': '正在读取仓库源…', 'zh-TW': '正在讀取倉庫來源…', en: 'Reading repository sources…', ko: '저장소 소스를 읽는 중…', ja: 'リポジトリソースを読み込み中…' },
+  readingRepositorySources: { 'zh-CN': '正在读取仓库源…', 'zh-TW': '正在讀取倉庫來源…', en: 'Reading repository sources…', ko: '저장소 소스를 읽는 중…', ja: 'リポジトリソースを読み込み中…', de: "Repository-Quellen lesen…", fr: "Lecture des sources du dépôt…", it: "Fonti di repository di lettura…", 'es-ES': "Leyendo fuentes de repositorio…", ru: "Чтение репозиторий источников…", pl: "Odczytywanie źródeł repozytorium…", 'pt-BR': "Lendo fontes do repositório…" },
   // 全部刷新
-  refreshAll: { 'zh-CN': '全部刷新', 'zh-TW': '全部重新整理', en: 'Refresh all', ko: '모두 새로 고침', ja: 'すべて更新' },
+  refreshAll: { 'zh-CN': '全部刷新', 'zh-TW': '全部重新整理', en: 'Refresh all', ko: '모두 새로 고침', ja: 'すべて更新', de: "Erfrischen Sie alle", fr: "Tout rafraîchir", it: "Rifiuti tutti", 'es-ES': "Refresca todo", ru: "Обновить все", pl: "Odśwież wszystkie", 'pt-BR': "Actualizar tudo" },
   // 暂无仓库配置
-  noRepositoriesConfigured: { 'zh-CN': '暂无仓库配置', 'zh-TW': '暫無倉庫設定', en: 'No repositories configured', ko: '저장소 설정 없음', ja: 'リポジトリ設定がありません' },
+  noRepositoriesConfigured: { 'zh-CN': '暂无仓库配置', 'zh-TW': '暫無倉庫設定', en: 'No repositories configured', ko: '저장소 설정 없음', ja: 'リポジトリ設定がありません', de: "Keine Repositories konfiguriert", fr: "Aucun dépôt configuré", it: "Nessun repository configurato", 'es-ES': "No hay repositorios configurados", ru: "Репозитории не настроены", pl: "Brak skonfigurowanych repozytoriów", 'pt-BR': "Sem repositórios configurados" },
   // 仓库文件
-  repositoryFile: { 'zh-CN': '仓库文件', 'zh-TW': '倉庫檔案', en: 'Repository file', ko: '저장소 파일', ja: 'リポジトリファイル' },
+  repositoryFile: { 'zh-CN': '仓库文件', 'zh-TW': '倉庫檔案', en: 'Repository file', ko: '저장소 파일', ja: 'リポジトリファイル', de: "Aufbewahrungsdatei", fr: "Fichier de dépôt", it: "File di repository", 'es-ES': "Archivo de repositorios", ru: "Файл репозитория", pl: "Plik repozytorium", 'pt-BR': "Arquivo do repositório" },
   // 未启用
-  disabled: { 'zh-CN': '未启用', 'zh-TW': '未啟用', en: 'Disabled', ko: '비활성', ja: '無効' },
+  disabled: { 'zh-CN': '未启用', 'zh-TW': '未啟用', en: 'Disabled', ko: '비활성', ja: '無効', de: "Deaktiviert", fr: "Désactivé", it: "Disabilitato", 'es-ES': "Desactivado", ru: "Отключено", pl: "Wyłączono", 'pt-BR': "Desativado" },
   // 仓库刷新失败
-  repositoryRefreshFailed: { 'zh-CN': '仓库刷新失败', 'zh-TW': '倉庫重新整理失敗', en: 'Repository refresh failed', ko: '저장소 새로 고침 실패', ja: 'リポジトリ更新失敗' },
+  repositoryRefreshFailed: { 'zh-CN': '仓库刷新失败', 'zh-TW': '倉庫重新整理失敗', en: 'Repository refresh failed', ko: '저장소 새로 고침 실패', ja: 'リポジトリ更新失敗', de: "Repository Refresh fehlgeschlagen", fr: "La mise à jour du dépôt a échoué", it: "Repository rinfresco fallito", 'es-ES': "Repositorio refresco fallado", ru: "Обновление репозитория провалилось", pl: "Odświeżenie repozytorium nie powiodło się", 'pt-BR': "Falha na atualização do repositório" },
   // 刷新
   refresh: common['action.refresh'],
   // 安装
   install: common['action.install'],
   // 版本
-  versions: { 'zh-CN': '版本', 'zh-TW': '版本', en: 'Versions', ko: '버전', ja: 'バージョン' },
+  versions: { 'zh-CN': '版本', 'zh-TW': '版本', en: 'Versions', ko: '버전', ja: 'バージョン', de: "Fassungen", fr: "Les versions", it: "Versioni", 'es-ES': "Versiones", ru: "Версии", pl: "Wersje", 'pt-BR': "Versões" },
   // 未刷新
-  notRefreshed: { 'zh-CN': '未刷新', 'zh-TW': '未重新整理', en: 'Not refreshed', ko: '새로 고침 안 됨', ja: '未更新' },
+  notRefreshed: { 'zh-CN': '未刷新', 'zh-TW': '未重新整理', en: 'Not refreshed', ko: '새로 고침 안 됨', ja: '未更新', de: "Nicht erfrischt", fr: "Non rafraîchi", it: "Non rinfrescato", 'es-ES': "No refrescante", ru: "Не освежается", pl: "Nieodświeżone", 'pt-BR': "Não atualizado" },
   // {count} 个版本
-  versions2: { 'zh-CN': '{count} 个版本', 'zh-TW': '{count} 個版本', en: '{count} versions', ko: '{count}개 버전', ja: '{count} バージョン' },
+  versions2: { 'zh-CN': '{count} 个版本', 'zh-TW': '{count} 個版本', en: '{count} versions', ko: '{count}개 버전', ja: '{count} バージョン', de: "{count} Versionen", fr: "Versions {count}", it: "versioni {count}", 'es-ES': "{count} versiones", ru: "{count} версии", pl: "Wersja {count}", 'pt-BR': "Versões {count}" },
   // 预发布
-  preRelease: { 'zh-CN': '预发布', 'zh-TW': '預發布', en: 'Pre-release', ko: '프리릴리스', ja: 'プレリリース' },
+  preRelease: { 'zh-CN': '预发布', 'zh-TW': '預發布', en: 'Pre-release', ko: '프리릴리스', ja: 'プレリリース', de: "Vorabversion", fr: "Prélibération", it: "Pre-rilascio", 'es-ES': "Pre-liberación", ru: "Предварительный выпуск", pl: "Wstępne zwolnienie", 'pt-BR': "Pré-lançamento" },
   // 安装依赖
-  installDependency: { 'zh-CN': '安装依赖', 'zh-TW': '安裝依賴', en: 'Install dependency', ko: '의존성 설치', ja: '依存関係をインストール' },
+  installDependency: { 'zh-CN': '安装依赖', 'zh-TW': '安裝依賴', en: 'Install dependency', ko: '의존성 설치', ja: '依存関係をインストール', de: "Abhängigkeit vom Installieren", fr: "Installer la dépendance", it: "Installare la dipendenza", 'es-ES': "Instalar la dependencia", ru: "Установить зависимость", pl: "Zainstaluj zależność", 'pt-BR': "Instalar dependência" },
   // 缺少依赖
   // 有冲突（被动描述：卡片自己装上了，但和别的插件撞了，唯一出路是卸载）
-  conflict: { 'zh-CN': '有冲突', 'zh-TW': '有衝突', en: 'Has conflict', ko: '충돌 있음', ja: '競合あり' },
+  conflict: { 'zh-CN': '有冲突', 'zh-TW': '有衝突', en: 'Has conflict', ko: '충돌 있음', ja: '競合あり', de: "Hat einen Konflikt", fr: "A un conflit", it: "Ha un conflitto", 'es-ES': "Tiene conflicto", ru: "Есть конфликт", pl: "Ma konflikt", 'pt-BR': "Tem conflito" },
   // 去卸载
-  uninstall: { 'zh-CN': '去卸载', 'zh-TW': '去解除安裝', en: 'Uninstall', ko: '제거하기', ja: 'アンインストールへ' },
+  uninstall: { 'zh-CN': '去卸载', 'zh-TW': '去解除安裝', en: 'Uninstall', ko: '제거하기', ja: 'アンインストールへ', de: "Deinstallieren", fr: "Désinstaller", it: "Disinstallare", 'es-ES': "Desinstalación", ru: "Удалить", pl: "Odinstaluj", 'pt-BR': "Desinstalar" },
   // 卸载冲突的 MOD
-  uninstallConflictingMod: { 'zh-CN': '卸载冲突的 MOD', 'zh-TW': '解除安裝衝突的 MOD', en: 'Uninstall conflicting MOD', ko: '충돌 MOD 제거', ja: '競合 MOD をアンインストール' },
+  uninstallConflictingMod: { 'zh-CN': '卸载冲突的 MOD', 'zh-TW': '解除安裝衝突的 MOD', en: 'Uninstall conflicting MOD', ko: '충돌 MOD 제거', ja: '競合 MOD をアンインストール', de: "Deinstallieren von Konflikt-MOD", fr: "Désinstaller le MOD en conflit", it: "Disinstallare MOD in conflitto", 'es-ES': "Desinstalación de MOD conflictiva", ru: "Удалить конфликтный MOD", pl: "Odinstaluj sprzeczny MOD", 'pt-BR': "Desinstalar o MOD conflitante" },
   // 「{owner}」与「{target}」不兼容，需要卸载
-  isIncompatibleWithAndMustBeUninstalled: { 'zh-CN': '「{owner}」与「{target}」不兼容，需要卸载', 'zh-TW': '「{owner}」與「{target}」不相容，需要解除安裝', en: '"{owner}" is incompatible with "{target}" and must be uninstalled', ko: '"{owner}"은(는) "{target}"와(과) 호환되지 않아 제거가 필요합니다', ja: '「{owner}」は「{target}」と互換性がないため、アンインストールが必要です' },
+  isIncompatibleWithAndMustBeUninstalled: { 'zh-CN': '「{owner}」与「{target}」不兼容，需要卸载', 'zh-TW': '「{owner}」與「{target}」不相容，需要解除安裝', en: '"{owner}" is incompatible with "{target}" and must be uninstalled', ko: '"{owner}"은(는) "{target}"와(과) 호환되지 않아 제거가 필요합니다', ja: '「{owner}」は「{target}」と互換性がないため、アンインストールが必要です', de: "\"{owner}\" ist nicht kompatibel mit \"{target}\" und muss deinstalliert werden", fr: "\"{owner}\" est incompatible avec \"{target}\" et doit être désinstallé", it: "\"{owner}\" è incompatibile con \"{target}\" e deve essere disinstallato", 'es-ES': "\"{owner}\" es incompatible con \"{target}\" y debe desinstalarse", ru: "«{owner}» несовместим с «{target}» и должен быть удален", pl: "\"{owner}\" jest niekompatybilny z \"{target}\" i musi być odinstalowany", 'pt-BR': "\"{owner}\" é incompatível com \"{target}\" e deve ser desinstalado" },
   // 不兼容
-  incompatible: { 'zh-CN': '不兼容', 'zh-TW': '不相容', en: 'Incompatible', ko: '비호환', ja: '非互換' },
+  incompatible: { 'zh-CN': '不兼容', 'zh-TW': '不相容', en: 'Incompatible', ko: '비호환', ja: '非互換', de: "Inkompatibel", fr: "Incompatibilité", it: "Incompatibile", 'es-ES': "Incompatibles", ru: "несовместимый", pl: "Niekompatybilne", 'pt-BR': "Incompatível" },
   // 「{name}」与「{owner}」不兼容，需要卸载。继续？
-  isIncompatibleWithAndMustBeUninstalledContinue: { 'zh-CN': '「{name}」与「{owner}」不兼容，需要卸载。继续？', 'zh-TW': '「{name}」與「{owner}」不相容，需要解除安裝。繼續？', en: '"{name}" is incompatible with "{owner}" and must be uninstalled. Continue?', ko: '"{name}"은(는) "{owner}"와(과) 호환되지 않아 제거가 필요합니다. 계속할까요?', ja: '「{name}」は「{owner}」と互換性がないため、アンインストールが必要です。続行しますか？' },
+  isIncompatibleWithAndMustBeUninstalledContinue: { 'zh-CN': '「{name}」与「{owner}」不兼容，需要卸载。继续？', 'zh-TW': '「{name}」與「{owner}」不相容，需要解除安裝。繼續？', en: '"{name}" is incompatible with "{owner}" and must be uninstalled. Continue?', ko: '"{name}"은(는) "{owner}"와(과) 호환되지 않아 제거가 필요합니다. 계속할까요?', ja: '「{name}」は「{owner}」と互換性がないため、アンインストールが必要です。続行しますか？', de: "\"{name}\" ist inkompatibel mit \"{owner}\" und muss deinstalliert werden.", fr: "\"{name}\" est incompatible avec \"{owner}\" et doit être désinstallé.", it: "\"{name}\" è incompatibile con \"{owner}\" e deve essere disinstallato.", 'es-ES': "\"{name}\" es incompatible con \"{owner}\" y debe desinstalarse. ¿Continúe?", ru: "\"{name}\" несовместим с \"{owner}\" и должен быть удален.", pl: "\"{name}\" jest niekompatybilny z \"{owner}\" i musi być odinstalowany. Kontynuować?", 'pt-BR': "\"{name}\" é incompatível com \"{owner}\" e deve ser desinstalado. Continuar?" },
   // 安装前检查
-  preInstallCheck: { 'zh-CN': '安装前检查', 'zh-TW': '安裝前檢查', en: 'Pre-install check', ko: '설치 전 검사', ja: 'インストール前の確認' },
+  preInstallCheck: { 'zh-CN': '安装前检查', 'zh-TW': '安裝前檢查', en: 'Pre-install check', ko: '설치 전 검사', ja: 'インストール前の確認', de: "Prüfung vor der Installation", fr: "Vérification préalable à l'installation", it: "Controllo preinstallato", 'es-ES': "Verificación de preinstalación", ru: "Предварительная проверка", pl: "Sprawdzanie przed instalacją", 'pt-BR': "Verificação pré- instalação" },
   // 安装「{name}」前，需要先处理以下关系：
-  beforeInstallingTheseRelationsMustBeHandledFirst: { 'zh-CN': '安装「{name}」前，需要先处理以下关系：', 'zh-TW': '安裝「{name}」前，需要先處理以下關係：', en: 'Before installing "{name}", these relations must be handled first:', ko: '"{name}" 설치 전에 다음 관계를 먼저 처리해야 합니다:', ja: '「{name}」をインストールする前に、以下の関係を処理する必要があります：' },
+  beforeInstallingTheseRelationsMustBeHandledFirst: { 'zh-CN': '安装「{name}」前，需要先处理以下关系：', 'zh-TW': '安裝「{name}」前，需要先處理以下關係：', en: 'Before installing "{name}", these relations must be handled first:', ko: '"{name}" 설치 전에 다음 관계를 먼저 처리해야 합니다:', ja: '「{name}」をインストールする前に、以下の関係を処理する必要があります：', de: "Vor der Installation von \"{name}\" müssen diese Beziehungen zuerst behandelt werden:", fr: "Avant d'installer \"{name}\", ces relations doivent être traitées en premier:", it: "Prima di installare \"{name}\", queste relazioni devono essere gestite prima:", 'es-ES': "Antes de instalar \"{name}\", estas relaciones deben manejarse primero:", ru: "Перед установкой «{name}» эти отношения должны быть обработаны в первую очередь:", pl: "Przed zainstalowaniem \"{name}\", te relacje muszą być traktowane jako pierwsze:", 'pt-BR': "Antes de instalar o \"{name}\", estas relações devem ser tratadas primeiro:" },
   // 全部处理
-  handleAll: { 'zh-CN': '全部处理', 'zh-TW': '全部處理', en: 'Handle all', ko: '모두 처리', ja: 'すべて処理' },
+  handleAll: { 'zh-CN': '全部处理', 'zh-TW': '全部處理', en: 'Handle all', ko: '모두 처리', ja: 'すべて処理', de: "Handhabe alle", fr: "Poignez tout", it: "Maneggiare tutto", 'es-ES': "Manejar todo", ru: "Управляйте всем", pl: "Zajmij się wszystkim", 'pt-BR': "Lidar com tudo" },
   // 仍然安装
-  installAnyway: { 'zh-CN': '仍然安装', 'zh-TW': '仍然安裝', en: 'Install anyway', ko: '그래도 설치', ja: 'それでもインストール' },
+  installAnyway: { 'zh-CN': '仍然安装', 'zh-TW': '仍然安裝', en: 'Install anyway', ko: '그래도 설치', ja: 'それでもインストール', de: "Installieren Sie es trotzdem", fr: "Installer de toute façon", it: "Installare lo stesso", 'es-ES': "Instala de todos modos", ru: "Установить в любом случае", pl: "Zainstaluj i tak", 'pt-BR': "Instalar mesmo assim" },
   // 完成
-  done: { 'zh-CN': '完成', 'zh-TW': '完成', en: 'Done', ko: '완료', ja: '完了' },
+  done: { 'zh-CN': '完成', 'zh-TW': '完成', en: 'Done', ko: '완료', ja: '完了', de: "Fertig", fr: "Terminé", it: "Fatto", 'es-ES': "Listo", ru: "Готово", pl: "Gotowe", 'pt-BR': "Concluído" },
   // 下载完成但没有解析出安装内容
-  downloadFinishedButNoInstallableContentWasParsed: { 'zh-CN': '下载完成但没有解析出安装内容', 'zh-TW': '下載完成但沒有解析出安裝內容', en: 'Download finished but no installable content was parsed', ko: '다운로드는 완료되었지만 설치할 내용을 분석하지 못했습니다', ja: 'ダウンロードは完了しましたが、インストール内容を解析できませんでした' },
+  downloadFinishedButNoInstallableContentWasParsed: { 'zh-CN': '下载完成但没有解析出安装内容', 'zh-TW': '下載完成但沒有解析出安裝內容', en: 'Download finished but no installable content was parsed', ko: '다운로드는 완료되었지만 설치할 내용을 분석하지 못했습니다', ja: 'ダウンロードは完了しましたが、インストール内容を解析できませんでした', de: "Download fertig, aber kein installierbarer Inhalt wurde analysiert", fr: "Téléchargement terminé mais aucun contenu installable n'a été analysé", it: "Scarica finito ma nessun contenuto installabile è stato parsed", 'es-ES': "Descarga terminado pero no se analiza ningún contenido instalable", ru: "Загрузка завершена, но ни один установочный контент не был разобран", pl: "Pobieranie zakończone, ale nie zainstalowano treści", 'pt-BR': "A transferência terminou, mas nenhum conteúdo instalável foi analisado" },
   // 正在读取配置
-  readingConfiguration: { 'zh-CN': '正在读取配置', 'zh-TW': '正在讀取設定', en: 'Reading configuration', ko: '설정 읽는 중', ja: '設定を読み込み中' },
+  readingConfiguration: { 'zh-CN': '正在读取配置', 'zh-TW': '正在讀取設定', en: 'Reading configuration', ko: '설정 읽는 중', ja: '設定を読み込み中', de: "Lesekonfiguration", fr: "Configuration de lecture", it: "Configurazione di lettura", 'es-ES': "Configuración de lectura", ru: "Конфигурация чтения", pl: "Konfiguracja odczytu", 'pt-BR': "Configuração de leitura" },
   // 保存
-  save: { 'zh-CN': '保存', 'zh-TW': '儲存', en: 'Save', ko: '저장', ja: '保存' },
+  save: { 'zh-CN': '保存', 'zh-TW': '儲存', en: 'Save', ko: '저장', ja: '保存', de: "Speichern", fr: "Enregistrer", it: "Salva", 'es-ES': "Guardar", ru: "Сохранить", pl: "Zapisz", 'pt-BR': "Salvar" },
   // 已复制
-  copied: { 'zh-CN': '已复制', 'zh-TW': '已複製', en: 'Copied', ko: '복사되었습니다', ja: 'コピーしました' },
+  copied: { 'zh-CN': '已复制', 'zh-TW': '已複製', en: 'Copied', ko: '복사되었습니다', ja: 'コピーしました', de: "Kopiert", fr: "Copié", it: "Copiato", 'es-ES': "Copiado", ru: "Скопировано", pl: "Skopiowano", 'pt-BR': "Copiado" },
   // 复制
-  copy: { 'zh-CN': '复制', 'zh-TW': '複製', en: 'Copy', ko: '복사', ja: 'コピー' },
+  copy: { 'zh-CN': '复制', 'zh-TW': '複製', en: 'Copy', ko: '복사', ja: 'コピー', de: "Kopieren", fr: "Copier", it: "Copia", 'es-ES': "Copiar", ru: "Копировать", pl: "Kopiuj", 'pt-BR': "Copiar" },
   // 整包移入回收站
-  movePackageToRecycleBin: { 'zh-CN': '整包移入回收站', 'zh-TW': '整包移入資源回收筒', en: 'Move package to recycle bin', ko: '패키지째 휴지통으로 이동', ja: 'パッケージをゴミ箱へ移動' },
+  movePackageToRecycleBin: { 'zh-CN': '整包移入回收站', 'zh-TW': '整包移入資源回收筒', en: 'Move package to recycle bin', ko: '패키지째 휴지통으로 이동', ja: 'パッケージをゴミ箱へ移動', de: "Verschieben Sie das Paket in den Papierkorb", fr: "Déplacer le colis dans la poubelle", it: "Spostare il pacchetto per riciclare il cestino", 'es-ES': "Mover el paquete a la papelera de reciclaje", ru: "Переместить упаковку для переработки мусора", pl: "Przenieś pakiet do recyklingu kosza", 'pt-BR': "Mover o pacote para a lixeira" },
   // 已完成 {count} 项处理
-  handledItemS: { 'zh-CN': '已完成 {count} 项处理', 'zh-TW': '已完成 {count} 項處理', en: 'Handled {count} item(s)', ko: '{count}개 항목을 처리했습니다', ja: '{count} 件を処理しました' },
+  handledItemS: { 'zh-CN': '已完成 {count} 项处理', 'zh-TW': '已完成 {count} 項處理', en: 'Handled {count} item(s)', ko: '{count}개 항목을 처리했습니다', ja: '{count} 件を処理しました', de: "Behandelter {count}-Artikel", fr: "Élément(s) géré(s) par {count}", it: "Prodotto(i) {count} gestito", 'es-ES': "{count} artículo(s)", ru: "Обработанный {count}(s)", pl: "Handled {count} pozycji (s)", 'pt-BR': "Artigo(s) {count} manipulado(s)" },
   // 找不到要卸载的 MOD
-  theModToUninstallWasNotFound: { 'zh-CN': '找不到要卸载的 MOD', 'zh-TW': '找不到要解除安裝的 MOD', en: 'The MOD to uninstall was not found', ko: '제거할 MOD를 찾을 수 없습니다', ja: 'アンインストール対象の MOD が見つかりません' },
+  theModToUninstallWasNotFound: { 'zh-CN': '找不到要卸载的 MOD', 'zh-TW': '找不到要解除安裝的 MOD', en: 'The MOD to uninstall was not found', ko: '제거할 MOD를 찾을 수 없습니다', ja: 'アンインストール対象の MOD が見つかりません', de: "Der MOD zum Deinstallieren wurde nicht gefunden", fr: "Le MOD à désinstaller n'a pas été trouvé", it: "Il MOD per disinstallare non è stato trovato", 'es-ES': "No se encontró el MOD para desinstalar", ru: "МО для удаления не было найдено", pl: "MOD, który ma zostać odblokowany nie został znaleziony", 'pt-BR': "O MOD para desinstalar não foi encontrado" },
   // 找不到可安装的来源
-  noInstallableSourceFound: { 'zh-CN': '找不到可安装的来源', 'zh-TW': '找不到可安裝的來源', en: 'No installable source found', ko: '설치 가능한 소스를 찾을 수 없습니다', ja: 'インストール可能なソースが見つかりません' },
+  noInstallableSourceFound: { 'zh-CN': '找不到可安装的来源', 'zh-TW': '找不到可安裝的來源', en: 'No installable source found', ko: '설치 가능한 소스를 찾을 수 없습니다', ja: 'インストール可能なソースが見つかりません', de: "Keine installierbare Quelle gefunden", fr: "Aucune source installable trouvée", it: "Nessuna fonte installabile trovata", 'es-ES': "No se encontró fuente instalable", ru: "Нет установленного источника найден", pl: "Nie znaleziono instalowanego źródła", 'pt-BR': "Não foi encontrada nenhuma fonte instalável" },
   // 「{name}」{version} 不兼容，需要 {range} 之间的版本
-  isIncompatibleAVersionInIsRequired: { 'zh-CN': '「{name}」{version} 不兼容，需要 {range} 之间的版本', 'zh-TW': '「{name}」{version} 不相容，需要 {range} 之間的版本', en: '"{name}" {version} is incompatible; a version in {range} is required', ko: '"{name}" {version}은(는) 호환되지 않습니다. {range} 버전이 필요합니다', ja: '「{name}」{version} は非互換です。{range} のバージョンが必要です' },
+  isIncompatibleAVersionInIsRequired: { 'zh-CN': '「{name}」{version} 不兼容，需要 {range} 之间的版本', 'zh-TW': '「{name}」{version} 不相容，需要 {range} 之間的版本', en: '"{name}" {version} is incompatible; a version in {range} is required', ko: '"{name}" {version}은(는) 호환되지 않습니다. {range} 버전이 필요합니다', ja: '「{name}」{version} は非互換です。{range} のバージョンが必要です', de: "\"{name}\" {version} ist inkompatibel; eine Version in {range} ist erforderlich", fr: "\"{name}\" {version} est incompatible; une version en {range} est requise", it: "\"{name}\" {version} è incompatibile; è richiesta una versione in {range}", 'es-ES': "\"{name}\" {version} es incompatible; se requiere una versión en {range}", ru: "«{name}» {version} несовместим; требуется версия в {range}", pl: "\"{name}\" {version} jest niekompatybilny; wymagana jest wersja w {range}", 'pt-BR': "\"{name}\" {version} é incompatível; é necessária uma versão em {range}" },
   // 「{name}」{version} 不兼容，请注意
-  isIncompatiblePleaseCheck: { 'zh-CN': '「{name}」{version} 不兼容，请注意', 'zh-TW': '「{name}」{version} 不相容，請注意', en: '"{name}" {version} is incompatible; please check', ko: '"{name}" {version}은(는) 호환되지 않습니다. 확인해 주세요', ja: '「{name}」{version} は非互換です。ご確認ください' },
+  isIncompatiblePleaseCheck: { 'zh-CN': '「{name}」{version} 不兼容，请注意', 'zh-TW': '「{name}」{version} 不相容，請注意', en: '"{name}" {version} is incompatible; please check', ko: '"{name}" {version}은(는) 호환되지 않습니다. 확인해 주세요', ja: '「{name}」{version} は非互換です。ご確認ください', de: "\"{name}\" {version} ist unvereinbar; bitte überprüfen", fr: "\"{name}\" {version} est incompatible; veuillez vérifier", it: "\"{name}\" {version} è incompatibile; si prega di controllare", 'es-ES': "\"{name}\" {version} es incompatible; por favor, compruebe", ru: "«{name}» {version} несовместим; пожалуйста, проверьте", pl: "\"{name}\" {version} jest niekompatybilny; prosimy sprawdzić", 'pt-BR': "\"{name}\" {version} é incompatível; verifique por favor" },
   // 「{name}」{version} 冲突，请卸载
-  conflictsPleaseUninstallIt: { 'zh-CN': '「{name}」{version} 冲突，请卸载', 'zh-TW': '「{name}」{version} 衝突，請解除安裝', en: '"{name}" {version} conflicts; please uninstall it', ko: '"{name}" {version}이(가) 충돌합니다. 제거해 주세요', ja: '「{name}」{version} が競合しています。アンインストールしてください' },
+  conflictsPleaseUninstallIt: { 'zh-CN': '「{name}」{version} 冲突，请卸载', 'zh-TW': '「{name}」{version} 衝突，請解除安裝', en: '"{name}" {version} conflicts; please uninstall it', ko: '"{name}" {version}이(가) 충돌합니다. 제거해 주세요', ja: '「{name}」{version} が競合しています。アンインストールしてください', de: "\"{name}\" {version} Konflikte; bitte deinstallieren", fr: "\"{name}\" Conflits {version}; veuillez le désinstaller", it: "\"{name}\" conflitti {version}; si prega di disinstallarlo", 'es-ES': "\"{name}\" Conflictos {version}; desinstalarlo", ru: "{name} конфликты {version}; пожалуйста, удалите его", pl: "\"{name}\" {version} konflikty; prosimy o jego odinstalowaniu", 'pt-BR': "Conflitos \"{name}\" {version}; por favor desinstala- o" },
   // 缺少依赖「{name}」，需要 {range} 之间的版本
-  missingDependencyAVersionInIsRequired: { 'zh-CN': '缺少依赖「{name}」，需要 {range} 之间的版本', 'zh-TW': '缺少依賴「{name}」，需要 {range} 之間的版本', en: 'Missing dependency "{name}"; a version in {range} is required', ko: '의존성 "{name}"이(가) 없습니다. {range} 버전이 필요합니다', ja: '依存関係「{name}」がありません。{range} のバージョンが必要です' },
+  missingDependencyAVersionInIsRequired: { 'zh-CN': '缺少依赖「{name}」，需要 {range} 之间的版本', 'zh-TW': '缺少依賴「{name}」，需要 {range} 之間的版本', en: 'Missing dependency "{name}"; a version in {range} is required', ko: '의존성 "{name}"이(가) 없습니다. {range} 버전이 필요합니다', ja: '依存関係「{name}」がありません。{range} のバージョンが必要です', de: "Fehlende Abhängigkeit \"{name}\"; eine Version in {range} ist erforderlich", fr: "Dépendance manquante \"{name}\"; une version en {range} est requise", it: "Dipendenza mancante \"{name}\"; è richiesta una versione in {range}", 'es-ES': "Falta de dependencia \"{name}\"; se requiere una versión en {range}", ru: "Пропавшая зависимость «{name}»; требуется версия в {range}", pl: "Brak zależności \"{name}\"; wymagana jest wersja w {range}", 'pt-BR': "Falta a dependência \"{name}\"; é necessária uma versão no {range}" },
   // 缺少依赖「{name}」
-  missingDependency2: { 'zh-CN': '缺少依赖「{name}」', 'zh-TW': '缺少依賴「{name}」', en: 'Missing dependency "{name}"', ko: '의존성 "{name}"이(가) 없습니다', ja: '依存関係「{name}」がありません' },
+  missingDependency2: { 'zh-CN': '缺少依赖「{name}」', 'zh-TW': '缺少依賴「{name}」', en: 'Missing dependency "{name}"', ko: '의존성 "{name}"이(가) 없습니다', ja: '依存関係「{name}」がありません', de: "Fehlende Abhängigkeit \"{name}\"", fr: "Dépendance manquante \"{name}\"", it: "Dipendenza mancante \"{name}\"", 'es-ES': "Falta de dependencia \"{name}\"", ru: "Пропавшая зависимость «{name}»", pl: "Brak zależności \"{name}\"", 'pt-BR': "Falta a dependência \"{name}\"" },
   // 测
-  t: { 'zh-CN': '测', 'zh-TW': '測', en: 'T', ko: '테', ja: '試' },
+  t: { 'zh-CN': '测', 'zh-TW': '測', en: 'T', ko: '테', ja: '試', de: "T", fr: "T", it: "T", 'es-ES': "P", ru: "Т", pl: "T", 'pt-BR': "T" },
   // 安装此版本
-  installThisVersion: { 'zh-CN': '安装此版本', 'zh-TW': '安裝此版本', en: 'Install this version', ko: '이 버전 설치', ja: 'このバージョンをインストール' },
+  installThisVersion: { 'zh-CN': '安装此版本', 'zh-TW': '安裝此版本', en: 'Install this version', ko: '이 버전 설치', ja: 'このバージョンをインストール', de: "Installieren Sie diese Version", fr: "Installer cette version", it: "Installa questa versione", 'es-ES': "Instala esta versión", ru: "Установите эту версию", pl: "Zainstaluj tę wersję", 'pt-BR': "Instalar esta versão" },
   // 尚无缓存的 Release，请先刷新。
-  noCachedReleasesRefreshFirst: { 'zh-CN': '尚无缓存的 Release，请先刷新。', 'zh-TW': '尚無快取的 Release，請先重新整理。', en: 'No cached releases. Refresh first.', ko: '캐시된 Release가 없습니다. 먼저 새로 고침하세요.', ja: 'キャッシュされたReleaseがありません。先に更新してください。' },
+  noCachedReleasesRefreshFirst: { 'zh-CN': '尚无缓存的 Release，请先刷新。', 'zh-TW': '尚無快取的 Release，請先重新整理。', en: 'No cached releases. Refresh first.', ko: '캐시된 Release가 없습니다. 먼저 새로 고침하세요.', ja: 'キャッシュされたReleaseがありません。先に更新してください。', de: "Keine zwischengespeicherten Releases. Erfrischen Sie zuerst.", fr: "Pas de mises en cache. Rafraîchir en premier.", it: "Nessun rilascio di cache. Rifiuta prima.", 'es-ES': "No hay lanzamientos en caché.", ru: "Никаких кэшированных релизов.", pl: "Odśwież pierwszy.", 'pt-BR': "Sem lançamentos em cache. Atualizar primeiro." },
   // 游戏运行中，已禁止安装。请先关闭游戏。
-  theGameIsRunningCloseItBeforeInstalling: { 'zh-CN': '游戏运行中，已禁止安装。请先关闭游戏。', 'zh-TW': '遊戲執行中，已禁止安裝。請先關閉遊戲。', en: 'The game is running. Close it before installing.', ko: '게임 실행 중에는 설치할 수 없습니다. 먼저 게임을 종료하세요.', ja: 'ゲーム実行中はインストールできません。先にゲームを終了してください。' },
+  theGameIsRunningCloseItBeforeInstalling: { 'zh-CN': '游戏运行中，已禁止安装。请先关闭游戏。', 'zh-TW': '遊戲執行中，已禁止安裝。請先關閉遊戲。', en: 'The game is running. Close it before installing.', ko: '게임 실행 중에는 설치할 수 없습니다. 먼저 게임을 종료하세요.', ja: 'ゲーム実行中はインストールできません。先にゲームを終了してください。', de: "Das Spiel läuft. Schließen Sie es vor der Installation.", fr: "Le jeu est en cours d'exécution. Fermez-le avant d'installer.", it: "Il gioco è in esecuzione. Chiudere prima di installare.", 'es-ES': "El juego se está ejecutando. Cerrarlo antes de instalar.", ru: "Игра запущена. Закройте ее перед установкой.", pl: "Gra jest uruchomiona. Zamknij ją przed instalacją.", 'pt-BR': "O jogo está em execução. Feche-o antes de instalar." },
   // 获取到 {count} 个 Release
-  fetchedReleases: { 'zh-CN': '获取到 {count} 个 Release', 'zh-TW': '取得 {count} 個 Release', en: 'Fetched {count} releases', ko: 'Release {count}개를 가져왔습니다', ja: 'Release を {count} 件取得しました' },
+  fetchedReleases: { 'zh-CN': '获取到 {count} 个 Release', 'zh-TW': '取得 {count} 個 Release', en: 'Fetched {count} releases', ko: 'Release {count}개를 가져왔습니다', ja: 'Release を {count} 件取得しました', de: "Abgerufene {count} Releases", fr: "Sorties Fetched {count}", it: "Comunicati {count}", 'es-ES': "Liberaciones de {count}", ru: "Обсуждение {count}", pl: "Wydania {count}", 'pt-BR': "Lançamentos Fetched {count}" },
   // 在 MOD 安装中查看依赖
-  viewDependencyInModInstall: { 'zh-CN': '在 MOD 安装中查看依赖', 'zh-TW': '在 MOD 安裝中檢視依賴', en: 'View dependency in MOD Install', ko: 'MOD 설치에서 의존성 보기', ja: 'MOD インストールで依存関係を表示' },
+  viewDependencyInModInstall: { 'zh-CN': '在 MOD 安装中查看依赖', 'zh-TW': '在 MOD 安裝中檢視依賴', en: 'View dependency in MOD Install', ko: 'MOD 설치에서 의존성 보기', ja: 'MOD インストールで依存関係を表示', de: "View Dependence in MOD Install", fr: "Voir la dépendance dans MOD Install", it: "Visualizzare la dipendenza in MOD Install", 'es-ES': "Ver dependencia en MOD Install", ru: "Зависимость от просмотра в MOD Install", pl: "Zobacz zależność w instalacji MOD", 'pt-BR': "Ver dependência na instalação do MOD" },
   // 没有可安装的来源
-  noInstallableSource: { 'zh-CN': '没有可安装的来源', 'zh-TW': '沒有可安裝的來源', en: 'No installable source', ko: '설치 가능한 소스 없음', ja: 'インストール可能なソースがありません' },
+  noInstallableSource: { 'zh-CN': '没有可安装的来源', 'zh-TW': '沒有可安裝的來源', en: 'No installable source', ko: '설치 가능한 소스 없음', ja: 'インストール可能なソースがありません', de: "Keine installierbare Quelle", fr: "Aucune source installable", it: "Nessuna fonte installabile", 'es-ES': "No hay fuente instalable", ru: "Нет установленного источника", pl: "Brak instalowanego źródła", 'pt-BR': "Sem fonte instalável" },
   // 点击定位到该仓库
-  clickToLocateThatRepository: { 'zh-CN': '点击定位到该仓库', 'zh-TW': '點擊定位到該倉庫', en: 'Click to locate that repository', ko: '클릭하면 해당 저장소로 이동합니다', ja: 'クリックでそのリポジトリへ移動します' },
+  clickToLocateThatRepository: { 'zh-CN': '点击定位到该仓库', 'zh-TW': '點擊定位到該倉庫', en: 'Click to locate that repository', ko: '클릭하면 해당 저장소로 이동합니다', ja: 'クリックでそのリポジトリへ移動します', de: "Klicken Sie, um dieses Repository zu finden", fr: "Cliquez pour localiser ce dépôt", it: "Fare clic per individuare il repository", 'es-ES': "Haga clic para localizar ese repositorio", ru: "Нажмите, чтобы найти этот репозиторий", pl: "Kliknij, aby zlokalizować to repozytorium", 'pt-BR': "Clique para localizar esse repositório" },
   // 在 MOD 管理中查看
-  viewInModManager: { 'zh-CN': '在 MOD 管理中查看', 'zh-TW': '在 MOD 管理中檢視', en: 'View in MOD Manager', ko: 'MOD 관리에서 보기', ja: 'MOD マネージャーで表示' },
+  viewInModManager: { 'zh-CN': '在 MOD 管理中查看', 'zh-TW': '在 MOD 管理中檢視', en: 'View in MOD Manager', ko: 'MOD 관리에서 보기', ja: 'MOD マネージャーで表示', de: "Ansicht in MOD Manager", fr: "Affichage dans le gestionnaire MOD", it: "Visualizza in MOD Manager", 'es-ES': "Vista en MOD Manager", ru: "Взгляд в MOD Manager", pl: "Widok w Menedżerze MOD", 'pt-BR': "Ver no Gerenciador de MOD" },
   // 在页面内定位
-  locateOnThisPage: { 'zh-CN': '在页面内定位', 'zh-TW': '在頁面內定位', en: 'Locate on this page', ko: '페이지에서 찾기', ja: 'このページ内で表示' },
+  locateOnThisPage: { 'zh-CN': '在页面内定位', 'zh-TW': '在頁面內定位', en: 'Locate on this page', ko: '페이지에서 찾기', ja: 'このページ内で表示', de: "Auf dieser Seite finden", fr: "Localiser sur cette page", it: "Individuare in questa pagina", 'es-ES': "Localizar en esta página", ru: "Найти на этой странице", pl: "Zlokalizuj na tej stronie", 'pt-BR': "Localizar nesta página" },
   // {provider} 社区仓库：{reason}
-  communityRepositoryError: { 'zh-CN': '{provider} 社区仓库：{reason}', 'zh-TW': '{provider} 社群倉庫：{reason}', en: '{provider} community repositories: {reason}', ko: '{provider} 커뮤니티 저장소: {reason}', ja: '{provider} コミュニティリポジトリ: {reason}' },
+  communityRepositoryError: { 'zh-CN': '{provider} 社区仓库：{reason}', 'zh-TW': '{provider} 社群倉庫：{reason}', en: '{provider} community repositories: {reason}', ko: '{provider} 커뮤니티 저장소: {reason}', ja: '{provider} コミュニティリポジトリ: {reason}', de: "{provider} Community Repositorys: {reason}", fr: "Dépôts communautaires de {provider}: {reason}", it: "Repositori comuni {provider}: {reason}", 'es-ES': "Repositorios comunitarios {provider}: {reason}", ru: "Сообщество {provider}: {reason}", pl: "{provider} repozytoria społecznościowe: {reason}", 'pt-BR': "Repositórios comunitários do {provider}: {reason}" },
 }

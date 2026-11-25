@@ -27,7 +27,7 @@ pub const GITEE_COMMUNITY_MAP_SOURCE_ID: &str = "gitee-map-community";
 /// 记 warn，等发现结果变化、用户下次刷新时自然轮得到。
 const MAX_COMMUNITY_MAP_REPOSITORIES: usize = 50;
 
-/// 社区地图源标签（每平台一个，五语名称）。
+/// 社区地图源标签（每平台一个）。
 pub(super) fn community_map_label(provider: &Provider) -> SourceLabel {
     let (id, product) = match provider {
         Provider::Github => (GITHUB_COMMUNITY_MAP_SOURCE_ID, "GitHub"),
@@ -46,6 +46,25 @@ pub(super) fn community_map_label(provider: &Provider) -> SourceLabel {
             ("en".to_string(), format!("Community maps ({product})")),
             ("ko".to_string(), format!("커뮤니티 맵 ({product})")),
             ("ja".to_string(), format!("コミュニティマップ（{product}）")),
+            ("de".to_string(), format!("Community-Karten ({product})")),
+            (
+                "fr".to_string(),
+                format!("Cartes de la communauté ({product})"),
+            ),
+            (
+                "it".to_string(),
+                format!("Mappe della community ({product})"),
+            ),
+            (
+                "es-ES".to_string(),
+                format!("Mapas de la comunidad ({product})"),
+            ),
+            ("ru".to_string(), format!("Карты сообщества ({product})")),
+            ("pl".to_string(), format!("Mapy społeczności ({product})")),
+            (
+                "pt-BR".to_string(),
+                format!("Mapas da comunidade ({product})"),
+            ),
         ]),
     }
 }

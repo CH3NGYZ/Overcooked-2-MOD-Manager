@@ -4,22 +4,77 @@
     "zh-TW": "目標「{path}」已存在。請選擇一個尚未包含 OC2ModManager 子目錄的上層目錄。",
     "en": "“{path}” already exists. Choose a parent folder that does not already contain OC2ModManager.",
     "ko": "대상 “{path}”이(가) 이미 있습니다. OC2ModManager 하위 폴더가 없는 상위 폴더를 선택하세요.",
-    "ja": "移動先「{path}」は既に存在します。OC2ModManager サブフォルダーのない親フォルダーを選んでください。"
+    "ja": "移動先「{path}」は既に存在します。OC2ModManager サブフォルダーのない親フォルダーを選んでください。",
+    "de": "„{path}“ ist bereits vorhanden. Wähle einen übergeordneten Ordner ohne Unterordner namens OC2ModManager.",
+    "fr": "« {path} » existe déjà. Choisissez un dossier parent qui ne contient pas encore de sous-dossier OC2ModManager.",
+    "it": "«{path}» esiste già. Scegli una cartella superiore che non contenga già una sottocartella OC2ModManager.",
+    "es-ES": "«{path}» ya existe. Elige una carpeta superior que aún no contenga una subcarpeta OC2ModManager.",
+    "ru": "Папка «{path}» уже существует. Выберите родительскую папку, в которой ещё нет подпапки OC2ModManager.",
+    "pl": "Folder „{path}” już istnieje. Wybierz folder nadrzędny, w którym nie ma jeszcze podfolderu OC2ModManager.",
+    "pt-BR": "A pasta “{path}” já existe. Escolha uma pasta que ainda não contenha a subpasta OC2ModManager."
   },
-  "dataOperationFailed": {"zh-CN":"管理器数据操作未完成。","zh-TW":"管理器資料操作未完成。","en":"The manager could not complete the data operation.","ko":"관리자 데이터 작업을 완료하지 못했습니다.","ja":"マネージャーのデータ操作を完了できませんでした。"},
-  "dataOperationUnsafe": {"zh-CN":"源目录、目标目录或数据内容未通过安全校验。","zh-TW":"來源、目標資料夾或資料內容未通過安全檢查。","en":"The source, destination or data failed a safety check.","ko":"원본 폴더, 대상 폴더 또는 데이터가 안전성 검사를 통과하지 못했습니다.","ja":"移動元、移動先、またはデータの安全性を確認できませんでした。"},
-  "dataOperationRootUnavailable": {"zh-CN":"无法访问当前配置目录。请确认所在磁盘已连接且目录可访问。","zh-TW":"無法存取目前設定目錄。請確認所在磁碟已連接且目錄可存取。","en":"The current configuration folder is unavailable. Check that its drive is connected and the folder is accessible.","ko":"현재 설정 폴더에 접근할 수 없습니다. 해당 드라이브가 연결되어 있고 폴더에 접근할 수 있는지 확인하세요.","ja":"現在の設定フォルダーにアクセスできません。ドライブの接続とフォルダーへのアクセスを確認してください。"},
-  "clearAllConfigBusy": {"zh-CN":"仍有任务正在执行，请等待完成后再清除或迁移配置。","zh-TW":"仍有工作正在執行，請等待完成後再清除或遷移設定。","en":"An operation is still running. Wait for it to finish before clearing or moving configuration.","ko":"실행 중인 작업이 있습니다. 완료된 후 설정을 삭제하거나 이동해 주세요.","ja":"処理が実行中です。完了してから設定を削除または移動してください。"},
-  "dataOperationSource": {"zh-CN":"源目录：{path}","zh-TW":"來源資料夾：{path}","en":"Source folder: {path}","ko":"원본 폴더: {path}","ja":"移動元フォルダー：{path}"},
-  "dataOperationTarget": {"zh-CN":"目标目录：{path}","zh-TW":"目標資料夾：{path}","en":"Destination folder: {path}","ko":"대상 폴더: {path}","ja":"移動先フォルダー：{path}"},
-  "dataOperationCurrent": {"zh-CN":"当前配置路径：{path}","zh-TW":"目前設定路徑：{path}","en":"Current configuration path: {path}","ko":"현재 설정 경로: {path}","ja":"現在の設定の保存先：{path}"},
-  "dataOperationCurrentUnknown": {"zh-CN":"无法确认当前配置路径。","zh-TW":"無法確認目前設定路徑。","en":"The current configuration path could not be confirmed.","ko":"현재 설정 경로를 확인할 수 없습니다.","ja":"現在の設定の保存先を確認できませんでした。"},
-  "dataOperationPending": {"zh-CN":"阶段：准备操作","zh-TW":"階段：準備操作","en":"Stage: preparing the operation","ko":"단계: 작업 준비","ja":"段階：操作の準備"},
-  "dataOperationCopying": {"zh-CN":"阶段：复制或校验数据","zh-TW":"階段：複製或驗證資料","en":"Stage: copying or verifying data","ko":"단계: 데이터 복사 또는 확인","ja":"段階：データのコピーまたは検証"},
-  "dataOperationVerified": {"zh-CN":"阶段：复核并切换配置路径","zh-TW":"階段：再次驗證並切換設定路徑","en":"Stage: verifying and switching the configuration path","ko":"단계: 설정 경로 재확인 및 전환","ja":"段階：設定の保存先の再確認と切り替え"},
-  "dataOperationCleaning": {"zh-CN":"阶段：清理原有数据","zh-TW":"階段：清理舊有資料","en":"Stage: cleaning up previous data","ko":"단계: 기존 데이터 정리","ja":"段階：以前のデータの整理"},
-  "dataOperationStageUnknown": {"zh-CN":"阶段：无法确认","zh-TW":"階段：無法確認","en":"Stage: unknown","ko":"단계: 확인할 수 없음","ja":"段階：不明"},
-  "dataOperationRetry": {"zh-CN":"请保留源目录、目标目录和恢复文件。核对路径和权限后再重试。","zh-TW":"請保留來源、目標資料夾及復原檔案。確認路徑和權限後再試一次。","en":"Keep both folders and any recovery files. Check the paths and permissions before trying again.","ko":"두 폴더와 복구 파일을 보존하세요. 경로와 권한을 확인한 뒤 다시 시도하세요.","ja":"両方のフォルダーと復旧ファイルを保持してください。パスと権限を確認してから再試行してください。"},
-  "dataOperationSwitched": {"zh-CN":"配置路径已切换。请保留原目录和恢复文件，核对当前位置的数据后再处理旧文件。","zh-TW":"設定路徑已切換。請保留原資料夾和復原檔案，確認目前位置的資料後再處理舊檔案。","en":"The configuration path has switched. Keep the old folder and any recovery files. Check the data at the current location before handling old files.","ko":"설정 경로가 전환되었습니다. 기존 폴더와 복구 파일을 보존하고 현재 위치의 데이터를 확인한 뒤 이전 파일을 처리하세요.","ja":"設定の保存先は切り替わっています。以前のフォルダーと復旧ファイルを残し、現在の保存先を確認してから古いファイルを整理してください。"},
-  "dataOperationPreserve": {"zh-CN":"请保留现有目录和恢复文件，并查看管理器日志。","zh-TW":"請保留現有資料夾和復原檔案，並查看管理器記錄。","en":"Keep existing folders and any recovery files, and check the manager log.","ko":"기존 폴더와 복구 파일을 보존하고 관리자 로그를 확인하세요.","ja":"既存のフォルダーと復旧ファイルを残し、マネージャーのログを確認してください。"}
+  "dataOperationFailed": {
+    "zh-CN":"管理器数据操作未完成。","zh-TW":"管理器資料操作未完成。","en":"The manager could not complete the data operation.","ko":"관리자 데이터 작업을 완료하지 못했습니다.","ja":"マネージャーのデータ操作を完了できませんでした。",
+    "de":"Der Mod-Manager konnte den Datenvorgang nicht abschließen.","fr":"Le gestionnaire n’a pas pu terminer l’opération sur les données.","it":"Il gestore non è riuscito a completare l’operazione sui dati.","es-ES":"El gestor no ha podido completar la operación con los datos.","ru":"Менеджеру не удалось завершить операцию с данными.","pl":"Menedżer nie mógł dokończyć operacji na danych.","pt-BR":"O gerenciador não conseguiu concluir a operação com os dados."
+  },
+  "dataOperationUnsafe": {
+    "zh-CN":"源目录、目标目录或数据内容未通过安全校验。","zh-TW":"來源、目標資料夾或資料內容未通過安全檢查。","en":"The source, destination or data failed a safety check.","ko":"원본 폴더, 대상 폴더 또는 데이터가 안전성 검사를 통과하지 못했습니다.","ja":"移動元、移動先、またはデータの安全性を確認できませんでした。",
+    "de":"Der Quellordner, der Zielordner oder die Daten haben die Sicherheitsprüfung nicht bestanden.","fr":"Le dossier source, le dossier de destination ou les données n’ont pas passé la vérification de sécurité.","it":"La cartella di origine, la cartella di destinazione o i dati non hanno superato un controllo di sicurezza.","es-ES":"La carpeta de origen, la de destino o los datos no han superado la comprobación de seguridad.","ru":"Исходная папка, папка назначения или данные не прошли проверку безопасности.","pl":"Folder źródłowy, folder docelowy lub dane nie przeszły kontroli bezpieczeństwa.","pt-BR":"A pasta de origem, a pasta de destino ou os dados não passaram na verificação de segurança."
+  },
+  "dataOperationRootUnavailable": {
+    "zh-CN":"无法访问当前配置目录。请确认所在磁盘已连接且目录可访问。","zh-TW":"無法存取目前設定目錄。請確認所在磁碟已連接且目錄可存取。","en":"The current configuration folder is unavailable. Check that its drive is connected and the folder is accessible.","ko":"현재 설정 폴더에 접근할 수 없습니다. 해당 드라이브가 연결되어 있고 폴더에 접근할 수 있는지 확인하세요.","ja":"現在の設定フォルダーにアクセスできません。ドライブの接続とフォルダーへのアクセスを確認してください。",
+    "de":"Der aktuelle Konfigurationsordner ist nicht verfügbar. Prüfe, ob das Laufwerk verbunden und der Ordner zugänglich ist.","fr":"Le dossier de configuration actuel est indisponible. Vérifiez que son lecteur est connecté et que le dossier est accessible.","it":"La cartella di configurazione attuale non è disponibile. Verifica che l’unità sia collegata e che la cartella sia accessibile.","es-ES":"La carpeta de configuración actual no está disponible. Comprueba que la unidad esté conectada y que se pueda acceder a la carpeta.","ru":"Текущая папка настроек недоступна. Проверьте, подключён ли диск и есть ли доступ к папке.","pl":"Bieżący folder konfiguracji jest niedostępny. Sprawdź, czy dysk jest podłączony i czy masz dostęp do folderu.","pt-BR":"A pasta de configuração atual não está disponível. Verifique se a unidade está conectada e se é possível acessar a pasta."
+  },
+  "clearAllConfigBusy": {
+    "zh-CN":"仍有任务正在执行，请等待完成后再清除或迁移配置。","zh-TW":"仍有工作正在執行，請等待完成後再清除或遷移設定。","en":"An operation is still running. Wait for it to finish before clearing or moving configuration.","ko":"실행 중인 작업이 있습니다. 완료된 후 설정을 삭제하거나 이동해 주세요.","ja":"処理が実行中です。完了してから設定を削除または移動してください。",
+    "de":"Ein Vorgang läuft noch. Warte, bis er abgeschlossen ist, bevor du die Konfiguration löschst oder verschiebst.","fr":"Une opération est en cours. Attendez qu’elle se termine avant d’effacer ou de déplacer la configuration.","it":"È in corso un’operazione. Attendi che termini prima di cancellare o spostare la configurazione.","es-ES":"Hay una operación en curso. Espera a que termine antes de borrar o mover la configuración.","ru":"Операция ещё выполняется. Дождитесь её завершения, прежде чем удалять или переносить настройки.","pl":"Trwa wykonywanie operacji. Zaczekaj na jej zakończenie, zanim usuniesz lub przeniesiesz konfigurację.","pt-BR":"Uma operação ainda está em andamento. Aguarde a conclusão antes de apagar ou mover a configuração."
+  },
+  "dataOperationSource": {
+    "zh-CN":"源目录：{path}","zh-TW":"來源資料夾：{path}","en":"Source folder: {path}","ko":"원본 폴더: {path}","ja":"移動元フォルダー：{path}",
+    "de":"Quellordner: {path}","fr":"Dossier source : {path}","it":"Cartella di origine: {path}","es-ES":"Carpeta de origen: {path}","ru":"Исходная папка: {path}","pl":"Folder źródłowy: {path}","pt-BR":"Pasta de origem: {path}"
+  },
+  "dataOperationTarget": {
+    "zh-CN":"目标目录：{path}","zh-TW":"目標資料夾：{path}","en":"Destination folder: {path}","ko":"대상 폴더: {path}","ja":"移動先フォルダー：{path}",
+    "de":"Zielordner: {path}","fr":"Dossier de destination : {path}","it":"Cartella di destinazione: {path}","es-ES":"Carpeta de destino: {path}","ru":"Папка назначения: {path}","pl":"Folder docelowy: {path}","pt-BR":"Pasta de destino: {path}"
+  },
+  "dataOperationCurrent": {
+    "zh-CN":"当前配置路径：{path}","zh-TW":"目前設定路徑：{path}","en":"Current configuration path: {path}","ko":"현재 설정 경로: {path}","ja":"現在の設定の保存先：{path}",
+    "de":"Aktueller Konfigurationspfad: {path}","fr":"Chemin de configuration actuel : {path}","it":"Percorso di configurazione attuale: {path}","es-ES":"Ruta de configuración actual: {path}","ru":"Текущий путь к настройкам: {path}","pl":"Bieżąca ścieżka konfiguracji: {path}","pt-BR":"Caminho de configuração atual: {path}"
+  },
+  "dataOperationCurrentUnknown": {
+    "zh-CN":"无法确认当前配置路径。","zh-TW":"無法確認目前設定路徑。","en":"The current configuration path could not be confirmed.","ko":"현재 설정 경로를 확인할 수 없습니다.","ja":"現在の設定の保存先を確認できませんでした。",
+    "de":"Der aktuelle Konfigurationspfad konnte nicht ermittelt werden.","fr":"Impossible de confirmer le chemin de configuration actuel.","it":"Non è stato possibile confermare il percorso di configurazione attuale.","es-ES":"No se ha podido confirmar la ruta de configuración actual.","ru":"Не удалось подтвердить текущий путь к настройкам.","pl":"Nie udało się potwierdzić bieżącej ścieżki konfiguracji.","pt-BR":"Não foi possível confirmar o caminho de configuração atual."
+  },
+  "dataOperationPending": {
+    "zh-CN":"阶段：准备操作","zh-TW":"階段：準備操作","en":"Stage: preparing the operation","ko":"단계: 작업 준비","ja":"段階：操作の準備",
+    "de":"Phase: Vorgang wird vorbereitet","fr":"Étape : préparation de l’opération","it":"Fase: preparazione dell’operazione","es-ES":"Fase: preparando la operación","ru":"Этап: подготовка операции","pl":"Etap: przygotowywanie operacji","pt-BR":"Etapa: preparando a operação"
+  },
+  "dataOperationCopying": {
+    "zh-CN":"阶段：复制或校验数据","zh-TW":"階段：複製或驗證資料","en":"Stage: copying or verifying data","ko":"단계: 데이터 복사 또는 확인","ja":"段階：データのコピーまたは検証",
+    "de":"Phase: Daten werden kopiert oder überprüft","fr":"Étape : copie ou vérification des données","it":"Fase: copia o verifica dei dati","es-ES":"Fase: copiando o comprobando los datos","ru":"Этап: копирование или проверка данных","pl":"Etap: kopiowanie lub sprawdzanie danych","pt-BR":"Etapa: copiando ou verificando os dados"
+  },
+  "dataOperationVerified": {
+    "zh-CN":"阶段：复核并切换配置路径","zh-TW":"階段：再次驗證並切換設定路徑","en":"Stage: verifying and switching the configuration path","ko":"단계: 설정 경로 재확인 및 전환","ja":"段階：設定の保存先の再確認と切り替え",
+    "de":"Phase: Konfigurationspfad wird überprüft und umgestellt","fr":"Étape : vérification et changement du chemin de configuration","it":"Fase: verifica e cambio del percorso di configurazione","es-ES":"Fase: comprobando y cambiando la ruta de configuración","ru":"Этап: проверка и смена пути к настройкам","pl":"Etap: sprawdzanie i zmiana ścieżki konfiguracji","pt-BR":"Etapa: verificando e alterando o caminho de configuração"
+  },
+  "dataOperationCleaning": {
+    "zh-CN":"阶段：清理原有数据","zh-TW":"階段：清理舊有資料","en":"Stage: cleaning up previous data","ko":"단계: 기존 데이터 정리","ja":"段階：以前のデータの整理",
+    "de":"Phase: Alte Daten werden bereinigt","fr":"Étape : nettoyage des anciennes données","it":"Fase: eliminazione dei dati precedenti","es-ES":"Fase: limpiando los datos anteriores","ru":"Этап: очистка прежних данных","pl":"Etap: usuwanie poprzednich danych","pt-BR":"Etapa: limpando os dados anteriores"
+  },
+  "dataOperationStageUnknown": {
+    "zh-CN":"阶段：无法确认","zh-TW":"階段：無法確認","en":"Stage: unknown","ko":"단계: 확인할 수 없음","ja":"段階：不明",
+    "de":"Phase: unbekannt","fr":"Étape : inconnue","it":"Fase: sconosciuta","es-ES":"Fase: desconocida","ru":"Этап: неизвестен","pl":"Etap: nieznany","pt-BR":"Etapa: desconhecida"
+  },
+  "dataOperationRetry": {
+    "zh-CN":"请保留源目录、目标目录和恢复文件。核对路径和权限后再重试。","zh-TW":"請保留來源、目標資料夾及復原檔案。確認路徑和權限後再試一次。","en":"Keep both folders and any recovery files. Check the paths and permissions before trying again.","ko":"두 폴더와 복구 파일을 보존하세요. 경로와 권한을 확인한 뒤 다시 시도하세요.","ja":"両方のフォルダーと復旧ファイルを保持してください。パスと権限を確認してから再試行してください。",
+    "de":"Behalte beide Ordner und alle Wiederherstellungsdateien. Prüfe die Pfade und Berechtigungen, bevor du es erneut versuchst.","fr":"Conservez les deux dossiers et les fichiers de récupération. Vérifiez les chemins et les droits d’accès avant de réessayer.","it":"Conserva entrambe le cartelle e gli eventuali file di ripristino. Controlla i percorsi e le autorizzazioni prima di riprovare.","es-ES":"Conserva ambas carpetas y los archivos de recuperación. Comprueba las rutas y los permisos antes de volver a intentarlo.","ru":"Сохраните обе папки и файлы восстановления. Проверьте пути и права доступа, прежде чем повторить попытку.","pl":"Zachowaj oba foldery i wszystkie pliki odzyskiwania. Przed ponowną próbą sprawdź ścieżki i uprawnienia.","pt-BR":"Mantenha as duas pastas e os arquivos de recuperação. Confira os caminhos e as permissões antes de tentar novamente."
+  },
+  "dataOperationSwitched": {
+    "zh-CN":"配置路径已切换。请保留原目录和恢复文件，核对当前位置的数据后再处理旧文件。","zh-TW":"設定路徑已切換。請保留原資料夾和復原檔案，確認目前位置的資料後再處理舊檔案。","en":"The configuration path has switched. Keep the old folder and any recovery files. Check the data at the current location before handling old files.","ko":"설정 경로가 전환되었습니다. 기존 폴더와 복구 파일을 보존하고 현재 위치의 데이터를 확인한 뒤 이전 파일을 처리하세요.","ja":"設定の保存先は切り替わっています。以前のフォルダーと復旧ファイルを残し、現在の保存先を確認してから古いファイルを整理してください。",
+    "de":"Der Konfigurationspfad wurde geändert. Behalte den bisherigen Ordner und alle Wiederherstellungsdateien. Überprüfe die Daten am neuen Speicherort, bevor du die alten Dateien bearbeitest.","fr":"Le chemin de configuration a changé. Conservez l’ancien dossier et les fichiers de récupération. Vérifiez les données à l’emplacement actuel avant de toucher aux anciens fichiers.","it":"Il percorso di configurazione è cambiato. Conserva la vecchia cartella e gli eventuali file di ripristino. Controlla i dati nella posizione attuale prima di intervenire sui vecchi file.","es-ES":"La ruta de configuración ha cambiado. Conserva la carpeta anterior y los archivos de recuperación. Comprueba los datos en la ubicación actual antes de tocar los archivos antiguos.","ru":"Путь к настройкам изменён. Сохраните прежнюю папку и файлы восстановления. Прежде чем что-либо делать со старыми файлами, проверьте данные в текущей папке.","pl":"Ścieżka konfiguracji została zmieniona. Zachowaj poprzedni folder i wszystkie pliki odzyskiwania. Sprawdź dane w bieżącej lokalizacji, zanim zajmiesz się starymi plikami.","pt-BR":"O caminho de configuração mudou. Mantenha a pasta antiga e os arquivos de recuperação. Confira os dados no local atual antes de mexer nos arquivos antigos."
+  },
+  "dataOperationPreserve": {
+    "zh-CN":"请保留现有目录和恢复文件，并查看管理器日志。","zh-TW":"請保留現有資料夾和復原檔案，並查看管理器記錄。","en":"Keep existing folders and any recovery files, and check the manager log.","ko":"기존 폴더와 복구 파일을 보존하고 관리자 로그를 확인하세요.","ja":"既存のフォルダーと復旧ファイルを残し、マネージャーのログを確認してください。",
+    "de":"Behalte die vorhandenen Ordner und alle Wiederherstellungsdateien und prüfe das Protokoll des Mod-Managers.","fr":"Conservez les dossiers existants et les fichiers de récupération, puis consultez le journal du gestionnaire.","it":"Conserva le cartelle esistenti e gli eventuali file di ripristino, quindi controlla il registro del gestore.","es-ES":"Conserva las carpetas existentes y los archivos de recuperación y consulta el registro del gestor.","ru":"Сохраните существующие папки и файлы восстановления и проверьте журнал менеджера.","pl":"Zachowaj istniejące foldery i wszystkie pliki odzyskiwania, a następnie sprawdź dziennik menedżera.","pt-BR":"Mantenha as pastas existentes e os arquivos de recuperação e consulte o log do gerenciador."
+  }
 }

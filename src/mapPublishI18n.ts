@@ -1,33 +1,17 @@
 /**
  * 地图块里的三张多语言表：显示名 / 分组名 / 说明。
  *
- * 界面按语言一行一行填，五种语言固定顺序，作者能看见自己填了什么、还缺什么；
- * 以前是一个 textarea 里写 `zh-CN = 名字`，行一多就对不齐，也看不出缺哪一行。
- *
- * 纯逻辑（默认值、必填判定、未知语言保留）都在这里，页面只负责渲染与存盘，
- * Node 测试直接 import。
+ * 这里负责默认值、必填判定及额外语言的保留；页面按管理器语言表渲染。
  */
-
-/** 界面提供的五种语言，顺序就是行的顺序。 */
-export const MAP_I18N_LANGUAGES = ['zh-CN', 'zh-TW', 'en', 'ko', 'ja'] as const
-export type MapI18nLanguage = (typeof MAP_I18N_LANGUAGES)[number]
+import { isLocale } from './locale/types.ts'
 
 /**
  * 只强制这两种语言。
  *
  * 管理器读不到作者的语言时会自己回退（`pickI18n`：精确 → en → zh-CN → 任意），
- * 要求五语齐全只会拦着作者保存；但 zh-CN 与 en 都没有时回退链不确定，必须填。
+ * 只要求中英两种，不因其他翻译尚未提供而阻止作者保存。
  */
 export const REQUIRED_I18N_LANGUAGES = ['zh-CN', 'en'] as const
-
-/** 语言标签用各自的本名：作者认的是「日本語」，不是「日语」。 */
-export const MAP_I18N_LANGUAGE_LABELS: Record<MapI18nLanguage, string> = {
-  'zh-CN': '简体中文',
-  'zh-TW': '繁體中文',
-  en: 'English',
-  ko: '한국어',
-  ja: '日本語',
-}
 
 /** 三个多语言字段；`labelKey` 是语言表里的标题，页面与测试共用同一份顺序。 */
 export const I18N_FIELD_ORDER = [
@@ -85,8 +69,7 @@ export function defaultI18nValues(field: I18nFieldId, defaults: I18nDefaults): R
 /**
  * 块里的表 → 草稿。
  *
- * 块里有值的行算「作者写过」，默认值不再覆盖；五种语言之外的语言原样收进来，
- * 保存时按原值写回（作者可能手工加了 fr，界面不该悄悄删掉）。
+ * 块里有值的行算「作者写过」，默认值不再覆盖；其他语言也随草稿写回。
  */
 export function i18nDraftFrom(
   field: I18nFieldId,
@@ -129,11 +112,9 @@ export function i18nTableOf(draft: I18nFieldDraft): Record<string, string> {
   return table
 }
 
-/** 五种语言之外的语言：界面只提示「会原样保留」，不提供输入行。 */
+/** 管理器不提供输入行、但会随草稿保存的语言。 */
 export function extraLanguages(draft: I18nFieldDraft): string[] {
-  return Object.keys(i18nTableOf(draft)).filter(
-    (language) => !(MAP_I18N_LANGUAGES as readonly string[]).includes(language),
-  )
+  return Object.keys(i18nTableOf(draft)).filter(language => !isLocale(language))
 }
 
 /** 这张表缺的必填语言；整张表为空时返回空数组（没填不算错，保存时按默认补）。 */

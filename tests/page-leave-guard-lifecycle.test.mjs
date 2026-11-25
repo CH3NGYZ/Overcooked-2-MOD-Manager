@@ -6,6 +6,7 @@ import { createMemoryHistory, createRouter, isNavigationFailure, RouterView } fr
 
 registerHooks({
   resolve(specifier, context, next) {
+    if (specifier === 'naive-ui') return { url: 'oc2-test:dialog-list', shortCircuit: true }
     if (specifier === '@tauri-apps/api/window') return { url: 'oc2-test:native-window', shortCircuit: true }
     if (specifier === '@tauri-apps/api/event') return { url: 'oc2-test:native-event', shortCircuit: true }
     if (specifier.startsWith('.') && !/\.[cm]?[jt]s$/.test(specifier)) {
@@ -14,21 +15,34 @@ registerHooks({
     return next(specifier, context)
   },
   load(url, context, next) {
+    if (url === 'oc2-test:dialog-list') return { format: 'module', shortCircuit: true, source: 'export const useDialogReactiveList = () => ({value:[]})' }
     if (url === 'oc2-test:native-window') return { format: 'module', shortCircuit: true, source: 'export const getCurrentWindow = () => globalThis.__guardNative' }
     if (url === 'oc2-test:native-event') return { format: 'module', shortCircuit: true, source: 'export const listen = async (event, handler) => { const events = globalThis.__guardEvents; events.set(event, handler); return () => events.delete(event) }' }
     if (url.endsWith('/src/useNotify.ts')) return { format: 'module', shortCircuit: true, source: 'export const useNotify = () => ({error: text => globalThis.__guardNotices.push(text)})' }
-    if (url.endsWith('/src/locale/backend.ts')) return { format: 'module', shortCircuit: true, source: 'export const backendMessageOf = reason => reason instanceof Error ? reason.message : String(reason)' }
-    if (url.endsWith('/src/modChanges/store.ts')) return {format:'module',shortCircuit:true,source:'export const useModChanges=()=>({state:{get value(){return globalThis.__guardChangeState}}})'}
-    if (url.endsWith('/src/services/tauri.ts')) return { format: 'module', shortCircuit: true, source: 'export const api = {exitApp: installUpdate => globalThis.__guardExit(installUpdate), applyStagedAppUpdate: () => globalThis.__guardApplyUpdate(), finishAppUpdateRecovery: destination => globalThis.__guardRecover(destination), checkAppUpdate: () => globalThis.__guardCheckUpdate()}' }
+    if (url.endsWith('/src/locale/backend.ts')) return { format: 'module', shortCircuit: true, source: `
+      export const backendMessageOf = reason => reason instanceof Error ? reason.message : String(reason)
+      export const backendPayloadOf = reason => ({tag: backendMessageOf(reason).split('?')[0]})
+    ` }
+    if (url.endsWith('/src/modChanges/store.ts')) return {format:'module',shortCircuit:true,source:'export const useModChanges=()=>({state:globalThis.__guardChangeState})'}
+    if (url.endsWith('/src/services/tauri.ts')) return { format: 'module', shortCircuit: true, source: `
+      export const api = {
+        exitApp: () => globalThis.__guardExit(),
+        applyStagedAppUpdate: () => globalThis.__guardApplyUpdate(),
+        openAppUpdateReleaseAndExit: (version, destination) => globalThis.__guardDownloadUpdate(version, destination),
+        restartUpdateAsUser: () => globalThis.__guardRestartUpdate(),
+      }
+    ` }
     return next(url, context)
   },
 })
 const { usePageLeaveGuard } = await import('../src/composables/usePageLeaveGuard.ts')
 const { useAppCloseGuard, registerPageLeaveGuard } = await import('../src/composables/useAppCloseGuard.ts')
-const { appUpdateState, beginAppUpdateCheck, finishAppUpdateCheck, retryBackgroundAppUpdate, finishBackgroundAppUpdate,
-  beginStagedAppUpdate, finishStagedAppUpdate, dismissAppUpdateNotes } = await import('../src/appUpdateState.ts')
+const { useAppUpdatePromptOpen } = await import('../src/composables/useAppUpdates.ts')
+const { appUpdateState, appUpdateBlocksOperations, beginAppUpdateCheck, beginDeferringAppUpdate, finishAppUpdateCheck,
+  finishBackgroundAppUpdate, finishDeferringAppUpdate } = await import('../src/appUpdateState.ts')
 const offer = { version: 'test', install_mode: 'deferred', source_channel: 'fixture' }
 const offerResult = { update: offer, all_failed: false }
+const resetUpdate = () => Object.assign(toRaw(appUpdateState), { stage: 'idle', error: '', update: null, deferred: false, notesRequested: false, resolvingExitBlock: false })
 const tick = async () => { await nextTick(); await new Promise(resolve => setImmediate(resolve)) }
 const deferred = () => { let resolve, reject; const promise = new Promise((r, j) => { resolve = r; reject = j }); return { promise, resolve, reject } }
 const host = createRenderer({
@@ -38,13 +52,14 @@ const host = createRenderer({
 globalThis.window = new EventTarget()
 window.__TAURI_INTERNALS__ = { metadata: {} }
 
-async function setup(t, { dirty = true, busy = false, confirm = async () => false, registration, exit, apply, recover, guarded = true } = {}) {
-  globalThis.__guardChangeState = null
-  const state = { dirty: shallowRef(dirty), busy: shallowRef(busy), confirms: 0, cancels: 0, stops: 0, closes: 0, exits: 0, applies: 0, subscriptions: 0, installsOnExit: [] }
+async function setup(t, { dirty = true, busy = false, confirm = async () => false, registration, exit, apply, download, restart, guarded = true } = {}) {
+  const changeState = globalThis.__guardChangeState = shallowRef(null)
+  const state = { dirty: shallowRef(dirty), busy: shallowRef(busy), confirms: 0, cancels: 0, stops: 0, closes: 0, exits: 0, applies: 0, subscriptions: 0 }
   const listeners = new Set()
   globalThis.__guardNotices = []
   const events = globalThis.__guardEvents = new Map()
-  globalThis.__guardRecover = recover
+  globalThis.__guardDownloadUpdate = download
+  globalThis.__guardRestartUpdate = restart
   const native = {
     async onCloseRequested(callback) {
       state.subscriptions++
@@ -58,9 +73,8 @@ async function setup(t, { dirty = true, busy = false, confirm = async () => fals
     },
   }
   globalThis.__guardNative = native
-  globalThis.__guardExit = async installUpdate => {
+  globalThis.__guardExit = async () => {
     state.exits++
-    state.installsOnExit.push(installUpdate)
     assert.equal(listeners.size, 1, 'the native listener must remain registered during recovery and on failure')
     if (exit) await exit()
   }
@@ -78,13 +92,18 @@ async function setup(t, { dirty = true, busy = false, confirm = async () => fals
   await router.push('/')
   await router.isReady()
   let appGuard
-  const app = host.createApp({ setup() { appGuard = useAppCloseGuard(); return () => h(RouterView) } }).use(router)
+  let updatePromptOpen
+  const app = host.createApp({ setup() {
+    appGuard = useAppCloseGuard()
+    updatePromptOpen = useAppUpdatePromptOpen()
+    return () => h(RouterView)
+  } }).use(router)
   app.mount({})
   let disposed = false
   const dispose = () => { if (!disposed) { disposed = true; app.unmount() } }
   t.after(dispose)
   await tick()
-  return { get guard() { return guard }, ...appGuard, router, state, dispose, listeners, events,
+  return { get guard() { return guard }, ...appGuard, router, state, dispose, listeners, events, changeState, updatePromptOpen,
     emitClose() {
       let prevented = 0
       const pending = Promise.all([...listeners].map(callback => callback({ preventDefault() { prevented++ } })))
@@ -92,6 +111,28 @@ async function setup(t, { dirty = true, busy = false, confirm = async () => fals
     },
   }
 }
+
+test('a required update waits for locked MOD preparation or execution before offering an exit', async t => {
+  resetUpdate()
+  t.after(resetUpdate)
+  const downloads = []
+  const fixture = await setup(t, { dirty: false, download: async version => { downloads.push(version) } })
+  fixture.changeState.value = { phase: 'preparing' }
+  beginAppUpdateCheck()
+  finishAppUpdateCheck(offerResult)
+  finishBackgroundAppUpdate({ error: 'update.verifyFailed' })
+  for (const phase of ['preparing', 'prepared', 'executing']) {
+    fixture.changeState.value = { phase }
+    assert.equal(fixture.updatePromptOpen.value, false, phase)
+    assert.equal(appUpdateBlocksOperations(), true, phase)
+    await fixture.updateExit('download')
+  }
+  assert.deepEqual(downloads, [])
+  fixture.changeState.value = { phase: 'failed' }
+  assert.equal(fixture.updatePromptOpen.value, true)
+  await fixture.updateExit('download')
+  assert.deepEqual(downloads, [offer.version])
+})
 
 test('the App listener survives route changes and ordinary pages also recover before exit', async t => {
   const fixture = await setup(t, { dirty: false })
@@ -265,110 +306,56 @@ test('page replacement invalidates native confirmation; App disposal settles it 
 
 test('batch preparation, displaying completion and execution block native close until the apply review',async t=>{
  const fixture=await setup(t,{dirty:false})
- for(const phase of ['preparing','prepared','executing']){globalThis.__guardChangeState={phase};await fixture.emitClose().pending;assert.equal(fixture.state.exits,0,phase)}
- globalThis.__guardChangeState={phase:'reconfirming'};await fixture.emitClose().pending;assert.equal(fixture.state.exits,1)
- globalThis.__guardChangeState=null
+ for(const phase of ['preparing','prepared','executing']){fixture.changeState.value={phase};await fixture.emitClose().pending;assert.equal(fixture.state.exits,0,phase)}
+ fixture.changeState.value={phase:'reconfirming'};await fixture.emitClose().pending;assert.equal(fixture.state.exits,1)
+ fixture.changeState.value=null
 })
 
-test('background downloads allow ordinary close; ready apply shares dirty confirmation and busy gates', async t => {
-  t.after(() => Object.assign(toRaw(appUpdateState), { stage: 'idle', notesPending: false, error: '', update: null }))
+test('downloads allow ordinary close; ready apply shares dirty confirmation and busy gates', async t => {
+  t.after(resetUpdate)
   const choice = deferred()
   const handoff = deferred()
   const fixture = await setup(t, { dirty: false, apply: () => handoff.promise })
   assert.equal(beginAppUpdateCheck(), true)
   assert.equal(finishAppUpdateCheck(offerResult), 'fixture')
   await fixture.emitClose().pending
-  await fixture.applyUpdate()
+  await fixture.updateExit('apply')
   assert.equal(fixture.state.exits, 1)
-  assert.deepEqual(fixture.state.installsOnExit, [false])
   assert.equal(fixture.state.applies, 0)
   fixture.dispose()
   finishBackgroundAppUpdate({ update: offer })
   assert.equal(appUpdateState.stage, 'ready')
   const guarded = await setup(t, { confirm: () => choice.promise, apply: () => handoff.promise })
-  globalThis.__guardChangeState = { phase: 'executing' }
-  await guarded.applyUpdate()
+  guarded.changeState.value = { phase: 'executing' }
+  await guarded.updateExit('apply')
   assert.equal(guarded.state.confirms, 0)
-  globalThis.__guardChangeState = null
-  const cancelled = guarded.applyUpdate()
+  guarded.changeState.value = null
+  const cancelled = guarded.updateExit('apply')
   await tick()
   assert.equal(guarded.confirmingClose.value, true)
-  assert.equal(appUpdateState.notesPending, true)
+  assert.equal(appUpdateBlocksOperations(), false)
   await guarded.emitClose().pending
   assert.equal(guarded.state.confirms, 1)
   choice.resolve(false)
   await cancelled
   assert.equal(guarded.confirmingClose.value, false)
-  assert.equal(appUpdateState.notesPending, true, 'cancelling a draft confirmation must restore the update notes')
+  assert.equal(appUpdateState.stage, 'ready', 'cancelling a draft confirmation keeps the ready update')
+  assert.equal(appUpdateState.notesRequested, true)
   assert.equal(guarded.state.exits, 0)
   assert.equal(guarded.state.applies, 0)
   guarded.dispose()
   const ready = await setup(t, { confirm: async () => true, apply: () => handoff.promise })
-  const applying = ready.applyUpdate()
+  const applying = ready.updateExit('apply')
   await tick()
   assert.equal(appUpdateState.stage, 'applying')
   await ready.emitClose().pending
-  await ready.applyUpdate()
+  await ready.updateExit('apply')
   assert.equal(ready.state.exits, 0)
   assert.equal(ready.state.applies, 1)
   handoff.reject('update.stagedUnavailable')
   await applying
   assert.equal(appUpdateState.stage, 'stageFailed')
   ready.dispose()
-
-  const closeResult = deferred()
-  const closingReady = await setup(t, { dirty: false, exit: () => closeResult.promise })
-  assert.equal(retryBackgroundAppUpdate(), 'fixture')
-  finishBackgroundAppUpdate({ update: offer })
-  dismissAppUpdateNotes()
-  const closingWithUpdate = closingReady.emitClose()
-  await tick()
-  assert.equal(appUpdateState.stage, 'applying')
-  await closingReady.applyUpdate()
-  await closingReady.emitClose().pending
-  assert.equal(closingReady.state.exits, 1)
-  assert.deepEqual(closingReady.state.installsOnExit, [true])
-  assert.equal(closingReady.state.applies, 0, 'ordinary close does not request a restart')
-  closeResult.reject(new Error('update.stagedUnavailable'))
-  await closingWithUpdate.pending
-  assert.equal(appUpdateState.stage, 'stageFailed')
-  assert.equal(appUpdateState.error, 'update.stagedUnavailable')
-  assert.equal(closingReady.listeners.size, 1)
-  closingReady.dispose()
-
-  const closeBlocked = await setup(t, { dirty: false, exit: async () => { throw 'assetBundle.recoveryPending' } })
-  assert.equal(retryBackgroundAppUpdate(), 'fixture')
-  finishBackgroundAppUpdate({ update: offer })
-  await closeBlocked.emitClose().pending
-  assert.deepEqual(closeBlocked.state.installsOnExit, [false], 'unread notes do not authorize install on exit')
-  assert.equal(appUpdateState.stage, 'ready', 'other failure keeps the verified package')
-  assert.deepEqual(globalThis.__guardNotices, ['assetBundle.recoveryPending'])
-  closeBlocked.dispose()
-
-  const pendingChoice = deferred()
-  const duringConfirmation = await setup(t, { confirm: () => pendingChoice.promise })
-  const pending = duringConfirmation.guard.requestLeave()
-  await tick()
-  assert.equal(duringConfirmation.state.confirms, 1)
-  assert.equal(beginStagedAppUpdate(), true)
-  assert.equal(await duringConfirmation.guard.requestLeave(), false)
-  assert.ok(isNavigationFailure(await duringConfirmation.router.push('/away')))
-  pendingChoice.resolve(true)
-  assert.equal(await pending, false)
-  await duringConfirmation.emitClose().pending
-  assert.equal(duringConfirmation.state.exits, 0)
-  assert.equal(duringConfirmation.router.currentRoute.value.path, '/')
-  finishStagedAppUpdate('update.inProgress')
-  duringConfirmation.dispose()
-
-  const normalHandoff = await setup(t, { dirty: false })
-  dismissAppUpdateNotes()
-  await normalHandoff.emitClose().pending
-  assert.equal(normalHandoff.state.exits, 1)
-  assert.deepEqual(normalHandoff.state.installsOnExit, [true])
-  assert.equal(normalHandoff.state.applies, 0)
-  assert.equal(appUpdateState.stage, 'handoff')
-  normalHandoff.dispose()
 
   const ordinary = await setup(t, { guarded: false })
   const closing = ordinary.emitClose()
@@ -387,28 +374,143 @@ test('system quit shares the draft guard, and its event listener is disposed', a
   assert.equal(fixture.events.size, 0)
 })
 
-test('local application failure runs a fresh recovery check, and link failure leaves both actions retryable', async t => {
-  t.after(() => Object.assign(toRaw(appUpdateState), { stage: 'idle', notesPending: false, error: '', update: null }))
-  const destinations = []
+test('only explicit elevated-update actions can exit; retries retain page confirmation and the native listener', async t => {
+  t.after(resetUpdate)
+  const browser = deferred()
+  const downloads = []
+  let restarts = 0
+  let allowLeave = false
+  const fixture = await setup(t, {
+    confirm: async () => allowLeave,
+    restart: async () => { restarts++; throw 'update.restartAsUserUnavailable?reason=Access%20denied' },
+    download: version => { downloads.push(version); return downloads.length === 1 ? browser.promise : undefined },
+  })
+  assert.equal(beginAppUpdateCheck(), true)
+  assert.equal(finishAppUpdateCheck({ ...offerResult, update: { ...offer, install_mode: 'restartAsUser' } }), undefined)
+  await fixture.emitClose().pending
+  fixture.events.get('app-quit-requested')()
+  await tick()
+  assert.equal(fixture.state.exits, 0)
+  assert.ok(isNavigationFailure(await fixture.router.push('/away')))
+
+  await fixture.updateExit('apply')
+  assert.equal(restarts, 0, 'declining draft confirmation does not dispatch relaunch')
+  assert.equal(appUpdateState.stage, 'ready')
+  allowLeave = true
+  await fixture.updateExit('apply')
+  assert.equal(restarts, 1)
+  assert.equal(appUpdateState.stage, 'stageFailed')
+  assert.equal(appUpdateState.error, 'update.restartAsUserUnavailable?reason=Access%20denied')
+  assert.deepEqual(globalThis.__guardNotices, [], 'action errors appear in the modal')
+  await fixture.updateExit('apply')
+  assert.equal(restarts, 1, 'unsafe relaunch is no longer available')
+  assert.equal(fixture.state.applies, 0, 'no installer is invoked in the elevated window')
+
+  const opening = fixture.updateExit('download')
+  await tick()
+  assert.equal(appUpdateState.stage, 'openingRelease')
+  await fixture.updateExit('download')
+  await fixture.emitClose().pending
+  assert.deepEqual(downloads, [offer.version], 'one browser IPC for concurrent clicks')
+  browser.reject(new Error('no browser'))
+  await opening
+  assert.equal(appUpdateState.stage, 'stageFailed')
+  assert.equal(appUpdateState.error, 'no browser')
+  assert.equal(fixture.listeners.size, 1)
+  assert.equal(fixture.state.exits, 0)
+  await fixture.updateExit('download')
+  assert.equal(appUpdateState.stage, 'handoff')
+  assert.deepEqual(downloads, [offer.version, offer.version])
+})
+
+test('local application failure leaves the version-bound manual destinations and permits retry through either', async t => {
+  t.after(resetUpdate)
+  const downloads = []
   const fixture = await setup(t, { dirty: false, apply: async () => { throw 'update.installFailedManual' },
-    recover: async destination => {
-      destinations.push(destination)
-      if (destination === 'website') throw 'no browser'
+    download: async (version, destination) => {
+      downloads.push([version, destination])
+      if (downloads.length === 1) throw 'no browser'
     },
   })
-  globalThis.__guardCheckUpdate = async () => ({ ...offerResult, recovery_required: true })
   beginAppUpdateCheck()
   finishAppUpdateCheck(offerResult)
   finishBackgroundAppUpdate({ update: offer })
-  await fixture.applyUpdate()
-  await tick()
-  assert.equal(appUpdateState.stage, 'recovery')
+  await fixture.updateExit('apply')
+  assert.equal(appUpdateState.stage, 'stageFailed')
   await fixture.emitClose().pending
   assert.equal(fixture.state.exits, 0)
-  await fixture.recoverUpdate('website')
-  assert.equal(appUpdateState.stage, 'recovery')
+  await fixture.updateExit('website')
+  assert.equal(appUpdateState.stage, 'stageFailed')
   assert.equal(appUpdateState.error, 'no browser')
-  await fixture.recoverUpdate('alternate')
-  assert.deepEqual(destinations, ['website', 'alternate'])
-  assert.equal(appUpdateState.stage, 'openingRecovery')
+  await fixture.updateExit('download')
+  assert.deepEqual(downloads, [[offer.version, 'website'], [offer.version, undefined]])
+  assert.equal(appUpdateState.stage, 'handoff')
+})
+
+test('scheduled installation follows normal quit and can retry after a recovery block', async t => {
+  t.after(resetUpdate)
+  let failures = 0
+  const fixture = await setup(t, { dirty: false, exit: async () => {
+    assert.equal(appUpdateState.stage, 'applying')
+    if (failures++ === 0) throw 'modChanges.recoveryRequired'
+  } })
+  beginAppUpdateCheck()
+  finishAppUpdateCheck(offerResult)
+  finishBackgroundAppUpdate({ update: offer })
+  assert.equal(beginDeferringAppUpdate(), offer.version)
+  finishDeferringAppUpdate()
+  await fixture.emitClose().pending
+  assert.equal(appUpdateState.stage, 'ready')
+  assert.equal(appUpdateState.deferred, true)
+  assert.equal(appUpdateState.resolvingExitBlock, true)
+  assert.equal(appUpdateBlocksOperations(), false)
+  await fixture.emitClose().pending
+  assert.equal(fixture.state.exits, 2)
+  assert.equal(fixture.state.applies, 0)
+  assert.equal(appUpdateState.stage, 'handoff')
+})
+
+test('a failed scheduled installation requires manual update and cannot close through the recovery detour', async t => {
+  t.after(resetUpdate)
+  const downloads = []
+  const fixture = await setup(t, { dirty: false, exit: async () => { throw 'update.installFailedManual' },
+    download: async version => {
+      downloads.push(version)
+      if (downloads.length === 1) throw 'assetBundle.recoveryPending'
+    },
+  })
+  beginAppUpdateCheck()
+  finishAppUpdateCheck(offerResult)
+  finishBackgroundAppUpdate({ update: offer })
+  beginDeferringAppUpdate()
+  finishDeferringAppUpdate()
+  await fixture.emitClose().pending
+  assert.equal(appUpdateState.stage, 'stageFailed')
+  assert.equal(appUpdateState.deferred, false)
+  await fixture.updateExit('download')
+  assert.equal(appUpdateState.resolvingExitBlock, true)
+  assert.equal(appUpdateBlocksOperations(), false)
+  await fixture.emitClose().pending
+  assert.equal(fixture.state.exits, 1)
+  assert.equal(appUpdateState.resolvingExitBlock, false)
+  await fixture.updateExit('download')
+  assert.deepEqual(downloads, [offer.version, offer.version])
+  assert.equal(appUpdateState.stage, 'handoff')
+})
+
+test('the only non-installer exit of a mandatory update is explicit quit for OS restart', async t => {
+  t.after(resetUpdate)
+  const fixture = await setup(t, { dirty: false })
+  beginAppUpdateCheck()
+  finishAppUpdateCheck({ ...offerResult, installation_status: 'applying' })
+  await fixture.updateExit('reboot')
+  await fixture.emitClose().pending
+  assert.equal(fixture.state.exits, 0)
+  beginAppUpdateCheck()
+  finishAppUpdateCheck({ ...offerResult, installation_status: 'reboot_required' })
+  await fixture.emitClose().pending
+  assert.equal(fixture.state.exits, 0)
+  await fixture.updateExit('reboot')
+  assert.equal(fixture.state.exits, 1)
+  assert.equal(fixture.state.applies, 0)
 })

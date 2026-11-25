@@ -85,7 +85,7 @@ const phase = computed(() => {
 })
 const downloadAbove = computed(() => state.value?.phase === 'preparing' && !appUpdateBlocksOperations()
   && !!activeDownloadProgress.value)
-const showDownloadFallback = computed(() => !appUpdateBlocksOperations() && !downloadAbove.value
+const showDownloadFallback = computed(() => !downloadAbove.value
   && (changes.canCancelDownload.value || changes.cancellingDownload.value))
 const statusElement = useTemplateRef<HTMLElement>('statusElement')
 const buttons = useTemplateRef<HTMLElement>('buttons')

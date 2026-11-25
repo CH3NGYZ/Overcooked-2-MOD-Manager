@@ -2,12 +2,9 @@ use crate::app_update::download::VerifiedInstallerDownload;
 use crate::app_update::receipt::{Attempt, Outcome};
 use crate::app_update::windows_session::{PermissionRoute, permission_route};
 use crate::app_update::{UpdateTarget, installer_directory, verify_download};
-use crate::elevation::{HandoffEvents, ManagerProcess, owned_handle, wide};
+use crate::elevation::{HandoffEvents, ManagerProcess, owned_handle, wait_for, wide};
 use crate::update_migration::{MANAGER_EXECUTABLE, update_executable};
-use crate::{
-    archive, file_metadata,
-    models::{AppUpdateInfo, AppUpdateInstallMode},
-};
+use crate::{archive, file_metadata, models::AppUpdateInfo};
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, Write};
@@ -19,23 +16,16 @@ use tempfile::TempDir;
 use uuid::Uuid;
 use winapi::shared::winerror::{
     ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_INVALID_HANDLE,
-    WAIT_TIMEOUT,
 };
 use winapi::um::errhandlingapi::SetLastError;
-use winapi::um::synchapi::{CreateMutexW, OpenMutexW, WaitForSingleObject};
-use winapi::um::winbase::{
-    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, WAIT_OBJECT_0,
-};
+use winapi::um::synchapi::{CreateMutexW, OpenMutexW};
+use winapi::um::winbase::{FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT};
 use winapi::um::winnt::{
     FILE_ATTRIBUTE_REPARSE_POINT, FILE_SHARE_READ, FILE_SHARE_WRITE, SYNCHRONIZE,
 };
 
-mod administrator;
 mod installer;
-mod protected;
-
-pub(crate) use administrator::can_install_as_admin;
-pub(crate) use protected::attempts_dir as protected_attempts_dir;
+mod restart;
 
 const FLAG: &str = "--oc2-update-supervisor";
 const SUPERVISOR_FILE: &str = "update-supervisor.exe";
@@ -47,7 +37,8 @@ const INSTALLER_BUSY_EXIT: i32 = 2;
 const INSTALLER_SLOT: &str = r"Global\OC2ModManager-Standalone-Installer";
 
 pub(crate) struct Prepared {
-    package: PreparedPackage,
+    work: TempDir,
+    digest: String,
     signature: String,
     source: PathBuf,
     destination: PathBuf,
@@ -55,24 +46,7 @@ pub(crate) struct Prepared {
     version: String,
 }
 
-enum PreparedPackage {
-    Ordinary { work: TempDir, digest: String },
-    Administrator(Vec<u8>),
-}
-
 impl Prepared {
-    #[cfg(test)]
-    pub(super) fn administrator_fixture(source: PathBuf) -> Self {
-        Self {
-            package: PreparedPackage::Administrator(Vec::new()),
-            signature: String::new(),
-            destination: source.clone(),
-            source,
-            kind: "exe",
-            version: "99.1.0".into(),
-        }
-    }
-
     pub(crate) fn prepare(
         download: VerifiedInstallerDownload,
         info: &AppUpdateInfo,
@@ -81,41 +55,21 @@ impl Prepared {
         if kind != info.installer_type {
             return Err("update.manifestPlatformMismatch".into());
         }
-        let admin_requested = info.install_mode == AppUpdateInstallMode::InstallAsAdministrator;
+        ensure_user_process()?;
         let source = std::env::current_exe().map_err(stage_error)?;
-        let destination = validated_destination(&source, kind).map_err(|error| {
-            if admin_requested {
-                administrator::preflight(error)
-            } else {
-                error
-            }
-        })?;
+        let destination = validated_destination(&source, kind)?;
         let size = download.bytes.len();
-        let package = match (info.install_mode, permission_route()) {
-            (AppUpdateInstallMode::Deferred, Ok(PermissionRoute::User)) => {
-                let work = tempfile::Builder::new()
-                    .prefix("OC2ModManager-update-")
-                    .tempdir()
-                    .map_err(stage_error)?;
-                let digest =
-                    archive::sha256_reader(download.bytes.as_slice()).map_err(stage_error)?;
-                let path = package_path(work.path(), kind)?;
-                write_new(&path, &mut download.bytes.as_slice()).map_err(stage_error)?;
-                let _locked = lock_verified(work.path(), &path, &digest).map_err(stage_error)?;
-                if !installer::supports_background(&path, kind) {
-                    return Err("update.deferredUnsupported".into());
-                }
-                PreparedPackage::Ordinary { work, digest }
-            }
-            (AppUpdateInstallMode::InstallAsAdministrator, Ok(PermissionRoute::Administrator)) => {
-                administrator::validate_target(&source, &destination, kind)
-                    .map_err(administrator::preflight)?;
-                administrator::validate_package(&download.bytes, kind, &info.version)?;
-                PreparedPackage::Administrator(download.bytes)
-            }
-            _ if admin_requested => return Err(administrator::unavailable()),
-            _ => return Err("update.deferredUnsupported".into()),
-        };
+        let work = tempfile::Builder::new()
+            .prefix("OC2ModManager-update-")
+            .tempdir()
+            .map_err(stage_error)?;
+        let digest = archive::sha256_reader(download.bytes.as_slice()).map_err(stage_error)?;
+        let path = package_path(work.path(), kind)?;
+        write_new(&path, &mut download.bytes.as_slice()).map_err(stage_error)?;
+        let _locked = lock_verified(work.path(), &path, &digest).map_err(stage_error)?;
+        if !installer::supports_background(&path, kind) {
+            return Err("update.deferredUnsupported".into());
+        }
         log::info!(
             "更新已暂存：版本={}，格式={kind}，字节数={}，当前程序={}，安装目标={}",
             info.version,
@@ -124,7 +78,8 @@ impl Prepared {
             destination.display()
         );
         Ok(Self {
-            package,
+            work,
+            digest,
             signature: info.installer_signature.clone(),
             source,
             destination,
@@ -143,13 +98,7 @@ impl Prepared {
 
     pub(crate) fn start(&self, attempt: &Attempt) -> Result<(), String> {
         ensure_user_process()?;
-        let PreparedPackage::Ordinary {
-            work: staged_work,
-            digest,
-        } = &self.package
-        else {
-            return Err(UNAVAILABLE.into());
-        };
+        let staged_work = self.work.path();
         let current = std::env::current_exe().map_err(start_error)?;
         if current != self.source
             || validated_destination(&current, self.kind)? != self.destination
@@ -162,9 +111,9 @@ impl Prepared {
         }
         let work = attempt.work_path();
         let _work_lock = lock_directory(work).map_err(start_error)?;
-        let path = package_path(staged_work.path(), self.kind)?;
+        let path = package_path(staged_work, self.kind)?;
         let (_staged_dir, mut package) =
-            lock_verified(staged_work.path(), &path, digest).map_err(|error| {
+            lock_verified(staged_work, &path, &self.digest).map_err(|error| {
                 log::warn!("暂存包复核失败：尝试={}，原因={error}", attempt.id);
                 UNAVAILABLE
             })?;
@@ -207,20 +156,14 @@ impl Prepared {
 
 pub(crate) fn run_if_requested() {
     let mut args = std::env::args_os().skip(1);
-    let flag = match args.next().as_deref().and_then(OsStr::to_str) {
-        Some(FLAG) => false,
-        Some(administrator::FLAG) => true,
-        _ => return,
-    };
+    if args.next().as_deref() != Some(OsStr::new(FLAG)) {
+        return;
+    }
     let result = (|| {
         let owner =
             ManagerProcess::parse(args.next(), args.next()).map_err(|error| error.to_string())?;
         let id = parse_attempt_id(args.next(), args.next()).map_err(|error| error.to_string())?;
-        if flag {
-            administrator::run_supervisor(&owner, id)
-        } else {
-            run_supervisor(&owner, id)
-        }
+        run_supervisor(&owner, id)
     })();
     if let Err(error) = &result {
         eprintln!("OC2 update supervisor: {error}");
@@ -266,7 +209,7 @@ fn run_supervisor(owner: &ManagerProcess, id: Uuid) -> Result<(), String> {
         return Err(UNAVAILABLE.into());
     }
     let owner_handle = owner.open(&attempt.source).map_err(start_error)?;
-    let _installer_slot = InstallerSlot::enter()?;
+    let installer_slot = InstallerSlot::enter()?;
     let source_file = lock_file(&attempt.source).map_err(start_error)?;
     if !matches_installed_version(&attempt.source, &attempt.source_version) {
         return Err(UNAVAILABLE.into());
@@ -289,45 +232,28 @@ fn run_supervisor(owner: &ManagerProcess, id: Uuid) -> Result<(), String> {
         return Err("update.deferredUnsupported".into());
     }
 
-    if let Err(error) = HandoffEvents::named(id, false)
-        .and_then(|events| events.yield_until_owner_exits(&owner_handle, WAIT_MS))
-    {
+    HandoffEvents::named(id, false)
+        .and_then(|events| events.wait_for_commit(WAIT_MS))
+        .map_err(start_error)?;
+    if let Err(error) = wait_for(&owner_handle, WAIT_MS, "The previous manager did not exit") {
+        let receipt_error = attempt.record_outcome(Outcome::Failed).err();
         installer::write_diagnostic(
             &attempt,
             installer::WINDOWS_RESULT,
-            &format!("outcome=Failed handoff_error={error}"),
+            &format!("outcome=Failed handoff_error={error} receipt_error={receipt_error:?}"),
         );
-        attempt.record_outcome(Outcome::Failed)?;
+        drop(package);
+        drop(source_file);
+        drop(attempt_lock);
+        drop(installer_slot);
+        restart::offer_manual_update(&attempt, Some(&error.to_string()));
         return Err(start_error(error));
     }
     drop(source_file);
-    let outcome = finish_install(&attempt, path, owner.pid, package, attempt_lock, false);
+    let outcome = finish_install(&attempt, path, owner.pid, package, attempt_lock);
     drop(owner_handle);
-    if attempt.restart {
-        let launched = match outcome {
-            Outcome::Installed => restart_verified(&attempt.destination, &attempt.version, None),
-            Outcome::Failed => restart_verified(
-                &attempt.source,
-                &attempt.source_version,
-                Some(&source_digest),
-            ),
-            _ => return Ok(()),
-        };
-        if let Err(error) = launched {
-            let receipt_error = (outcome == Outcome::Installed)
-                .then(|| attempt.record_outcome(Outcome::RestartFailed).err())
-                .flatten();
-            installer::write_diagnostic(
-                &attempt,
-                "windows-restart-result.txt",
-                &format!(
-                    "outcome={outcome:?} launch_error={error} receipt_error={receipt_error:?}"
-                ),
-            );
-            return Err(error);
-        }
-    }
-    Ok(())
+    drop(installer_slot);
+    restart::after_install(&attempt, outcome)
 }
 
 struct InstallerSlot {
@@ -376,9 +302,8 @@ fn finish_install(
     owner_pid: u32,
     package_lock: File,
     attempt_lock: File,
-    administrator: bool,
 ) -> Outcome {
-    let (outcome, details) = installer::apply_and_observe(attempt, &path, owner_pid, administrator);
+    let (outcome, details) = installer::apply_and_observe(attempt, &path, owner_pid);
     drop(package_lock);
     let receipt_error = attempt.record_outcome(outcome).err();
     if let Some(error) = &receipt_error {
@@ -392,25 +317,6 @@ fn finish_install(
     );
     drop(attempt_lock);
     outcome
-}
-
-fn restart_verified(path: &Path, version: &str, old_digest: Option<&str>) -> Result<(), String> {
-    let locked = lock_file(path).map_err(|error| error.to_string())?;
-    if !matches_installed_version(path, version)
-        || old_digest
-            .is_some_and(|digest| archive::sha256_reader(&locked).as_deref().ok() != Some(digest))
-    {
-        return Err(format!("Program does not match expected version {version}"));
-    }
-    let mut child = Command::new(path)
-        .current_dir(installer_directory(path)?)
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    match unsafe { WaitForSingleObject(child.as_raw_handle().cast(), 1000) } {
-        WAIT_TIMEOUT => Ok(()),
-        WAIT_OBJECT_0 => Err(format!("Manager exited during startup: {:?}", child.wait())),
-        _ => Err(io::Error::last_os_error().to_string()),
-    }
 }
 
 fn matches_installed_version(path: &Path, expected: &str) -> bool {
@@ -506,7 +412,7 @@ fn check_type(file: &File, directory: bool) -> io::Result<()> {
 }
 
 fn ensure_user_process() -> Result<(), String> {
-    if crate::is_elevated() {
+    if permission_route().ok() != Some(PermissionRoute::User) {
         return Err("update.deferredUnsupported".into());
     }
     Ok(())

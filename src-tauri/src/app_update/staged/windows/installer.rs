@@ -10,10 +10,6 @@ use std::process::Command;
 use winapi::um::processthreadsapi::GetExitCodeProcess;
 use winapi::um::synchapi::WaitForSingleObject;
 use winapi::um::winbase::{INFINITE, WAIT_OBJECT_0};
-use winreg::{
-    RegKey,
-    enums::{HKEY_CURRENT_USER, KEY_READ},
-};
 
 const NSIS_RESULT: &str = "update-result.txt";
 const MSI_LOG: &str = "update-msi.log";
@@ -29,53 +25,15 @@ pub(super) fn supports_background(path: &Path, kind: &str) -> bool {
     }
 }
 
-pub(super) fn supports_admin(path: &Path, kind: &str, version: &str) -> bool {
-    kind == "exe"
-        && supports_background(path, kind)
-        && file_metadata::read_version_string(path, "OC2AdminDeferredUpdate").as_deref()
-            == Some("1")
-        && matches_installed_version(path, version)
-}
-
-pub(super) fn matches_nsis_registration(source: &Path) -> bool {
-    [
-        winreg::enums::KEY_WOW64_32KEY,
-        winreg::enums::KEY_WOW64_64KEY,
-    ]
-    .into_iter()
-    .any(|view| {
-        RegKey::predef(HKEY_CURRENT_USER)
-            .open_subkey_with_flags(
-                r"Software\Microsoft\Windows\CurrentVersion\Uninstall\OC2ModManager",
-                KEY_READ | view,
-            )
-            .ok()
-            .filter(|key| {
-                key.get_value::<String, _>("MainBinaryName").as_deref().ok()
-                    == Some("OC2ModManager.exe")
-            })
-            .is_some_and(|key| registered_directory(&key, source))
-    })
-}
-
-fn registered_directory(key: &RegKey, source: &Path) -> bool {
-    let Some(directory) = source.parent().and_then(Path::to_str) else {
-        return false;
-    };
-    key.get_value::<String, _>("InstallLocation")
-        .is_ok_and(|value| value.trim_matches('"').eq_ignore_ascii_case(directory))
-}
-
 pub(super) fn apply_and_observe(
     attempt: &Attempt,
     package: &Path,
     owner_pid: u32,
-    administrator: bool,
 ) -> (Outcome, String) {
     let msi_log = attempt.work_path().join(MSI_LOG);
     let exit = match attempt.installer_type.as_str() {
-        "exe" => run_nsis(&attempt.source, package, owner_pid, administrator),
-        "msi" if !administrator => run_msi(&attempt.destination, package, &msi_log),
+        "exe" => run_nsis(&attempt.source, package, owner_pid),
+        "msi" => run_msi(&attempt.destination, package, &msi_log),
         _ => Err(io::Error::other("unsupported installer format")),
     };
     let nsis_report = if attempt.installer_type == "exe" {
@@ -96,13 +54,7 @@ pub(super) fn apply_and_observe(
     let outcome = classify(
         &attempt.installer_type,
         exit.as_ref().ok().copied(),
-        nsis_report.as_ref().map(Option::as_deref).map(|report| {
-            if administrator && report.is_none() {
-                Some("missing_receipt")
-            } else {
-                report
-            }
-        }),
+        nsis_report.as_ref().map(Option::as_deref),
         target_is_installed,
     );
     let details = format!(
@@ -137,20 +89,10 @@ fn classify(
     }
 }
 
-fn run_nsis(source: &Path, package: &Path, owner_pid: u32, administrator: bool) -> io::Result<u32> {
+fn run_nsis(source: &Path, package: &Path, owner_pid: u32) -> io::Result<u32> {
     let directory = installer_directory(source).map_err(io::Error::other)?;
     let ordinary = deferred_nsis_args(directory, owner_pid);
-    let mut command = if administrator {
-        let work = package
-            .parent()
-            .ok_or_else(|| io::Error::other("Missing protected installer directory"))?;
-        let mut command = protected_command(package, work)?;
-        command.raw_arg("/OC2AdminDeferred");
-        command
-    } else {
-        Command::new(package)
-    };
-    command
+    Command::new(package)
         .raw_arg(ordinary)
         .status()?
         .code()
@@ -187,26 +129,6 @@ fn run_msi(destination: &Path, package: &Path, log: &Path) -> io::Result<u32> {
         return Err(io::Error::last_os_error());
     }
     Ok(code)
-}
-
-pub(super) fn protected_command(executable: &Path, work: &Path) -> io::Result<Command> {
-    let system = system_msiexec()?;
-    let system = system
-        .parent()
-        .ok_or_else(|| io::Error::other("Missing Windows system directory"))?;
-    let windows = system
-        .parent()
-        .ok_or_else(|| io::Error::other("Missing Windows directory"))?;
-    let mut command = Command::new(executable);
-    command
-        .current_dir(work)
-        .env_clear()
-        .env("SystemRoot", windows)
-        .env("WINDIR", windows)
-        .env("PATH", system)
-        .env("TEMP", work)
-        .env("TMP", work);
-    Ok(command)
 }
 
 fn msi_parameters(destination: &Path, package: &Path, log: &Path) -> io::Result<OsString> {

@@ -169,9 +169,9 @@ onMounted(() => {
       <n-dialog-provider>
         <AppWebLinks />
         <div class="app-shell">
-          <AppCloseGuard v-slot="{ applyUpdate, recoverUpdate, confirmingClose }">
-            <AppTitleBar :version="version" :choosing-language="choosingLanguage" @apply-update="applyUpdate" />
-            <UpdatePrompt :confirming-close="confirmingClose" @apply-update="applyUpdate" @recover-update="recoverUpdate" />
+          <AppCloseGuard v-slot="{ updateExit, confirmingClose }">
+            <AppTitleBar :version="version" :choosing-language="choosingLanguage" @update-exit="updateExit" />
+            <UpdatePrompt :confirming-close="confirmingClose" @update-exit="updateExit" />
           </AppCloseGuard>
           <div class="app-body" :inert="choosingLanguage || appUpdateBlocksOperations()">
             <AppSidebar />

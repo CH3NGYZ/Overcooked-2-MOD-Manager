@@ -449,12 +449,11 @@ pub fn run() {
             commands::system::probe_startup_source,
             commands::system::cancel_startup_probe,
             commands::system::relaunch_as_admin,
-            commands::update::get_pending_app_update_recovery,
             commands::update::check_app_update,
             commands::update::stage_app_update,
+            commands::update::defer_staged_app_update,
             commands::update::restart_update_as_user,
-            commands::update::install_update_as_administrator,
-            commands::update::finish_app_update_recovery,
+            commands::update::open_app_update_release_and_exit,
             commands::system::apply_staged_app_update,
         ])
         .build(context)

@@ -52,13 +52,13 @@ pub struct AppUpdateInfo {
 pub enum AppUpdateInstallMode {
     Deferred,
     RestartAsUser,
-    InstallAsAdministrator,
+    DownloadAndExit,
     Manual,
 }
 
-impl AppUpdateInstallMode {
-    pub(crate) fn can_stage(self) -> bool {
-        matches!(self, Self::Deferred | Self::InstallAsAdministrator)
+impl AppUpdateInfo {
+    pub(crate) fn has_signed_package(&self) -> bool {
+        self.installer_url.is_some() && !self.installer_signature.is_empty()
     }
 }
 

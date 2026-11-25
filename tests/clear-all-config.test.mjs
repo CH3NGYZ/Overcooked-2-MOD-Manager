@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { registerHooks } from 'node:module'
 import test from 'node:test'
 import { compileScript, parse } from '@vue/compiler-sfc'
-import { createRenderer, h, nextTick } from 'vue'
+import { createRenderer, h, nextTick, toRaw } from 'vue'
 import { LOCALE_CODES } from '../src/locale/types.ts'
 
 // Execute the production view setup; only IPC, dialogs and unrelated services
@@ -63,7 +63,7 @@ registerHooks({
 })
 const { default: ToolsView } = await import('../src/views/ToolsView.vue')
 const { toolsUiDataReset } = await import('../src/locale/tools/dataReset.ts')
-const { setCheckingUpdateRecovery } = await import('../src/appUpdateState.ts')
+const { appUpdateState, beginAppUpdateCheck, finishAppUpdateCheck } = await import('../src/appUpdateState.ts')
 const renderer = createRenderer({
   patchProp() {}, insert() {}, remove() {}, createElement: () => ({}), createText: () => ({}),
   createComment: () => ({}), setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null,
@@ -367,8 +367,10 @@ test('a mandatory update closes unconfirmed data actions and ignores a late dire
   const lateClear = mounted(t, { directory: () => directory.promise })
   const openingClear = lateClear.confirmClearAllConfig()
 
-  setCheckingUpdateRecovery(true)
-  t.after(() => setCheckingUpdateRecovery(false))
+  const previousUpdate = { ...toRaw(appUpdateState) }
+  t.after(() => Object.assign(toRaw(appUpdateState), previousUpdate))
+  assert.equal(beginAppUpdateCheck(), true)
+  finishAppUpdateCheck({ update: { install_mode: 'manual' }, all_failed: false })
   assert.equal(await clear.onPositiveClick(), false)
   assert.equal(confirming.destroyed, undefined)
   inProgress.reject('update.inProgress')

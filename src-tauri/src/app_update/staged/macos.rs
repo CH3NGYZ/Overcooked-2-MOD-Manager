@@ -4,6 +4,7 @@ use crate::models::AppUpdateInfo;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::{AppHandle, Manager};
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 mod validation;
 
@@ -68,29 +69,44 @@ impl Prepared {
                 attempt.version
             );
             let _ = attempt.record_outcome(Outcome::Failed);
-            if attempt.restart
-                && let Some(window) = app.get_webview_window("main")
-            {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            restore_window(app);
             return Err("update.installFailedManual".into());
         }
 
         let _ = attempt.record_outcome(Outcome::Installed);
         if attempt.restart {
-            tauri_plugin_single_instance::destroy(app);
+            super::release_single_instance(app);
             if let Err(error) = reopen(bundle) {
                 log::error!(
                     "macOS 更新已安装，重新打开失败：尝试={}，原因={error}",
                     attempt.id
                 );
                 let _ = attempt.record_outcome(Outcome::RestartFailed);
+                let locale = crate::manager_data::native_notice_language(None);
+                let path = crate::display_path::display_path(bundle);
+                let message = super::native_message("restartFailed", &locale)
+                    .replace("{reason}", &format!("{path}\n{error}"));
+                app.dialog()
+                    .message(message)
+                    .title(app.package_info().name.clone())
+                    .kind(MessageDialogKind::Warning)
+                    .blocking_show();
             }
             log::logger().flush();
             std::process::exit(0);
         }
         Ok(())
+    }
+}
+
+fn restore_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        if let Err(error) = window.show() {
+            log::warn!("无法重新显示更新窗口：{error}");
+        }
+        if let Err(error) = window.set_focus() {
+            log::warn!("无法聚焦更新窗口：{error}");
+        }
     }
 }
 

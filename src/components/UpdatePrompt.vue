@@ -1,75 +1,74 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NButton } from 'naive-ui'
-import {
-  appUpdateState, dismissAppUpdateNotes, type UpdateRecoveryDestination,
-} from '../appUpdateState'
-import { openAppUpdatePage, useAppUpdatePromptMode } from '../composables/useAppUpdates'
+import { appUpdateState, canCheckAppUpdate, canExitForAppUpdate, type UpdateExitAction } from '../appUpdateState'
+import { checkForAppUpdate, deferAppUpdate, useAppUpdatePromptOpen } from '../composables/useAppUpdates'
 import { t } from '../i18n'
-import { backendMessageOf, translateBackendMessage } from '../locale/backend'
-import { useNotify } from '../useNotify'
+import { translateBackendMessage } from '../locale/backend'
 import AppModal from './AppModal.vue'
 import AppUpdateNotes from './AppUpdateNotes.vue'
 
-const emit = defineEmits<{ 'apply-update': []; 'recover-update': [destination: UpdateRecoveryDestination] }>()
+const emit = defineEmits<{ 'update-exit': [action: UpdateExitAction] }>()
 defineProps<{ confirmingClose: boolean }>()
-const appUpdatePromptMode = useAppUpdatePromptMode()
-const recovery = computed(() => appUpdatePromptMode.value === 'recovery')
-const openingRecovery = computed(() => appUpdateState.stage === 'openingRecovery')
-const applying = computed(() => ['applying', 'handoff'].includes(appUpdateState.stage))
+const appUpdatePromptOpen = useAppUpdatePromptOpen()
 const update = computed(() => appUpdateState.update)
-const asUser = computed(() => update.value?.install_mode === 'restartAsUser')
-const asAdministrator = computed(() => update.value?.install_mode === 'installAsAdministrator')
-const notify = useNotify()
-
-async function openReleasePage() {
-  try { await openAppUpdatePage(update.value?.version) }
-  catch (reason) { notify.error(backendMessageOf(reason)) }
-}
+const stage = computed(() => appUpdateState.stage)
+const asUser = computed(() => update.value?.install_mode === 'restartAsUser' && ['ready', 'applying'].includes(stage.value))
+const error = computed(() => appUpdateState.error)
+const normalUpdate = computed(() => update.value?.install_mode === 'deferred' && ['ready', 'deferring', 'applying'].includes(stage.value))
+const showDownload = computed(() => canExitForAppUpdate('download') || ['openingRelease', 'openingWebsite'].includes(stage.value)
+  || (stage.value === 'applying' && !normalUpdate.value))
+const showLater = computed(() => normalUpdate.value && stage.value !== 'applying')
+const showApply = computed(() => canExitForAppUpdate('apply') || stage.value === 'applying')
+const showReboot = computed(() => ['systemReboot', 'exitingForReboot'].includes(stage.value))
+const showStatusCheck = computed(() => ['systemApplying', 'systemReboot'].includes(stage.value))
+const status = computed(() => {
+  switch (stage.value) {
+    case 'systemReboot': case 'exitingForReboot': return t('update.rebootRequired')
+    case 'systemApplying': return t('update.waitForInstaller')
+    case 'openingRelease': return t('update.openingReleasePage')
+    case 'openingWebsite': return t('update.openingWebsite')
+    case 'applying': return t(asUser.value ? 'update.reopeningAsUser' : 'update.applyingUpdate')
+    default: return ''
+  }
+})
 </script>
 
 <template>
-  <AppModal :show="recovery || (!confirmingClose && appUpdatePromptMode === 'notes')" exclude-from-dialog-queue
-    :closable="!recovery && !applying" :mask-closable="false"
+  <AppModal :show="appUpdatePromptOpen && !confirmingClose" :closable="false" :mask-closable="false" exclude-from-dialog-queue
     :z-index="6100" max-width="min(520px, 92%)" max-height="85%" min-height="100px"
-    :aria-label="recovery ? t('update.applicationFailedTitle') : t('update.releaseNotes')"
-    :data-testid="recovery ? 'app-update-recovery' : 'app-update-notes'"
-    @update:show="(show: boolean) => { if (!show) dismissAppUpdateNotes() }">
-    <div v-if="recovery" class="update-body">
-      <h2>{{ t('update.applicationFailedTitle') }}</h2>
-      <p>{{ t('update.applicationFailed') }}</p>
-      <p v-if="appUpdateState.error" class="update-error" role="alert">{{ translateBackendMessage(appUpdateState.error) }}</p>
-    </div>
-    <div v-else class="update-body">
+    :aria-label="t('update.managerUpdate')" data-testid="app-update-notes">
+    <div class="update-body">
       <div class="update-heading">
         <h2>{{ t('dialogs.versionAvailable', { version: 'v' + update?.version }) }}</h2>
         <span v-if="update" class="version-line muted">v{{ update.current_version }} → v{{ update.version }}</span>
       </div>
-      <p v-if="asUser" data-testid="app-update-permission-info">{{ t('update.restartAsUserHelp') }}</p>
-      <p v-else-if="asAdministrator" data-testid="app-update-permission-info">{{ t('update.installAsAdministratorHelp') }}</p>
-      <p v-if="appUpdateState.error" class="update-error" role="alert">{{ translateBackendMessage(appUpdateState.error) }}</p>
+      <p v-if="asUser && !showStatusCheck" data-testid="app-update-permission-info">{{ t('update.restartAsUserHelp') }}</p>
+      <p v-else-if="update?.install_mode === 'downloadAndExit' && !showStatusCheck"
+        data-testid="app-update-permission-info">
+        {{ t('update.restartAsUserUnavailable') }}
+      </p>
+      <p v-if="showDownload">{{ t('update.downloadAndExitHelp') }}</p>
+      <p v-if="normalUpdate">{{ t('update.installOnExitHelp') }}</p>
+      <p v-if="error" class="update-error" role="alert">{{ translateBackendMessage(error) }}</p>
+      <p v-if="status" role="status">{{ status }}</p>
       <AppUpdateNotes :update="update" />
-      <p v-if="applying" role="status">{{ t(asUser ? 'update.reopeningAsUser' : 'update.applyingUpdate') }}</p>
     </div>
     <template #footer>
-      <div v-if="recovery" class="update-footer">
-        <NButton secondary :disabled="openingRecovery" data-testid="app-update-alternate" @click="emit('recover-update', 'alternate')">
-          {{ t('update.goToAlternateDownload') }}
-        </NButton>
-        <NButton type="primary" :disabled="openingRecovery" data-testid="app-update-website" @click="emit('recover-update', 'website')">
-          {{ t('update.goToWebsite') }}
-        </NButton>
-      </div>
-      <div v-else class="update-footer">
-        <NButton v-if="asUser || asAdministrator" quaternary :disabled="applying" data-testid="app-update-manual" @click="openReleasePage">
-          {{ t('dialogs.openReleasePage') }}
-        </NButton>
-        <NButton secondary :disabled="applying" data-testid="app-update-install-later" @click="dismissAppUpdateNotes">
-          {{ t(asUser || asAdministrator ? 'dialogs.later' : 'update.installLater') }}
-        </NButton>
-        <NButton type="primary" :loading="applying" :disabled="applying" data-testid="app-update-install-now" @click="emit('apply-update')">
-          {{ t(asUser ? 'update.restartAsUserAction' : asAdministrator ? 'update.installAsAdministratorAction' : 'update.applyNow') }}
-        </NButton>
+      <div class="update-footer">
+        <NButton v-if="showStatusCheck" secondary :loading="appUpdateState.recheckingStatus" :disabled="!canCheckAppUpdate()"
+          data-testid="app-update-check-again" @click="checkForAppUpdate()">{{ t('update.checkAgain') }}</NButton>
+        <NButton v-if="showReboot" type="primary" :loading="stage === 'exitingForReboot'" :disabled="!canExitForAppUpdate('reboot')"
+          data-testid="app-update-quit-to-reboot" @click="emit('update-exit', 'reboot')">{{ t('update.quitToRestart') }}</NButton>
+        <NButton v-if="showDownload" secondary :loading="stage === 'openingWebsite'" :disabled="!canExitForAppUpdate('website')"
+          data-testid="app-update-website" @click="emit('update-exit', 'website')">{{ t('update.goToWebsite') }}</NButton>
+        <NButton v-if="showDownload" :type="showApply ? 'default' : 'primary'"
+          :secondary="showApply" :loading="stage === 'openingRelease'" :disabled="!canExitForAppUpdate('download')"
+          data-testid="app-update-manual" @click="emit('update-exit', 'download')">{{ t('dialogs.openReleasePage') }}</NButton>
+        <NButton v-if="showLater" secondary :loading="stage === 'deferring'"
+          :disabled="stage !== 'ready'" data-testid="app-update-install-later" @click="deferAppUpdate">{{ t('update.installLater') }}</NButton>
+        <NButton v-if="showApply || stage === 'deferring'" type="primary" :loading="stage === 'applying'" :disabled="!canExitForAppUpdate('apply')"
+          data-testid="app-update-install-now" @click="emit('update-exit', 'apply')">{{ t(asUser ? 'update.restartAsUserAction' : 'update.applyNow') }}</NButton>
       </div>
     </template>
   </AppModal>

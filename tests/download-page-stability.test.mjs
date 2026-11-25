@@ -115,19 +115,19 @@ test('ordinary download cancellation discards queued bytes and never affects a n
     assert.equal(state.percent, 40, 'a same-name result from the old task does not erase current bytes')
     assert.equal(downloadTaskState.running.id, ordinary)
     // The public transition owns this readonly state; raw reset is fixture cleanup only.
-    const { beginAppUpdateCheck, finishAppUpdateCheck, finishBackgroundAppUpdate, beginStagedAppUpdate } = await import('../src/appUpdateState.ts')
+    const { beginAppUpdateCheck, finishAppUpdateCheck, finishBackgroundAppUpdate, beginAppUpdateExit } = await import('../src/appUpdateState.ts')
     const update = { version: 'fixture', current_version: 'fixture', install_mode: 'deferred', source_channel: 'fixture' }
     beginAppUpdateCheck()
     finishAppUpdateCheck({ update, all_failed: false })
-    assert.equal(state.visible, true, 'background updates do not hide ordinary downloads')
+    assert.equal(state.visible, true, 'a background update download leaves ordinary downloads usable')
     finishBackgroundAppUpdate({ update })
-    assert.equal(beginStagedAppUpdate(), true)
+    assert.equal(beginAppUpdateExit('apply'), true)
     await state.cancel()
     assert.equal(state.visible, false)
     assert.deepEqual(boundary.calls, ['cancelDownload'], 'update installation remains non-cancellable')
-    toRaw(appUpdateState).stage = 'idle'
+    Object.assign(toRaw(appUpdateState), { stage: 'idle', update: null, notesRequested: false })
     endDownloadTask(ordinary)
-  } finally { toRaw(appUpdateState).stage = 'idle'; app.unmount() }
+  } finally { Object.assign(toRaw(appUpdateState), { stage: 'idle', update: null, notesRequested: false }); app.unmount() }
 })
 
 test('the overlay delegates cancellation without hiding a caller-owned download when cancellation fails', async () => {

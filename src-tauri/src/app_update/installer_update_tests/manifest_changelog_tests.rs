@@ -52,6 +52,7 @@ fn changelog_uses_numeric_order_open_current_closed_target_and_first_duplicate()
     assert_eq!(info.installer_signature, original.installer_signature);
     assert_eq!(info.installer_name, original.installer_name);
     assert_eq!(info.installer_type, original.installer_type);
+    assert_eq!(info.manifest_url, original.manifest_url);
     assert_eq!(info.provider, original.provider);
     assert_eq!(info.source_channel, original.source_channel);
 }
@@ -229,21 +230,30 @@ fn history_cannot_bypass_platform_url_signature_or_newer_version_checks() {
             inspect(&invalid_url, "1.0.0").unwrap_err(),
             "update.manifestPlatformMismatch"
         );
-        let mut invalid_signature = valid.clone();
-        invalid_signature["platforms"][&key]["signature"] = " ".into();
-        assert_eq!(
-            inspect(&invalid_signature, "1.0.0").unwrap_err(),
-            "update.manifestPlatformMismatch"
-        );
+        let mut whitespace_signature = valid.clone();
+        whitespace_signature["platforms"][&key]["signature"] = " ".into();
+        let whitespace_info = inspect(&whitespace_signature, "1.0.0").unwrap().unwrap();
+        assert_eq!(whitespace_info.installer_signature, "");
+        assert_eq!(whitespace_info.installer_url, None);
+        assert_eq!(whitespace_info.install_mode, AppUpdateInstallMode::Manual);
+        let mut missing_signature = valid.clone();
+        missing_signature["platforms"][&key]
+            .as_object_mut()
+            .unwrap()
+            .remove("signature");
+        let unsigned = inspect(&missing_signature, "1.0.0").unwrap().unwrap();
+        assert_eq!(unsigned.version, "9.0.0");
+        assert!(!unsigned.has_signed_package());
+        assert_eq!(unsigned.install_mode, AppUpdateInstallMode::Manual);
         let mut missing_platform = valid.clone();
         missing_platform["platforms"]
             .as_object_mut()
             .unwrap()
             .remove(&key);
-        assert_eq!(
-            inspect(&missing_platform, "1.0.0").unwrap_err(),
-            "update.noMatchingPackage"
-        );
+        let without_package = inspect(&missing_platform, "1.0.0").unwrap().unwrap();
+        assert_eq!(without_package.version, "9.0.0");
+        assert!(!without_package.has_signed_package());
+        assert_eq!(without_package.install_mode, AppUpdateInstallMode::Manual);
         valid["version"] = "9.0.0-beta".into();
         assert_eq!(
             inspect(&valid, "1.0.0").unwrap_err(),
@@ -278,4 +288,25 @@ fn selected_package_normalizes_signature_and_requires_matching_release_tag() {
             .unwrap_err(),
         "update.manifestPlatformMismatch"
     );
+}
+
+#[test]
+fn manifest_discovery_only_validates_the_selected_package() {
+    let channel = direct(Provider::Github);
+    let target = target();
+    let current = semver::Version::new(1, 0, 0);
+    let mut document = fixture(Provider::Github);
+    let platforms = document["platforms"].as_object_mut().unwrap();
+    let selected = platforms.remove(&target.manifest_key()).unwrap();
+    platforms.clear();
+    platforms.insert("other-platform".into(), json!({ "url": false }));
+    platforms.insert(target.manifest_key(), selected);
+    let inspect =
+        |document: &Value| inspect_installer_manifest(&channel, document, target, &current);
+    assert!(inspect(&document).unwrap().unwrap().has_signed_package());
+
+    document.as_object_mut().unwrap().remove("platforms");
+    let manual = inspect(&document).unwrap().unwrap();
+    assert_eq!(manual.version, "9.0.0");
+    assert!(!manual.has_signed_package());
 }

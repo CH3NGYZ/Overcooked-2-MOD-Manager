@@ -1,32 +1,33 @@
 import { computed } from 'vue'
 import { useDialogReactiveList } from 'naive-ui'
 import {
-  appUpdateState, beginAppUpdateCheck, finishAppUpdateCheck, finishBackgroundAppUpdate,
-  requireAppUpdateRecoveryCheck, retryBackgroundAppUpdate, setAppDistribution,
-  setBackgroundAppUpdateProgress, setCheckingUpdateRecovery,
+  appUpdateExitInProgress, appUpdateState, beginAppUpdateCheck, beginDeferringAppUpdate, finishAppUpdateCheck, finishBackgroundAppUpdate,
+  finishDeferringAppUpdate, isRequiredAppUpdate, setAppDistribution, setBackgroundAppUpdateProgress,
 } from '../appUpdateState.ts'
-import { activeDownloadProgress, downloadTaskState } from '../downloadTask'
 import { appModalOpen } from '../dialogBusy'
+import { backendMessageOf, backendPayloadOf } from '../locale/backend'
 import { useModChanges } from '../modChanges/store'
+import { isChangePlanLocked } from '../modChanges/workflow'
 import { api } from '../services/tauri'
 import { demoActive } from '../tutorial/demo'
 
-export function useAppUpdatePromptMode() {
+export function useAppUpdatePromptOpen() {
   const dialogs = useDialogReactiveList()
+  const changes = useModChanges()
   return computed(() => {
-    const stage = appUpdateState.stage
-    if (stage === 'recovery' || stage === 'openingRecovery') return 'recovery'
-    if (appUpdateState.notesPending && (stage === 'ready' || stage === 'applying')
-      && !appModalOpen.value && !dialogs.value.length
-      && !demoActive.value && !useModChanges().state.value
-      && !activeDownloadProgress.value && !downloadTaskState.failure) return 'notes'
-    return null
+    if (appUpdateState.resolvingExitBlock || isChangePlanLocked(changes.state.value?.phase)) return false
+    if (isRequiredAppUpdate() || appUpdateState.stage === 'deferring') return true
+    if (appUpdateExitInProgress()) {
+      return appUpdateState.stage !== 'applying' || appUpdateState.notesRequested || appUpdateState.update?.install_mode === 'restartAsUser'
+    }
+    return appUpdateState.stage === 'ready' && appUpdateState.notesRequested && !appModalOpen.value && !dialogs.value.length
+      && !demoActive.value && !changes.state.value
   })
 }
 
-let startupRecovery: Promise<void> | undefined
 let check: Promise<void> | undefined
 let openingStore: Promise<void> | undefined
+let distribution: Promise<void> | undefined
 const REATTACH_INTERVAL_MS = 2000
 const REATTACH_ATTEMPTS = 60
 
@@ -37,10 +38,10 @@ async function stageUpdate(channel: string): Promise<void> {
       finishBackgroundAppUpdate({ update })
       return
     } catch (reason) {
-      const error = typeof reason === 'string' ? reason : reason instanceof Error ? reason.message : 'update.stageFailed'
-      if (error !== 'update.inProgress' || attempt >= REATTACH_ATTEMPTS) {
-        finishBackgroundAppUpdate({ error: error || 'update.stageFailed' })
-        if (error === 'update.installFailedManual') await refreshAppUpdateRecovery()
+      const error = typeof reason === 'string' ? reason : reason instanceof Error ? reason.message : backendMessageOf(reason)
+      const tag = backendPayloadOf(reason)?.tag ?? error
+      if (tag !== 'update.inProgress' || attempt >= REATTACH_ATTEMPTS) {
+        finishBackgroundAppUpdate({ error: error || 'update.stageFailed', tag })
         return
       }
       await new Promise(resolve => setTimeout(resolve, REATTACH_INTERVAL_MS))
@@ -48,12 +49,20 @@ async function stageUpdate(channel: string): Promise<void> {
   }
 }
 
-export function retryAppUpdateDownload(): void {
-  const channel = retryBackgroundAppUpdate()
-  if (channel) void stageUpdate(channel)
+export async function deferAppUpdate(): Promise<void> {
+  const version = beginDeferringAppUpdate()
+  if (!version) return
+  try {
+    await api.deferStagedAppUpdate(version)
+    finishDeferringAppUpdate()
+  } catch (reason) {
+    const error = typeof reason === 'string' ? reason : reason instanceof Error ? reason.message : backendMessageOf(reason)
+    finishDeferringAppUpdate(error || 'update.stagedUnavailable', backendPayloadOf(reason)?.tag)
+  }
 }
 
 export function openAppUpdatePage(version?: string): Promise<void> {
+  if (isRequiredAppUpdate()) return Promise.reject(new Error('update.requiredToContinue'))
   const open = (targetVersion?: string) => api.openUpdateRepository(targetVersion).then(result => {
     if (!result.ok) throw new Error(result.message)
   })
@@ -62,16 +71,14 @@ export function openAppUpdatePage(version?: string): Promise<void> {
 }
 
 async function runCheck(force: boolean): Promise<void> {
-  await startupRecovery
+  await distribution
   if (appUpdateState.distribution === 'microsoft_store') {
-    setCheckingUpdateRecovery(false)
     if (force) await openAppUpdatePage()
     return
   }
   if (!beginAppUpdateCheck()) return
   const result = await api.checkAppUpdate(force).catch(() => undefined)
   const channel = finishAppUpdateCheck(result)
-  setCheckingUpdateRecovery(false)
   if (channel) void stageUpdate(channel)
   else if (force && result?.distribution === 'microsoft_store') await openAppUpdatePage()
 }
@@ -80,18 +87,7 @@ export function checkForAppUpdate(force = true): Promise<void> {
   return check ??= runCheck(force).finally(() => { check = undefined })
 }
 
-export async function refreshAppUpdateRecovery(): Promise<void> {
-  requireAppUpdateRecoveryCheck()
-  try {
-    await check
-    await checkForAppUpdate()
-  }
-  finally { setCheckingUpdateRecovery(false) }
-}
-
 export function initializeAppUpdates(): void {
-  void api.getAppDistribution().then(setAppDistribution).catch(() => undefined)
-  startupRecovery ??= api.getPendingAppUpdateRecovery()
-    .then(setCheckingUpdateRecovery).catch(() => undefined)
+  distribution ??= api.getAppDistribution().then(setAppDistribution).catch(() => undefined)
   void checkForAppUpdate(false)
 }

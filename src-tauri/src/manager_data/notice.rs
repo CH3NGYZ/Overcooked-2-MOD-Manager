@@ -133,7 +133,7 @@ fn system_code(value: &str) -> Option<&'static str> {
     })
 }
 
-fn language(requested: Option<&str>) -> String {
+pub(crate) fn language(requested: Option<&str>) -> String {
     requested
         .and_then(supported_language)
         .map(str::to_owned)

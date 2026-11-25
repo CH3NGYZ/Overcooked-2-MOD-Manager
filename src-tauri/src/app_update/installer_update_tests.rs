@@ -250,23 +250,12 @@ fn package_channels(info: &AppUpdateInfo, region: InstallerRegion) -> Vec<Instal
 }
 
 #[test]
-fn malformed_missing_platform_unsafe_urls_bad_names_and_empty_signatures_fail() {
+fn malformed_manifests_unsafe_urls_and_bad_package_names_fail() {
     let valid = fixture(Provider::Github);
     let mut invalid = vec![
         serde_json::json!({}),
         serde_json::json!({ "version": "invalid" }),
     ];
-    let mut missing = valid.clone();
-    missing["platforms"]
-        .as_object_mut()
-        .unwrap()
-        .remove("windows-x86_64-nsis");
-    invalid.push(missing);
-    for signature in ["", " "] {
-        let mut value = valid.clone();
-        value["platforms"]["windows-x86_64-nsis"]["signature"] = signature.into();
-        invalid.push(value);
-    }
     for url in [
         "http://github.com/CH3NGYZ/Overcooked-2-MOD-Manager/releases/download/v9.0.0/OC2ModManager_9.0.0_x64-setup.exe",
         "https://github.com/wrong/repo/releases/download/v9.0.0/OC2ModManager_9.0.0_x64-setup.exe",
@@ -312,6 +301,25 @@ fn equal_or_older_versions_do_not_update() {
             .is_none()
         );
     }
+}
+
+#[test]
+fn empty_signature_becomes_a_confirmed_manual_release() {
+    let mut document = fixture(Provider::Github);
+    document["platforms"]["windows-x86_64-nsis"]["signature"] = String::new().into();
+    let info = inspect_installer_manifest(
+        &direct(Provider::Github),
+        &document,
+        target(),
+        &semver::Version::new(1, 0, 0),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(info.version, "9.0.0");
+    assert!(info.installer_url.is_none());
+    assert_eq!(info.installer_signature, "");
+    assert_eq!(info.installer_name, "OC2ModManager_9.0.0_x64-setup.exe");
+    assert_eq!(info.install_mode, AppUpdateInstallMode::Manual);
 }
 
 struct Server {

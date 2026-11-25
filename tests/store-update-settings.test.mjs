@@ -49,7 +49,7 @@ registerHooks({
       '/src/theme.ts': 'export const tagColorFor=()=>({})',
       '/src/crossLink.ts': 'export const FOCUS_QUERY="focus"',
       '/src/gameRuntime.ts': 'export const displayPath=v=>v',
-      '/src/locale/backend.ts': 'export const backendMessageOf=v=>`translated:${String(v)}`;export const translateBackendMessage=String',
+      '/src/locale/backend.ts': 'export const backendMessageOf=v=>`translated:${String(v)}`;export const translateBackendMessage=String;export const backendPayloadOf=()=>undefined',
     }
     for (const [suffix, source] of Object.entries(modules)) if (url.endsWith(suffix)) return fake(source)
     return next(url, context)
@@ -64,7 +64,7 @@ const renderer = createRenderer({
 const result = (patch = {}) => ({ channels: [], all_failed: false, region: 'cn', ...patch })
 const info = { version: '9.9.9', current_version: '2.3.2', install_mode: 'manual' }
 function mounted(t) {
-  Object.assign(toRaw(shared.appUpdateState), { distribution: null, update: null, stage: 'idle', error: '', checkingRecovery: false })
+  Object.assign(toRaw(shared.appUpdateState), { distribution: null, update: null, stage: 'idle', error: '', recheckingStatus: false })
   boundary.calls.length = boundary.notices.length = 0
   boundary.result = result()
   boundary.opening = async () => ({ ok: true })
@@ -119,7 +119,7 @@ test('ordinary checks preserve current, update and all-channel failure behavior'
   await view.checkUpdate()
   assert.deepEqual(boundary.notices, [['success', 'dialogs.youAreUpToDate']])
   assert.equal(view.storeManaged, false)
-  boundary.result = result({ all_failed: true, update: info })
+  boundary.result = result({ all_failed: true })
   await view.checkUpdate()
   assert.equal(shared.appUpdateState.stage, 'checkFailed')
   assert.deepEqual(boundary.notices.at(-1), ['error', 'dialogs.updateCheckFailed'])

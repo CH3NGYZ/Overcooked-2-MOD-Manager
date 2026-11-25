@@ -2,8 +2,11 @@ import { readonly, shallowReactive } from 'vue'
 import type { AppDistribution, AppUpdateCheckResult, AppUpdateInfo, DownloadProgress } from './types.ts'
 
 export type UpdateStage = 'idle' | 'checking' | 'current' | 'checkFailed' | 'downloading' | 'stageFailed'
-  | 'ready' | 'applying' | 'handoff' | 'recovery' | 'openingRecovery' | 'systemReboot' | 'systemApplying' | 'restartFailed'
-export type UpdateRecoveryDestination = 'website' | 'alternate'
+  | 'ready' | 'deferring' | 'applying' | 'openingRelease' | 'openingWebsite' | 'exitingForReboot' | 'handoff' | 'systemReboot' | 'systemApplying' | 'restartFailed'
+export type UpdateExitAction = 'apply' | 'download' | 'website' | 'reboot'
+
+const exitStages = { apply: 'applying', download: 'openingRelease', website: 'openingWebsite', reboot: 'exitingForReboot' } as const
+const pendingExitStages: readonly UpdateStage[] = Object.values(exitStages)
 
 const state = shallowReactive<{
   distribution: AppDistribution | null
@@ -11,64 +14,78 @@ const state = shallowReactive<{
   stage: UpdateStage
   error: string
   progress: DownloadProgress | null
-  checkingRecovery: boolean
-  notesPending: boolean
+  recheckingStatus: boolean
+  deferred: boolean
+  notesRequested: boolean
+  resolvingExitBlock: boolean
 }>({
   distribution: null, update: null, stage: 'idle', error: '', progress: null,
-  checkingRecovery: false, notesPending: false,
+  recheckingStatus: false, deferred: false, notesRequested: false, resolvingExitBlock: false,
 })
 
 export const appUpdateState = readonly(state)
 
-export function appUpdateBusy(): boolean {
-  return state.stage === 'applying' || state.stage === 'handoff' || state.stage === 'openingRecovery'
+export function isRequiredAppUpdate(): boolean {
+  return state.distribution !== 'microsoft_store' && !!state.update
+    && (['stageFailed', 'systemApplying', 'systemReboot'].includes(state.stage)
+      || (state.stage === 'ready' && state.update.install_mode !== 'deferred'))
 }
 
-export function appUpdateBlocksOperations(): boolean {
-  return state.checkingRecovery || state.stage === 'recovery' || appUpdateBusy()
+export function appUpdateExitInProgress(): boolean {
+  return pendingExitStages.includes(state.stage)
+}
+
+export function appUpdateBlocksOperations(allowRequiredUpdate = false): boolean {
+  return state.stage === 'handoff' || state.stage === 'deferring' || appUpdateExitInProgress()
+    || (!allowRequiredUpdate && !state.resolvingExitBlock && isRequiredAppUpdate())
+}
+
+export function presentAppUpdate(): void {
+  if (!state.resolvingExitBlock) return
+  state.resolvingExitBlock = false
+  if (state.stage === 'ready') state.notesRequested = true
 }
 
 export function setAppDistribution(distribution: AppDistribution): void {
   state.distribution = distribution
 }
 
-export function setCheckingUpdateRecovery(checking: boolean): void {
-  state.checkingRecovery = checking
+export function canCheckAppUpdate(): boolean {
+  return !state.recheckingStatus && ['idle', 'current', 'checkFailed', 'systemReboot', 'systemApplying', 'restartFailed'].includes(state.stage)
 }
 
 export function beginAppUpdateCheck(): boolean {
   if (state.distribution === 'microsoft_store' || !canCheckAppUpdate()) return false
-  state.stage = 'checking'
+  if (isRequiredAppUpdate()) state.recheckingStatus = true
+  else state.stage = 'checking'
   state.error = ''
   return true
 }
 
-export function canCheckAppUpdate(): boolean {
-  return ['idle', 'current', 'checkFailed', 'stageFailed', 'systemReboot', 'systemApplying', 'restartFailed'].includes(state.stage)
-}
-
 export function finishAppUpdateCheck(result?: AppUpdateCheckResult): string | undefined {
-  if (state.stage !== 'checking') return
+  if (state.stage !== 'checking' && !state.recheckingStatus) return
+  state.recheckingStatus = false
   if (result?.distribution) setAppDistribution(result.distribution)
-  const update = state.distribution === 'microsoft_store' || result?.all_failed ? null : result?.update ?? null
-  state.update = update
-  if (state.distribution === 'microsoft_store') state.stage = 'idle'
-  else if (result?.installation_status === 'reboot_required') state.stage = 'systemReboot'
-  else if (result?.installation_status === 'applying') state.stage = 'systemApplying'
-  else if (result?.installation_status === 'restart_failed') state.stage = 'restartFailed'
-  else if (!result || result.all_failed) state.stage = 'checkFailed'
-  else if (!update) state.stage = 'current'
-  else if (result.recovery_required) state.stage = 'recovery'
-  else if (update.install_mode === 'restartAsUser') setReadyUpdate(update)
-  else if (supportsStaging(update) && update.source_channel) return startBackgroundAppUpdate(update.source_channel)
-  else {
-    state.stage = 'stageFailed'
-    state.error = 'update.manualUpdateRequired'
+  if (state.distribution === 'microsoft_store') {
+    state.update = null
+    state.stage = 'idle'
+    return
   }
-}
-
-function supportsStaging(update: AppUpdateInfo | null): boolean {
-  return update?.install_mode === 'deferred' || update?.install_mode === 'installAsAdministrator'
+  if (!result || (result.all_failed && !result.update)) {
+    state.error = 'dialogs.updateCheckFailed'
+    if (!isRequiredAppUpdate()) state.stage = 'checkFailed'
+    return
+  }
+  const update = result.update ?? state.update
+  state.update = update
+  if (result.installation_status === 'reboot_required') state.stage = 'systemReboot'
+  else if (result.installation_status === 'applying') state.stage = 'systemApplying'
+  else if (!update) state.stage = result.installation_status === 'restart_failed' ? 'restartFailed' : 'current'
+  else if (update.install_mode === 'restartAsUser' || update.install_mode === 'downloadAndExit') setReadyUpdate(update)
+  else if (result.installation_status === 'restart_failed' || result.recovery_required) {
+    finishPreparationWithError(result.recovery_required ? 'update.installFailedManual' : 'update.restartFailed')
+  } else if (update.install_mode === 'deferred' && update.source_channel) return startBackgroundAppUpdate(update.source_channel)
+  else finishPreparationWithError('update.manualUpdateRequired')
 }
 
 function startBackgroundAppUpdate(channel: string): string {
@@ -78,120 +95,94 @@ function startBackgroundAppUpdate(channel: string): string {
   return channel
 }
 
-export function retryBackgroundAppUpdate(): string | undefined {
-  if (!canRetryAppUpdateDownload()) return
-  const channel = state.update?.source_channel
-  if (channel) return startBackgroundAppUpdate(channel)
-}
-
-export function canRetryAppUpdateDownload(): boolean {
-  return state.stage === 'stageFailed'
-    && !manualAppUpdateErrors.has(state.error) && state.error !== 'update.installFailedManual'
-    && supportsStaging(state.update) && !!state.update?.source_channel
-}
-
-const manualAppUpdateErrors = new Set([
-  'update.manualUpdateRequired', 'update.deferredUnsupported', 'update.formatUnsupported',
-  'update.restartAsUserUnavailable', 'update.installAsAdministratorUnavailable',
-])
-
-export function appUpdateNeedsManualInstall(): boolean {
-  return state.stage === 'stageFailed' && manualAppUpdateErrors.has(state.error)
+function finishPreparationWithError(error: string, tag = error): void {
+  state.error = error
+  state.progress = null
+  state.deferred = false
+  state.notesRequested = false
+  state.resolvingExitBlock = false
+  state.stage = tag === 'update.rebootRequired' ? 'systemReboot'
+    : tag === 'update.inProgress' ? 'systemApplying' : 'stageFailed'
 }
 
 export function setBackgroundAppUpdateProgress(progress: DownloadProgress): void {
   if (state.stage === 'downloading') state.progress = progress
 }
 
-export function finishBackgroundAppUpdate(outcome: { update: AppUpdateInfo | null } | { error: string }): void {
+export function finishBackgroundAppUpdate(outcome: { update: AppUpdateInfo | null } | { error: string; tag?: string }): void {
   if (state.stage !== 'downloading') return
   state.progress = null
-  if ('error' in outcome) {
-    state.error = outcome.error
-    state.stage = outcome.error === 'update.rebootRequired' ? 'systemReboot'
-      : outcome.error === 'update.restartFailed' ? 'restartFailed' : 'stageFailed'
-    return
-  }
-  setReadyUpdate(outcome.update)
+  if ('error' in outcome) finishPreparationWithError(outcome.error, outcome.tag)
+  else if (outcome.update) setReadyUpdate(outcome.update)
+  else finishPreparationWithError('update.stagedUnavailable')
 }
 
-const dismissedNotesKey = 'oc2-update-dismissed-notes'
-const notesVersion = (update: AppUpdateInfo) => `${update.current_version}:${update.version}:${update.install_mode}`
-
-function dismissedNotesVersion(): string | null {
-  try { return globalThis.sessionStorage?.getItem(dismissedNotesKey) ?? null }
-  catch { return null }
-}
-
-function setReadyUpdate(update: AppUpdateInfo | null): void {
+function setReadyUpdate(update: AppUpdateInfo): void {
   state.update = update
-  if (update?.install_mode === 'manual') {
-    state.stage = 'stageFailed'
-    state.error = 'update.manualUpdateRequired'
-  } else {
-    state.stage = update ? 'ready' : 'current'
+  if (update.install_mode === 'manual') finishPreparationWithError('update.manualUpdateRequired')
+  else {
+    state.stage = 'ready'
+    state.notesRequested = update.install_mode === 'deferred' && !state.deferred
   }
-  state.notesPending = state.stage === 'ready' && !!update && notesVersion(update) !== dismissedNotesVersion()
 }
 
-export function showAppUpdateNotes(): void {
-  if (state.stage === 'ready' && state.update) state.notesPending = true
+export function canExitForAppUpdate(action: UpdateExitAction): boolean {
+  if (state.distribution === 'microsoft_store' || !state.update || state.recheckingStatus) return false
+  if (action === 'reboot') return state.stage === 'systemReboot'
+  if (action === 'download' || action === 'website') {
+    return state.stage === 'stageFailed' || (state.stage === 'ready' && state.update.install_mode !== 'deferred')
+  }
+  return state.stage === 'ready' && (state.update?.install_mode === 'deferred' || state.update?.install_mode === 'restartAsUser')
 }
 
-export function dismissAppUpdateNotes(): void {
-  if (state.stage !== 'ready' || !state.update) return
-  state.notesPending = false
-  try { globalThis.sessionStorage?.setItem(dismissedNotesKey, notesVersion(state.update)) } catch { /* storage can be unavailable */ }
+export function beginDeferringAppUpdate(): string | undefined {
+  if (state.stage !== 'ready' || state.update?.install_mode !== 'deferred' || state.resolvingExitBlock) return
+  state.stage = 'deferring'
+  return state.update.version
 }
 
-export function beginStagedAppUpdate(): boolean {
-  if (state.stage !== 'ready' || !state.update || state.update.install_mode === 'manual') return false
+export function finishDeferringAppUpdate(error?: string, tag = error): void {
+  if (state.stage !== 'deferring') return
+  if (error) finishPreparationWithError(error, tag)
+  else {
+    state.stage = 'ready'
+    state.deferred = true
+    state.notesRequested = false
+    state.error = ''
+  }
+}
+
+export function beginDeferredAppUpdateExit(): boolean {
+  return state.deferred && beginAppUpdateExit('apply')
+}
+
+export function beginAppUpdateExit(action: UpdateExitAction): boolean {
+  if (!canExitForAppUpdate(action)) return false
   state.error = ''
-  state.stage = 'applying'
+  state.resolvingExitBlock = false
+  if (action !== 'apply') state.progress = null
+  state.stage = exitStages[action]
   return true
 }
 
-export function cancelStagedAppUpdate(): void {
-  if (state.stage === 'applying') state.stage = 'ready'
-}
-
-export function finishStagedAppUpdate(error?: unknown): void {
-  if (state.stage !== 'applying') return
-  const reason = error instanceof Error ? error.message : error
-  if (reason === 'update.stagedUnavailable' || reason === 'update.installFailedManual'
-    || (typeof reason === 'string' && manualAppUpdateErrors.has(reason))) {
-    state.error = reason
-    state.notesPending = false
-    state.stage = 'stageFailed'
+export function finishAppUpdateExit(previousStage: UpdateStage, error?: string, tag = error): void {
+  if (!pendingExitStages.includes(state.stage)) return
+  if (error === undefined) {
+    state.stage = 'handoff'
     return
   }
-  if (reason === 'update.rebootRequired' || reason === 'update.restartFailed') {
-    state.notesPending = false
-    state.stage = reason === 'update.rebootRequired' ? 'systemReboot' : 'restartFailed'
+  if (tag === 'assetBundle.recoveryPending' || tag === 'modChanges.recoveryRequired' || tag === 'levelSet.recoveryRequired') {
+    state.stage = previousStage
+    state.error = error
+    state.notesRequested = false
+    state.resolvingExitBlock = true
     return
   }
-  if (reason === 'update.restartAsUserFailed') {
-    state.error = reason
-    state.notesPending = true
+  const whileApplying = state.stage === 'applying'
+  if (whileApplying || tag === 'update.rebootRequired' || tag === 'update.inProgress') {
+    finishPreparationWithError(error, tag)
+  } else {
+    state.stage = previousStage
+    state.error = error
   }
-  state.stage = error === undefined ? 'handoff' : 'ready'
-}
-
-export function requireAppUpdateRecoveryCheck(): void {
-  state.checkingRecovery = true
-  state.error = 'update.installFailedManual'
-  state.notesPending = false
-  state.stage = 'stageFailed'
-}
-
-export function beginAppUpdateRecovery(): boolean {
-  if (state.stage !== 'recovery') return false
-  state.stage = 'openingRecovery'
-  return true
-}
-
-export function failAppUpdateRecovery(error: string): void {
-  if (state.stage !== 'openingRecovery') return
-  state.error = error
-  state.stage = 'recovery'
 }

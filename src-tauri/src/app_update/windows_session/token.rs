@@ -5,17 +5,16 @@ use winapi::{
     um::{
         processthreadsapi::{GetCurrentProcess, OpenProcessToken},
         securitybaseapi::{
-            CreateWellKnownSid, DuplicateTokenEx, EqualSid, GetSidSubAuthority,
-            GetSidSubAuthorityCount, GetTokenInformation, IsValidSid,
+            CreateWellKnownSid, EqualSid, GetSidSubAuthority, GetSidSubAuthorityCount,
+            GetTokenInformation, IsValidSid,
         },
         winbase::LocalFree,
         winnt::{
             HANDLE, PSID, SE_GROUP_ENABLED, SE_GROUP_USE_FOR_DENY_ONLY,
             SECURITY_MANDATORY_HIGH_RID, SECURITY_MANDATORY_MEDIUM_RID,
-            SECURITY_MANDATORY_SYSTEM_RID, SECURITY_MAX_SID_SIZE, SID_AND_ATTRIBUTES,
-            SecurityIdentification, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE, TOKEN_GROUPS,
+            SECURITY_MANDATORY_SYSTEM_RID, SECURITY_MAX_SID_SIZE, SID_AND_ATTRIBUTES, TOKEN_GROUPS,
             TOKEN_INFORMATION_CLASS, TOKEN_QUERY, TokenElevation, TokenGroups, TokenIntegrityLevel,
-            TokenPrimary, TokenSessionId, TokenUIAccess, TokenUser, WinBuiltinAdministratorsSid,
+            TokenSessionId, TokenUIAccess, TokenUser, WinBuiltinAdministratorsSid,
         },
     },
 };
@@ -37,8 +36,7 @@ impl Identity {
 
     pub(super) fn ordinary(&self) -> bool {
         self.session != 0
-            && (SECURITY_MANDATORY_MEDIUM_RID..SECURITY_MANDATORY_HIGH_RID)
-                .contains(&self.integrity)
+            && self.integrity == SECURITY_MANDATORY_MEDIUM_RID
             && !self.elevated
             && !self.administrator_group
             && !self.ui_access
@@ -48,6 +46,7 @@ impl Identity {
         self.session != 0
             && (SECURITY_MANDATORY_HIGH_RID..SECURITY_MANDATORY_SYSTEM_RID)
                 .contains(&self.integrity)
+            && self.elevated
             && self.administrator_group
             && !self.ui_access
     }
@@ -57,18 +56,18 @@ pub(super) struct Token(OwnedHandle);
 
 impl Token {
     pub(super) fn current() -> io::Result<Self> {
-        Self::of(unsafe { GetCurrentProcess() }, TOKEN_QUERY)
+        Self::of(unsafe { GetCurrentProcess() })
     }
 
-    pub(super) fn of(process: HANDLE, access: u32) -> io::Result<Self> {
+    pub(super) fn of(process: HANDLE) -> io::Result<Self> {
         let mut token = null_mut();
-        if unsafe { OpenProcessToken(process, access, &mut token) } == 0 {
+        if unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) } == 0 {
             return Err(io::Error::last_os_error());
         }
         Ok(Self(owned_handle(token)?))
     }
 
-    pub(super) fn handle(&self) -> HANDLE {
+    fn handle(&self) -> HANDLE {
         raw(&self.0)
     }
 
@@ -93,31 +92,6 @@ impl Token {
             return Err(io::Error::last_os_error());
         }
         Ok(())
-    }
-
-    fn duplicate(&self, access: u32, kind: u32) -> io::Result<Self> {
-        let mut duplicate = null_mut();
-        if unsafe {
-            DuplicateTokenEx(
-                self.handle(),
-                access,
-                null_mut(),
-                SecurityIdentification,
-                kind,
-                &mut duplicate,
-            )
-        } == 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(Self(owned_handle(duplicate)?))
-    }
-
-    pub(super) fn duplicate_primary(&self) -> io::Result<Self> {
-        self.duplicate(
-            TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY,
-            TokenPrimary,
-        )
     }
 
     fn administrator_group(&self) -> io::Result<bool> {

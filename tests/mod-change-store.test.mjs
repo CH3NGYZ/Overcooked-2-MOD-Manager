@@ -6,7 +6,14 @@ registerHooks({resolve(specifier,context,next){if(specifier.startsWith('.')&&!/\
 const {useModChanges,registerEvaluationSubject}=await import('../src/modChanges/store.ts')
 const {changeStatusKey}=await import('../src/modChanges/presentation.ts')
 const {downloadTaskState,updateDownloadProgress}=await import('../src/downloadTask.ts')
-const {setCheckingUpdateRecovery}=await import('../src/appUpdateState.ts')
+const {appUpdateState,beginAppUpdateCheck,finishAppUpdateCheck}=await import('../src/appUpdateState.ts')
+const {toRaw}=await import('vue')
+function blockWithConfirmedUpdate(){
+ const state=toRaw(appUpdateState),previous={...state}
+ assert.equal(beginAppUpdateCheck(),true)
+ finishAppUpdateCheck({update:{install_mode:'manual'},all_failed:false})
+ return ()=>Object.assign(state,previous)
+}
 const {backendMessageOf}=await import('../src/locale/backend.ts')
 const {i18n}=await import('../src/locale/index.ts')
 const tick=()=>new Promise(resolve=>setImmediate(resolve)),deferred=()=>{let resolve;const promise=new Promise(yes=>resolve=yes);return{promise,resolve}}
@@ -84,7 +91,6 @@ test('recovery approval cannot bypass installation notes, the update gate, or in
    if(name==='executeModChanges')return {ok:true,message:''}
  }
  const pending=store.run({roots:[]});await tick()
- t.after(()=>setCheckingUpdateRecovery(false))
  assert.equal(store.state.value.phase,'reconfirming')
  assert.equal(store.installNotes.value.length,1)
  await store.confirmRecovery(ready.plan_id,ready.recovery_approval)
@@ -92,10 +98,10 @@ test('recovery approval cannot bypass installation notes, the update gate, or in
  await readCurrentNotes(store)
  assert.deepEqual(store.installNotes.value,[])
  await store.confirm()
- setCheckingUpdateRecovery(true)
+ const restoreUpdate=blockWithConfirmedUpdate();t.after(restoreUpdate)
  await store.confirmRecovery(ready.plan_id,ready.recovery_approval)
  assert.equal(calls.length,1)
- setCheckingUpdateRecovery(false)
+ restoreUpdate()
  await store.confirmRecovery(ready.plan_id,ready.recovery_approval)
  assert.equal((await pending).ok,true)
  assert.deepEqual(calls.at(-1),['executeModChanges','verified-conflict','verified-proof'])
@@ -143,12 +149,11 @@ test('exact note-only acknowledgment applies once and stale consent never applie
  await store.acceptInstallNotes(stale,'old-plan',true)
  await store.acceptInstallNotes(stale,'first',false)
  assert.equal(executions,0)
- t.after(()=>setCheckingUpdateRecovery(false))
- setCheckingUpdateRecovery(true)
+ const restoreUpdate=blockWithConfirmedUpdate();t.after(restoreUpdate)
  await readCurrentNotes(store)
  assert.equal(executions,0)
  assert.equal(store.installNotes.value.length,1)
- setCheckingUpdateRecovery(false)
+ restoreUpdate()
  await readCurrentNotes(store)
  assert.equal(executions,1)
  assert.deepEqual(calls,['planModChanges','prepareModChanges','executeModChanges','cancelModChanges','planModChanges','prepareModChanges'])

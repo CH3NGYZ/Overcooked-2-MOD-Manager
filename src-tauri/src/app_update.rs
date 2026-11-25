@@ -1,5 +1,3 @@
-#[cfg(windows)]
-pub(crate) mod admin_consent;
 pub(crate) mod cache;
 pub(crate) mod channels;
 pub(crate) mod distribution;
@@ -71,22 +69,25 @@ impl UpdateTarget {
         }
         match (self.os, self.kind, bundle_type()) {
             #[cfg(windows)]
-            ("windows", "exe", Some(BundleType::Nsis))
-            | ("windows", "msi", Some(BundleType::Msi)) => {
+            ("windows", _, bundle) => {
                 use windows_session::PermissionRoute;
 
                 match windows_session::permission_route() {
-                    Ok(PermissionRoute::User) => Deferred,
+                    Ok(PermissionRoute::User) => match (self.kind, bundle) {
+                        ("exe", Some(BundleType::Nsis)) | ("msi", Some(BundleType::Msi)) => {
+                            Deferred
+                        }
+                        _ => Manual,
+                    },
                     Ok(PermissionRoute::RestartAsUser) => AppUpdateInstallMode::RestartAsUser,
-                    Ok(PermissionRoute::Administrator)
-                        if self.kind == "exe" && staged::windows::can_install_as_admin() =>
-                    {
-                        AppUpdateInstallMode::InstallAsAdministrator
-                    }
-                    Ok(PermissionRoute::Administrator) => Manual,
+                    Ok(PermissionRoute::ManualDownload) => AppUpdateInstallMode::DownloadAndExit,
                     Err(error) => {
                         log::warn!("[update] 无法确认 Windows 更新权限：{error}");
-                        Manual
+                        if crate::is_elevated() {
+                            AppUpdateInstallMode::DownloadAndExit
+                        } else {
+                            Manual
+                        }
                     }
                 }
             }

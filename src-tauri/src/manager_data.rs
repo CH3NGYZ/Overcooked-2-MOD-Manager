@@ -18,6 +18,8 @@ mod tests;
 mod webview_reset;
 
 pub(crate) use notice::install_language;
+#[cfg(any(windows, target_os = "macos"))]
+pub(crate) use notice::language as native_notice_language;
 pub(crate) use webview_reset::webview_reset_script;
 
 const HELPER_FLAG: &str = "--oc2-clear-manager-data";

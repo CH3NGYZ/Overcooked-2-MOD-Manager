@@ -43,6 +43,21 @@ impl Installation {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct InstallationState {
+    pub(crate) status: Installation,
+    pub(crate) version: Option<Version>,
+}
+
+impl InstallationState {
+    fn unbound(status: Installation) -> Self {
+        Self {
+            status,
+            version: None,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Attempt {
@@ -93,29 +108,6 @@ impl Attempt {
         installer_type: &str,
         restart: bool,
     ) -> Result<Self, String> {
-        Self::create_with(
-            root,
-            source,
-            destination,
-            version,
-            installer_type,
-            restart,
-            |path| {
-                fs::create_dir_all(root)?;
-                fs::create_dir(path)
-            },
-        )
-    }
-
-    pub(in crate::app_update) fn create_with(
-        root: &Path,
-        source: &Path,
-        destination: &Path,
-        version: &str,
-        installer_type: &str,
-        restart: bool,
-        create_work: impl FnOnce(&Path) -> io::Result<()>,
-    ) -> Result<Self, String> {
         let id = Uuid::new_v4();
         let attempt = Self {
             schema: SCHEMA,
@@ -132,7 +124,8 @@ impl Attempt {
         };
         attempt.validate(id)?;
         validate_dir(root)?;
-        create_work(&attempt.work).map_err(receipt_error)?;
+        fs::create_dir_all(root).map_err(receipt_error)?;
+        fs::create_dir(&attempt.work).map_err(receipt_error)?;
         validate_dir(root)?;
         write_json(&attempt.work.join(ATTEMPT), &attempt, false)?;
         Ok(attempt)
@@ -143,7 +136,7 @@ impl Attempt {
         Self::read_at(&attempts_dir()?, id)
     }
 
-    pub(in crate::app_update) fn read_at(root: &Path, id: Uuid) -> Result<Self, String> {
+    fn read_at(root: &Path, id: Uuid) -> Result<Self, String> {
         let work = root.join(id.to_string());
         let attempt = Self {
             work: work.clone(),
@@ -231,35 +224,43 @@ impl Attempt {
     }
 }
 
-pub(crate) fn status(target: UpdateTarget) -> Result<Option<Installation>, String> {
+pub(crate) fn status(target: UpdateTarget) -> Option<InstallationState> {
+    read_status(target).unwrap_or_else(|error| {
+        log::warn!("[update] 无法核验安装回执，改用手动更新：{error}");
+        Some(InstallationState::unbound(Installation::Failed))
+    })
+}
+
+fn read_status(target: UpdateTarget) -> Result<Option<InstallationState>, String> {
     if tauri::is_dev() {
         return Ok(None);
     }
     #[cfg(windows)]
-    if super::staged::windows::installation_in_progress() {
-        return Ok(Some(Installation::Applying));
-    }
-    let executable = std::env::current_exe().map_err(receipt_error)?;
-    let current = version(env!("CARGO_PKG_VERSION"))?;
-    let boot_time = sysinfo::System::boot_time();
+    let applying = super::staged::windows::installation_in_progress();
     #[cfg(windows)]
     if crate::is_elevated() {
-        return match super::staged::windows::protected_attempts_dir(false) {
-            Ok(Some(root)) => inspect(root.path(), &executable, target.kind, &current, boot_time),
-            Ok(None) => Ok(None),
-            Err(error) => {
-                log::warn!("[update] 无法核验管理员更新目录：{error}");
-                Ok(None)
-            }
-        };
+        return Ok(applying.then(|| InstallationState::unbound(Installation::Applying)));
     }
-    inspect(
-        &attempts_dir()?,
-        &executable,
-        target.kind,
-        &current,
-        boot_time,
-    )
+    let recorded = (|| {
+        inspect(
+            &attempts_dir()?,
+            &std::env::current_exe().map_err(receipt_error)?,
+            target.kind,
+            &version(env!("CARGO_PKG_VERSION"))?,
+            sysinfo::System::boot_time(),
+        )
+    })();
+    #[cfg(windows)]
+    if applying {
+        return Ok(Some(
+            recorded
+                .ok()
+                .flatten()
+                .filter(|record| record.status == Installation::Applying)
+                .unwrap_or_else(|| InstallationState::unbound(Installation::Applying)),
+        ));
+    }
+    recorded
 }
 
 fn inspect(
@@ -268,7 +269,7 @@ fn inspect(
     kind: &str,
     current: &Version,
     boot_time: u64,
-) -> Result<Option<Installation>, String> {
+) -> Result<Option<InstallationState>, String> {
     validate_dir(root)?;
     let entries = match fs::read_dir(root) {
         Ok(entries) => entries,
@@ -286,7 +287,7 @@ fn inspect(
         else {
             continue;
         };
-        let check = || -> Result<Option<Installation>, String> {
+        let check = || -> Result<Option<InstallationState>, String> {
             let attempt = Attempt::read_at(root, id)?;
             if !same_installation(executable, &attempt.source, kind)
                 && !same_installation(executable, &attempt.destination, kind)
@@ -294,7 +295,8 @@ fn inspect(
                 return Ok(None);
             }
             let outcome = attempt.outcome()?;
-            let meets_target = current.cmp_precedence(&version(&attempt.version)?).is_ge();
+            let target_version = version(&attempt.version)?;
+            let meets_target = current.cmp_precedence(&target_version).is_ge();
             let lock = attempt.try_lock_work()?;
             if meets_target || outcome == Outcome::Abandoned {
                 if let Some(lock) = lock {
@@ -306,15 +308,26 @@ fn inspect(
                 return Ok(None);
             }
             let same_boot = boot_time.abs_diff(attempt.boot_time) < 10;
-            Ok(Some(match outcome {
+            let status = match outcome {
                 Outcome::Pending if lock.is_none() => Installation::Applying,
                 Outcome::RebootRequired if same_boot => Installation::RebootRequired,
                 Outcome::Installed | Outcome::RestartFailed => Installation::RestartFailed,
                 _ => Installation::Failed,
+            };
+            Ok(Some(InstallationState {
+                status,
+                version: Some(target_version),
             }))
         };
         match check() {
-            Ok(Some(next)) if priority(next) > found.map_or(0, priority) => found = Some(next),
+            Ok(Some(next))
+                if found.as_ref().is_none_or(|current: &InstallationState| {
+                    (priority(next.status), &next.version)
+                        > (priority(current.status), &current.version)
+                }) =>
+            {
+                found = Some(next);
+            }
             Ok(_) => {}
             Err(error) => log::warn!("[update] 跳过无法核验的安装记录：尝试={id}，原因={error}"),
         }

@@ -16,7 +16,6 @@ use winapi::{
     },
     um::{
         errhandlingapi::SetLastError,
-        minwinbase::SECURITY_ATTRIBUTES,
         processthreadsapi::{GetCurrentProcess, GetProcessTimes, OpenProcess},
         synchapi::{
             CreateEventW, OpenEventW, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
@@ -88,40 +87,14 @@ pub(crate) struct HandoffEvents {
 
 impl HandoffEvents {
     pub(crate) fn named(token: uuid::Uuid, create: bool) -> io::Result<Self> {
-        Self::with_access(token, create, "Restart", null_mut())
-    }
-
-    pub(crate) fn protected_update(
-        token: uuid::Uuid,
-        attributes: Option<&mut SECURITY_ATTRIBUTES>,
-    ) -> io::Result<Self> {
-        Self::with_access(
-            token,
-            attributes.is_some(),
-            "AdminUpdate",
-            attributes.map_or(null_mut(), |value| value),
-        )
-    }
-
-    fn with_access(
-        token: uuid::Uuid,
-        create: bool,
-        purpose: &str,
-        attributes: *mut SECURITY_ATTRIBUTES,
-    ) -> io::Result<Self> {
-        fn event(
-            name: String,
-            create: bool,
-            access: u32,
-            attributes: *mut SECURITY_ATTRIBUTES,
-        ) -> io::Result<OwnedHandle> {
+        fn event(name: String, create: bool, access: u32) -> io::Result<OwnedHandle> {
             let name = wide(OsStr::new(&name));
             if !create {
                 return owned_handle(unsafe { OpenEventW(access, 0, name.as_ptr()) });
             }
             let (handle, already_exists) = unsafe {
                 SetLastError(0);
-                let handle = CreateEventW(attributes, 1, 0, name.as_ptr());
+                let handle = CreateEventW(null_mut(), 1, 0, name.as_ptr());
                 let already_exists = !handle.is_null()
                     && io::Error::last_os_error().raw_os_error()
                         == Some(ERROR_ALREADY_EXISTS as i32);
@@ -137,15 +110,10 @@ impl HandoffEvents {
             Ok(handle)
         }
 
-        let prefix = format!(r"Local\OC2ModManager-{purpose}-{token}");
+        let prefix = format!(r"Local\OC2ModManager-Restart-{token}");
         Ok(Self {
-            ready: event(
-                format!("{prefix}-Ready"),
-                create,
-                EVENT_MODIFY_STATE,
-                attributes,
-            )?,
-            proceed: event(format!("{prefix}-Proceed"), create, SYNCHRONIZE, attributes)?,
+            ready: event(format!("{prefix}-Ready"), create, EVENT_MODIFY_STATE)?,
+            proceed: event(format!("{prefix}-Proceed"), create, SYNCHRONIZE)?,
         })
     }
 
@@ -170,6 +138,11 @@ impl HandoffEvents {
         owner: &OwnedHandle,
         timeout_ms: u32,
     ) -> io::Result<()> {
+        self.wait_for_commit(timeout_ms)?;
+        wait_for(owner, timeout_ms, "The previous manager did not exit")
+    }
+
+    pub(crate) fn wait_for_commit(&self, timeout_ms: u32) -> io::Result<()> {
         signal(&self.ready)?;
         // Never continue after an abandoned/expired attempt, even if the old
         // instance is later closed by the user for an unrelated reason.
@@ -177,8 +150,7 @@ impl HandoffEvents {
             &self.proceed,
             timeout_ms,
             "The previous manager did not commit the restart",
-        )?;
-        wait_for(owner, timeout_ms, "The previous manager did not exit")
+        )
     }
 }
 
@@ -208,7 +180,7 @@ pub(crate) fn wait_for(handle: &OwnedHandle, timeout_ms: u32, message: &str) -> 
     }
 }
 
-fn creation_time(process: HANDLE) -> io::Result<u64> {
+pub(crate) fn creation_time(process: HANDLE) -> io::Result<u64> {
     let zero = FILETIME {
         dwLowDateTime: 0,
         dwHighDateTime: 0,

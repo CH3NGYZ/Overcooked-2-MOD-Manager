@@ -18,7 +18,8 @@ test('About reads the native version at startup while update initialization wait
   assert.match(app, /<StartupLanguageDialog v-if="choosingLanguage" @confirmed="finishLanguageSelection" \/>/)
   const service = readFileSync(new URL('../src/composables/useAppUpdates.ts', import.meta.url), 'utf8')
   const startup = service.slice(service.indexOf('export function initializeAppUpdates()'))
-  assert.match(startup, /void api\.getAppDistribution\(\)\.then\(setAppDistribution\)[^]*?void checkForAppUpdate\(false\)/)
+  assert.match(startup, /distribution \?\?= api\.getAppDistribution\(\)\.then\(setAppDistribution\)[^]*?void checkForAppUpdate\(false\)/)
+  assert.match(service, /await distribution\s*if \(appUpdateState\.distribution === 'microsoft_store'\)/)
 })
 
 test('Store checks and installs stop before standalone cache, network or update locks', () => {
@@ -31,9 +32,7 @@ test('Store checks and installs stop before standalone cache, network or update 
   const install = commands.slice(commands.indexOf('pub async fn stage_app_update('))
   const gate = install.indexOf('UpdateTarget::current()?')
   assert.ok(gate >= 0)
-  for (const action of ['discover_and_download_installer_update(']) {
-    assert.ok(install.indexOf(action) > gate, `${action} must follow the distribution gate`)
-  }
+  assert.ok(install.indexOf('download_confirmed_update(') > gate, 'download must follow the distribution gate')
 })
 
 test('packaged or unknown runtime cannot expose updater plugin IPC or create installer targets', () => {

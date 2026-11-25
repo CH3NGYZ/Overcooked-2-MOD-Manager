@@ -385,7 +385,7 @@ export const api = {
   openModLogsDirectory: (dllFile: string) => invoke<OperationResult>('open_mod_logs_directory', { dllFile }),
   openBackupDirectory: (backupPath?: string) => invoke<OperationResult>('open_backup_directory', { backupPath: backupPath ?? null }),
   openUpdateRepository: (version?: string) => invoke<OperationResult>('open_update_repository', version ? { version } : {}),
-  exitApp: (installUpdate: boolean) => invoke<void>('exit_app', { installUpdate }),
+  exitApp: () => invoke<void>('exit_app'),
   /** 实际管理器数据根，只读展示；清理命令不接受前端路径。 */
   getManagerDataDirectory: () => invoke<string>('get_manager_data_directory'),
   /** 确认后安排清除所有管理器数据并退出；成功不继续使用本次会话。 */
@@ -425,14 +425,13 @@ export const api = {
    * 否则他会看到一次「已是最新」的旧结论。
    */
   checkAppUpdate: (force = false) => invoke<AppUpdateCheckResult>('check_app_update', { force }),
-  getPendingAppUpdateRecovery: () => invoke<boolean>('get_pending_app_update_recovery'),
-  finishAppUpdateRecovery: (destination: 'website' | 'alternate') =>
-    invoke<void>('finish_app_update_recovery', { destination, locale: locale.value }),
   stageAppUpdate: (channel: string, onProgress: DownloadProgressHandler) =>
     invokeDownload<AppUpdateInfo | null>('stage_app_update', { channel }, onProgress),
   applyStagedAppUpdate: () => invoke<void>('apply_staged_app_update'),
+  deferStagedAppUpdate: (version: string) => invoke<void>('defer_staged_app_update', { version }),
   restartUpdateAsUser: () => invoke<void>('restart_update_as_user'),
-  installUpdateAsAdministrator: (version: string) => invoke<boolean>('install_update_as_administrator', { version, locale: locale.value }),
+  openAppUpdateReleaseAndExit: (version: string, destination?: 'website') =>
+    invoke<void>('open_app_update_release_and_exit', { version, destination }),
   chooseGameDirectory: () => open({ multiple: false, directory: true }),
   /** 选择要导入的地图 ZIP。 */
   chooseLevelSetZip: () => open({

@@ -14,6 +14,7 @@ use crate::models::{
 };
 use crate::releases;
 use futures_util::StreamExt;
+use serde::Deserialize;
 use std::collections::HashSet;
 use std::sync::Mutex;
 use tauri::AppHandle;
@@ -21,22 +22,36 @@ use tauri::AppHandle;
 mod changelog;
 mod package;
 
+#[derive(Deserialize)]
+struct ReleaseMetadata {
+    version: semver::Version,
+    notes: Option<String>,
+    pub_date: Option<String>,
+}
+
 pub(crate) fn inspect_installer_manifest(
     channel: &InstallerChannel,
     document: &serde_json::Value,
     target: crate::app_update::UpdateTarget,
     current_version: &semver::Version,
 ) -> Result<Option<AppUpdateInfo>, String> {
-    let manifest: tauri_plugin_updater::RemoteRelease = serde_json::from_value(document.clone())
-        .map_err(|_| "update.manifestInvalid".to_string())?;
-    if !manifest.version.pre.is_empty() {
+    let manifest =
+        ReleaseMetadata::deserialize(document).map_err(|_| "update.manifestInvalid".to_string())?;
+    if !manifest.version.pre.is_empty() || !manifest.version.build.is_empty() {
         return Err("update.manifestNotStable".into());
     }
-    let package = package::select(&manifest, target)?;
-    if manifest.version <= *current_version {
+    if manifest
+        .pub_date
+        .as_deref()
+        .is_some_and(|date| chrono::DateTime::parse_from_rfc3339(date).is_err())
+    {
+        return Err("update.manifestInvalid".into());
+    }
+    let package = package::select(document, target, &manifest.version)?;
+    if manifest.version.cmp_precedence(current_version) != std::cmp::Ordering::Greater {
         return Ok(None);
     }
-    Ok(Some(AppUpdateInfo {
+    let mut info = AppUpdateInfo {
         version: manifest.version.to_string(),
         current_version: current_version.to_string(),
         changelog: changelog::versioned_notes(
@@ -46,17 +61,24 @@ pub(crate) fn inspect_installer_manifest(
             manifest.notes.as_deref(),
         ),
         body: manifest.notes,
-        date: document["pub_date"].as_str().map(str::to_string),
+        date: manifest.pub_date,
         download_size: None,
         manifest_url: channel.endpoint.clone(),
-        installer_url: Some(package.url),
-        installer_signature: package.signature,
-        installer_name: package.name,
+        installer_url: None,
+        installer_signature: String::new(),
+        installer_name: String::new(),
         installer_type: target.kind.into(),
-        provider: Some(package.provider),
+        provider: None,
         source_channel: Some(channel.id.clone()),
         install_mode: AppUpdateInstallMode::Manual,
-    }))
+    };
+    if let Some(package) = package {
+        info.installer_url = package.url;
+        info.installer_signature = package.signature;
+        info.installer_name = package.name;
+        info.provider = Some(package.provider);
+    }
+    Ok(Some(info))
 }
 
 pub(super) async fn fetch_installer_manifest(
@@ -330,38 +352,43 @@ pub(crate) async fn discover_installer_update(
     emit_installer_phase(app, region, "manifest", None, None);
     let client = releases::build_client(config.network.api_timeout()).map_err(|e| e.to_string())?;
     let target = crate::app_update::UpdateTarget::current()?;
-    let current_version = semver::Version::parse(env!("CARGO_PKG_VERSION")).map_err(|e| {
-        crate::locale_tag::with_params(
-            "update.currentVersionInvalid",
-            &[("reason", &e.to_string())],
-        )
-    })?;
-    let mut statuses: Vec<AppUpdateChannelStatus> = Vec::new();
-    let result = run_installer_manifest_routes(
+    let current_version = app.package_info().version.clone();
+    log::info!(
+        "安装器更新发现开始：当前版本={current_version}，目标平台={}，渠道={}",
+        target.manifest_key(),
+        channels
+            .iter()
+            .map(|channel| channel.id.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let mut statuses = Vec::<AppUpdateChannelStatus>::new();
+    let result = compare_all_installer_manifest_routes(
         &client,
         channels,
         target,
         &current_version,
-        || false,
-        |status| {
-            emit_installer_channel_status(app, region, status.clone());
-            if let Some(previous) = statuses
-                .iter_mut()
-                .find(|previous| previous.id == status.id)
-            {
-                *previous = status;
-            } else {
-                statuses.push(status);
+        {
+            let statuses = &mut statuses;
+            move |status| {
+                emit_installer_channel_status(app, region, status.clone());
+                if let Some(previous) = statuses
+                    .iter_mut()
+                    .find(|previous| previous.id == status.id)
+                {
+                    *previous = status;
+                } else {
+                    statuses.push(status);
+                }
             }
         },
-        |info| std::future::ready(Ok(info)),
         &config.network,
     )
     .await?;
-    let all_failed = matches!(result, InstallerRouteResult::Failed);
-    let update = match result {
-        InstallerRouteResult::Updated(info) => Some(info),
-        _ => None,
+    let (update, all_failed) = match result {
+        InstallerRouteResult::Updated(info) => (Some(info), false),
+        InstallerRouteResult::Latest => (None, false),
+        InstallerRouteResult::Failed => (None, true),
     };
     Ok(AppUpdateCheckResult {
         distribution: crate::models::AppDistribution::Standalone,
@@ -372,4 +399,66 @@ pub(crate) async fn discover_installer_update(
         recovery_required: false,
         installation_status: None,
     })
+}
+
+pub(super) async fn compare_all_installer_manifest_routes(
+    client: &reqwest::Client,
+    channels: &[InstallerChannel],
+    target: crate::app_update::UpdateTarget,
+    current_version: &semver::Version,
+    mut on_status: impl FnMut(AppUpdateChannelStatus),
+    network: &crate::models::NetworkConfig,
+) -> Result<InstallerRouteResult<AppUpdateInfo>, String> {
+    let mut best = Option::<AppUpdateInfo>::None;
+    let mut any_success = false;
+    for provider in INSTALLER_PROVIDERS {
+        let group = channels
+            .iter()
+            .filter(|channel| channel.provider == provider)
+            .cloned()
+            .collect::<Vec<_>>();
+        if group.is_empty() {
+            continue;
+        }
+        let result = run_installer_manifest_routes(
+            client,
+            &group,
+            target,
+            current_version,
+            || false,
+            |status| on_status(status),
+            |info| std::future::ready(Ok(info)),
+            network,
+        )
+        .await?;
+        match result {
+            InstallerRouteResult::Updated(info) => {
+                let version = semver::Version::parse(&info.version)
+                    .map_err(|_| "update.manifestInvalid".to_string())?;
+                let prefer = if let Some(best) = best.as_ref() {
+                    let previous = semver::Version::parse(&best.version)
+                        .map_err(|_| "update.manifestInvalid".to_string())?;
+                    previous.cmp_precedence(&version) == std::cmp::Ordering::Less
+                        || (previous.cmp_precedence(&version) == std::cmp::Ordering::Equal
+                            && !best.has_signed_package()
+                            && info.has_signed_package())
+                } else {
+                    true
+                };
+                if prefer {
+                    best = Some(info);
+                }
+                any_success = true;
+            }
+            InstallerRouteResult::Latest => any_success = true,
+            InstallerRouteResult::Failed => {}
+        }
+    }
+    if let Some(info) = best {
+        Ok(InstallerRouteResult::Updated(info))
+    } else if any_success {
+        Ok(InstallerRouteResult::Latest)
+    } else {
+        Ok(InstallerRouteResult::Failed)
+    }
 }

@@ -40,7 +40,7 @@ impl Fixture {
         kind: &str,
         current: &str,
         boot_time: u64,
-    ) -> Option<Installation> {
+    ) -> Option<InstallationState> {
         assert!(self.root.path().exists());
         inspect(
             self.attempt.work.parent().unwrap(),
@@ -51,6 +51,13 @@ impl Fixture {
         )
         .unwrap()
     }
+}
+
+fn bound(status: Installation) -> Option<InstallationState> {
+    Some(InstallationState {
+        status,
+        version: Some(Version::new(99, 1, 0)),
+    })
 }
 
 #[test]
@@ -70,11 +77,11 @@ fn failed_attempt_is_bound_to_installation_and_format_and_clears_after_manual_up
     );
     assert_eq!(
         fixture.inspect(&fixture.source, "exe", "99.0.9", boot),
-        Some(Installation::Failed)
+        bound(Installation::Failed)
     );
     assert_eq!(
         fixture.inspect(&fixture.destination, "exe", "99.1.0-rc.1", boot),
-        Some(Installation::Failed)
+        bound(Installation::Failed)
     );
     assert_eq!(
         fixture.inspect(&fixture.destination, "exe", "99.1.0+manual", boot),
@@ -90,12 +97,12 @@ fn pending_is_in_progress_only_while_locked_and_committed_failure_survives_the_l
     let lock = fixture.attempt.lock_work().unwrap();
     assert_eq!(
         fixture.inspect(&fixture.source, "exe", "99.0.0", boot),
-        Some(Installation::Applying)
+        bound(Installation::Applying)
     );
     fixture.attempt.record_outcome(Outcome::Failed).unwrap();
     assert_eq!(
         fixture.inspect(&fixture.source, "exe", "99.0.0", boot),
-        Some(Installation::Failed)
+        bound(Installation::Failed)
     );
     assert_eq!(
         fixture.inspect(&fixture.source, "exe", "99.2.0", boot),
@@ -116,7 +123,7 @@ fn unlocked_pending_detects_interrupted_apply_and_abandoned_stage_is_removed() {
     let boot = fixture.attempt.boot_time;
     assert_eq!(
         fixture.inspect(&fixture.source, "exe", "99.0.0", boot),
-        Some(Installation::Failed)
+        bound(Installation::Failed)
     );
     fixture.attempt.record_outcome(Outcome::Abandoned).unwrap();
     assert_eq!(
@@ -136,11 +143,11 @@ fn msi_reboot_required_is_not_marked_as_a_failed_apply_before_reboot() {
     let boot = fixture.attempt.boot_time;
     assert_eq!(
         fixture.inspect(&fixture.source, "msi", "99.0.0", boot),
-        Some(Installation::RebootRequired)
+        bound(Installation::RebootRequired)
     );
     assert_eq!(
         fixture.inspect(&fixture.source, "msi", "99.0.0", boot + 30),
-        Some(Installation::Failed)
+        bound(Installation::Failed)
     );
     assert_eq!(
         fixture.inspect(&fixture.source, "msi", "99.1.0", boot),
@@ -160,7 +167,7 @@ fn mac_bundle_identity_applies_even_if_the_executable_name_changes() {
     let renamed = fixture.destination.with_file_name("NewManager");
     assert_eq!(
         fixture.inspect(&renamed, "app", "99.0.0", boot),
-        Some(Installation::RestartFailed)
+        bound(Installation::RestartFailed)
     );
     assert_eq!(fixture.inspect(&renamed, "app", "99.2.0", boot), None);
     assert!(!fixture.attempt.work.exists());

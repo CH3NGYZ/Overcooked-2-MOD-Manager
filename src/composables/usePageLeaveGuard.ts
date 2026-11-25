@@ -20,12 +20,11 @@ export function usePageLeaveGuard(options: PageLeaveOptions) {
   let cancelRequest: (() => void) | null = null
   let disposed = false
   let unregister: (() => void) | null = null
-  const blocked = () => disposed || appCloseBlocked() || options.busy.value
+  const blocked = (allowRequiredUpdate = false) => disposed || appCloseBlocked(allowRequiredUpdate) || options.busy.value
 
-  function requestLeave(): Promise<boolean> {
-    if (disposed || appCloseBlocked()) return Promise.resolve(false)
+  function requestLeave(allowRequiredUpdate = false): Promise<boolean> {
+    if (blocked(allowRequiredUpdate)) return Promise.resolve(false)
     if (request) return request
-    if (options.busy.value) return Promise.resolve(false)
     if (!options.dirty.value) return Promise.resolve(true)
     confirming.value = true
     request = new Promise<boolean>(resolve => {
@@ -36,12 +35,12 @@ export function usePageLeaveGuard(options: PageLeaveOptions) {
         confirming.value = false
         request = null
         cancelRequest = null
-        resolve(ok && !blocked())
+        resolve(ok && !blocked(allowRequiredUpdate))
       }
       cancelRequest = () => finish(false)
       // Start after request is assigned, so an immediate resolution cannot leave
       // a stale in-flight promise behind.
-      void Promise.resolve().then(() => blocked() ? false : options.confirm()).then(finish, reason => {
+      void Promise.resolve().then(() => blocked(allowRequiredUpdate) ? false : options.confirm()).then(finish, reason => {
         if (!disposed) message.error(backendMessageOf(reason))
         finish(false)
       })

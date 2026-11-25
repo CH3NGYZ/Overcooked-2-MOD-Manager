@@ -10,13 +10,7 @@ use semver::Version;
 use std::time::Duration;
 
 const RECOVERY_PROBE_TIMEOUT: Duration = Duration::from_millis(1200);
-
-#[derive(Clone, Copy, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Destination {
-    Website,
-    Alternate,
-}
+pub(crate) const OFFICIAL_WEBSITE: &str = "https://oc2modmanager.ch3ng.top";
 
 pub(crate) fn release_list_url(region: InstallerRegion) -> String {
     match region {
@@ -27,14 +21,6 @@ pub(crate) fn release_list_url(region: InstallerRegion) -> String {
             format!("https://github.com/{INSTALLER_GITHUB_OWNER}/{INSTALLER_GITHUB_REPO}/releases")
         }
     }
-}
-
-pub(crate) fn website_recovery_url(locale: &str) -> String {
-    let locale = match locale {
-        "zh-CN" | "zh-TW" | "en" | "ja" | "ko" => locale,
-        _ => "en",
-    };
-    format!("https://oc2modmanager.ch3ng.top/?lang={locale}#download")
 }
 
 fn stable_version(value: &str) -> Option<Version> {
@@ -52,7 +38,7 @@ pub(crate) fn official_release_url(version: &str) -> String {
     }
 }
 
-pub(crate) async fn alternate_recovery_url(
+pub(crate) async fn installer_release_url(
     region: InstallerRegion,
     target: UpdateTarget,
     update: &AppUpdateInfo,
@@ -163,20 +149,6 @@ mod tests {
         .unwrap()
     }
 
-    #[test]
-    fn website_only_uses_supported_locale_values() {
-        for locale in ["zh-CN", "zh-TW", "en", "ja", "ko"] {
-            assert_eq!(
-                website_recovery_url(locale),
-                format!("https://oc2modmanager.ch3ng.top/?lang={locale}#download")
-            );
-        }
-        assert_eq!(
-            website_recovery_url("ja&extra=bad"),
-            "https://oc2modmanager.ch3ng.top/?lang=en#download"
-        );
-    }
-
     #[tokio::test]
     async fn alternate_opens_github_when_the_candidate_is_not_a_verified_manual_installer() {
         for (region, os, kind, name) in [
@@ -201,7 +173,7 @@ mod tests {
         ] {
             let target = UpdateTarget::from_parts(os, "x86_64", Some(kind)).unwrap();
             assert_eq!(
-                alternate_recovery_url(region, target, &update("9.0.0", kind, name)).await,
+                installer_release_url(region, target, &update("9.0.0", kind, name)).await,
                 format!("{RELEASES}/tag/v9.0.0")
             );
         }
@@ -212,7 +184,7 @@ mod tests {
         let target = UpdateTarget::from_parts("macos", "aarch64", Some("app")).unwrap();
         for version in ["9.0.0/escape", "9.0.0?x=y", "9.0.0-beta.1", "9.0.0+build"] {
             assert_eq!(
-                alternate_recovery_url(
+                installer_release_url(
                     InstallerRegion::MainlandChina,
                     target,
                     &update(version, "app", "OC2ModManager_aarch64.app.tar.gz")

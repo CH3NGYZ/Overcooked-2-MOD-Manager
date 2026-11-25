@@ -14,8 +14,7 @@ import { useUiZoom } from '../composables/useUiZoom'
 import { useDashboard } from '../composables/useDashboardStore'
 import { api } from '../services/tauri'
 import { isTauri, safeTauri, safeTauriSync } from '../runtime'
-import { appUpdateBlocksOperations } from '../appUpdateState'
-import { useAppUpdatePromptMode } from '../composables/useAppUpdates'
+import { appUpdateBlocksOperations, type UpdateExitAction } from '../appUpdateState'
 import { isMacWindow } from '../platform'
 import appIcon from '../assets/app-icon.png'
 import LevelCompressionStatus from './LevelCompressionStatus.vue'
@@ -26,8 +25,7 @@ import { demoActive, withDemoGame } from '../tutorial/demo'
 import { openTransactionRecovery, transactionRecoveries, transactionRecoveryReadError, transactionRecoveryUnavailable } from '../modChanges/transactionRecovery'
 
 const props = defineProps<{ version: string; choosingLanguage: boolean }>()
-const emit = defineEmits<{ 'apply-update': [] }>()
-const appUpdatePromptMode = useAppUpdatePromptMode()
+const emit = defineEmits<{ 'update-exit': [action: UpdateExitAction] }>()
 
 /**
  * 标题栏三个弹层（缩放 / 语言 / 主题色）的层级。
@@ -94,7 +92,7 @@ async function toggleMaximize() {
     maximized.value = await appWindow.isMaximized().catch(() => false)
   })
 }
-const updateBusy = computed(appUpdateBlocksOperations)
+const updateBusy = computed(() => appUpdateBlocksOperations())
 async function close() {
   if (updateBusy.value) return
   await safeTauri(async () => appWindow?.close())
@@ -238,8 +236,8 @@ defineExpose({ onUnmountedCleanup })
       显示与外观：缩放 / 语言 / 明暗 / 主题色。
       整组包一层，macOS 上靠 `order` 提到左侧、跟在窗控后面（右侧留给身份与主操作）。
     -->
-    <div class="toolbar-group" :inert="props.choosingLanguage || appUpdatePromptMode !== null || updateBusy">
-      <AppUpdateStatus :prompt-open="appUpdatePromptMode !== null" @apply-update="emit('apply-update')" />
+    <div class="toolbar-group" :inert="props.choosingLanguage || updateBusy">
+      <AppUpdateStatus @update-exit="emit('update-exit', $event)" />
       <LevelCompressionStatus />
       <RecycleBinStatus />
       <button v-if="transactionRecoveries.length || transactionRecoveryReadError" type="button"

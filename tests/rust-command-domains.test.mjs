@@ -13,14 +13,14 @@ test('commands root only declares domains; registered IPC points at the real imp
   const handler = read('lib.rs').match(/audited_handler!\s*\[([\s\S]*?)\]/)?.[1]
   assert.ok(handler)
   const paths = [...handler.matchAll(/\bcommands::([a-z_]+)::([a-z_]+)\b/g)]
-  assert.equal(paths.length, 150, '包含 Windows 更新权限交接 IPC')
+  assert.equal(paths.length, 149, '包含独立版更新预约、退出与 Windows 普通权限交接 IPC')
   assert.ok(paths.some(([, domain, name]) => domain === 'logs' && name === 'record_ipc_failure'))
   assert.ok(paths.some(([, domain, name]) => domain === 'logs' && name === 'record_file_drop'))
   assert.ok(paths.some(([, domain, name]) => domain === 'system' && name === 'open_external_page'))
   assert.ok(paths.some(([, domain, name]) => domain === 'system' && name === 'apply_staged_app_update'))
   assert.ok(paths.some(([, domain, name]) => domain === 'update' && name === 'get_app_distribution'))
   assert.ok(paths.some(([, domain, name]) => domain === 'download' && name === 'control_download_race'))
-  for (const name of ['get_pending_app_update_recovery', 'stage_app_update', 'finish_app_update_recovery', 'restart_update_as_user', 'install_update_as_administrator']) {
+  for (const name of ['stage_app_update', 'restart_update_as_user', 'open_app_update_release_and_exit']) {
     assert.ok(paths.some(([, domain, actual]) => domain === 'update' && actual === name))
   }
   assert.ok(!paths.some(([, domain, name]) => domain === 'update' && name === 'install_app_update'))
@@ -62,7 +62,7 @@ test('extracted business helpers have one owner outside IPC and do not become an
     ['level_sets/view.rs', ['level_set_to_info', 'bind_map_relation_snapshot']],
     ['map_sources/view.rs', ['map_to_info']],
     ['app_update/manifest.rs', ['inspect_installer_manifest', 'discover_installer_update']],
-    ['app_update/download.rs', ['download_verified_installer', 'discover_and_download_installer_update']],
+    ['app_update/download.rs', ['download_verified_installer', 'download_confirmed_update']],
     ['app_update/cache.rs', ['app_update_cache_get', 'app_update_cache_store']],
     ['release_cache/freshness.rs', ['cache_is_fresh']],
   ]

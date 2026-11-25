@@ -19,10 +19,6 @@ fn official_mirrors_can_share_a_manifest_and_plan_by_package_provider() {
             .unwrap()
             .unwrap();
             assert_eq!(info.provider, Some(package_provider.clone()));
-            assert_eq!(
-                info.manifest_url,
-                installer_manifest_url(&manifest_provider)
-            );
             let candidates = package_channels(&info, InstallerRegion::MainlandChina);
             if package_provider != Provider::Github {
                 assert_eq!(candidates.len(), 1);
@@ -168,4 +164,143 @@ async fn sequential_manifest_fallback_starts_with_a_fresh_timeout() {
     assert_eq!(requests.len(), 2);
     assert!(requests[0].starts_with("GET /slow "));
     assert!(requests[1].starts_with("GET /next "));
+}
+
+#[tokio::test]
+async fn newest_manual_release_wins_over_an_older_signed_package() {
+    let key = target().manifest_key();
+    let mut without_signature = fixture(Provider::Github);
+    without_signature["platforms"][&key]
+        .as_object_mut()
+        .unwrap()
+        .remove("signature");
+    let mut without_package = fixture(Provider::Github);
+    without_package["platforms"]
+        .as_object_mut()
+        .unwrap()
+        .remove(&key);
+    let mut without_url = fixture(Provider::Github);
+    without_url["platforms"][&key]
+        .as_object_mut()
+        .unwrap()
+        .remove("url");
+    compare_newest_release(without_signature, false).await;
+    compare_newest_release(without_package, false).await;
+    compare_newest_release(without_url, false).await;
+}
+
+#[tokio::test]
+async fn discovery_compares_all_providers_and_keeps_the_newest_release() {
+    compare_newest_release(fixture(Provider::Github), true).await;
+}
+
+async fn compare_newest_release(latest: serde_json::Value, signed: bool) {
+    let key = target().manifest_key();
+    let mut outdated = fixture(Provider::Gitee);
+    outdated["version"] = "8.0.0".into();
+    outdated["platforms"][&key]["url"] =
+        "https://gitee.com/ch3ngyz/Overcooked-2-MOD-Manager/releases/download/v8.0.0/OC2ModManager_8.0.0_x64-setup.exe"
+            .into();
+    outdated["platforms"][&key]["signature"] = "outdated signature".into();
+    let server = Server::new(HashMap::from([
+        (
+            "/gitee/latest.json".into(),
+            response(200, serde_json::to_vec(&outdated).unwrap()),
+        ),
+        (
+            "/github/latest.json".into(),
+            response(200, serde_json::to_vec(&latest).unwrap()),
+        ),
+    ]));
+    let mut channels =
+        installer_manifest_sources(&direct_test_policy(), InstallerRegion::MainlandChina)
+            .into_iter()
+            .filter(|channel| channel.provider != Provider::Gitcode)
+            .collect::<Vec<_>>();
+    for channel in &mut channels {
+        channel.endpoint = match channel.provider {
+            Provider::Gitee => format!("{}/gitee/latest.json", server.base),
+            _ => format!("{}/github/latest.json", server.base),
+        };
+        channel.execution = DownloadExecution {
+            max_parallelism: 1,
+            race: false,
+        };
+    }
+    let mut statuses = Vec::new();
+    let result = compare_all_installer_manifest_routes(
+        &reqwest::Client::new(),
+        &channels,
+        target(),
+        &semver::Version::new(1, 0, 0),
+        |status| statuses.push(status),
+        &NetworkConfig::default(),
+    )
+    .await
+    .unwrap();
+    let InstallerRouteResult::Updated(info) = result else {
+        panic!("no update: {statuses:?}")
+    };
+    assert_eq!(info.version, "9.0.0");
+    assert_eq!(info.manifest_url, channels[1].endpoint);
+    assert_eq!(info.has_signed_package(), signed);
+    assert_eq!(
+        statuses
+            .iter()
+            .map(|status| (status.id.as_str(), status.status.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (channels[0].id.as_str(), "checking"),
+            (channels[0].id.as_str(), "update_available"),
+            (channels[1].id.as_str(), "checking"),
+            (channels[1].id.as_str(), "update_available"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn equal_versions_prefer_the_signed_package_across_providers() {
+    let mut manual = fixture(Provider::Gitee);
+    manual["platforms"]["windows-x86_64-nsis"]["signature"] = " ".into();
+    let signed = fixture(Provider::Github);
+    let server = Server::new(HashMap::from([
+        (
+            "/gitee/latest.json".into(),
+            response(200, serde_json::to_vec(&manual).unwrap()),
+        ),
+        (
+            "/github/latest.json".into(),
+            response(200, serde_json::to_vec(&signed).unwrap()),
+        ),
+    ]));
+    let mut channels =
+        installer_manifest_sources(&direct_test_policy(), InstallerRegion::MainlandChina)
+            .into_iter()
+            .filter(|channel| channel.provider != Provider::Gitcode)
+            .collect::<Vec<_>>();
+    for channel in &mut channels {
+        channel.endpoint = match channel.provider {
+            Provider::Gitee => format!("{}/gitee/latest.json", server.base),
+            _ => format!("{}/github/latest.json", server.base),
+        };
+        channel.execution = DownloadExecution {
+            max_parallelism: 1,
+            race: false,
+        };
+    }
+    let result = compare_all_installer_manifest_routes(
+        &reqwest::Client::new(),
+        &channels,
+        target(),
+        &semver::Version::new(1, 0, 0),
+        |_| {},
+        &NetworkConfig::default(),
+    )
+    .await
+    .unwrap();
+    let InstallerRouteResult::Updated(info) = result else {
+        panic!("no update")
+    };
+    assert!(info.has_signed_package());
+    assert_eq!(info.provider, Some(Provider::Github));
 }

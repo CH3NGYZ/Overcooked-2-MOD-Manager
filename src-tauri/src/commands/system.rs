@@ -1,8 +1,11 @@
 use crate::app_state::AppState;
-use crate::app_update::staged::UpdateOnExit;
+use crate::app_update::{
+    UpdateTarget,
+    receipt::{self, Installation},
+};
 use crate::archive;
 use crate::game;
-use crate::models::OperationResult;
+use crate::models::{AppUpdateInfo, AppUpdateInstallMode, OperationResult};
 use std::path::Path;
 use std::time::Duration;
 use tauri::{AppHandle, State};
@@ -25,19 +28,9 @@ pub fn open_devtools(window: tauri::WebviewWindow) -> Result<OperationResult, St
 }
 
 #[tauri::command]
-pub async fn exit_app(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    install_update: bool,
-) -> Result<(), String> {
+pub async fn exit_app(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     log::info!("收到退出应用请求");
-    let update = if install_update {
-        UpdateOnExit::Install
-    } else {
-        UpdateOnExit::Skip
-    };
-    request_user_exit(app, state.inner().clone(), ExitAction::Update(update)).await?;
-    Ok(())
+    request_user_exit(app, state.inner().clone(), ExitAction::Quit).await
 }
 
 #[tauri::command]
@@ -48,40 +41,77 @@ pub async fn apply_staged_app_update(
     request_user_exit(
         app,
         state.inner().clone(),
-        ExitAction::Update(UpdateOnExit::Restart),
+        ExitAction::ApplyUpdate { restart: true },
     )
-    .await?;
-    Ok(())
+    .await
 }
 
 pub(super) enum ExitAction {
-    Update(UpdateOnExit),
-    OpenRecoveryPage(String),
+    Quit,
+    ApplyUpdate {
+        restart: bool,
+    },
+    OpenRecoveryPage {
+        version: String,
+        url: String,
+    },
     #[cfg(windows)]
     RestartAsUser,
-    #[cfg(windows)]
-    InstallAsAdministrator {
-        version: String,
-        locale: String,
-    },
+}
+
+impl ExitAction {
+    fn validate(
+        &self,
+        offer: Option<&AppUpdateInfo>,
+        installation: Option<Installation>,
+    ) -> Result<(), String> {
+        if matches!(self, Self::Quit) {
+            return Ok(());
+        }
+        let offer = offer.ok_or("update.stagedUnavailable")?;
+        if let Some(status @ (Installation::Applying | Installation::RebootRequired)) = installation
+        {
+            return Err(status.update_block_reason().into());
+        }
+        match self {
+            Self::ApplyUpdate { .. } if offer.install_mode != AppUpdateInstallMode::Deferred => {
+                Err("update.stagedUnavailable".into())
+            }
+            Self::ApplyUpdate { .. } => {
+                installation.map_or(Ok(()), |status| Err(status.update_block_reason().into()))
+            }
+            Self::OpenRecoveryPage { version, .. } if version != &offer.version => {
+                Err("update.stagedUnavailable".into())
+            }
+            #[cfg(windows)]
+            Self::RestartAsUser if offer.install_mode != AppUpdateInstallMode::RestartAsUser => {
+                Err("update.restartAsUserUnavailable".into())
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 pub(super) async fn request_user_exit(
     app: AppHandle,
     state: AppState,
     action: ExitAction,
-) -> Result<bool, String> {
+) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let _exit = archive::begin_app_update()?;
         let closing = state.app_updates.closing()?;
-        #[cfg(windows)]
-        if let ExitAction::InstallAsAdministrator { version, locale } = &action {
-            check_administrator_update()?;
-            let destination = closing.administrator_destination(version)?;
-            if !crate::app_update::admin_consent::confirm(&app, locale, version, &destination)? {
-                return Ok(false);
-            }
-        }
+        let action = if matches!(action, ExitAction::Quit) && closing.installs_on_quit()? {
+            ExitAction::ApplyUpdate { restart: false }
+        } else {
+            action
+        };
+        let offer = state.app_updates.offer()?;
+        let installation = if offer.is_some() && !matches!(action, ExitAction::Quit) {
+            receipt::status(UpdateTarget::current()?).map(|installation| installation.status)
+        } else {
+            None
+        };
+        action.validate(offer.as_ref(), installation)?;
         let compression = crate::level_sets::recompress::quiesce_for_exit();
         let _operation = state.operation.lock().map_err(|_| "lock.poisoned")?;
         restore_map_compression_for_exit(&compression, &state)?;
@@ -89,44 +119,23 @@ pub(super) async fn request_user_exit(
             log::warn!("更新暂存取消未在退出期限内完成，继续退出");
         }
         match action {
-            ExitAction::Update(update) => {
-                let update = if update != UpdateOnExit::Skip && closing.has_deferred()? {
-                    update_after_recovery_check(
-                        update,
-                        crate::mod_changes::guard::ensure_recovered(&state),
-                    )?
-                } else {
-                    update
-                };
-                let restart = update == UpdateOnExit::Restart;
-                if let Some(staged) = closing.take_ready(update)?
-                    && let Err(error) = staged.handoff(&app, restart)
-                {
-                    if restart {
-                        return Err(error);
-                    }
-                    log::error!("退出时未能交接或应用更新：{error}");
-                }
-                log::info!("管理器退出条件已满足：应用更新后重启={restart}");
+            ExitAction::Quit => {}
+            ExitAction::ApplyUpdate { restart } => {
+                crate::mod_changes::guard::ensure_recovered(&state)?;
+                let offer = offer.as_ref().ok_or("update.stagedUnavailable")?;
+                closing.take_ready(&offer.version)?.handoff(&app, restart)?;
             }
-            ExitAction::OpenRecoveryPage(url) => {
+            ExitAction::OpenRecoveryPage { url, .. } => {
                 crate::shell_open::open_web_page(&url, crate::shell_open::WebPageKind::Release)?;
-                log::info!("已交接更新恢复网页，关闭当前管理器");
+                log::info!("系统已接受打开更新页面的请求，关闭当前管理器");
             }
             #[cfg(windows)]
             ExitAction::RestartAsUser => {
                 crate::mod_changes::guard::ensure_recovered(&state)?;
                 restart_for_update()?;
             }
-            #[cfg(windows)]
-            ExitAction::InstallAsAdministrator { version, .. } => {
-                crate::mod_changes::guard::ensure_recovered(&state)?;
-                check_administrator_update()?;
-                closing
-                    .take_administrator(&version)?
-                    .start_administrator()?;
-            }
         }
+        closing.discard_ready();
         exit_process(&app)
     })
     .await
@@ -134,60 +143,28 @@ pub(super) async fn request_user_exit(
 }
 
 #[cfg(windows)]
-fn check_administrator_update() -> Result<(), String> {
-    use crate::app_update::{UpdateTarget, receipt};
-    use crate::models::AppUpdateInstallMode;
-
-    let target = UpdateTarget::current()?;
-    if target.install_mode() != AppUpdateInstallMode::InstallAsAdministrator {
-        return Err("update.installAsAdministratorUnavailable".into());
-    }
-    if let Some(status) = receipt::status(target)? {
-        return Err(status.update_block_reason().into());
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
 fn restart_for_update() -> Result<(), String> {
-    use crate::app_update::{UpdateTarget, windows_session};
-    use crate::models::AppUpdateInstallMode::RestartAsUser;
+    use crate::app_update::windows_session::{self, RelaunchError};
 
-    let target = UpdateTarget::current()?;
-    if target.install_mode() != RestartAsUser {
-        return Err("update.restartAsUserUnavailable".into());
-    }
     if let Err(error) = windows_session::launch_unelevated() {
         log::warn!("普通权限更新未能交接，保留当前窗口：{error}");
-        return Err(if target.install_mode() == RestartAsUser {
-            "update.restartAsUserFailed"
-        } else {
-            "update.restartAsUserUnavailable"
-        }
-        .into());
+        let tag = match error {
+            RelaunchError::Unavailable(_) => "update.restartAsUserUnavailable",
+            RelaunchError::Failed(_) => "update.restartAsUserFailed",
+        };
+        return Err(crate::locale_tag::with_params(
+            tag,
+            &[("reason", &error.to_string())],
+        ));
     }
     log::info!("普通权限实例已应答，退出当前管理器以交接启动");
     Ok(())
 }
 
 fn exit_process(app: &AppHandle) -> ! {
-    tauri_plugin_single_instance::destroy(app);
+    crate::app_update::staged::release_single_instance(app);
     log::logger().flush();
     std::process::exit(0)
-}
-
-fn update_after_recovery_check(
-    update: UpdateOnExit,
-    recovery: Result<bool, String>,
-) -> Result<UpdateOnExit, String> {
-    match recovery {
-        Err(error) if update == UpdateOnExit::Install => {
-            log::warn!("退出时未应用暂存更新，保留待恢复的整链事务：{error}");
-            Ok(UpdateOnExit::Skip)
-        }
-        Err(error) => Err(error),
-        Ok(_) => Ok(update),
-    }
 }
 
 fn restore_map_compression_for_exit(
@@ -309,23 +286,83 @@ mod permission_diagnostics_tests {
 mod exit_tests {
     use super::*;
 
+    fn offer(mode: AppUpdateInstallMode) -> AppUpdateInfo {
+        serde_json::from_value(serde_json::json!({
+            "version": "99.1.0", "current_version": "99.0.0", "install_mode": mode,
+        }))
+        .unwrap()
+    }
+
     #[test]
-    fn unresolved_chain_skips_update_on_normal_close_but_rejects_immediate_restart() {
-        let blocked = || Err("modChanges.recoveryRequired".to_string());
-        assert!(matches!(
-            update_after_recovery_check(UpdateOnExit::Install, blocked()),
-            Ok(UpdateOnExit::Skip)
-        ));
-        assert_eq!(
-            update_after_recovery_check(UpdateOnExit::Restart, blocked())
-                .err()
-                .as_deref(),
-            Some("modChanges.recoveryRequired")
+    fn normal_quit_does_not_require_a_staged_update() {
+        let offer = offer(AppUpdateInstallMode::Deferred);
+        assert!(ExitAction::Quit.validate(None, None).is_ok());
+        assert!(ExitAction::Quit.validate(Some(&offer), None).is_ok());
+        assert!(
+            ExitAction::Quit
+                .validate(Some(&offer), Some(Installation::RebootRequired))
+                .is_ok()
         );
-        assert!(matches!(
-            update_after_recovery_check(UpdateOnExit::Install, Ok(true)),
-            Ok(UpdateOnExit::Install)
-        ));
+    }
+
+    #[test]
+    fn pending_installation_blocks_another_installer_but_failed_installation_allows_manual_exit() {
+        let offer = offer(AppUpdateInstallMode::Deferred);
+        let release = ExitAction::OpenRecoveryPage {
+            version: offer.version.clone(),
+            url: crate::app_update::recovery_links::OFFICIAL_WEBSITE.into(),
+        };
+        for action in [
+            &ExitAction::ApplyUpdate { restart: true },
+            &ExitAction::ApplyUpdate { restart: false },
+            &release,
+        ] {
+            assert_eq!(
+                action
+                    .validate(Some(&offer), Some(Installation::Applying))
+                    .unwrap_err(),
+                "update.inProgress"
+            );
+        }
+        assert_eq!(
+            ExitAction::ApplyUpdate { restart: false }
+                .validate(Some(&offer), Some(Installation::Failed))
+                .unwrap_err(),
+            "update.installFailedManual"
+        );
+        assert!(
+            release
+                .validate(Some(&offer), Some(Installation::Failed))
+                .is_ok()
+        );
+        assert!(
+            release
+                .validate(Some(&offer), Some(Installation::RestartFailed))
+                .is_ok()
+        );
+        assert!(release.validate(None, None).is_err());
+        assert!(
+            release
+                .validate(
+                    Some(&AppUpdateInfo {
+                        version: "99.2.0".into(),
+                        ..offer
+                    }),
+                    None
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn manual_only_offer_cannot_execute_a_staged_installer() {
+        let offer = offer(AppUpdateInstallMode::DownloadAndExit);
+        assert_eq!(
+            ExitAction::ApplyUpdate { restart: true }
+                .validate(Some(&offer), None)
+                .unwrap_err(),
+            "update.stagedUnavailable"
+        );
     }
 }
 
@@ -379,6 +416,10 @@ pub(crate) fn relaunch_with(
 ) -> Result<OperationResult, String> {
     // Share the updater/data-migration gate while Windows is waiting for UAC.
     let _handoff = archive::begin_app_update()?;
+    let _closing = state.app_updates.closing()?;
+    if state.app_updates.offer()?.is_some() {
+        return Err("update.requiredToContinue".into());
+    }
     let compression = crate::level_sets::recompress::quiesce_for_exit();
     let _operation = state.operation.lock().map_err(|_| "lock.poisoned")?;
     restore_map_compression_for_exit(&compression, state)?;

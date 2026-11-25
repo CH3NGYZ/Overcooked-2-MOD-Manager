@@ -2,36 +2,28 @@
 import { computed, shallowRef, watch } from 'vue'
 import { NButton } from 'naive-ui'
 import { RefreshOutline } from '@vicons/ionicons5'
-import { appUpdateNeedsManualInstall, appUpdateState, canCheckAppUpdate, canRetryAppUpdateDownload, showAppUpdateNotes } from '../appUpdateState'
-import { checkForAppUpdate, openAppUpdatePage, retryAppUpdateDownload } from '../composables/useAppUpdates'
+import { appUpdateState, canCheckAppUpdate, canExitForAppUpdate, presentAppUpdate, type UpdateExitAction } from '../appUpdateState'
+import { checkForAppUpdate, openAppUpdatePage, useAppUpdatePromptOpen } from '../composables/useAppUpdates'
 import { downloadAmount, downloadPercent, downloadRate } from '../downloadPresentation'
 import { t } from '../i18n'
-import { backendMessageOf, translateBackendMessage } from '../locale/backend'
+import { backendMessageOf } from '../locale/backend'
 import { useNotify } from '../useNotify'
+import AppUpdateNotes from './AppUpdateNotes.vue'
 import TitleBarProgressTable from './TitleBarProgressTable.vue'
 import TitleBarStatusPopover from './TitleBarStatusPopover.vue'
-import DownloadRace from './DownloadRace.vue'
 
-const emit = defineEmits<{ 'apply-update': [] }>()
-const props = defineProps<{ promptOpen: boolean }>()
 const notify = useNotify()
+const emit = defineEmits<{ 'update-exit': [action: UpdateExitAction] }>()
+const appUpdatePromptOpen = useAppUpdatePromptOpen()
 const open = shallowRef(false)
-watch(() => props.promptOpen, promptOpen => { if (promptOpen) open.value = false })
+const stagedForExit = computed(() => appUpdateState.stage === 'ready' && appUpdateState.deferred)
+watch(appUpdatePromptOpen, visible => { if (visible) open.value = false })
 const storeManaged = computed(() => appUpdateState.distribution === 'microsoft_store')
 const checking = computed(() => appUpdateState.stage === 'checking')
 const downloading = computed(() => appUpdateState.stage === 'downloading')
-const ready = computed(() => appUpdateState.stage === 'ready')
-const downloadFailed = computed(() => appUpdateState.stage === 'stageFailed')
 const checkFailed = computed(() => appUpdateState.stage === 'checkFailed')
-const recovery = computed(() => ['recovery', 'openingRecovery'].includes(appUpdateState.stage))
-const update = computed(() => appUpdateState.update)
-const shouldReview = computed(() => update.value?.install_mode === 'restartAsUser' || update.value?.install_mode === 'installAsAdministrator')
-const progress = computed(() => appUpdateState.progress)
-const percent = computed(() => downloading.value && progress.value ? downloadPercent(progress.value) : null)
-const progressBar = computed(() => ready.value && update.value?.install_mode !== 'restartAsUser'
-  ? 100 : downloading.value ? percent.value : undefined)
-const tone = computed(() => ready.value ? 'warning'
-  : downloadFailed.value || checkFailed.value || recovery.value || appUpdateState.stage === 'restartFailed' ? 'error'
+const tone = computed(() => appUpdateState.error || checkFailed.value || appUpdateState.stage === 'restartFailed' ? 'error'
+  : appUpdatePromptOpen.value || appUpdateState.stage === 'ready' ? 'warning'
     : checking.value || downloading.value ? 'activity' : undefined)
 const status = computed(() => {
   if (storeManaged.value) return t('update.microsoftStoreOnly')
@@ -39,32 +31,36 @@ const status = computed(() => {
     case 'checking': return t('update.checking')
     case 'current': return t('update.alreadyLatest')
     case 'checkFailed': return t('dialogs.updateCheckFailed')
-    case 'downloading': return t(progress.value?.finished || progress.value?.phase === 'finished' || progress.value?.phase === 'verifying'
+    case 'downloading': return t(appUpdateState.progress?.finished || appUpdateState.progress?.phase === 'verifying'
       ? 'update.verifyingUpdate' : 'update.downloadingInstaller')
-    case 'stageFailed':
-      if (appUpdateState.error === 'update.installFailedManual') return t('update.applicationFailedTitle')
-      return t(appUpdateNeedsManualInstall() ? 'update.manualUpdateTitle' : 'update.downloadFailed')
-    case 'ready': return t(update.value?.install_mode === 'restartAsUser' ? 'update.actionRequired' : 'update.pendingInstall')
+    case 'ready': return t(appUpdateState.deferred ? 'update.installPending' : 'update.actionRequired')
     case 'systemReboot': return t('update.rebootRequired')
     case 'restartFailed': return t('update.restartFailed')
-    case 'applying': case 'handoff': case 'systemApplying': return t('update.applyingUpdate')
-    case 'recovery': case 'openingRecovery': return t('update.applicationFailedTitle')
-    default: return t('update.notChecked')
+    case 'applying': case 'systemApplying': return t('update.applyingUpdate')
+    default: return t(appUpdatePromptOpen.value ? 'update.actionRequired' : 'update.notChecked')
   }
 })
 const rows = computed(() => {
   const rows = [{ label: t('update.status'), value: status.value }]
-  if (update.value) rows.push({ label: t('update.targetVersion'), value: `v${update.value.version}` })
-  if (downloading.value && progress.value) {
-    rows.push({ label: t('update.progress'), value: downloadAmount(progress.value) })
-    const rate = downloadRate(progress.value)
+  const progress = appUpdateState.progress
+  if (downloading.value && progress) {
+    rows.push({ label: t('update.progress'), value: downloadAmount(progress) })
+    const rate = downloadRate(progress)
     if (rate) rows.push({ label: t('update.speed'), value: rate })
+  }
+  if (appUpdateState.resolvingExitBlock && appUpdateState.error) {
+    rows.push({ label: t('update.exitBlocked'), value: backendMessageOf(appUpdateState.error) })
   }
   return rows
 })
+const percent = computed(() => downloading.value ? (appUpdateState.progress ? downloadPercent(appUpdateState.progress) : null) : undefined)
 const canCheck = computed(canCheckAppUpdate)
-const canRetry = computed(canRetryAppUpdateDownload)
-const openRelease = computed(() => checkFailed.value || downloadFailed.value)
+
+function applyUpdate() {
+  if (!canExitForAppUpdate('apply')) return
+  open.value = false
+  emit('update-exit', 'apply')
+}
 
 async function check() {
   try { await checkForAppUpdate() }
@@ -72,14 +68,8 @@ async function check() {
 }
 
 async function openReleasePage() {
-  try { await openAppUpdatePage(update.value?.version) }
+  try { await openAppUpdatePage() }
   catch (reason) { notify.error(backendMessageOf(reason)) }
-}
-
-function apply() {
-  open.value = false
-  if (shouldReview.value) showAppUpdateNotes()
-  else emit('apply-update')
 }
 </script>
 
@@ -88,27 +78,27 @@ function apply() {
     :tone="tone" :rotating="downloading" data-testid="app-update-status" :data-update-stage="appUpdateState.stage">
     <template #icon><RefreshOutline width="17" height="17" aria-hidden="true" /></template>
     <strong>{{ t('update.managerUpdate') }}</strong>
-    <TitleBarProgressTable :label="t('update.managerUpdate')" :rows="rows" :progress="progressBar" />
-    <DownloadRace v-if="downloading && progress?.race && !progress.finished" :key="progress.race.id" :race="progress.race" />
-    <p v-if="downloadFailed && appUpdateState.error" class="update-detail" role="alert">{{ translateBackendMessage(appUpdateState.error) }}</p>
-    <div v-if="ready || canCheck" class="update-actions">
-      <NButton v-if="ready" size="small" type="primary" secondary data-testid="app-update-install" @click="apply">
-        {{ t(shouldReview ? 'update.actionRequired' : 'update.applyNow') }}
+    <TitleBarProgressTable :label="t('update.managerUpdate')" :rows="rows" :progress="percent" />
+    <template v-if="stagedForExit">
+      <AppUpdateNotes class="update-notes-preview" :update="appUpdateState.update" tabindex="0" data-testid="app-update-notes-preview" />
+      <div class="update-actions">
+        <NButton size="small" type="primary" :disabled="!canExitForAppUpdate('apply')" data-testid="app-update-preview-apply"
+          @click="applyUpdate">{{ t('update.applyNow') }}</NButton>
+      </div>
+    </template>
+    <NButton v-else-if="appUpdateState.resolvingExitBlock" size="small" secondary data-testid="app-update-show" @click="presentAppUpdate">
+      {{ t('update.managerUpdate') }}
+    </NButton>
+    <div v-if="(canCheck || storeManaged) && !appUpdatePromptOpen" class="update-actions">
+      <NButton v-if="checkFailed" size="small" quaternary @click="openReleasePage">{{ t('dialogs.openReleasePage') }}</NButton>
+      <NButton size="small" secondary data-testid="app-update-check" @click="check">
+        {{ storeManaged ? t('overview.check') : t('update.checkAgain') }}
       </NButton>
-      <template v-else>
-        <NButton v-if="openRelease" size="small" quaternary @click="openReleasePage">{{ t('dialogs.openReleasePage') }}</NButton>
-        <NButton size="small" secondary data-testid="app-update-check" @click="check">
-          {{ storeManaged ? t('overview.check') : t('update.checkAgain') }}
-        </NButton>
-        <NButton v-if="canRetry" size="small" type="primary" data-testid="app-update-retry" @click="retryAppUpdateDownload">
-          {{ t('update.retryDownload') }}
-        </NButton>
-      </template>
     </div>
   </TitleBarStatusPopover>
 </template>
 
 <style scoped>
 .update-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-.update-detail { margin: 0; color: var(--oc2-status-error); font-size: 12px; overflow-wrap: anywhere; max-height: 90px; overflow-y: auto; }
+.update-notes-preview { max-height: min(180px, 40vh); overflow: auto; overflow-wrap: anywhere; scrollbar-gutter: stable; }
 </style>

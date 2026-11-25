@@ -2,25 +2,25 @@ import { onBeforeUnmount, onMounted, shallowRef } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
-  appUpdateBlocksOperations, appUpdateState, beginAppUpdateRecovery, beginStagedAppUpdate,
-  cancelStagedAppUpdate, failAppUpdateRecovery, finishStagedAppUpdate, type UpdateRecoveryDestination,
+  appUpdateBlocksOperations, appUpdateState, beginAppUpdateExit, beginDeferredAppUpdateExit, canExitForAppUpdate, finishAppUpdateExit,
+  isRequiredAppUpdate, presentAppUpdate,
+  type UpdateExitAction,
 } from '../appUpdateState'
 import { useModChanges } from '../modChanges/store'
 import { isChangePlanLocked } from '../modChanges/workflow'
-import { backendMessageOf } from '../locale/backend'
+import { backendMessageOf, backendPayloadOf } from '../locale/backend'
 import { isTauri } from '../runtime'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
-import { refreshAppUpdateRecovery } from './useAppUpdates'
 
 interface PageCloseGuard {
-  requestLeave: () => Promise<boolean>
-  blocked: () => boolean
+  requestLeave: (allowRequiredUpdate?: boolean) => Promise<boolean>
+  blocked: (allowRequiredUpdate?: boolean) => boolean
 }
 
 const pageGuards: PageCloseGuard[] = []
 
-export const appCloseBlocked = () => appUpdateBlocksOperations()
+export const appCloseBlocked = (allowRequiredUpdate = false) => appUpdateBlocksOperations(allowRequiredUpdate)
   || isChangePlanLocked(useModChanges().state.value?.phase)
 
 /** Route transitions can briefly overlap page lifetimes. The newest mounted
@@ -48,66 +48,58 @@ export function useAppCloseGuard() {
     else unlisten.push(stop)
   }
 
-  async function requestExit(applyNow: boolean) {
-    if (disposed || closing || appCloseBlocked()) return
-    const chosenUpdate = applyNow ? appUpdateState.update : null
+  async function requestExit(action?: UpdateExitAction) {
+    const fromUpdate = action !== undefined
+    if (disposed || closing || appCloseBlocked(fromUpdate)) return
+    if (!fromUpdate && appUpdateState.resolvingExitBlock && isRequiredAppUpdate()) {
+      presentAppUpdate()
+      return
+    }
+    if (action && !canExitForAppUpdate(action)) return
+    const chosenUpdate = fromUpdate ? appUpdateState.update : null
     const guard = pageGuards.at(-1)
-    if (guard?.blocked()) return
+    if (guard?.blocked(fromUpdate)) return
     closing = true
-    let applyingStaged = false
+    let startedUpdateExit = false
+    let previousStage = appUpdateState.stage
     try {
       if (guard) {
         confirmingClose.value = true
-        if (!await guard.requestLeave()) return
+        if (!await guard.requestLeave(fromUpdate)) return
       }
+      confirmingClose.value = false
       // A route change, save or update may start while its dialog is open.
-      if (disposed || appCloseBlocked() || guard !== pageGuards.at(-1) || guard?.blocked()) return
-      if (applyNow) {
-        if (!chosenUpdate || chosenUpdate !== appUpdateState.update || !beginStagedAppUpdate()) return
-        applyingStaged = true
-        switch (chosenUpdate.install_mode) {
-          case 'deferred': await api.applyStagedAppUpdate(); break
-          case 'restartAsUser': await api.restartUpdateAsUser(); break
-          case 'installAsAdministrator':
-            if (!await api.installUpdateAsAdministrator(chosenUpdate.version)) {
-              cancelStagedAppUpdate()
-              applyingStaged = false
-              return
-            }
-            break
+      if (disposed || appCloseBlocked(fromUpdate) || guard !== pageGuards.at(-1) || guard?.blocked(fromUpdate)) return
+      if (action) {
+        previousStage = appUpdateState.stage
+        if (!chosenUpdate || chosenUpdate !== appUpdateState.update || !beginAppUpdateExit(action)) return
+        startedUpdateExit = true
+        if (action === 'download' || action === 'website') {
+          await api.openAppUpdateReleaseAndExit(chosenUpdate.version, action === 'website' ? 'website' : undefined)
         }
+        else if (action === 'reboot') await api.exitApp()
+        else if (chosenUpdate.install_mode === 'restartAsUser') await api.restartUpdateAsUser()
+        else await api.applyStagedAppUpdate()
       } else {
-        applyingStaged = appUpdateState.update?.install_mode === 'deferred'
-          && !appUpdateState.notesPending && beginStagedAppUpdate()
-        await api.exitApp(applyingStaged)
+        previousStage = appUpdateState.stage
+        startedUpdateExit = beginDeferredAppUpdateExit()
+        await api.exitApp()
       }
-      if (applyingStaged) finishStagedAppUpdate()
+      if (startedUpdateExit) finishAppUpdateExit(previousStage)
     } catch (reason) {
-      const rejected = reason ?? (applyingStaged ? 'update.installFailedManual' : 'update.inProgress')
-      if (applyingStaged) finishStagedAppUpdate(rejected)
-      const tag = rejected instanceof Error ? rejected.message : rejected
-      if (tag === 'update.installFailedManual') {
-        void refreshAppUpdateRecovery().catch(error => { if (!disposed) message.error(backendMessageOf(error)) })
-      } else if (!disposed && !(applyingStaged && appUpdateState.error === tag)) {
-        message.error(backendMessageOf(rejected))
-      }
+      const rejected = reason ?? (startedUpdateExit ? 'update.installFailedManual' : 'update.inProgress')
+      const error = typeof rejected === 'string' ? rejected : rejected instanceof Error ? rejected.message : backendMessageOf(rejected)
+      const tag = backendPayloadOf(rejected)?.tag ?? error
+      if (startedUpdateExit) finishAppUpdateExit(previousStage, error, tag)
+      else if (!disposed) message.error(backendMessageOf(rejected))
     } finally {
       confirmingClose.value = false
       closing = false
     }
   }
 
-  async function applyUpdate() {
-    if (!isTauri() || appUpdateState.stage !== 'ready') return
-    await requestExit(true)
-  }
-
-  async function recoverUpdate(destination: UpdateRecoveryDestination) {
-    if (!isTauri() || disposed || closing || !beginAppUpdateRecovery()) return
-    closing = true
-    try { await api.finishAppUpdateRecovery(destination) }
-    catch (reason) { failAppUpdateRecovery(backendMessageOf(reason)) }
-    finally { closing = false }
+  async function updateExit(action: UpdateExitAction) {
+    if (isTauri()) await requestExit(action)
   }
 
   async function listenForClose() {
@@ -116,9 +108,9 @@ export function useAppCloseGuard() {
       await Promise.all([
         getCurrentWindow().onCloseRequested(async event => {
           event.preventDefault()
-          await requestExit(false)
+          await requestExit()
         }).then(registerUnlisten),
-        listen('app-quit-requested', () => { void requestExit(false) }).then(registerUnlisten),
+        listen('app-quit-requested', () => { void requestExit() }).then(registerUnlisten),
       ])
     } catch (reason) {
       if (!disposed) message.error(backendMessageOf(reason))
@@ -130,5 +122,5 @@ export function useAppCloseGuard() {
     disposed = true
     unlisten.splice(0).forEach(stop => stop())
   })
-  return { applyUpdate, recoverUpdate, confirmingClose }
+  return { updateExit, confirmingClose }
 }

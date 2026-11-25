@@ -6,14 +6,12 @@ use crate::app_update::channels::installer_channel_status;
 use crate::app_update::channels::installer_manifest_sources;
 use crate::app_update::channels::installer_sources_for_url;
 use crate::app_update::channels::{InstallerRegion, installer_region};
-use crate::app_update::manifest::InstallerRouteResult;
 use crate::app_update::manifest::race_installer_channels;
-use crate::app_update::manifest::run_installer_manifest_routes;
 use crate::archive;
 use crate::archive::DownloadRoute as AssetDownloadRoute;
 use crate::download::DownloadContext;
 use crate::download::history::RaceSession;
-use crate::models::{AppUpdateInfo, AppUpdateInstallMode};
+use crate::models::AppUpdateInfo;
 use crate::network_policy::NetworkPolicy;
 use crate::releases;
 use futures_util::StreamExt;
@@ -327,24 +325,12 @@ async fn prepare_and_download_installer(
     })
 }
 
-pub(crate) enum InstallerDownloadAttempt {
-    Updated {
-        info: AppUpdateInfo,
-        download: VerifiedInstallerDownload,
-    },
-    Latest,
-    Failed(String),
-}
-
-/// Try mainland direct mirrors in order before GitHub's independent manifest
-/// and signature-validated package races; international uses only GitHub.
-pub(crate) async fn discover_and_download_installer_update(
+pub(crate) async fn download_confirmed_update(
     state: &AppState,
     app: &AppHandle,
-    checked_channel: Option<&str>,
-    install_mode: AppUpdateInstallMode,
+    info: AppUpdateInfo,
     is_cancelled: impl Copy + Fn() -> bool,
-) -> Result<InstallerDownloadAttempt, String> {
+) -> Result<(AppUpdateInfo, VerifiedInstallerDownload), String> {
     if is_cancelled() {
         return Err("download.cancelled".into());
     }
@@ -357,96 +343,20 @@ pub(crate) async fn discover_and_download_installer_update(
         .map(Ok)
         .unwrap_or_else(NetworkPolicy::active)?;
     let manifest_channels = installer_manifest_sources(&policy, region);
-    log::info!("开始执行安装器更新流程：地区={}", region.as_str());
-    let client =
-        releases::build_client(config.network.api_timeout()).map_err(|error| error.to_string())?;
     let download_client = releases::build_download_client(config.network.first_byte_timeout())
         .map_err(|error| error.to_string())?;
-    let target = crate::app_update::UpdateTarget::current()?;
-    let current_version = semver::Version::parse(env!("CARGO_PKG_VERSION")).map_err(|error| {
-        crate::locale_tag::with_params(
-            "update.currentVersionInvalid2",
-            &[("reason", &error.to_string())],
-        )
-    })?;
-    // The supplied ID can only select a previously checked, official manifest.
-    if let Some(channel) = checked_channel
-        && let Some(mut info) =
-            super::cache::app_update_cache_get(state, region).and_then(|result| result.update)
-        && info.source_channel.as_deref() == Some(channel)
-    {
-        info.install_mode = install_mode;
-        emit_installer_phase(app, region, "download", None, Some(info.clone()));
-        match prepare_and_download_installer(
-            &download_client,
-            &info,
-            app,
-            &policy,
-            &manifest_channels,
-            region,
-            &config.network,
-            is_cancelled,
-            &race_session,
-        )
-        .await
-        {
-            Ok(download) => {
-                return Ok(InstallerDownloadAttempt::Updated { info, download });
-            }
-            Err(error) if error == "download.cancelled" => return Err(error),
-            Err(error) => log::warn!(
-                "按已检查的渠道下载更新失败，将重新检查：渠道={channel:?}，原因={}",
-                crate::locale_tag::diagnostic_tag(&error)
-            ),
-        }
-    }
-    let result = run_installer_manifest_routes(
-        &client,
+    emit_installer_phase(app, region, "download", None, Some(info.clone()));
+    let download = prepare_and_download_installer(
+        &download_client,
+        &info,
+        app,
+        &policy,
         &manifest_channels,
-        target,
-        &current_version,
-        is_cancelled,
-        |status| {
-            if status.status == "checking" {
-                emit_installer_phase(app, region, "manifest", None, None);
-            }
-            emit_installer_channel_status(app, region, status);
-        },
-        |mut info| {
-            info.install_mode = install_mode;
-            let download_client = &download_client;
-            let policy = &policy;
-            let manifest_channels = &manifest_channels;
-            let network = &config.network;
-            let race_session = &race_session;
-            async move {
-                emit_installer_phase(app, region, "download", None, Some(info.clone()));
-                let download = prepare_and_download_installer(
-                    download_client,
-                    &info,
-                    app,
-                    policy,
-                    manifest_channels,
-                    region,
-                    network,
-                    is_cancelled,
-                    race_session,
-                )
-                .await?;
-                Ok((info, download))
-            }
-        },
+        region,
         &config.network,
+        is_cancelled,
+        &race_session,
     )
     .await?;
-    match result {
-        InstallerRouteResult::Updated((info, download)) => {
-            return Ok(InstallerDownloadAttempt::Updated { info, download });
-        }
-        InstallerRouteResult::Latest => return Ok(InstallerDownloadAttempt::Latest),
-        InstallerRouteResult::Failed => {}
-    }
-    let message = "update.manualRequired".to_string();
-    emit_installer_phase(app, region, "skipped", Some(message.clone()), None);
-    Ok(InstallerDownloadAttempt::Failed(message))
+    Ok((info, download))
 }

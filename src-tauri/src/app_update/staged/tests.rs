@@ -1,10 +1,26 @@
 use super::*;
 
+fn offer(version: &str) -> AppUpdateInfo {
+    serde_json::from_value(serde_json::json!({
+        "version": version,
+        "current_version": "99.0.0",
+        "installer_name": format!("OC2ModManager_{version}_x64-setup.exe"),
+        "installer_type": "exe",
+        "installer_url": "https://example.test/signed-installer",
+        "installer_signature": "fixture",
+        "install_mode": "manual",
+    }))
+    .unwrap()
+}
+
+fn confirm(updates: &AppUpdates, version: &str) {
+    updates
+        .confirm_offer(Some(offer(version)), None, AppUpdateInstallMode::Deferred)
+        .unwrap();
+}
+
 fn start(updates: &AppUpdates) -> StageGuard<'_> {
-    match updates
-        .start_download(AppUpdateInstallMode::Deferred)
-        .unwrap()
-    {
+    match updates.start_download("99.1.0").unwrap() {
         DownloadStart::Started(guard) => guard,
         DownloadStart::Ready(_) => panic!("fresh update slot should start a download"),
     }
@@ -13,138 +29,123 @@ fn start(updates: &AppUpdates) -> StageGuard<'_> {
 #[test]
 fn only_one_background_download_runs_and_retry_can_acquire_the_slot() {
     let updates = AppUpdates::default();
+    confirm(&updates, "99.1.0");
     let first = start(&updates);
-    assert!(
-        matches!(updates.start_download(AppUpdateInstallMode::Deferred), Err(error) if error == IN_PROGRESS)
-    );
+    assert!(matches!(updates.start_download("99.1.0"), Err(error) if error == IN_PROGRESS));
     assert!(!first.cancelled());
     drop(first);
     assert!(!start(&updates).cancelled());
 }
 
 #[test]
-fn ordinary_exit_cancels_the_update_and_waits_for_the_download_to_release_its_slot() {
+fn exit_validates_before_cancel_and_waits_for_the_download_to_release_its_slot() {
     let updates = AppUpdates::default();
+    confirm(&updates, "99.1.0");
     let download = start(&updates);
     let closing = updates.closing().unwrap();
-    assert!(download.cancelled());
-    assert!(
-        matches!(updates.start_download(AppUpdateInstallMode::Deferred), Err(error) if error == IN_PROGRESS)
-    );
+    assert!(!download.cancelled());
+    assert!(matches!(updates.start_download("99.1.0"), Err(error) if error == IN_PROGRESS));
     assert!(matches!(updates.closing(), Err(error) if error == IN_PROGRESS));
+    assert!(!closing.wait_for_download(Duration::ZERO).unwrap());
+    assert!(download.cancelled());
     std::thread::scope(|scope| {
         scope.spawn(move || drop(download));
         assert!(closing.wait_for_download(Duration::from_secs(5)).unwrap());
     });
-    assert!(closing.take_ready(UpdateOnExit::Skip).unwrap().is_none());
-    assert!(closing.take_ready(UpdateOnExit::Install).unwrap().is_none());
-    assert!(
-        matches!(closing.take_ready(UpdateOnExit::Restart), Err(error) if error == UNAVAILABLE)
-    );
+    assert!(matches!(closing.take_ready("99.1.0"), Err(error) if error == UNAVAILABLE));
     drop(closing);
     assert!(!start(&updates).cancelled());
 }
 
 #[test]
-fn stalled_staging_does_not_prevent_exit_after_the_cancel_deadline() {
+fn quit_installation_cannot_be_deferred_before_staging() {
     let updates = AppUpdates::default();
-    let download = start(&updates);
+    assert!(matches!(updates.defer("99.1.0"), Err(error) if error == UNAVAILABLE));
+    confirm(&updates, "99.1.0");
+    let _download = start(&updates);
+    assert!(matches!(updates.defer("99.1.0"), Err(error) if error == UNAVAILABLE));
     let closing = updates.closing().unwrap();
-    assert!(download.cancelled());
-    assert!(!closing.wait_for_download(Duration::ZERO).unwrap());
-    assert!(closing.take_ready(UpdateOnExit::Install).unwrap().is_none());
-    drop(closing);
-    assert!(
-        matches!(updates.start_download(AppUpdateInstallMode::Deferred), Err(error) if error == IN_PROGRESS)
-    );
-    drop(download);
-    assert!(!start(&updates).cancelled());
+    assert!(matches!(updates.defer("99.1.0"), Err(error) if error == IN_PROGRESS));
+    assert!(!closing.installs_on_quit().unwrap());
 }
 
-fn fixture_info(mode: AppUpdateInstallMode) -> AppUpdateInfo {
-    serde_json::from_value(serde_json::json!({
-        "version": "99.1.0", "current_version": "99.0.0",
-        "installer_name": "update.exe", "installer_type": "exe", "installer_signature": "fixture",
-        "install_mode": mode,
-    }))
-    .unwrap()
-}
-
-#[cfg(windows)]
 #[test]
-fn only_explicit_matching_administrator_action_can_take_an_administrator_package() {
+fn lower_or_offline_checks_cannot_clear_a_confirmed_newer_update() {
     let updates = AppUpdates::default();
-    let mode = AppUpdateInstallMode::InstallAsAdministrator;
-    let destination = std::path::PathBuf::from(r"C:\Program Files\OC2ModManager\OC2ModManager.exe");
-    let DownloadStart::Started(download) = updates.start_download(mode).unwrap() else {
-        panic!("fresh update slot");
+    confirm(&updates, "99.2.0");
+    confirm(&updates, "99.1.0");
+    let retained = updates
+        .confirm_offer(None, None, AppUpdateInstallMode::Deferred)
+        .unwrap()
+        .unwrap();
+    assert_eq!(retained.version, "99.2.0");
+    assert!(matches!(updates.start_download("99.1.0"), Err(error) if error == UNAVAILABLE));
+}
+
+#[test]
+fn a_newer_release_without_a_signed_package_stays_mandatory_but_never_stages() {
+    let updates = AppUpdates::default();
+    confirm(&updates, "99.1.0");
+    let missing = AppUpdateInfo {
+        installer_url: None,
+        installer_signature: String::new(),
+        ..offer("99.2.0")
     };
-    let info = download
-        .publish(StagedInstaller {
-            info: fixture_info(mode),
-            prepared: Prepared::administrator_fixture(destination.clone()),
-        })
+    let manual = updates
+        .confirm_offer(Some(missing), None, AppUpdateInstallMode::Deferred)
+        .unwrap()
         .unwrap();
-    drop(download);
-    let closing = updates.closing().unwrap();
-    assert!(!closing.has_deferred().unwrap());
-    assert!(closing.take_ready(UpdateOnExit::Install).unwrap().is_none());
-    assert!(
-        matches!(closing.take_ready(UpdateOnExit::Restart), Err(error) if error == UNAVAILABLE)
-    );
-    assert!(
-        matches!(closing.administrator_destination("99.0.9"), Err(error) if error == UNAVAILABLE)
-    );
-    assert!(matches!(closing.take_administrator("99.0.9"), Err(error) if error == UNAVAILABLE));
-    assert_eq!(
-        closing.administrator_destination(&info.version).unwrap(),
-        destination
-    );
-    drop(closing);
-    assert!(
-        matches!(updates.start_download(mode), Ok(DownloadStart::Ready(ready)) if ready.version == info.version)
-    );
-    let closing = updates.closing().unwrap();
-    assert_eq!(
-        closing
-            .take_administrator(&info.version)
-            .unwrap()
-            .info
-            .version,
-        info.version
-    );
-    assert!(
-        matches!(closing.administrator_destination(&info.version), Err(error) if error == UNAVAILABLE)
-    );
+    assert_eq!(manual.version, "99.2.0");
+    assert_eq!(manual.install_mode, AppUpdateInstallMode::Manual);
+    assert!(matches!(updates.start_download("99.2.0"), Err(error) if error == UNAVAILABLE));
+    assert!(matches!(updates.start_download("99.1.0"), Err(error) if error == UNAVAILABLE));
 }
 
 #[test]
-fn mandatory_recovery_disallows_download_and_install_handoff() {
+fn receipt_offer_cannot_replace_an_equal_or_newer_manifest_offer() {
     let updates = AppUpdates::default();
-    let download = start(&updates);
-    let info = fixture_info(AppUpdateInstallMode::Deferred);
-    let alternate_link = "https://example.com/releases".to_owned();
-    updates
-        .require_recovery(Recovery {
-            update: info,
-            alternate_link: alternate_link.clone(),
-        })
+    confirm(&updates, "99.1.0");
+    let receipt = |version| AppUpdateInfo {
+        installer_url: None,
+        installer_signature: String::new(),
+        ..offer(version)
+    };
+    let retained = updates
+        .confirm_offer(
+            None,
+            Some(receipt("99.1.0")),
+            AppUpdateInstallMode::Deferred,
+        )
+        .unwrap()
         .unwrap();
-    assert!(download.cancelled());
-    drop(download);
-    assert_eq!(
-        updates.recovery().unwrap().unwrap().alternate_link,
-        alternate_link
-    );
-    assert!(
-        matches!(updates.start_download(AppUpdateInstallMode::Deferred), Err(error) if error == APPLY_FAILED)
-    );
-    let closing = updates.closing().unwrap();
-    for update in [
-        UpdateOnExit::Skip,
-        UpdateOnExit::Install,
-        UpdateOnExit::Restart,
-    ] {
-        assert!(matches!(closing.take_ready(update), Err(error) if error == APPLY_FAILED));
-    }
+    assert!(retained.has_signed_package());
+    let newer = updates
+        .confirm_offer(
+            None,
+            Some(receipt("99.2.0")),
+            AppUpdateInstallMode::Deferred,
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(newer.version, "99.2.0");
+    assert_eq!(newer.install_mode, AppUpdateInstallMode::Manual);
+}
+
+#[test]
+fn staged_identity_requires_the_same_signed_package_as_the_confirmed_offer() {
+    let staged = AppUpdateInfo {
+        install_mode: AppUpdateInstallMode::Deferred,
+        ..offer("99.1.0")
+    };
+    assert!(matches_package(&staged, &staged));
+    let replaced = AppUpdateInfo {
+        installer_signature: "new signature".into(),
+        ..staged.clone()
+    };
+    assert!(!matches_package(&replaced, &staged));
+    let manual = AppUpdateInfo {
+        install_mode: AppUpdateInstallMode::Manual,
+        ..staged.clone()
+    };
+    assert!(!matches_package(&manual, &staged));
 }

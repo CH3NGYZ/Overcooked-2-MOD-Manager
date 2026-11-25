@@ -61,6 +61,7 @@ test('planning stays indeterminate; task-local bytes use the shared race overlay
  assert.match(strip,/<AppModal :show="visible" :closable="false"[^>]*:z-index="2600"/)
  assert.match(strip,/const visible = computed\(\(\) => !appUpdateBlocksOperations\(\)/)
  assert.match(dialog,/<AppModal v-else :key="applyReview \? 'apply-review' : 'prepare-review'"[^>]*:z-index="2599"/)
+ assert.match(dialog,/const showDownloadFallback = computed\(\(\) => !downloadAbove\.value\s*&& \(changes\.canCancelDownload\.value \|\| changes\.cancellingDownload\.value\)\)/)
  assert.match(dialog,/v-if="showDownloadFallback"/)
  assert.doesNotMatch(strip,/downloadInlineTarget|mod-changes|dl-inline/)
  assert.doesNotMatch(strip,/watchDownloadProgress|download-progress/)

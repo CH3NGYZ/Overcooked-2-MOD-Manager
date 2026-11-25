@@ -112,6 +112,24 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
   return baseImage(tokens, idx, options, env, self)
 }
 
+const markdownStructure = new MarkdownIt({ html: true })
+
+export function markdownHeadingSections(source: string): { heading: string; body: string }[] {
+  const tokens = markdownStructure.parse(source, {})
+  const headings = tokens.flatMap((token, index) => {
+    if (token.type !== 'heading_open' || token.tag !== 'h1' || token.level !== 0 || !token.map) return []
+    const heading = tokens[index + 1]?.children?.map(child =>
+      child.type === 'softbreak' || child.type === 'hardbreak' ? ' ' : child.content,
+    ).join('') ?? ''
+    return [{ heading, start: token.map[0], end: token.map[1] }]
+  })
+  const lines = source.split(/\r\n?|\n/)
+  return headings.map(({ heading, end }, index) => ({
+    heading,
+    body: lines.slice(end, headings[index + 1]?.start).join('\n'),
+  }))
+}
+
 /** 把 Markdown 渲染成 HTML 字符串。 */
 export function renderReadme(markdown: string): string {
   if (!markdown.trim()) return ''

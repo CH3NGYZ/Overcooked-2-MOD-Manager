@@ -1,5 +1,6 @@
 //! Optional display metadata must never decide whether an update is valid.
 
+use crate::models::AppUpdateReleaseNotes;
 use semver::Version;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -9,15 +10,14 @@ const MAX_ENTRIES: usize = 256;
 const MAX_NOTE_BYTES: usize = 128 * 1024;
 const MAX_TOTAL_NOTE_BYTES: usize = 768 * 1024;
 
-/// `None` keeps the original notes, including the distinction between absent
-/// and empty notes. Validate the entire extension before selecting a range so
-/// malformed or oversized history cannot produce a misleading partial log.
-pub(super) fn aggregate_notes(
+/// Validate the entire extension before selecting a range so malformed or
+/// oversized history cannot produce a misleading partial log.
+pub(super) fn versioned_notes(
     changelog: Option<&Value>,
     current: &Version,
     target: &Version,
     target_notes: Option<&str>,
-) -> Option<String> {
+) -> Option<Vec<AppUpdateReleaseNotes>> {
     let entries = changelog?.as_array()?;
     if entries.len() > MAX_ENTRIES || !target.pre.is_empty() || !target.build.is_empty() {
         return None;
@@ -54,8 +54,10 @@ pub(super) fn aggregate_notes(
     }
     Some(
         selected
-            .map(|(version, notes)| format!("### v{version}\n\n{notes}"))
-            .collect::<Vec<_>>()
-            .join("\n\n"),
+            .map(|(version, notes)| AppUpdateReleaseNotes {
+                version: version.to_string(),
+                notes: (*notes).to_owned(),
+            })
+            .collect(),
     )
 }

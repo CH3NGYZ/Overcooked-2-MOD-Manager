@@ -67,7 +67,7 @@ async function runCheck(force: boolean): Promise<void> {
     return
   }
   if (!beginAppUpdateCheck()) return
-  const result = await api.checkAppUpdate('zh-CN', force).catch(() => undefined)
+  const result = await api.checkAppUpdate(force).catch(() => undefined)
   const channel = finishAppUpdateCheck(result)
   setCheckingUpdateRecovery(false)
   if (channel) void stageUpdate(channel)

@@ -91,7 +91,7 @@ test('first manual check discovering Store never says latest or opens independen
   const view = mounted(t)
   boundary.result = result({ distribution: 'microsoft_store', update: info })
   await view.checkUpdate()
-  assert.deepEqual(boundary.calls, [['check', 'zh-CN', true], ['open']])
+  assert.deepEqual(boundary.calls, [['check', true], ['open']])
   assert.deepEqual(boundary.notices, [])
   assert.equal(view.storeManaged, true)
   assert.equal(shared.appUpdateState.stage, 'idle')

@@ -424,8 +424,7 @@ export const api = {
    * 窗口重新聚焦都用缓存；用户点「检查更新」必须传 `force: true`，
    * 否则他会看到一次「已是最新」的旧结论。
    */
-  checkAppUpdate: (locale: 'zh-CN' | 'zh-TW' | 'en' | 'ko' | 'ja', force = false) =>
-    invoke<AppUpdateCheckResult>('check_app_update', { locale, force }),
+  checkAppUpdate: (force = false) => invoke<AppUpdateCheckResult>('check_app_update', { force }),
   getPendingAppUpdateRecovery: () => invoke<boolean>('get_pending_app_update_recovery'),
   finishAppUpdateRecovery: (destination: 'website' | 'alternate') =>
     invoke<void>('finish_app_update_recovery', { destination, locale: locale.value }),

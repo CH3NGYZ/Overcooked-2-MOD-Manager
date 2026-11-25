@@ -93,13 +93,13 @@ pub(crate) fn inspect_installer_manifest(
     Ok(Some(AppUpdateInfo {
         version: manifest.version.to_string(),
         current_version: current_version.to_string(),
-        body: changelog::aggregate_notes(
+        changelog: changelog::versioned_notes(
             document.get("changelog"),
             current_version,
             &manifest.version,
             manifest.notes.as_deref(),
-        )
-        .or(manifest.notes),
+        ),
+        body: manifest.notes,
         date: document["pub_date"].as_str().map(str::to_string),
         download_size: None,
         manifest_url: channel.endpoint.clone(),

@@ -11,7 +11,15 @@ fn inspect(document: &Value, current: &str) -> Result<Option<AppUpdateInfo>, Str
 }
 
 fn body(document: &Value, current: &str) -> Option<String> {
-    inspect(document, current).unwrap().unwrap().body
+    let info = inspect(document, current).unwrap().unwrap();
+    assert!(info.changelog.is_none());
+    assert!(
+        serde_json::to_value(&info)
+            .unwrap()
+            .get("changelog")
+            .is_none()
+    );
+    info.body
 }
 
 #[test]
@@ -27,9 +35,14 @@ fn changelog_uses_numeric_order_open_current_closed_target_and_first_duplicate()
         {"version":"9.0.1", "notes":"future is excluded"}
     ]);
     let info = inspect(&document, "2.0.0").unwrap().unwrap();
+    assert_eq!(info.body.as_deref(), Some("Release notes"));
     assert_eq!(
-        info.body.as_deref(),
-        Some("### v2.9.0\n\nNine\n\n### v2.10.0\n\nTen\n\n### v9.0.0\n\nRelease notes")
+        serde_json::to_value(&info).unwrap()["changelog"],
+        json!([
+            {"version":"2.9.0", "notes":"Nine"},
+            {"version":"2.10.0", "notes":"Ten"},
+            {"version":"9.0.0", "notes":"Release notes"},
+        ])
     );
     let original = inspect(&fixture(Provider::Github), "2.0.0")
         .unwrap()
@@ -46,17 +59,22 @@ fn changelog_uses_numeric_order_open_current_closed_target_and_first_duplicate()
 #[test]
 fn changelog_adds_missing_target_and_preserves_the_authoritative_notes_verbatim() {
     let mut document = fixture(Provider::Github);
-    document["notes"] = json!("\nTarget **body**  \n");
-    document["changelog"] = json!([{"version":"2.1.0", "notes":"Earlier"}]);
-    assert_eq!(
-        body(&document, "2.0.0").as_deref(),
-        Some("### v2.1.0\n\nEarlier\n\n### v9.0.0\n\n\nTarget **body**  \n")
-    );
+    let target = "\r\n# English\r\n\r\nTarget **body**  \r\n\r\n# 简体中文\r\n\r\n- 新版\r\n";
+    let earlier = "### v1.2.3\n\nEarlier\n\n```markdown\n# Français";
+    document["notes"] = target.into();
+    document["changelog"] = json!([{"version":"2.1.0", "notes":earlier}]);
+    let info = inspect(&document, "2.0.0").unwrap().unwrap();
+    assert_eq!(info.body.as_deref(), Some(target));
+    let history = info.changelog.unwrap();
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0].version, "2.1.0");
+    assert_eq!(history[0].notes, earlier);
+    assert_eq!(history[1].version, "9.0.0");
+    assert_eq!(history[1].notes, target);
     document.as_object_mut().unwrap().remove("notes");
-    assert_eq!(
-        body(&document, "2.0.0").as_deref(),
-        Some("### v2.1.0\n\nEarlier\n\n### v9.0.0\n\n")
-    );
+    let info = inspect(&document, "2.0.0").unwrap().unwrap();
+    assert!(info.body.is_none());
+    assert_eq!(info.changelog.unwrap()[1].notes, "");
 }
 
 #[test]
@@ -133,7 +151,12 @@ fn changelog_bounds_include_the_target_and_accept_exactly_256_entries() {
     let mut document = fixture(Provider::Github);
     document["changelog"] = entries.clone().into();
     assert_eq!(
-        body(&document, "1.0.0").unwrap().matches("### v").count(),
+        inspect(&document, "1.0.0")
+            .unwrap()
+            .unwrap()
+            .changelog
+            .unwrap()
+            .len(),
         256
     );
     entries.push(json!({"version":"2.1.0", "notes":"too many input entries"}));
@@ -161,9 +184,13 @@ fn note_limits_count_utf8_bytes_with_inclusive_single_and_total_boundaries() {
     entries.push(json!({"version":"2.0.0", "notes":notes}));
     entries.push(json!({"version":"9.0.0", "notes":"stale"}));
     document["changelog"] = entries.clone().into();
-    let aggregated = body(&document, "1.0.0").unwrap();
-    assert_eq!(aggregated.matches("### v").count(), 6);
-    assert_eq!(aggregated.matches('界').count(), (NOTE_LIMIT / 3) * 6);
+    let aggregated = inspect(&document, "1.0.0")
+        .unwrap()
+        .unwrap()
+        .changelog
+        .unwrap();
+    assert_eq!(aggregated.len(), 6);
+    assert!(aggregated.iter().all(|entry| entry.notes == notes));
     entries.push(json!({"version":"2.1.0", "notes":"x"}));
     document["changelog"] = entries.into();
     assert_eq!(body(&document, "1.0.0").as_deref(), Some(notes.as_str()));

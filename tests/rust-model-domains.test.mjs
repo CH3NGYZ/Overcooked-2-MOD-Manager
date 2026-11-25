@@ -6,7 +6,7 @@ import { readText, sourceFiles } from './helpers/source-scan.mjs'
 const root = resolve('src-tauri/src/models')
 const read = file => readText(resolve(root, file))
 const owners = {
-  app: ['AppDistribution', 'AppUpdateChannelEvent', 'AppUpdateChannelStatus', 'AppUpdateCheckResult', 'AppUpdateInfo', 'AppUpdateInstallationStatus', 'AppUpdatePhaseEvent', 'DashboardData', 'LogFileEntry', 'RustLog'],
+  app: ['AppDistribution', 'AppUpdateChannelEvent', 'AppUpdateChannelStatus', 'AppUpdateCheckResult', 'AppUpdateInfo', 'AppUpdateInstallationStatus', 'AppUpdatePhaseEvent', 'AppUpdateReleaseNotes', 'DashboardData', 'LogFileEntry', 'RustLog'],
   config: ['AppConfig', 'AuthConfig', 'LaunchConfig', 'PublicConfig', 'SettingsPatch', 'TokenPatch'],
   chef_preview: ['ChefPreviewBounds', 'ChefPreviewMesh', 'ChefPreviewScene'],
   diychef: ['LocalModSnapshot', 'ChefTarget', 'ChefSource', 'ChefItem', 'ChefHat', 'ChefReference', 'HatReference', 'ChefEntry', 'ChefSelection', 'ChefDocumentRow', 'ChefDiagnostic', 'ChefChange', 'ChefValidation', 'ChefDraft', 'ChefEditorSnapshot', 'ChefEditorOpen'],

@@ -715,7 +715,8 @@ export interface RepositorySourceImportResult {
   access_error: string | null
   builtin_fallback_available: boolean
 }
-export interface AppUpdateInfo { version: string; current_version: string; body?: string; date?: string; download_size?: number; manifest_url: string; installer_url?: string; installer_signature: string; installer_name: string; installer_type?: 'exe' | 'msi' | 'app'; provider?: Provider; source_channel?: string; background_install?: boolean }
+export interface AppUpdateReleaseNotes { version: string; notes: string }
+export interface AppUpdateInfo { version: string; current_version: string; body?: string | null; changelog?: readonly AppUpdateReleaseNotes[]; date?: string; download_size?: number; manifest_url: string; installer_url?: string; installer_signature: string; installer_name: string; installer_type?: 'exe' | 'msi' | 'app'; provider?: Provider; source_channel?: string; background_install?: boolean }
 export interface AppUpdateChannelStatus { id: string; provider: Provider; mode: string; status: string; error?: string }
 export type AppDistribution = 'standalone' | 'microsoft_store'
 export type AppUpdateInstallationStatus = 'reboot_required' | 'applying' | 'restart_failed'

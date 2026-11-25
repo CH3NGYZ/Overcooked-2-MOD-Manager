@@ -65,10 +65,8 @@ async fn installation_status(target: UpdateTarget) -> Result<Option<Installation
 pub async fn check_app_update(
     app: AppHandle,
     state: State<'_, AppState>,
-    locale: Option<String>,
     force: Option<bool>,
 ) -> Result<AppUpdateCheckResult, String> {
-    let _ = locale;
     let force = force.unwrap_or(false);
     let config = state.config.load_or_default();
     let region = installer_region(&config.region);

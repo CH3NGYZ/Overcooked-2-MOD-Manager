@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NButton } from 'naive-ui'
+import { updateNotesForLocale } from '../appUpdateNotes'
 import {
   appUpdateState, dismissAppUpdateNotes, type UpdateRecoveryDestination,
 } from '../appUpdateState'
 import { useAppUpdatePromptMode } from '../composables/useAppUpdates'
-import { t } from '../i18n'
+import { locale, t } from '../i18n'
 import { translateBackendMessage } from '../locale/backend'
 import AppModal from './AppModal.vue'
 import MarkdownBody from './MarkdownBody.vue'
@@ -17,7 +18,7 @@ const recovery = computed(() => appUpdatePromptMode.value === 'recovery')
 const openingRecovery = computed(() => appUpdateState.stage === 'openingRecovery')
 const applying = computed(() => ['applying', 'handoff'].includes(appUpdateState.stage))
 const update = computed(() => appUpdateState.update)
-const notes = computed(() => update.value?.body?.trim() ?? '')
+const notes = computed(() => updateNotesForLocale(update.value, locale.value))
 </script>
 
 <template>
@@ -37,8 +38,13 @@ const notes = computed(() => update.value?.body?.trim() ?? '')
         <h2>{{ t('dialogs.versionAvailable', { version: 'v' + update?.version }) }}</h2>
         <span v-if="update" class="version-line muted">v{{ update.current_version }} → v{{ update.version }}</span>
       </div>
-      <MarkdownBody v-if="notes" class="update-notes" :source="notes" />
-      <div v-else class="update-notes">{{ t('dialogs.noReleaseNotesWereProvided') }}</div>
+      <div class="update-notes">
+        <section v-for="entry in notes" :key="entry.version ?? 'target'">
+          <h3 v-if="entry.version">v{{ entry.version }}</h3>
+          <MarkdownBody v-if="entry.notes" :source="entry.notes" />
+          <p v-else>{{ t('dialogs.noReleaseNotesWereProvided') }}</p>
+        </section>
+      </div>
       <p v-if="applying" role="status">{{ t('update.applyingUpdate') }}</p>
     </div>
     <template #footer>
@@ -72,6 +78,8 @@ const notes = computed(() => update.value?.body?.trim() ?? '')
   padding: 10px 12px; border: 1px solid var(--oc2-divider); border-radius: 8px;
   background: var(--oc2-sunken); font-size: 13px; line-height: 1.6; color: var(--oc2-text-2);
 }
+.update-notes section + section { margin-top: 14px; }
+.update-notes h3 { margin: 0 0 4px; font-size: 15px; }
 .update-error { color: var(--oc2-status-error); overflow-wrap: anywhere; }
 .update-footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 </style>

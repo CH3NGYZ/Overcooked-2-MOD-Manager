@@ -200,9 +200,10 @@ test('real manifest aggregation verifies all signed packages before adding Relea
 for (const existing of [false, true]) {
   test(`explicit notes stay identical across ${existing ? 'updated' : 'created'} Release and signed manifest`, async () => {
     const fixture = signedFixture()
+    const publicBody = '# English\n\n- Concise public changes\n\n# Español (España)\n\n- Cambios públicos\n\n# 繁體中文\n\n- 更新說明'
     const notes = releaseNotesFromMessage([
       fixture.version, '- Detailed implementation record', '', '<!-- release-notes:start -->',
-      '- Concise public changes', '<!-- release-notes:end -->', '', '- Internal delivery details',
+      publicBody, '<!-- release-notes:end -->', '', '- Internal delivery details',
     ].join('\n'))
     const commitish = 'a'.repeat(40)
     const requests = []
@@ -220,7 +221,7 @@ for (const existing of [false, true]) {
     const release = await prepareRelease(github, fixture.version, fixture.release.tag_name, commitish, notes)
     const result = await aggregateManifest(fixture.github, release, fixture.assets, fixture.version, fixture.publicKey)
 
-    assert.equal(notes, '- Concise public changes')
+    assert.equal(notes, publicBody)
     assert.equal(release.body, notes)
     assert.equal(release.target_commitish, commitish)
     assert.equal(release.draft, true)

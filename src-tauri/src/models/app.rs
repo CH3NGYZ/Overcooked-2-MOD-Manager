@@ -16,10 +16,18 @@ pub struct RustLog {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppUpdateReleaseNotes {
+    pub version: String,
+    pub notes: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppUpdateInfo {
     pub version: String,
     pub current_version: String,
     pub body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changelog: Option<Vec<AppUpdateReleaseNotes>>,
     pub date: Option<String>,
     pub download_size: Option<u64>,
     #[serde(default)]

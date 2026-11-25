@@ -29,7 +29,7 @@ test('启动更新检查恒开，不再有开关门控', () => {
 test('手动检测绕过 5 分钟缓存', () => {
   assert.match(
     services,
-    /checkAppUpdate: \(locale: [^)]*force = false\)/,
+    /checkAppUpdate: \(force = false\)/,
     '服务层 checkAppUpdate 必须带 force 参数（默认走缓存）',
   )
   assert.match(
@@ -38,7 +38,7 @@ test('手动检测绕过 5 分钟缓存', () => {
     '设置页「检查更新」必须传 force: true，否则会拿缓存当结论',
   )
   assert.match(updates, /function checkForAppUpdate\(force = true\)/)
-  assert.match(updates, /api\.checkAppUpdate\('zh-CN', force\)/)
+  assert.match(updates, /api\.checkAppUpdate\(force\)/)
 })
 
 test('后端按地区缓存更新检查结果 5 分钟', () => {

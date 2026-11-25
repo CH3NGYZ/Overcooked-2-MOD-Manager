@@ -1,6 +1,6 @@
 import type { TutorialStep } from './types'
 
-// 只介绍交流与本地维护。引导不打开群链接、发布地图或触发数据操作。
+// 只介绍交流与本地维护：反馈入口需用户主动点击，不自动打开链接或触发数据操作。
 export const toolsSteps: TutorialStep[] = [
   {
     id: 'tools-feedback',
@@ -9,6 +9,7 @@ export const toolsSteps: TutorialStep[] = [
     target: '[data-tutorial="tools-feedback"]',
     route: 'tools',
     padding: 4,
+    cardWidth: 440,
   },
   {
     id: 'tools-logs',

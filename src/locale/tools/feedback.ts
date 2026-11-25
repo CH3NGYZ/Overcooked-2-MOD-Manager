@@ -1,6 +1,6 @@
 import type { DomainMessages } from '../types.ts'
 
-/** 工具页反馈渠道。 */
+/** 工具页与教程共用的反馈渠道。 */
 export const toolsUiFeedback: DomainMessages = {
   feedbackChannels: { en: 'Feedback channels', de: 'Feedback-Kanäle', fr: 'Canaux de retour', it: 'Canali di feedback', ko: '피드백 채널', 'es-ES': 'Canales de comentarios', 'zh-CN': '反馈渠道', 'zh-TW': '回饋管道', ru: 'Каналы обратной связи', ja: 'フィードバック窓口', pl: 'Kanały opinii', 'pt-BR': 'Canais de feedback' },
   arcadeModFeedbackGroup1: { en: 'Arcade MOD feedback - QQ group 1', de: 'Feedback zum Arcade-Mod - QQ-Gruppe 1', fr: 'Retours sur le mod Arcade - groupe QQ 1', it: 'Feedback sulla mod Arcade - gruppo QQ 1', ko: '아케이드 MOD 피드백 - QQ 그룹 1', 'es-ES': 'Comentarios sobre el mod Arcade - grupo de QQ 1', 'zh-CN': '街机 MOD 反馈 - QQ 群 1', 'zh-TW': '街機 MOD 回饋 - QQ 群 1', ru: 'Отзывы об Arcade MOD - группа QQ 1', ja: 'アーケードMOD フィードバック - QQ グループ 1', pl: 'Opinie o modzie Arcade - grupa QQ 1', 'pt-BR': 'Feedback do mod Arcade - grupo do QQ 1' },

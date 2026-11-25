@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { registerHooks } from 'node:module'
+import { parse } from '@vue/compiler-sfc'
+import { LOCALE_CODES } from '../src/locale/types.ts'
+import { readLocaleTables } from './helpers/locale-tables.mjs'
 
 /**
  * 教程步骤表的守门测试。
@@ -231,6 +235,26 @@ test('交流群、数据操作与下载设置只讲解，锚定真实页面且�
     }
   }
   assert.ok(tutorialSteps.every(step => step.route !== 'map-publish'))
+})
+
+test('工具页和现有反馈教程共用四个邀请及十二语标签，只有工具页是高亮目标', () => {
+  const component = path => parse(readFileSync(new URL(`../src/${path}.vue`, import.meta.url), 'utf8')).descriptor
+  const view = component('views/ToolsView').template.content
+  const overlay = component('components/TutorialOverlay').template.content
+  const { scriptSetup } = component('components/FeedbackChannels')
+  const channels = [...scriptSetup.content.matchAll(/\{ title: '([^']+)', url: '([^']+)'/g)]
+  assert.match(view, /data-tutorial="tools-feedback">\s*<FeedbackChannels\s*\/>/)
+  assert.match(overlay, /<FeedbackChannels v-if="step\.id === 'tools-feedback'" compact\s*\/>/)
+  assert.doesNotMatch(overlay, /data-tutorial="tools-feedback"/)
+  assert.equal(channels.length, 4)
+  assert.equal(new Set(channels.map(([, , url]) => url)).size, 4)
+  assert.deepEqual(channels.map(([, , url]) => new URL(url).origin), [
+    'https://qm.qq.com', 'https://qm.qq.com', 'https://qm.qq.com', 'https://discord.gg',
+  ])
+  const { registered } = readLocaleTables()
+  for (const [, title] of channels) {
+    for (const locale of LOCALE_CODES) assert.ok(registered.get(title)?.[locale]?.trim(), `${locale}: ${title}`)
+  }
 })
 
 test('每一步都有 id / 标题 key / 正文 key，且是教程域下的静态 key', () => {

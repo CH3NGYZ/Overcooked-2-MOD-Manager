@@ -588,6 +588,7 @@ body {
 
 .tutorial-card-head {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -603,6 +604,7 @@ body {
 .tutorial-card-skip { color: var(--oc2-text-3); }
 
 .tutorial-card-progress {
+  flex: none;
   height: 3px;
   border-radius: 2px;
   background: var(--oc2-sunken);
@@ -616,6 +618,14 @@ body {
   background: var(--oc2-accent);
   transition: width .3s cubic-bezier(.4, 0, .2, 1);
 }
+
+.tutorial-card-content {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.tutorial-card-content > :not(:first-child) { margin-top: 8px; }
 
 .tutorial-card-title {
   margin: 2px 0 0;
@@ -635,6 +645,7 @@ body {
 
 .tutorial-card-foot {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: space-between;
   gap: 12px;

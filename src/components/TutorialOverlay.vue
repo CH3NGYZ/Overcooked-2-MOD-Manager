@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NButton } from 'naive-ui'
+import FeedbackChannels from './FeedbackChannels.vue'
 import { t } from '../i18n'
 import {
   measureTutorialTarget,
@@ -18,8 +19,8 @@ import { placeCard, VIEWPORT_MARGIN, type Size } from '../tutorial/geometry'
  *
  * 一个 `position: fixed` 的根节点铺满视口并**接管全部点击**，里面是一圈
  * 高亮描边、一张卡片，以及没有目标时才用的整屏底板。所有装饰层都是
- * `pointer-events: none`：点击统一由根节点处理（点哪儿都算「继续」），
- * 这样「点高亮区域」与「点暗处」是同一套逻辑，不会因为洞的边界算出两种行为。
+ * `pointer-events: none`：「点高亮区域」与「点暗处」都由根节点处理为「继续」；
+ * 卡片内只有导航按钮和反馈入口响应各自的点击。
  *
  * ## 遮罩为什么是环的一层阴影，而不是四块面板
  *
@@ -35,7 +36,7 @@ import { placeCard, VIEWPORT_MARGIN, type Size } from '../tutorial/geometry'
  *
  * ## 输入
  *
- * - 点击任意位置 / 「下一步」：下一步
+ * - 点击卡片外 / 「下一步」：下一步
  * - 滚轮（累计到阈值才切，避免触控板一滑跳好几步）
  * - ← ↑ = 上一步，→ ↓ = 下一步
  * - 切步期间（`tutorial.busy`）全部忽略，避免连点开两次抽屉
@@ -45,12 +46,13 @@ import { placeCard, VIEWPORT_MARGIN, type Size } from '../tutorial/geometry'
  */
 const viewport = ref<Size>({ width: window.innerWidth, height: window.innerHeight })
 const cardEl = ref<HTMLElement | null>(null)
+const contentEl = ref<HTMLElement | null>(null)
 /** 卡片高度只能量：文案长短随语言变化，估一个值会压到高亮框。 */
 const cardHeight = ref(190)
 
 const step = computed(() => tutorial.current.value)
 const cardWidth = computed(() =>
-  Math.min(step.value?.cardWidth ?? 380, Math.max(240, viewport.value.width - VIEWPORT_MARGIN * 2)),
+  Math.min(step.value?.cardWidth ?? 380, Math.max(0, viewport.value.width - VIEWPORT_MARGIN * 2)),
 )
 const cardBox = computed(() =>
   placeCard(
@@ -64,6 +66,7 @@ const cardStyle = computed(() => ({
   left: `${cardBox.value.left}px`,
   top: `${cardBox.value.top}px`,
   width: `${cardWidth.value}px`,
+  maxHeight: `${Math.max(0, viewport.value.height - VIEWPORT_MARGIN * 2)}px`,
 }))
 const progress = computed(() => {
   const total = tutorial.total.value
@@ -126,6 +129,8 @@ let wheelLockedUntil = 0
 
 function onWheel(event: WheelEvent) {
   if (!tutorial.active.value) return
+  const content = contentEl.value
+  if (content && event.target instanceof Node && content.contains(event.target) && content.scrollHeight > content.clientHeight) return
   // 教程期间页面不滚：滚轮在这里是切步手势
   event.preventDefault()
   const now = performance.now()
@@ -154,6 +159,16 @@ function onKeydown(event: KeyboardEvent) {
   // 带修饰键的组合留给系统/浏览器（缩放、切窗口等）
   if (event.altKey || event.ctrlKey || event.metaKey) return
   switch (event.key) {
+    case 'Tab': {
+      const buttons = Array.from(cardEl.value?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])
+      const index = buttons.findIndex(button => button === document.activeElement)
+      if (index < 0 || (event.shiftKey ? index === 0 : index === buttons.length - 1)) {
+        event.preventDefault()
+        const boundary = event.shiftKey ? buttons.at(-1) : buttons[0]
+        boundary?.focus()
+      }
+      break
+    }
     case 'ArrowRight':
     case 'ArrowDown':
       event.preventDefault()
@@ -205,6 +220,7 @@ watch(
   async () => {
     wheelAccumulator = 0
     await nextTick()
+    contentEl.value?.scrollTo({ top: 0 })
     observeCard()
     measureTutorialTarget()
     cardEl.value?.focus({ preventScroll: true })
@@ -250,8 +266,11 @@ watch(
         <div class="tutorial-card-progress" aria-hidden="true">
           <span :style="{ width: `${progress}%` }" />
         </div>
-        <h3 class="tutorial-card-title">{{ title }}</h3>
-        <p class="tutorial-card-body">{{ body }}</p>
+        <div ref="contentEl" class="tutorial-card-content">
+          <h3 class="tutorial-card-title">{{ title }}</h3>
+          <p class="tutorial-card-body">{{ body }}</p>
+          <FeedbackChannels v-if="step.id === 'tools-feedback'" compact />
+        </div>
         <div class="tutorial-card-foot">
           <span class="tutorial-card-hint">{{ t('tutorial.cardHint') }}</span>
           <div class="tutorial-card-actions">

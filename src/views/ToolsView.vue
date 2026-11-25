@@ -25,7 +25,7 @@ const feedbackChannels = [
   { title: 'tools.arcadeModFeedbackGroup1', url: 'https://qm.qq.com/q/Uo7nhlbWiA' },
   { title: 'tools.arcadeModFeedbackGroup2', url: 'https://qm.qq.com/q/7CpekB9FYc' },
   { title: 'tools.modManagerFeedbackGroup', url: 'https://qm.qq.com/q/LN93oZTyUg' },
-  { title: 'tools.modManagerFeedbackDiscord', url: 'https://discord.gg/rYx75pWERN', discord: true },
+  { title: 'tools.modManagerFeedbackDiscord', url: 'https://discord.gg/N5qycAU67N', discord: true },
 ]
 const tutorialManagerOpen = ref(false)
 const logKind = ref<LogKind | null>(null)

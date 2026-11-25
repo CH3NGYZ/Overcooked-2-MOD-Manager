@@ -145,7 +145,7 @@ test('app and settings use one updater, with modal actions distinct from quit an
   assert.match(app, /:inert="choosingLanguage \|\| appUpdateBlocksOperations\(\)"/)
   const prompt = source('src/components/UpdatePrompt.vue')
   assert.match(prompt, /:closable="!recovery && !applying" :mask-closable="false"/)
-  assert.match(prompt, /<MarkdownBody v-if="entry.notes"[^>]+:source="entry.notes"/)
+  assert.match(prompt, /<AppUpdateNotes :update="update"\s*\/>/)
   assert.match(prompt, /data-testid="app-update-install-later" @click="dismissAppUpdateNotes"/)
   assert.match(prompt, /data-testid="app-update-website" @click="emit\('recover-update', 'website'\)"/)
   assert.match(prompt, /data-testid="app-update-alternate" @click="emit\('recover-update', 'alternate'\)"/)

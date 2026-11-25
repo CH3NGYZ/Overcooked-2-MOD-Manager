@@ -1,16 +1,15 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NButton } from 'naive-ui'
-import { updateNotesForLocale } from '../appUpdateNotes'
 import {
   appUpdateState, dismissAppUpdateNotes, type UpdateRecoveryDestination,
 } from '../appUpdateState'
 import { openAppUpdatePage, useAppUpdatePromptMode } from '../composables/useAppUpdates'
-import { locale, t } from '../i18n'
+import { t } from '../i18n'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { useNotify } from '../useNotify'
 import AppModal from './AppModal.vue'
-import MarkdownBody from './MarkdownBody.vue'
+import AppUpdateNotes from './AppUpdateNotes.vue'
 
 const emit = defineEmits<{ 'apply-update': []; 'recover-update': [destination: UpdateRecoveryDestination] }>()
 defineProps<{ confirmingClose: boolean }>()
@@ -21,7 +20,6 @@ const applying = computed(() => ['applying', 'handoff'].includes(appUpdateState.
 const update = computed(() => appUpdateState.update)
 const asUser = computed(() => update.value?.install_mode === 'restartAsUser')
 const asAdministrator = computed(() => update.value?.install_mode === 'installAsAdministrator')
-const notes = computed(() => updateNotesForLocale(update.value, locale.value))
 const notify = useNotify()
 
 async function openReleasePage() {
@@ -50,13 +48,7 @@ async function openReleasePage() {
       <p v-if="asUser" data-testid="app-update-permission-info">{{ t('update.restartAsUserHelp') }}</p>
       <p v-else-if="asAdministrator" data-testid="app-update-permission-info">{{ t('update.installAsAdministratorHelp') }}</p>
       <p v-if="appUpdateState.error" class="update-error" role="alert">{{ translateBackendMessage(appUpdateState.error) }}</p>
-      <div class="update-notes">
-        <section v-for="entry in notes" :key="entry.version ?? 'target'">
-          <h3 v-if="entry.version">v{{ entry.version }}</h3>
-          <MarkdownBody v-if="entry.notes" :source="entry.notes" />
-          <p v-else>{{ t('dialogs.noReleaseNotesWereProvided') }}</p>
-        </section>
-      </div>
+      <AppUpdateNotes :update="update" />
       <p v-if="applying" role="status">{{ t(asUser ? 'update.reopeningAsUser' : 'update.applyingUpdate') }}</p>
     </div>
     <template #footer>
@@ -89,12 +81,6 @@ async function openReleasePage() {
 .update-body p { margin: 0; }
 .update-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
 .version-line { font-size: 13px; white-space: nowrap; }
-.update-notes {
-  padding: 10px 12px; border: 1px solid var(--oc2-divider); border-radius: 8px;
-  background: var(--oc2-sunken); font-size: 13px; line-height: 1.6; color: var(--oc2-text-2);
-}
-.update-notes section + section { margin-top: 14px; }
-.update-notes h3 { margin: 0 0 4px; font-size: 15px; }
 .update-error { color: var(--oc2-status-error); overflow-wrap: anywhere; }
 .update-footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .update-footer :deep(.n-button) { min-width: 0; max-width: 100%; height: auto; min-height: var(--n-height); white-space: normal; }

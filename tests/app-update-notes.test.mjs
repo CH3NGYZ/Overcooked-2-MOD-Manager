@@ -93,8 +93,8 @@ test('each version is isolated, with an empty or missing language shown as no no
   assert.equal(selectReleaseNotes('# Deutsch\n\n# de\nActual text\n\n# de\nLater duplicate', 'de').trim(), 'Actual text')
 })
 
-test('UpdatePrompt reacts to the selected locale and renders Markdown separately for each version', () => {
-  const prompt = readFileSync(new URL('../src/components/UpdatePrompt.vue', import.meta.url), 'utf8')
-  assert.match(prompt, /computed\(\(\) => updateNotesForLocale\(update\.value, locale\.value\)\)/)
-  assert.match(prompt, /<section v-for="entry in notes"[^>]*>\s*<h3 v-if="entry.version">[^<]*<\/h3>\s*<MarkdownBody v-if="entry.notes" :source="entry.notes" \/>\s*<p v-else>\{\{ t\('dialogs.noReleaseNotesWereProvided'\) \}\}/)
+test('shared update notes react to the selected locale and render Markdown separately for each version', () => {
+  const notes = readFileSync(new URL('../src/components/AppUpdateNotes.vue', import.meta.url), 'utf8')
+  assert.match(notes, /computed\(\(\) => updateNotesForLocale\(props\.update, locale\.value\)\)/)
+  assert.match(notes, /<section v-for="entry in notes"[^>]*>\s*<h3 v-if="entry.version">[^<]*<\/h3>\s*<MarkdownBody v-if="entry.notes" :source="entry.notes" \/>\s*<p v-else>\{\{ t\('dialogs.noReleaseNotesWereProvided'\) \}\}/)
 })

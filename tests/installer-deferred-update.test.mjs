@@ -45,19 +45,11 @@ test('migration and ordinary installer success honor the deferred restart choice
   assert.match(hooks, /\$\{If\} \$OC2RestartAfterUpdate = 1\n\s*ClearErrors\n\s*Exec/)
 })
 
-test('administrator updates use a distinct marker and skip per-user install side effects', () => {
+test('retired administrator handoff is rejected before ordinary installer processing', () => {
   const deferred = readFileSync(deferredPath, 'utf8').replace(/\r\n/g, '\n')
-  assert.match(installer, /\{\{#unless resources\}\}\s+\{\{#unless binaries\}\}\s+!define OC2_ADMIN_DEFERRED_UPDATE\s+VIAddVersionKey \/LANG=1033 "OC2AdminDeferredUpdate" "1"\s+\{\{\/unless\}\}\s+\{\{\/unless\}\}/)
+  assert.doesNotMatch(installer + deferred, /OC2AdminDeferredUpdate|OC2_ADMIN_DEFERRED_UPDATE/)
   const wait = fn('OC2WaitForUpdateOwner', deferred)
-  assert.match(wait, /GetOptions\} \$R0 "\/OC2AdminDeferred"[\s\S]*?!ifdef OC2_ADMIN_DEFERRED_UPDATE[\s\S]*?StrCpy \$OC2AdminDeferredUpdate 1\s+!else\s+Goto oc2_update_wait_failed\s+!endif/)
-  assert.match(wait, /GetOptions\} \$R0 "\/OC2AdminDeferred"[\s\S]*?GetOptions\} \$R0 "\/OC2WaitForPid"[\s\S]*?\$\{If\} \$OC2AdminDeferredUpdate = 1\n\s*Goto oc2_update_wait_failed/)
-  assert.match(wait, /GetOptions\} \$R0 "\/OC2AutoLaunch"[\s\S]*?\$\{OrIf\} \$OC2AdminDeferredUpdate = 1\n\s*Goto oc2_update_wait_failed/)
-  assert.match(fn('OC2ValidateInstallDirectory'), /\$\{AndIf\} \$OC2AdminDeferredUpdate != 1[\s\S]*?--oc2-migrate-update prepare/)
-  assert.match(fn('.onInit'), /\$\{If\} \$OC2AdminDeferredUpdate != 1\n\s*!insertmacro MUI_LANGDLL_DISPLAY/)
-  assert.match(installer, /Section WebView2\n\s*\$\{If\} \$OC2AdminDeferredUpdate = 1\n\s*Goto oc2_webview_section_end/)
-  const install = installer.split('Section Install\n')[1].split('SectionEnd')[0]
-  assert.match(install, /\$\{If\} \$OC2AdminDeferredUpdate = 1\n\s*Call OC2ReplaceDeferredMain\n\s*Goto oc2_install_section_end[\s\S]*?; Copy resources[\s\S]*?WriteUninstaller[\s\S]*?ReadRegStr \$OldMainBinaryName[\s\S]*?CreateOrUpdateDesktopShortcut[\s\S]*?oc2_install_section_end:/)
-  assert.match(fn('.onInstSuccess'), /^Function \.onInstSuccess\n\s*\$\{If\} \$OC2AdminDeferredUpdate = 1\n\s*!insertmacro OC2_UPDATE_RESULT "installed"\n\s*Return/)
+  assert.match(wait, /GetOptions\} \$R0 "\/OC2AdminDeferred" \$R2\n\s*\$\{IfNot\} \$\{Errors\}\n\s*Goto oc2_update_wait_failed\n\s*\$\{EndIf\}\n\s*\$\{GetOptions\} \$R0 "\/OC2WaitForPid"/)
 })
 
 test('native NSIS handoff waits, publishes the staged EXE and reports its result', {
@@ -221,7 +213,7 @@ class Occupant {
   assert.equal(other.child.exitCode, null)
   other.stop()
   assert.equal((await other.closed)[0], 0)
-  assert.equal(run(executable, [...args(`=${other.pid}`), '/OC2AdminDeferred']).status, 1, 'a build without the capability rejects administrator updates')
+  assert.equal(run(executable, [...args(`=${other.pid}`), '/OC2AdminDeferred']).status, 1, 'the retired flag cannot fall through to the ordinary deferred install')
   assert.match(contents(), /^\|\r\n1\|1\r\n$/)
   assert.equal(run(executable, args(`=${other.pid}`)).status, 0)
   assert.match(contents(), /^\|\r\n1\|1\r\n1\|0?\r\n$/)

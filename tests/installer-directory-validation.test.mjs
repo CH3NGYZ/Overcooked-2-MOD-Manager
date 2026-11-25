@@ -11,7 +11,7 @@ const guard = installer.split('Function OC2ValidateInstallDirectory\n')[1].split
 const { languages } = JSON.parse(source('src-tauri/tauri.conf.json')).bundle.windows.nsis
 
 test('only an explicit unsafe-directory verdict can trigger automatic migration', () => {
-  assert.match(guard, /\$\{If\} \$0 == 1\n\s*\$\{AndIf\} \$UpdateMode = 1\n\s*\$\{AndIf\} \$OC2AdminDeferredUpdate != 1\n\s*\$\{AndIf\} \$OC2MigrationPlan == ""/)
+  assert.match(guard, /\$\{If\} \$0 == 1\n\s*\$\{AndIf\} \$UpdateMode = 1\n\s*\$\{AndIf\} \$OC2MigrationPlan == ""/)
   assert.doesNotMatch(guard, /\$\{If\} \$0 != 0\n\s*\$\{AndIf\} \$UpdateMode = 1/)
   assert.match(guard, /\$\{If\} \$0 != 1[\s\S]*?Goto oc2_guard_allowed/)
   assert.ok(guard.indexOf('Goto oc2_guard_allowed') < guard.indexOf('--oc2-migrate-update prepare'))

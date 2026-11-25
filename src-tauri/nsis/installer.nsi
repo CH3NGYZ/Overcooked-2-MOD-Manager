@@ -96,12 +96,6 @@ VIAddVersionKey /LANG=1033 "LegalCopyright" "${COPYRIGHT}"
 VIAddVersionKey /LANG=1033 "FileVersion" "${VERSION}"
 VIAddVersionKey /LANG=1033 "ProductVersion" "${VERSION}"
 VIAddVersionKey /LANG=1033 "OC2DeferredUpdate" "1"
-{{#unless resources}}
-{{#unless binaries}}
-!define OC2_ADMIN_DEFERRED_UPDATE
-VIAddVersionKey /LANG=1033 "OC2AdminDeferredUpdate" "1"
-{{/unless}}
-{{/unless}}
 
 # additional plugins
 !addplugindir "${ADDITIONALPLUGINSPATH}"
@@ -442,7 +436,6 @@ Function OC2ValidateInstallDirectory
   ; launch error, timeout, or OS exit code does not establish an unsafe path.
   ${If} $0 == 1
   ${AndIf} $UpdateMode = 1
-  ${AndIf} $OC2AdminDeferredUpdate != 1
   ${AndIf} $OC2MigrationPlan == ""
     ; Older clients pass their original directory. Preserve their data before
     ; redirecting this automatic update to the current user's default location.
@@ -572,14 +565,6 @@ FunctionEnd
 
 Function .onInit
   Call OC2WaitForUpdateOwner
-  ${If} $OC2AdminDeferredUpdate = 1
-    ${If} $INSTDIR == ""
-    ${OrIf} $INSTDIR == "${PLACEHOLDER_INSTALL_DIR}"
-      !insertmacro OC2_UPDATE_RESULT "directory_check_failed"
-      SetErrorLevel 1
-      Quit
-    ${EndIf}
-  ${EndIf}
 
   ${GetOptions} $CMDLINE "/P" $PassiveMode
   ${IfNot} ${Errors}
@@ -597,9 +582,7 @@ Function .onInit
   ${EndIf}
 
   !if "${DISPLAYLANGUAGESELECTOR}" == "true"
-    ${If} $OC2AdminDeferredUpdate != 1
-      !insertmacro MUI_LANGDLL_DISPLAY
-    ${EndIf}
+    !insertmacro MUI_LANGDLL_DISPLAY
   !endif
 
   !insertmacro SetContext
@@ -642,9 +625,6 @@ Section EarlyChecks
 SectionEnd
 
 Section WebView2
-  ${If} $OC2AdminDeferredUpdate = 1
-    Goto oc2_webview_section_end
-  ${EndIf}
   ; Check if Webview2 is already installed and skip this section
   ${If} ${RunningX64}
     ReadRegStr $4 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
@@ -734,7 +714,6 @@ Section WebView2
       ${EndIf}
     !endif
   ${EndIf}
-  oc2_webview_section_end:
 SectionEnd
 
 Section Install
@@ -754,11 +733,6 @@ Section Install
 
   ; Copy main executable
   !insertmacro OC2_STAGE_MAIN_BINARY
-
-  ${If} $OC2AdminDeferredUpdate = 1
-    Call OC2ReplaceDeferredMain
-    Goto oc2_install_section_end
-  ${EndIf}
 
   ; Copy resources
   {{#each resources_dirs}}
@@ -868,14 +842,9 @@ Section Install
   ${If} $PassiveMode = 1
     SetAutoClose true
   ${EndIf}
-  oc2_install_section_end:
 SectionEnd
 
 Function .onInstSuccess
-  ${If} $OC2AdminDeferredUpdate = 1
-    !insertmacro OC2_UPDATE_RESULT "installed"
-    Return
-  ${EndIf}
   ${If} $OC2MigrationPlan != ""
     ; Finish program relocation before starting the new manager.
     DetailPrint "$(OC2Migrating)"

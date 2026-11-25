@@ -5,12 +5,13 @@ import test from 'node:test'
 import { compileScript, parse } from '@vue/compiler-sfc'
 import { createRenderer, nextTick, shallowReactive, shallowRef } from 'vue'
 import { modChanges } from '../src/locale/modChanges.ts'
+import { modChangeEvidence } from '../src/locale/modChangeEvidence.ts'
 import { common } from '../src/locale/common.ts'
 import { modsOnline } from '../src/locale/modsOnline.ts'
 
 const fixture = globalThis.__changeRender = {
   state: shallowRef(null), preparation: shallowRef(null), cancelDownload: shallowRef(false), cancelling: shallowRef(false),
-  execution: shallowReactive(new Map()), installNotes: shallowRef([]), locale: shallowRef('zh-CN'), messages: { modChanges, common, modsOnline }, calls: [],
+  execution: shallowReactive(new Map()), installNotes: shallowRef([]), locale: shallowRef('zh-CN'), messages: { modChanges: { ...modChanges, ...modChangeEvidence }, common, modsOnline }, calls: [],
 }
 registerHooks({
   resolve(specifier, context, next) {
@@ -99,6 +100,38 @@ test('first install hides the entire plan while one five-second note window can 
   assert.deepEqual(fixture.calls, [])
   cancel.props.onClick()
   assert.deepEqual(fixture.calls, ['cancel'])
+})
+
+test('a first-plan duplicate shows one existing file and one planned candidate without leaking repository IDs', async t => {
+  const root = mounted(t)
+  const localPath = 'BepInEx/plugins/Old HostUtilities/HostUtilities.dll'
+  const projectedPath = 'BepInEx/plugins/New HostUtilities/HostUtilities.dll'
+  const base = { guid: 'fixture.hostutilities', runtime_conflict: true, rows: [
+    { origin: 'installed', enabled: true, installed_enabled: true, path: localPath, label: 'Old HostUtilities', version: '2.0.2',
+      repository: { provider: 'github', owner: 'OriginalOwner', repository: 'HostUtilities' }, node_id: 'disk:old' },
+    { origin: 'planned', enabled: true, label: 'Planned HostUtilities', name_i18n: { 'zh-CN': '计划版街机 MOD' }, version: '2.0.3',
+      repository: { provider: 'gitee', owner: 'MirrorOwner', repository: 'HostUtilities' }, node_id: 'mod:opaque-new-source' },
+  ] }
+  function fail(evidence) {
+    fixture.state.value = { phase: 'failed', plan: null, silent: false,
+      error: `modChanges.duplicatePluginRuntime?evidence=${encodeURIComponent(JSON.stringify(evidence))}` }
+    return nextTick()
+  }
+  await fail(base)
+  const origins = () => find(root, node => node.tag === 'li' && node.props?.['data-evidence-origin'])
+  const markers = key => find(root, node => node.props?.[key] !== undefined)
+  assert.deepEqual(origins().map(node => node.props['data-evidence-origin']), ['installed', 'planned'])
+  assert.match(text(origins()[0]), /Old HostUtilities.*GitHub.*OriginalOwner\/HostUtilities/)
+  assert.match(text(origins()[1]), /计划版街机 MOD.*Gitee.*MirrorOwner\/HostUtilities/)
+  assert.doesNotMatch(text(root), /opaque-new-source|\{paths\}|不需要的副本移出插件目录/)
+  assert.equal(markers('data-evidence-path-pending').length, 1)
+  assert.equal(markers('data-evidence-locate').length, 1)
+  assert.equal(text(markers('data-evidence-path')[0]), localPath)
+
+  await fail({ ...base, rows: [base.rows[0], { ...base.rows[1], projected_path: projectedPath }] })
+  assert.equal(markers('data-evidence-path-pending').length, 0)
+  assert.equal(markers('data-evidence-locate').length, 1)
+  assert.match(text(markers('data-evidence-projected-path')[0]), /BepInEx\/plugins\/New HostUtilities\/HostUtilities\.dll/)
 })
 
 test('read-and-apply reflects its exact plan and restarts the countdown when either changes', async t => {

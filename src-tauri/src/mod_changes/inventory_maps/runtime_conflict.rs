@@ -60,7 +60,7 @@ pub(in crate::mod_changes) fn solve_toggle(
             (*index == map_index || (original.nodes[*index].enabled && plugin.enabled))
                 .then_some((&original.nodes[*index], *plugin))
         });
-        let Some(error) = super::super::evidence::duplicate_runtime(trusted, guid, would_load)
+        let Some(error) = super::super::evidence::duplicate_runtime(session, guid, would_load)
         else {
             continue;
         };

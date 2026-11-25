@@ -166,3 +166,105 @@ async fn relocation_cannot_reclaim_a_record_with_a_live_copy_from_another_source
     assert_eq!(test.server.request_count(), 0);
     assert_eq!(test.fingerprints(), before);
 }
+
+#[test]
+fn duplicate_runtime_distinguishes_a_retired_github_binding_and_a_catalog_candidate() {
+    let test = setup_relocation();
+    let mut config = test.fixture.state.config.load_or_default();
+    let repo = config
+        .repositories
+        .iter_mut()
+        .find(|repo| repo.id == REPO)
+        .unwrap();
+    repo.provider = Provider::Gitee;
+    repo.username = "MirrorOwner".into();
+    repo.name = "Planned HostUtilities".into();
+    test.fixture.state.config.save(&config).unwrap();
+    write(&test.fixture.game.join(OTHER_COPY), &mod_dll());
+    let mut installed = test.old_record();
+    installed.repository_id = "7134b722-0196-4529-8deb-10dc40f2307c".into();
+    installed.files = vec![OTHER_COPY.into()];
+    installed
+        .package_name_i18n
+        .insert("en".into(), "Original HostUtilities".into());
+    installed.repository_binding = Some(ModRepositoryBinding {
+        provider: Provider::Github,
+        owner: "OriginalOwner".into(),
+        ..installed.repository_binding.take().unwrap()
+    });
+    test.write_record(&installed);
+
+    let mut selection = request(REPO, Some(TAG), true);
+    selection.roots[0].asset_name = Some(ASSET.into());
+    let before = test.fingerprints();
+    let error = planning::create(&test.fixture.state, selection).unwrap_err();
+    let evidence = runtime_evidence(&error);
+    assert_eq!(evidence["runtime_conflict"], true);
+    let rows = evidence["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    let local = rows
+        .iter()
+        .find(|row| row["origin"] == "installed")
+        .unwrap();
+    assert_eq!(local["path"], OTHER_COPY);
+    assert_eq!(local["installed_enabled"], true);
+    assert_eq!(local["name_i18n"]["en"], "Original HostUtilities");
+    assert_eq!(local["repository"]["provider"], "github");
+    assert_eq!(local["repository"]["owner"], "OriginalOwner");
+    let planned = rows.iter().find(|row| row["origin"] == "planned").unwrap();
+    assert_eq!(planned["label"], "Planned HostUtilities");
+    assert_eq!(planned["repository"]["provider"], "gitee");
+    assert_eq!(planned["repository"]["owner"], "MirrorOwner");
+    assert_eq!(planned["repository"]["repository"], test.binding.repository);
+    assert!(planned["path"].is_null() && planned["projected_path"].is_null());
+    assert!(rows.iter().all(|row| row["source"].is_null()));
+    assert_eq!(test.server.request_count(), 0);
+    assert_eq!(test.fingerprints(), before);
+}
+
+#[tokio::test]
+async fn duplicate_runtime_after_package_verification_shows_the_exact_projected_path() {
+    const EXTRA_GUID: &str = "com.example.extra-provider";
+    const EXTRA: &str = "MiXeD Extra/Runtime.dll";
+    const TARGET_EXTRA: &str = "BepInEx/plugins/FixtureMod/v2.0.0/MiXeD Extra/Runtime.dll";
+    let mut extra = PE.to_vec();
+    extra.extend(mods::plugin_blob(EXTRA_GUID, "Runtime", "2.0.0"));
+    let test = setup_asset(
+        true,
+        zip(&[
+            ("FixtureMod/v2.0.0/Fixture.dll", &mod_dll()),
+            (&format!("FixtureMod/v2.0.0/{EXTRA}"), &extra),
+        ]),
+    );
+    let local = "BepInEx/plugins/InstalledRuntime/Runtime.dll";
+    let mut old = PE.to_vec();
+    old.extend(mods::plugin_blob(EXTRA_GUID, "Runtime", "1.0.0"));
+    write(&test.fixture.game.join(local), &old);
+    let before = Fingerprint::capture(&test.fixture.game).unwrap();
+    let outcome = test.prepare().await;
+    assert_eq!(outcome.progress.stage, PreparationStage::Failed);
+    let evidence = runtime_evidence(outcome.error.as_deref().unwrap());
+    assert_eq!(evidence["guid"], EXTRA_GUID);
+    let rows = evidence["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    let installed = rows
+        .iter()
+        .find(|row| row["origin"] == "installed")
+        .unwrap();
+    assert_eq!(installed["path"], local);
+    assert!(installed["repository"].is_null());
+    let planned = rows.iter().find(|row| row["origin"] == "planned").unwrap();
+    assert_eq!(planned["projected_path"], TARGET_EXTRA);
+    assert!(planned["path"].is_null());
+    assert_eq!(Fingerprint::capture(&test.fixture.game).unwrap(), before);
+}
+
+fn runtime_evidence(error: &str) -> serde_json::Value {
+    let query = error
+        .strip_prefix("modChanges.duplicatePluginRuntime?")
+        .unwrap();
+    let (_, evidence) = url::form_urlencoded::parse(query.as_bytes())
+        .find(|(key, _)| key == "evidence")
+        .unwrap();
+    serde_json::from_str(&evidence).unwrap()
+}

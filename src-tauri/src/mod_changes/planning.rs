@@ -777,7 +777,7 @@ fn resolve_inner(
     }
     *step = "validate_solution";
     let retirements = if let Some(solved) = &solved {
-        inventory::validate_solution(&session.trusted, &session.request, solved, &unbound)?;
+        inventory::validate_solution(session, solved, &unbound)?;
         session
             .trusted
             .duplicate_releases
@@ -824,15 +824,12 @@ fn resolve_inner(
             {
                 summary.enabled = node.enabled;
                 if let Some(candidate) = &node.current {
-                    let payload = session
-                        .verified_payloads
-                        .get(&(node.id.clone(), candidate.id.clone()))
-                        .or_else(|| {
-                            session
-                                .payloads
-                                .get(&node.id)
-                                .filter(|payload| payload.candidate.id == candidate.id)
-                        });
+                    let payload = Payload::verified(
+                        &session.verified_payloads,
+                        &session.payloads,
+                        &node.id,
+                        &candidate.id,
+                    );
                     let staged_roles = session
                         .map_payload
                         .as_ref()
@@ -877,14 +874,9 @@ fn resolve_inner(
                                         .and_then(|files| files.get(key))
                                         .cloned()
                                         .or_else(|| {
-                                            payload.and_then(|payload| {
-                                                payload.files.iter().find_map(|file| {
-                                                    let canonical =
-                                                        crate::mods::canonical_dll_name(file);
-                                                    (inventory::key(&canonical) == *key)
-                                                        .then_some(canonical)
-                                                })
-                                            })
+                                            payload
+                                                .and_then(|payload| payload.member_file(key))
+                                                .map(crate::mods::canonical_dll_name)
                                         })
                                         .or_else(|| {
                                             summary

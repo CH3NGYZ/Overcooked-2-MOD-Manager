@@ -403,12 +403,7 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
         session
             .release_target_claims
             .verify(state, session, solved)?;
-        inventory::validate_solution(
-            &session.trusted,
-            &session.request,
-            solved,
-            &session.unbound_toggle_roots(),
-        )?;
+        inventory::validate_solution(session, solved, &session.unbound_toggle_roots())?;
     }
     let roots = mutations::transaction_roots(state, session)?;
     if let Some(batch) = &session.map_payload {

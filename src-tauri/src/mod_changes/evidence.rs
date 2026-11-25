@@ -1,15 +1,21 @@
 use super::{
     evaluate::same_guid,
     inventory::{self, TrustedInventory},
-    model::{Candidate, ChangeNode, DiagnosticTarget, Inventory, ProvidedPlugin, SolveResult},
+    model::{
+        Candidate, ChangeNode, DiagnosticTarget, Inventory, NodeKind, ProvidedPlugin, SolveResult,
+    },
+    session::{Payload, PlanSession},
 };
-use crate::{models::InstalledMod, mods};
+use crate::{
+    models::{InstalledMod, Provider},
+    mods,
+};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
 const ROW_LIMIT: usize = 24;
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct ProviderFact {
     #[serde(skip_serializing_if = "Option::is_none")]
     node_id: Option<String>,
@@ -20,13 +26,46 @@ pub(crate) struct ProviderFact {
     #[serde(skip_serializing_if = "Option::is_none")]
     path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    projected_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    source: Option<String>,
+    label: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    name_i18n: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repository: Option<RepositoryFact>,
     origin: Origin,
     enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     installed_enabled: Option<bool>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+struct RepositoryFact {
+    provider: Provider,
+    owner: String,
+    repository: String,
+}
+
+impl RepositoryFact {
+    fn from_coordinates(provider: &Provider, owner: &str, repository: &str) -> Option<Self> {
+        let (owner, repository) =
+            crate::providers::repository_coordinates(owner, repository).ok()?;
+        Some(Self {
+            provider: provider.clone(),
+            owner,
+            repository,
+        })
+    }
+
+    fn from_installed(item: &InstalledMod) -> Option<Self> {
+        let binding = item
+            .repository_binding
+            .as_ref()
+            .filter(|binding| binding.is_valid())?;
+        Self::from_coordinates(&binding.provider, &binding.owner, &binding.repository)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -43,6 +82,8 @@ pub(crate) struct ProviderEvidence {
     rows: Vec<ProviderFact>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     truncated: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    runtime_conflict: bool,
 }
 
 impl ProviderEvidence {
@@ -54,21 +95,14 @@ impl ProviderEvidence {
             guid: guid.into(),
             rows,
             truncated,
+            runtime_conflict: false,
         }
     }
 
     fn error(&self, tag: &str) -> String {
-        self.error_with_params(tag, &[])
-    }
-
-    fn error_with_params(&self, tag: &str, params: &[(&str, &str)]) -> String {
         match serde_json::to_string(self) {
-            Ok(evidence) => {
-                let mut fields = params.to_vec();
-                fields.push(("evidence", &evidence));
-                crate::locale_tag::with_params(tag, &fields)
-            }
-            Err(_) => crate::locale_tag::with_params(tag, params),
+            Ok(evidence) => crate::locale_tag::with_params(tag, &[("evidence", &evidence)]),
+            Err(_) => tag.into(),
         }
     }
 }
@@ -90,8 +124,11 @@ pub(crate) fn framework_ambiguity(mods: &[&InstalledMod]) -> String {
             candidate_id: None,
             member_key: None,
             path: Some(physical_path(&item.dll_file, item.enabled)),
+            projected_path: None,
             version: item.version.clone(),
-            source: item.repository_id.clone(),
+            label: item.plugin_name.clone(),
+            name_i18n: item.package_name_i18n.clone(),
+            repository: RepositoryFact::from_installed(item),
             origin: Origin::Installed,
             enabled: item.enabled,
             installed_enabled: Some(item.enabled),
@@ -110,11 +147,11 @@ pub(crate) fn planned_framework_ambiguity<'a>(
             candidate_id: node.current.as_ref().map(|candidate| candidate.id.clone()),
             member_key: member.member_key.clone(),
             path: None,
+            projected_path: None,
             version: member.version.clone(),
-            source: node
-                .current
-                .as_ref()
-                .and_then(|candidate| candidate.source_id.clone()),
+            label: None,
+            name_i18n: BTreeMap::new(),
+            repository: None,
             origin: Origin::Planned,
             enabled: node.enabled && member.enabled,
             installed_enabled: None,
@@ -219,7 +256,7 @@ fn fact(
 }
 
 pub(crate) fn duplicate_runtime<'a>(
-    trusted: &TrustedInventory,
+    session: &PlanSession,
     guid: &str,
     members: impl IntoIterator<Item = (&'a ChangeNode, &'a ProvidedPlugin)>,
 ) -> Option<String> {
@@ -227,19 +264,87 @@ pub(crate) fn duplicate_runtime<'a>(
         .into_iter()
         .filter_map(|(node, plugin)| {
             let candidate = node.current.as_ref()?;
-            Some(fact(trusted, &node.id, candidate, plugin, true, false))
+            let mut row = fact(&session.trusted, &node.id, candidate, plugin, true, false);
+            if row.path.is_none()
+                && !candidate.verification_pending
+                && let Some(key) = plugin.member_key.as_deref()
+            {
+                row.projected_path = verified_path(session, &node.id, &candidate.id, key)
+                    .map(|path| physical_path(path, true));
+            }
+            Some(row)
         })
         .collect();
     if rows.len() < 2 {
         return None;
     }
-    let evidence = ProviderEvidence::new(guid, rows);
-    let paths = evidence.rows.iter().filter_map(|row| row.path.as_deref());
-    let locations = paths.collect::<Vec<_>>().join(" · ");
-    Some(evidence.error_with_params(
-        "modChanges.duplicatePluginRuntime",
-        &[("guid", guid), ("paths", &locations)],
-    ))
+    let mut evidence = ProviderEvidence::new(guid, rows);
+    evidence.runtime_conflict = true;
+    Some(evidence.error("modChanges.duplicatePluginRuntime"))
+}
+
+fn verified_path<'a>(
+    session: &'a PlanSession,
+    node: &str,
+    candidate: &str,
+    key: &str,
+) -> Option<&'a str> {
+    if let Some(path) = session
+        .map_payload
+        .as_ref()
+        .and_then(|batch| batch.member_files.get(candidate))
+        .and_then(|files| files.get(key))
+    {
+        return Some(path);
+    }
+    Payload::verified(
+        &session.verified_payloads,
+        &session.payloads,
+        node,
+        candidate,
+    )?
+    .member_file(key)
+}
+
+fn repository_for_target(
+    trusted: &TrustedInventory,
+    target: &DiagnosticTarget,
+    installed: Option<&inventory::MemberSummary>,
+    summary: Option<&inventory::NodeSummary>,
+) -> Option<RepositoryFact> {
+    let map = summary.is_some_and(|item| {
+        item.kind == NodeKind::Map || item.bundle_parent_node_id.is_some() && item.map_id.is_some()
+    });
+    if map {
+        let source = match installed {
+            Some(_) => summary?.map_id.as_ref(),
+            None => target.source.as_ref(),
+        }?;
+        let repo = trusted
+            .config
+            .map_repositories
+            .iter()
+            .find(|repo| repo.id == *source)?;
+        return RepositoryFact::from_coordinates(&repo.provider, &repo.username, &repo.repository);
+    }
+    if let Some(member) = installed {
+        let mut matches = trusted
+            .installed_mods
+            .iter()
+            .filter(|item| item.dll_file == member.dll_file && item.enabled == member.enabled);
+        let item = matches.next()?;
+        if matches.next().is_some() {
+            return None;
+        }
+        return RepositoryFact::from_installed(item);
+    }
+    let source = target.source.as_ref()?;
+    let repo = trusted
+        .config
+        .repositories
+        .iter()
+        .find(|repo| repo.id == *source)?;
+    RepositoryFact::from_coordinates(&repo.provider, &repo.username, &repo.repository)
 }
 
 fn fact_for_target(
@@ -254,13 +359,24 @@ fn fact_for_target(
         .and_then(|(member, candidate)| {
             installed_member(trusted, &target.node_id, candidate, member)
         });
+    let summary = trusted
+        .files
+        .get(&target.node_id)
+        .map(|files| &files.summary);
     ProviderFact {
         node_id: Some(target.node_id.clone()),
         candidate_id: target.candidate_id.clone(),
         member_key: target.member_key.clone(),
         path: installed.map(|item| physical_path(&item.dll_file, item.enabled)),
+        projected_path: None,
         version: target.version.clone(),
-        source: target.source.clone(),
+        label: summary
+            .map(|item| item.label.clone())
+            .filter(|label| !label.trim().is_empty()),
+        name_i18n: summary
+            .map(|item| item.name_i18n.clone())
+            .unwrap_or_default(),
+        repository: repository_for_target(trusted, target, installed, summary),
         origin: if selected {
             Origin::Selected
         } else if installed.is_some() {
@@ -274,12 +390,16 @@ fn fact_for_target(
 }
 
 fn enrich_group(
-    groups: &mut BTreeMap<String, BTreeSet<ProviderFact>>,
+    groups: &mut BTreeMap<String, Vec<ProviderFact>>,
     guid: &str,
     facts: impl IntoIterator<Item = ProviderFact>,
 ) {
     let rows = groups.entry(guid.trim().to_ascii_lowercase()).or_default();
-    rows.extend(facts);
+    for fact in facts {
+        if !rows.contains(&fact) {
+            rows.push(fact);
+        }
+    }
 }
 
 fn members<'a>(

@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { CopyOutline, FolderOpenOutline } from '@vicons/ionicons5'
 import HeaderIconAction from '../components/HeaderIconAction.vue'
-import { t } from '../i18n'
+import { pickI18n, t } from '../i18n'
 import { backendMessageOf } from '../locale/backend'
 import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
-import type { EvidenceRow } from './evidence'
+import { formatEvidenceRepository, type EvidenceRow } from './evidence'
 
 defineProps<{ rows: readonly EvidenceRow[]; guid?: string; truncated?: boolean; names?: ReadonlyMap<string, string> }>()
 const notify = useNotify()
@@ -32,16 +32,22 @@ async function visit(path: string, locate: boolean) {
             <span v-if="row.provider.installed_enabled !== undefined && row.provider.installed_enabled !== row.provider.enabled">
               {{ t('modChanges.evidence.diskState', { state: status(row.provider.installed_enabled) }) }}
             </span>
-            <span v-if="row.provider.node_id && names?.get(row.provider.node_id)">{{ names.get(row.provider.node_id) }}</span>
-            <span v-if="row.provider.source">{{ row.provider.source }}</span>
+            <span>{{ pickI18n(row.provider.name_i18n, row.provider.label || (row.provider.node_id && names?.get(row.provider.node_id)) || '') }}</span>
+            <span v-if="row.provider.repository">{{ formatEvidenceRepository(row.provider.repository) }}</span>
           </div>
           <code v-if="row.path" class="evidence-path" data-evidence-path>{{ row.path }}</code>
+          <div v-if="row.provider?.projected_path" class="evidence-path" data-evidence-projected-path>
+            {{ t('modChanges.evidence.projectedPath') }} <code>{{ row.provider.projected_path }}</code>
+          </div>
+          <div v-else-if="row.provider && !row.path && row.provider.origin !== 'installed'" class="evidence-path" data-evidence-path-pending>
+            {{ t('modChanges.evidence.pendingPath') }}
+          </div>
         </div>
-        <div v-if="row.path" class="evidence-buttons">
-          <HeaderIconAction v-if="row.locate" :label="t('modChanges.evidence.reveal')" :description="row.path" quaternary
-            data-evidence-locate @click="visit(row.path!, true)"><FolderOpenOutline width="15" height="15" /></HeaderIconAction>
-          <HeaderIconAction :label="t('modChanges.evidence.copyPath')" :description="row.path" quaternary
-            data-evidence-copy @click="visit(row.path!, false)"><CopyOutline width="15" height="15" /></HeaderIconAction>
+        <div v-if="row.path || row.provider?.projected_path" class="evidence-buttons">
+          <HeaderIconAction v-if="row.locate && row.path" :label="t('modChanges.evidence.reveal')" :description="row.path" quaternary
+            data-evidence-locate @click="visit(row.path, true)"><FolderOpenOutline width="15" height="15" /></HeaderIconAction>
+          <HeaderIconAction :label="t('modChanges.evidence.copyPath')" :description="row.path || row.provider?.projected_path" quaternary
+            data-evidence-copy @click="visit((row.path || row.provider?.projected_path)!, false)"><CopyOutline width="15" height="15" /></HeaderIconAction>
         </div>
       </li>
     </ul>

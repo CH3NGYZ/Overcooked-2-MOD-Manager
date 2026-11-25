@@ -9,6 +9,8 @@ export const modChangeEvidence: DomainMessages = {
   'evidence.selected': { 'zh-CN': '方案选用', 'zh-TW': '方案選用', en: 'Selected by plan', ko: '계획에서 선택됨', ja: '計画で選択' },
   'evidence.diskState': { 'zh-CN': '磁盘现状：{state}', 'zh-TW': '磁碟現況：{state}', en: 'On disk: {state}', ko: '디스크 상태: {state}', ja: 'ディスク上：{state}' },
   'evidence.unknownVersion': { 'zh-CN': '版本未确认', 'zh-TW': '版本未確認', en: 'Version unknown', ko: '버전 미확인', ja: 'バージョン不明' },
+  'evidence.projectedPath': { 'zh-CN': '计划写入：', 'zh-TW': '計畫寫入：', en: 'Planned destination:', ko: '설치 예정 위치:', ja: '書き込み予定先：' },
+  'evidence.pendingPath': { 'zh-CN': '尚未确认目标路径，需先验证安装包。', 'zh-TW': '尚未確認目標路徑，需先驗證安裝套件。', en: 'The destination is unknown until the package is verified.', ko: '설치 패키지를 검증하기 전에는 대상 경로를 알 수 없습니다.', ja: 'インストールパッケージを検証するまで書き込み先は未確定です。' },
   'evidence.copyPath': { 'zh-CN': '复制路径', 'zh-TW': '複製路徑', en: 'Copy path', ko: '경로 복사', ja: 'パスをコピー' },
   'evidence.reveal': { 'zh-CN': '在文件管理器中定位', 'zh-TW': '在檔案總管中定位', en: 'Show in file manager', ko: '파일 관리자에서 보기', ja: 'ファイルマネージャーで表示' },
   'evidence.truncated': { 'zh-CN': '还有未显示的副本。', 'zh-TW': '還有未顯示的副本。', en: 'Additional copies are not shown.', ko: '표시되지 않은 복사본이 더 있습니다.', ja: '表示されていないコピーがあります。' },
@@ -32,5 +34,12 @@ export const modChangeEvidence: DomainMessages = {
     en: 'These are candidates considered by the solver, not files to delete. Change the selected package or version and recalculate.',
     ko: '아래는 계산에 사용된 후보이며 삭제할 파일이 아닙니다. 선택한 패키지나 버전을 변경하고 다시 계산하세요.',
     ja: '以下は計算時に検討した候補で、削除するファイルではありません。選択したパッケージやバージョンを変えて再計算してください。',
+  },
+  'evidence.checkRuntimePlan': {
+    'zh-CN': '本地已安装项与本次候选发生冲突。若要保留本地版本，请取消本次变更；若要安装候选，请先关闭游戏并停用不再需要的本地副本，再重试。',
+    'zh-TW': '本機已安裝項目與這次的候選發生衝突。若要保留本機版本，請取消這次變更；若要安裝候選，請先關閉遊戲並停用不再需要的本機副本，再試一次。',
+    en: 'An installed copy conflicts with a candidate in this plan. Cancel to keep the installed copy, or close the game and disable the installed copy you no longer need before retrying.',
+    ko: '설치된 복사본이 이번 후보와 충돌합니다. 설치된 버전을 유지하려면 취소하세요. 후보를 설치하려면 게임을 종료하고 더 이상 필요하지 않은 복사본을 비활성화한 뒤 다시 시도하세요.',
+    ja: 'インストール済みのコピーが今回の候補と競合しています。既存のコピーを残す場合はキャンセルし、候補を入れる場合はゲームを終了して不要なコピーを無効にしてから再試行してください。',
   },
 }

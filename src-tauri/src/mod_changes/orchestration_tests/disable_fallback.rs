@@ -156,8 +156,7 @@ fn ready_session(test: &DisableFixture) -> PlanSession {
 
     verify_selected(f, &mut session);
     inventory::validate_solution(
-        &session.trusted,
-        &session.request,
+        &session,
         session.solved.as_ref().unwrap(),
         &session.unbound_toggle_roots(),
     )

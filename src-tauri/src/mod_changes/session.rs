@@ -244,6 +244,30 @@ pub(crate) struct Payload {
     pub member_roles: BTreeMap<String, crate::models::DllRole>,
 }
 
+impl Payload {
+    pub(super) fn verified<'a>(
+        verified: &'a HashMap<(String, String), Self>,
+        staged: &'a HashMap<String, Self>,
+        node: &str,
+        candidate: &str,
+    ) -> Option<&'a Self> {
+        verified
+            .get(&(node.to_owned(), candidate.to_owned()))
+            .or_else(|| {
+                staged
+                    .get(node)
+                    .filter(|payload| payload.candidate.id == candidate)
+            })
+    }
+
+    pub(super) fn member_file(&self, key: &str) -> Option<&str> {
+        self.files
+            .iter()
+            .find(|path| super::inventory::key(&crate::mods::canonical_dll_name(path)) == key)
+            .map(String::as_str)
+    }
+}
+
 pub(crate) struct PlanSession {
     pub trusted: TrustedInventory,
     pub request: ChangeRequest,

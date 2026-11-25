@@ -679,12 +679,13 @@ pub(crate) fn cached(state: &AppState) -> Result<std::sync::Arc<TrustedInventory
 /// Ownership and duplicate barriers apply only to the chosen roots, changed nodes
 /// and their required closure. Unrelated baseline problems never authorize writes.
 pub(crate) fn validate_solution(
-    trusted: &TrustedInventory,
-    request: &ChangeRequest,
+    session: &super::session::PlanSession,
     solved: &Inventory,
     suppressed: &BTreeSet<&str>,
 ) -> Result<(), String> {
     use super::evaluate::targets;
+    let trusted = &session.trusted;
+    let request = &session.request;
     if let Some(id) = request.repair_dependencies_of.as_deref() {
         let before = trusted.inventory.nodes.iter().find(|node| node.id == id);
         let after = solved.nodes.iter().find(|node| node.id == id);
@@ -775,7 +776,7 @@ pub(crate) fn validate_solution(
                 && plugin.enabled
                 && !plugin.guid.trim().is_empty()
                 && let Some(error) = super::evidence::duplicate_runtime(
-                    trusted,
+                    session,
                     &plugin.guid,
                     targets(solved, &plugin.guid, true)
                         .into_iter()

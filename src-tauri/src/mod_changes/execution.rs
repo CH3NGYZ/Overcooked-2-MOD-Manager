@@ -142,12 +142,7 @@ fn commit_inner(
     *step = "verify_frozen_payloads";
     preparation::verify_fingerprints(&session.payload_fingerprints)?;
     *step = "validate_solution";
-    inventory::validate_solution(
-        &session.trusted,
-        &session.request,
-        solved,
-        &session.unbound_toggle_roots(),
-    )?;
+    inventory::validate_solution(session, solved, &session.unbound_toggle_roots())?;
     *step = "verify_map_claims";
     let roots = mutations::transaction_roots(state, session)?;
     if let Some(batch) = &session.map_payload {

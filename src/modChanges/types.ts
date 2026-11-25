@@ -1,4 +1,4 @@
-import type { DownloadProgress, MapInstallOrigin, RepositoryRelation } from '../types'
+import type { DownloadProgress, MapInstallOrigin, Provider, RepositoryRelation } from '../types'
 
 /** Rust mod_changes/model.rs is the authority for relation and action semantics. */
 export interface RootIntent { node_id: string; candidate_id?: string; enabled: boolean; member_key?: string; asset_name?: string }
@@ -90,13 +90,16 @@ export interface ProviderEvidenceRow {
   candidate_id?: string
   member_key?: string
   path?: string
+  projected_path?: string
   version?: string
-  source?: string
+  label?: string
+  name_i18n?: Record<string, string>
+  repository?: { provider: Provider; owner: string; repository: string }
   origin: 'installed' | 'planned' | 'selected'
   enabled: boolean
   installed_enabled?: boolean
 }
-export interface ProviderEvidence { guid: string; rows: ProviderEvidenceRow[]; truncated?: boolean }
+export interface ProviderEvidence { guid: string; rows: ProviderEvidenceRow[]; truncated?: boolean; runtime_conflict?: boolean }
 export interface BundledDllDisplay {
   parent_node_id: string
   node_id: string

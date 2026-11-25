@@ -53,17 +53,19 @@ export function retryAppUpdateDownload(): void {
   if (channel) void stageUpdate(channel)
 }
 
-function openStoreUpdates(): Promise<void> {
-  return openingStore ??= api.openUpdateRepository().then(result => {
+export function openAppUpdatePage(version?: string): Promise<void> {
+  const open = (targetVersion?: string) => api.openUpdateRepository(targetVersion).then(result => {
     if (!result.ok) throw new Error(result.message)
-  }).finally(() => { openingStore = undefined })
+  })
+  if (appUpdateState.distribution !== 'microsoft_store') return open(version)
+  return openingStore ??= open().finally(() => { openingStore = undefined })
 }
 
 async function runCheck(force: boolean): Promise<void> {
   await startupRecovery
   if (appUpdateState.distribution === 'microsoft_store') {
     setCheckingUpdateRecovery(false)
-    if (force) await openStoreUpdates()
+    if (force) await openAppUpdatePage()
     return
   }
   if (!beginAppUpdateCheck()) return
@@ -71,7 +73,7 @@ async function runCheck(force: boolean): Promise<void> {
   const channel = finishAppUpdateCheck(result)
   setCheckingUpdateRecovery(false)
   if (channel) void stageUpdate(channel)
-  else if (force && result?.distribution === 'microsoft_store') await openStoreUpdates()
+  else if (force && result?.distribution === 'microsoft_store') await openAppUpdatePage()
 }
 
 export function checkForAppUpdate(force = true): Promise<void> {

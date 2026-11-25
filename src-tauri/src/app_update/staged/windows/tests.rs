@@ -33,6 +33,19 @@ fn validates_only_declared_attempt_tokens() {
 }
 
 #[test]
+fn standalone_installers_cannot_overlap_and_do_not_reuse_existing_mutexes() {
+    let name = format!(r"Global\OC2ModManager-installer-test-{}", Uuid::new_v4());
+    let name = OsStr::new(&name);
+    assert!(!InstallerSlot::visible(name));
+    let first = InstallerSlot::open(name).unwrap();
+    assert!(InstallerSlot::visible(name));
+    assert!(matches!(InstallerSlot::open(name), Err(error) if error == "update.inProgress"));
+    drop(first);
+    assert!(!InstallerSlot::visible(name));
+    assert!(InstallerSlot::open(name).is_ok());
+}
+
+#[test]
 fn does_not_overwrite_a_renamed_manager() {
     let work = tempfile::tempdir().unwrap();
     let renamed = work.path().join("other.exe");

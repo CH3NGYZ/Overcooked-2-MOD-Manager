@@ -27,7 +27,7 @@ const { usePageLeaveGuard } = await import('../src/composables/usePageLeaveGuard
 const { useAppCloseGuard, registerPageLeaveGuard } = await import('../src/composables/useAppCloseGuard.ts')
 const { appUpdateState, beginAppUpdateCheck, finishAppUpdateCheck, retryBackgroundAppUpdate, finishBackgroundAppUpdate,
   beginStagedAppUpdate, finishStagedAppUpdate, dismissAppUpdateNotes } = await import('../src/appUpdateState.ts')
-const offer = { version: 'test', background_install: true, source_channel: 'fixture' }
+const offer = { version: 'test', install_mode: 'deferred', source_channel: 'fixture' }
 const offerResult = { update: offer, all_failed: false }
 const tick = async () => { await nextTick(); await new Promise(resolve => setImmediate(resolve)) }
 const deferred = () => { let resolve, reject; const promise = new Promise((r, j) => { resolve = r; reject = j }); return { promise, resolve, reject } }

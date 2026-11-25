@@ -44,8 +44,22 @@ pub struct AppUpdateInfo {
     pub provider: Option<Provider>,
     #[serde(default)]
     pub source_channel: Option<String>,
-    #[serde(default)]
-    pub background_install: bool,
+    pub install_mode: AppUpdateInstallMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AppUpdateInstallMode {
+    Deferred,
+    RestartAsUser,
+    InstallAsAdministrator,
+    Manual,
+}
+
+impl AppUpdateInstallMode {
+    pub(crate) fn can_stage(self) -> bool {
+        matches!(self, Self::Deferred | Self::InstallAsAdministrator)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,8 +1,8 @@
-use super::download::VerifiedInstallerDownload;
 use super::receipt::Attempt;
 #[cfg(windows)]
 use super::receipt::Outcome;
-use crate::models::AppUpdateInfo;
+use super::{UpdateTarget, download::VerifiedInstallerDownload};
+use crate::models::{AppUpdateInfo, AppUpdateInstallMode};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
@@ -50,7 +50,10 @@ pub(crate) struct Recovery {
 }
 
 impl AppUpdates {
-    pub(crate) fn start_download(&self) -> Result<DownloadStart<'_>, String> {
+    pub(crate) fn start_download(
+        &self,
+        mode: AppUpdateInstallMode,
+    ) -> Result<DownloadStart<'_>, String> {
         let mut slot = self.slot.lock().map_err(|_| "lock.poisoned")?;
         if slot.recovery.is_some() {
             return Err(APPLY_FAILED.into());
@@ -58,9 +61,12 @@ impl AppUpdates {
         if slot.closing || slot.download.is_some() {
             return Err(IN_PROGRESS.into());
         }
-        if let Some(ready) = &slot.ready {
+        if let Some(ready) = &slot.ready
+            && ready.info.install_mode == mode
+        {
             return Ok(DownloadStart::Ready(Box::new(ready.info.clone())));
         }
+        slot.ready = None;
         let cancelled = Arc::new(AtomicBool::new(false));
         slot.download = Some(cancelled.clone());
         Ok(DownloadStart::Started(StageGuard {
@@ -159,23 +165,63 @@ impl Closing<'_> {
         if slot.recovery.is_some() {
             return Err(APPLY_FAILED.into());
         }
-        let ready = slot.ready.take();
         match update {
-            UpdateOnExit::Skip => Ok(None),
-            UpdateOnExit::Restart if ready.is_none() => Err(UNAVAILABLE.into()),
-            _ => Ok(ready),
+            UpdateOnExit::Skip => {
+                slot.ready = None;
+                Ok(None)
+            }
+            _ if deferred(&slot) => Ok(slot.ready.take()),
+            UpdateOnExit::Restart => Err(UNAVAILABLE.into()),
+            UpdateOnExit::Install => Ok(None),
         }
     }
 
-    pub(crate) fn has_ready(&self) -> Result<bool, String> {
-        Ok(self
-            .0
-            .slot
-            .lock()
-            .map_err(|_| "lock.poisoned")?
-            .ready
-            .is_some())
+    pub(crate) fn has_deferred(&self) -> Result<bool, String> {
+        let slot = self.0.slot.lock().map_err(|_| "lock.poisoned")?;
+        Ok(deferred(&slot))
     }
+
+    #[cfg(windows)]
+    pub(crate) fn administrator_destination(
+        &self,
+        version: &str,
+    ) -> Result<std::path::PathBuf, String> {
+        let slot = self.0.slot.lock().map_err(|_| "lock.poisoned")?;
+        Ok(administrator_ready(&slot, version)?
+            .prepared
+            .destination()
+            .to_owned())
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn take_administrator(&self, version: &str) -> Result<StagedInstaller, String> {
+        let mut slot = self.0.slot.lock().map_err(|_| "lock.poisoned")?;
+        administrator_ready(&slot, version)?;
+        slot.ready.take().ok_or_else(|| UNAVAILABLE.into())
+    }
+}
+
+fn deferred(slot: &Slot) -> bool {
+    slot.ready
+        .as_ref()
+        .is_some_and(|ready| ready.info.install_mode == AppUpdateInstallMode::Deferred)
+}
+
+#[cfg(windows)]
+fn administrator_ready<'slot>(
+    slot: &'slot Slot,
+    version: &str,
+) -> Result<&'slot StagedInstaller, String> {
+    if slot.recovery.is_some() {
+        return Err(APPLY_FAILED.into());
+    }
+    slot.ready
+        .as_ref()
+        .filter(|ready| {
+            ready.info.install_mode == AppUpdateInstallMode::InstallAsAdministrator
+                && ready.info.version == version
+        })
+        .ok_or_else(|| UNAVAILABLE.into())
 }
 
 impl Drop for Closing<'_> {
@@ -201,6 +247,11 @@ impl StagedInstaller {
     }
 
     pub(crate) fn handoff(self, app: &AppHandle, restart: bool) -> Result<(), String> {
+        if self.info.install_mode != AppUpdateInstallMode::Deferred
+            || UpdateTarget::current()?.install_mode() != AppUpdateInstallMode::Deferred
+        {
+            return Err(UNAVAILABLE.into());
+        }
         let attempt = Attempt::begin(
             self.prepared.source(),
             self.prepared.destination(),
@@ -212,7 +263,7 @@ impl StagedInstaller {
         {
             let _ = app;
             if let Err(error) = self.prepared.start(&attempt) {
-                let outcome = if error == UNAVAILABLE {
+                let outcome = if matches!(error.as_str(), UNAVAILABLE | IN_PROGRESS) {
                     Outcome::Abandoned
                 } else {
                     Outcome::Failed
@@ -226,6 +277,11 @@ impl StagedInstaller {
         {
             self.prepared.apply(app, &attempt)
         }
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn start_administrator(self) -> Result<(), String> {
+        self.prepared.start_admin()
     }
 }
 

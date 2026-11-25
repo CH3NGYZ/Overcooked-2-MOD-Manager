@@ -59,11 +59,16 @@ export function finishAppUpdateCheck(result?: AppUpdateCheckResult): string | un
   else if (!result || result.all_failed) state.stage = 'checkFailed'
   else if (!update) state.stage = 'current'
   else if (result.recovery_required) state.stage = 'recovery'
-  else if (update.background_install && update.source_channel) return startBackgroundAppUpdate(update.source_channel)
+  else if (update.install_mode === 'restartAsUser') setReadyUpdate(update)
+  else if (supportsStaging(update) && update.source_channel) return startBackgroundAppUpdate(update.source_channel)
   else {
     state.stage = 'stageFailed'
-    state.error = 'update.deferredUnsupported'
+    state.error = 'update.manualUpdateRequired'
   }
+}
+
+function supportsStaging(update: AppUpdateInfo | null): boolean {
+  return update?.install_mode === 'deferred' || update?.install_mode === 'installAsAdministrator'
 }
 
 function startBackgroundAppUpdate(channel: string): string {
@@ -80,8 +85,18 @@ export function retryBackgroundAppUpdate(): string | undefined {
 }
 
 export function canRetryAppUpdateDownload(): boolean {
-  return state.stage === 'stageFailed' && !['update.deferredUnsupported', 'update.installFailedManual'].includes(state.error)
-    && !!state.update?.background_install && !!state.update.source_channel
+  return state.stage === 'stageFailed'
+    && !manualAppUpdateErrors.has(state.error) && state.error !== 'update.installFailedManual'
+    && supportsStaging(state.update) && !!state.update?.source_channel
+}
+
+const manualAppUpdateErrors = new Set([
+  'update.manualUpdateRequired', 'update.deferredUnsupported', 'update.formatUnsupported',
+  'update.restartAsUserUnavailable', 'update.installAsAdministratorUnavailable',
+])
+
+export function appUpdateNeedsManualInstall(): boolean {
+  return state.stage === 'stageFailed' && manualAppUpdateErrors.has(state.error)
 }
 
 export function setBackgroundAppUpdateProgress(progress: DownloadProgress): void {
@@ -97,17 +112,30 @@ export function finishBackgroundAppUpdate(outcome: { update: AppUpdateInfo | nul
       : outcome.error === 'update.restartFailed' ? 'restartFailed' : 'stageFailed'
     return
   }
-  state.update = outcome.update
-  state.stage = outcome.update ? 'ready' : 'current'
-  state.notesPending = !!outcome.update && notesVersion(outcome.update) !== dismissedNotesVersion()
+  setReadyUpdate(outcome.update)
 }
 
 const dismissedNotesKey = 'oc2-update-dismissed-notes'
-const notesVersion = (update: AppUpdateInfo) => `${update.current_version}:${update.version}`
+const notesVersion = (update: AppUpdateInfo) => `${update.current_version}:${update.version}:${update.install_mode}`
 
 function dismissedNotesVersion(): string | null {
   try { return globalThis.sessionStorage?.getItem(dismissedNotesKey) ?? null }
   catch { return null }
+}
+
+function setReadyUpdate(update: AppUpdateInfo | null): void {
+  state.update = update
+  if (update?.install_mode === 'manual') {
+    state.stage = 'stageFailed'
+    state.error = 'update.manualUpdateRequired'
+  } else {
+    state.stage = update ? 'ready' : 'current'
+  }
+  state.notesPending = state.stage === 'ready' && !!update && notesVersion(update) !== dismissedNotesVersion()
+}
+
+export function showAppUpdateNotes(): void {
+  if (state.stage === 'ready' && state.update) state.notesPending = true
 }
 
 export function dismissAppUpdateNotes(): void {
@@ -117,19 +145,34 @@ export function dismissAppUpdateNotes(): void {
 }
 
 export function beginStagedAppUpdate(): boolean {
-  if (state.stage !== 'ready') return false
+  if (state.stage !== 'ready' || !state.update || state.update.install_mode === 'manual') return false
+  state.error = ''
   state.stage = 'applying'
   return true
+}
+
+export function cancelStagedAppUpdate(): void {
+  if (state.stage === 'applying') state.stage = 'ready'
 }
 
 export function finishStagedAppUpdate(error?: unknown): void {
   if (state.stage !== 'applying') return
   const reason = error instanceof Error ? error.message : error
-  if (reason === 'update.stagedUnavailable' || reason === 'update.installFailedManual') {
+  if (reason === 'update.stagedUnavailable' || reason === 'update.installFailedManual'
+    || (typeof reason === 'string' && manualAppUpdateErrors.has(reason))) {
     state.error = reason
     state.notesPending = false
     state.stage = 'stageFailed'
     return
+  }
+  if (reason === 'update.rebootRequired' || reason === 'update.restartFailed') {
+    state.notesPending = false
+    state.stage = reason === 'update.rebootRequired' ? 'systemReboot' : 'restartFailed'
+    return
+  }
+  if (reason === 'update.restartAsUserFailed') {
+    state.error = reason
+    state.notesPending = true
   }
   state.stage = error === undefined ? 'handoff' : 'ready'
 }

@@ -13,7 +13,7 @@ use crate::archive;
 use crate::archive::DownloadRoute as AssetDownloadRoute;
 use crate::download::DownloadContext;
 use crate::download::history::RaceSession;
-use crate::models::AppUpdateInfo;
+use crate::models::{AppUpdateInfo, AppUpdateInstallMode};
 use crate::network_policy::NetworkPolicy;
 use crate::releases;
 use futures_util::StreamExt;
@@ -342,6 +342,7 @@ pub(crate) async fn discover_and_download_installer_update(
     state: &AppState,
     app: &AppHandle,
     checked_channel: Option<&str>,
+    install_mode: AppUpdateInstallMode,
     is_cancelled: impl Copy + Fn() -> bool,
 ) -> Result<InstallerDownloadAttempt, String> {
     if is_cancelled() {
@@ -370,10 +371,11 @@ pub(crate) async fn discover_and_download_installer_update(
     })?;
     // The supplied ID can only select a previously checked, official manifest.
     if let Some(channel) = checked_channel
-        && let Some(info) =
+        && let Some(mut info) =
             super::cache::app_update_cache_get(state, region).and_then(|result| result.update)
         && info.source_channel.as_deref() == Some(channel)
     {
+        info.install_mode = install_mode;
         emit_installer_phase(app, region, "download", None, Some(info.clone()));
         match prepare_and_download_installer(
             &download_client,
@@ -410,7 +412,8 @@ pub(crate) async fn discover_and_download_installer_update(
             }
             emit_installer_channel_status(app, region, status);
         },
-        |info| {
+        |mut info| {
+            info.install_mode = install_mode;
             let download_client = &download_client;
             let policy = &policy;
             let manifest_channels = &manifest_channels;

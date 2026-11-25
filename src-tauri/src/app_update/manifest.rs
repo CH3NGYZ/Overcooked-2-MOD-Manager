@@ -15,7 +15,8 @@ use crate::download::DownloadContext;
 use crate::download::try_download_candidates_with_progress;
 use crate::http_diagnostics::HttpRequestExt;
 use crate::models::{
-    AppConfig, AppUpdateChannelStatus, AppUpdateCheckResult, AppUpdateInfo, Provider,
+    AppConfig, AppUpdateChannelStatus, AppUpdateCheckResult, AppUpdateInfo, AppUpdateInstallMode,
+    Provider,
 };
 use crate::releases;
 use futures_util::StreamExt;
@@ -109,7 +110,7 @@ pub(crate) fn inspect_installer_manifest(
         installer_type: target.kind.into(),
         provider: Some(reference.provider),
         source_channel: Some(channel.id.clone()),
-        background_install: target.supports_background_install(),
+        install_mode: AppUpdateInstallMode::Manual,
     }))
 }
 

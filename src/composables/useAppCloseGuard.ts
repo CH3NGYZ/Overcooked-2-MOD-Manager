@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   appUpdateBlocksOperations, appUpdateState, beginAppUpdateRecovery, beginStagedAppUpdate,
-  failAppUpdateRecovery, finishStagedAppUpdate, type UpdateRecoveryDestination,
+  cancelStagedAppUpdate, failAppUpdateRecovery, finishStagedAppUpdate, type UpdateRecoveryDestination,
 } from '../appUpdateState'
 import { useModChanges } from '../modChanges/store'
 import { isChangePlanLocked } from '../modChanges/workflow'
@@ -48,8 +48,9 @@ export function useAppCloseGuard() {
     else unlisten.push(stop)
   }
 
-  async function requestExit(restart: boolean) {
+  async function requestExit(applyNow: boolean) {
     if (disposed || closing || appCloseBlocked()) return
+    const chosenUpdate = applyNow ? appUpdateState.update : null
     const guard = pageGuards.at(-1)
     if (guard?.blocked()) return
     closing = true
@@ -61,10 +62,25 @@ export function useAppCloseGuard() {
       }
       // A route change, save or update may start while its dialog is open.
       if (disposed || appCloseBlocked() || guard !== pageGuards.at(-1) || guard?.blocked()) return
-      applyingStaged = (restart || !appUpdateState.notesPending) && beginStagedAppUpdate()
-      if (restart && !applyingStaged) return
-      if (restart) await api.applyStagedAppUpdate()
-      else await api.exitApp(applyingStaged)
+      if (applyNow) {
+        if (!chosenUpdate || chosenUpdate !== appUpdateState.update || !beginStagedAppUpdate()) return
+        applyingStaged = true
+        switch (chosenUpdate.install_mode) {
+          case 'deferred': await api.applyStagedAppUpdate(); break
+          case 'restartAsUser': await api.restartUpdateAsUser(); break
+          case 'installAsAdministrator':
+            if (!await api.installUpdateAsAdministrator(chosenUpdate.version)) {
+              cancelStagedAppUpdate()
+              applyingStaged = false
+              return
+            }
+            break
+        }
+      } else {
+        applyingStaged = appUpdateState.update?.install_mode === 'deferred'
+          && !appUpdateState.notesPending && beginStagedAppUpdate()
+        await api.exitApp(applyingStaged)
+      }
       if (applyingStaged) finishStagedAppUpdate()
     } catch (reason) {
       const rejected = reason ?? (applyingStaged ? 'update.installFailedManual' : 'update.inProgress')
@@ -72,7 +88,7 @@ export function useAppCloseGuard() {
       const tag = rejected instanceof Error ? rejected.message : rejected
       if (tag === 'update.installFailedManual') {
         void refreshAppUpdateRecovery().catch(error => { if (!disposed) message.error(backendMessageOf(error)) })
-      } else if (!disposed && !(applyingStaged && appUpdateState.error === 'update.stagedUnavailable')) {
+      } else if (!disposed && !(applyingStaged && appUpdateState.error === tag)) {
         message.error(backendMessageOf(rejected))
       }
     } finally {

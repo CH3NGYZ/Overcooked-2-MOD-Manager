@@ -16,6 +16,7 @@ use winapi::{
     },
     um::{
         errhandlingapi::SetLastError,
+        minwinbase::SECURITY_ATTRIBUTES,
         processthreadsapi::{GetCurrentProcess, GetProcessTimes, OpenProcess},
         synchapi::{
             CreateEventW, OpenEventW, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
@@ -87,14 +88,40 @@ pub(crate) struct HandoffEvents {
 
 impl HandoffEvents {
     pub(crate) fn named(token: uuid::Uuid, create: bool) -> io::Result<Self> {
-        fn event(name: String, create: bool, access: u32) -> io::Result<OwnedHandle> {
+        Self::with_access(token, create, "Restart", null_mut())
+    }
+
+    pub(crate) fn protected_update(
+        token: uuid::Uuid,
+        attributes: Option<&mut SECURITY_ATTRIBUTES>,
+    ) -> io::Result<Self> {
+        Self::with_access(
+            token,
+            attributes.is_some(),
+            "AdminUpdate",
+            attributes.map_or(null_mut(), |value| value),
+        )
+    }
+
+    fn with_access(
+        token: uuid::Uuid,
+        create: bool,
+        purpose: &str,
+        attributes: *mut SECURITY_ATTRIBUTES,
+    ) -> io::Result<Self> {
+        fn event(
+            name: String,
+            create: bool,
+            access: u32,
+            attributes: *mut SECURITY_ATTRIBUTES,
+        ) -> io::Result<OwnedHandle> {
             let name = wide(OsStr::new(&name));
             if !create {
                 return owned_handle(unsafe { OpenEventW(access, 0, name.as_ptr()) });
             }
             let (handle, already_exists) = unsafe {
                 SetLastError(0);
-                let handle = CreateEventW(null_mut(), 1, 0, name.as_ptr());
+                let handle = CreateEventW(attributes, 1, 0, name.as_ptr());
                 let already_exists = !handle.is_null()
                     && io::Error::last_os_error().raw_os_error()
                         == Some(ERROR_ALREADY_EXISTS as i32);
@@ -110,10 +137,15 @@ impl HandoffEvents {
             Ok(handle)
         }
 
-        let prefix = format!(r"Local\OC2ModManager-Restart-{token}");
+        let prefix = format!(r"Local\OC2ModManager-{purpose}-{token}");
         Ok(Self {
-            ready: event(format!("{prefix}-Ready"), create, EVENT_MODIFY_STATE)?,
-            proceed: event(format!("{prefix}-Proceed"), create, SYNCHRONIZE)?,
+            ready: event(
+                format!("{prefix}-Ready"),
+                create,
+                EVENT_MODIFY_STATE,
+                attributes,
+            )?,
+            proceed: event(format!("{prefix}-Proceed"), create, SYNCHRONIZE, attributes)?,
         })
     }
 
@@ -150,14 +182,14 @@ impl HandoffEvents {
     }
 }
 
-fn owned_handle(handle: HANDLE) -> io::Result<OwnedHandle> {
+pub(crate) fn owned_handle(handle: HANDLE) -> io::Result<OwnedHandle> {
     if handle.is_null() {
         return Err(io::Error::last_os_error());
     }
     Ok(unsafe { OwnedHandle::from_raw_handle(handle.cast()) })
 }
 
-fn raw(handle: &OwnedHandle) -> HANDLE {
+pub(crate) fn raw(handle: &OwnedHandle) -> HANDLE {
     handle.as_raw_handle().cast()
 }
 
@@ -168,7 +200,7 @@ fn signal(event: &OwnedHandle) -> io::Result<()> {
     Ok(())
 }
 
-fn wait_for(handle: &OwnedHandle, timeout_ms: u32, message: &str) -> io::Result<()> {
+pub(crate) fn wait_for(handle: &OwnedHandle, timeout_ms: u32, message: &str) -> io::Result<()> {
     match unsafe { WaitForSingleObject(raw(handle), timeout_ms) } {
         WAIT_OBJECT_0 => Ok(()),
         WAIT_TIMEOUT => Err(io::Error::new(io::ErrorKind::TimedOut, message)),
@@ -188,7 +220,7 @@ fn creation_time(process: HANDLE) -> io::Result<u64> {
     Ok((u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
 }
 
-fn process_image(process: HANDLE) -> io::Result<PathBuf> {
+pub(crate) fn process_image(process: HANDLE) -> io::Result<PathBuf> {
     let mut name = vec![0; 32_768];
     let mut length = name.len() as u32;
     if unsafe { QueryFullProcessImageNameW(process, 0, name.as_mut_ptr(), &mut length) } == 0 {
@@ -228,7 +260,7 @@ pub(crate) fn complete_handoff() -> bool {
     }
 }
 
-fn wide(value: &OsStr) -> Vec<u16> {
+pub(crate) fn wide(value: &OsStr) -> Vec<u16> {
     value.encode_wide().chain([0]).collect()
 }
 

@@ -32,6 +32,17 @@ pub(crate) enum Installation {
     RestartFailed,
 }
 
+impl Installation {
+    pub(crate) fn update_block_reason(self) -> &'static str {
+        match self {
+            Self::Failed => "update.installFailedManual",
+            Self::Applying => "update.inProgress",
+            Self::RebootRequired => "update.rebootRequired",
+            Self::RestartFailed => "update.restartFailed",
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Attempt {
@@ -82,6 +93,29 @@ impl Attempt {
         installer_type: &str,
         restart: bool,
     ) -> Result<Self, String> {
+        Self::create_with(
+            root,
+            source,
+            destination,
+            version,
+            installer_type,
+            restart,
+            |path| {
+                fs::create_dir_all(root)?;
+                fs::create_dir(path)
+            },
+        )
+    }
+
+    pub(in crate::app_update) fn create_with(
+        root: &Path,
+        source: &Path,
+        destination: &Path,
+        version: &str,
+        installer_type: &str,
+        restart: bool,
+        create_work: impl FnOnce(&Path) -> io::Result<()>,
+    ) -> Result<Self, String> {
         let id = Uuid::new_v4();
         let attempt = Self {
             schema: SCHEMA,
@@ -98,9 +132,8 @@ impl Attempt {
         };
         attempt.validate(id)?;
         validate_dir(root)?;
-        fs::create_dir_all(root).map_err(receipt_error)?;
+        create_work(&attempt.work).map_err(receipt_error)?;
         validate_dir(root)?;
-        fs::create_dir(&attempt.work).map_err(receipt_error)?;
         write_json(&attempt.work.join(ATTEMPT), &attempt, false)?;
         Ok(attempt)
     }
@@ -110,7 +143,7 @@ impl Attempt {
         Self::read_at(&attempts_dir()?, id)
     }
 
-    fn read_at(root: &Path, id: Uuid) -> Result<Self, String> {
+    pub(in crate::app_update) fn read_at(root: &Path, id: Uuid) -> Result<Self, String> {
         let work = root.join(id.to_string());
         let attempt = Self {
             work: work.clone(),
@@ -202,13 +235,30 @@ pub(crate) fn status(target: UpdateTarget) -> Result<Option<Installation>, Strin
     if tauri::is_dev() {
         return Ok(None);
     }
+    #[cfg(windows)]
+    if super::staged::windows::installation_in_progress() {
+        return Ok(Some(Installation::Applying));
+    }
     let executable = std::env::current_exe().map_err(receipt_error)?;
+    let current = version(env!("CARGO_PKG_VERSION"))?;
+    let boot_time = sysinfo::System::boot_time();
+    #[cfg(windows)]
+    if crate::is_elevated() {
+        return match super::staged::windows::protected_attempts_dir(false) {
+            Ok(Some(root)) => inspect(root.path(), &executable, target.kind, &current, boot_time),
+            Ok(None) => Ok(None),
+            Err(error) => {
+                log::warn!("[update] 无法核验管理员更新目录：{error}");
+                Ok(None)
+            }
+        };
+    }
     inspect(
         &attempts_dir()?,
         &executable,
         target.kind,
-        &version(env!("CARGO_PKG_VERSION"))?,
-        sysinfo::System::boot_time(),
+        &current,
+        boot_time,
     )
 }
 

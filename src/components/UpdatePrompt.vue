@@ -5,9 +5,10 @@ import { updateNotesForLocale } from '../appUpdateNotes'
 import {
   appUpdateState, dismissAppUpdateNotes, type UpdateRecoveryDestination,
 } from '../appUpdateState'
-import { useAppUpdatePromptMode } from '../composables/useAppUpdates'
+import { openAppUpdatePage, useAppUpdatePromptMode } from '../composables/useAppUpdates'
 import { locale, t } from '../i18n'
-import { translateBackendMessage } from '../locale/backend'
+import { backendMessageOf, translateBackendMessage } from '../locale/backend'
+import { useNotify } from '../useNotify'
 import AppModal from './AppModal.vue'
 import MarkdownBody from './MarkdownBody.vue'
 
@@ -18,7 +19,15 @@ const recovery = computed(() => appUpdatePromptMode.value === 'recovery')
 const openingRecovery = computed(() => appUpdateState.stage === 'openingRecovery')
 const applying = computed(() => ['applying', 'handoff'].includes(appUpdateState.stage))
 const update = computed(() => appUpdateState.update)
+const asUser = computed(() => update.value?.install_mode === 'restartAsUser')
+const asAdministrator = computed(() => update.value?.install_mode === 'installAsAdministrator')
 const notes = computed(() => updateNotesForLocale(update.value, locale.value))
+const notify = useNotify()
+
+async function openReleasePage() {
+  try { await openAppUpdatePage(update.value?.version) }
+  catch (reason) { notify.error(backendMessageOf(reason)) }
+}
 </script>
 
 <template>
@@ -38,6 +47,9 @@ const notes = computed(() => updateNotesForLocale(update.value, locale.value))
         <h2>{{ t('dialogs.versionAvailable', { version: 'v' + update?.version }) }}</h2>
         <span v-if="update" class="version-line muted">v{{ update.current_version }} → v{{ update.version }}</span>
       </div>
+      <p v-if="asUser" data-testid="app-update-permission-info">{{ t('update.restartAsUserHelp') }}</p>
+      <p v-else-if="asAdministrator" data-testid="app-update-permission-info">{{ t('update.installAsAdministratorHelp') }}</p>
+      <p v-if="appUpdateState.error" class="update-error" role="alert">{{ translateBackendMessage(appUpdateState.error) }}</p>
       <div class="update-notes">
         <section v-for="entry in notes" :key="entry.version ?? 'target'">
           <h3 v-if="entry.version">v{{ entry.version }}</h3>
@@ -45,7 +57,7 @@ const notes = computed(() => updateNotesForLocale(update.value, locale.value))
           <p v-else>{{ t('dialogs.noReleaseNotesWereProvided') }}</p>
         </section>
       </div>
-      <p v-if="applying" role="status">{{ t('update.applyingUpdate') }}</p>
+      <p v-if="applying" role="status">{{ t(asUser ? 'update.reopeningAsUser' : 'update.applyingUpdate') }}</p>
     </div>
     <template #footer>
       <div v-if="recovery" class="update-footer">
@@ -57,11 +69,14 @@ const notes = computed(() => updateNotesForLocale(update.value, locale.value))
         </NButton>
       </div>
       <div v-else class="update-footer">
+        <NButton v-if="asUser || asAdministrator" quaternary :disabled="applying" data-testid="app-update-manual" @click="openReleasePage">
+          {{ t('dialogs.openReleasePage') }}
+        </NButton>
         <NButton secondary :disabled="applying" data-testid="app-update-install-later" @click="dismissAppUpdateNotes">
-          {{ t('update.installLater') }}
+          {{ t(asUser || asAdministrator ? 'dialogs.later' : 'update.installLater') }}
         </NButton>
         <NButton type="primary" :loading="applying" :disabled="applying" data-testid="app-update-install-now" @click="emit('apply-update')">
-          {{ t('update.applyNow') }}
+          {{ t(asUser ? 'update.restartAsUserAction' : asAdministrator ? 'update.installAsAdministratorAction' : 'update.applyNow') }}
         </NButton>
       </div>
     </template>
@@ -82,4 +97,6 @@ const notes = computed(() => updateNotesForLocale(update.value, locale.value))
 .update-notes h3 { margin: 0 0 4px; font-size: 15px; }
 .update-error { color: var(--oc2-status-error); overflow-wrap: anywhere; }
 .update-footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.update-footer :deep(.n-button) { min-width: 0; max-width: 100%; height: auto; min-height: var(--n-height); white-space: normal; }
+.update-footer :deep(.n-button__content) { min-width: 0; overflow-wrap: anywhere; }
 </style>

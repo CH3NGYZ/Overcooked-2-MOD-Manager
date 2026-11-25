@@ -17,8 +17,8 @@ use crate::app_update::recovery_links::{self, Destination};
 use crate::app_update::staged::{DownloadStart, Recovery, StagedInstaller};
 use crate::archive;
 use crate::models::{
-    AppConfig, AppDistribution, AppUpdateCheckResult, AppUpdateInfo, AppUpdateInstallationStatus,
-    OperationResult,
+    AppConfig, AppDistribution, AppUpdateCheckResult, AppUpdateInfo, AppUpdateInstallMode,
+    AppUpdateInstallationStatus, OperationResult,
 };
 use crate::network_policy::NetworkPolicy;
 use crate::shell_open;
@@ -31,7 +31,10 @@ pub fn get_app_distribution() -> Result<AppDistribution, String> {
 }
 
 #[tauri::command]
-pub fn open_update_repository(state: State<'_, AppState>) -> Result<OperationResult, String> {
+pub fn open_update_repository(
+    state: State<'_, AppState>,
+    version: Option<String>,
+) -> Result<OperationResult, String> {
     if distribution::current()? == AppDistribution::MicrosoftStore {
         shell_open::open_url(distribution::STORE_UPDATES_URI)?;
         return Ok(OperationResult {
@@ -41,9 +44,11 @@ pub fn open_update_repository(state: State<'_, AppState>) -> Result<OperationRes
     }
     log::info!("打开安装器更新仓库页面");
     let config = state.config.load_or_default();
-    open_release_page(recovery_links::release_list_url(installer_region(
-        &config.region,
-    )))
+    let url = version
+        .as_deref()
+        .map(recovery_links::official_release_url)
+        .unwrap_or_else(|| recovery_links::release_list_url(installer_region(&config.region)));
+    open_release_page(url)
 }
 
 #[tauri::command]
@@ -75,10 +80,13 @@ pub async fn check_app_update(
         return Ok(distribution::store_check(region.as_str()));
     }
     log::info!("开始检查安装器更新：跳过缓存={force}");
+    let target = UpdateTarget::current()?;
     if let Some(recovery) = state.app_updates.recovery()? {
+        let mut update = recovery.update;
+        update.install_mode = current_install_mode(target).await?;
         return Ok(AppUpdateCheckResult {
             distribution: AppDistribution::Standalone,
-            update: Some(recovery.update),
+            update: Some(update),
             channels: Vec::new(),
             all_failed: false,
             region: region.as_str().into(),
@@ -86,7 +94,6 @@ pub async fn check_app_update(
             installation_status: None,
         });
     }
-    let target = UpdateTarget::current()?;
     let installation = installation_status(target).await?;
     /*
      * 启动时恒检测，所以这个命令每次启动都会跑；5 分钟内重复调用直接返回
@@ -107,6 +114,9 @@ pub async fn check_app_update(
         }
         result
     };
+    if let Some(update) = result.update.as_mut() {
+        update.install_mode = current_install_mode(target).await?;
+    }
     if !result.all_failed
         && let Some(update) = result.update.as_ref()
         && installation == Some(Installation::Failed)
@@ -125,6 +135,12 @@ pub async fn check_app_update(
         _ => None,
     };
     Ok(result)
+}
+
+async fn current_install_mode(target: UpdateTarget) -> Result<AppUpdateInstallMode, String> {
+    tauri::async_runtime::spawn_blocking(move || target.install_mode())
+        .await
+        .map_err(|_| "update.checkInitFailed".into())
 }
 
 async fn run_update_check(
@@ -194,26 +210,23 @@ pub async fn stage_app_update(
     on_update: tauri::ipc::Channel<archive::DownloadProgress>,
 ) -> Result<Option<AppUpdateInfo>, String> {
     let target = UpdateTarget::current()?;
-    if !target.supports_background_install() {
+    let mode = current_install_mode(target).await?;
+    if !mode.can_stage() {
         return Err("update.formatUnsupported".into());
     }
     if let Some(status) = installation_status(target).await? {
-        return Err(match status {
-            Installation::Failed => "update.installFailedManual",
-            Installation::Applying => "update.inProgress",
-            Installation::RebootRequired => "update.rebootRequired",
-            Installation::RestartFailed => "update.restartFailed",
-        }
-        .into());
+        return Err(status.update_block_reason().into());
     }
-    let guard = match state.app_updates.start_download()? {
+    let guard = match state.app_updates.start_download(mode)? {
         DownloadStart::Ready(info) => return Ok(Some(*info)),
         DownloadStart::Started(guard) => guard,
     };
     let attempt = archive::channel_download_progress(
         false,
         on_update,
-        discover_and_download_installer_update(&state, &app, Some(&channel), || guard.cancelled()),
+        discover_and_download_installer_update(&state, &app, Some(&channel), mode, || {
+            guard.cancelled()
+        }),
     )
     .await?;
     let (info, download) = match attempt {
@@ -227,11 +240,67 @@ pub async fn stage_app_update(
     if info.installer_type != target.kind {
         return Err("update.manifestPlatformMismatch".into());
     }
-    let staged =
-        tauri::async_runtime::spawn_blocking(move || StagedInstaller::prepare(download, info))
-            .await
-            .map_err(|_| "update.stageFailed")??;
+    let staged = tauri::async_runtime::spawn_blocking(move || {
+        let staged = StagedInstaller::prepare(download, info)?;
+        if target.install_mode() != mode {
+            return Err(match mode {
+                AppUpdateInstallMode::InstallAsAdministrator => {
+                    "update.installAsAdministratorUnavailable"
+                }
+                _ => "update.formatUnsupported",
+            }
+            .into());
+        }
+        Ok::<_, String>(staged)
+    })
+    .await
+    .map_err(|_| "update.stageFailed")??;
     guard.publish(staged).map(Some)
+}
+
+#[tauri::command]
+pub async fn restart_update_as_user(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        super::system::request_user_exit(
+            app,
+            state.inner().clone(),
+            super::system::ExitAction::RestartAsUser,
+        )
+        .await?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, state);
+        Err("update.restartAsUserUnavailable".into())
+    }
+}
+
+#[tauri::command]
+pub async fn install_update_as_administrator(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    version: String,
+    locale: String,
+) -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        super::system::request_user_exit(
+            app,
+            state.inner().clone(),
+            super::system::ExitAction::InstallAsAdministrator { version, locale },
+        )
+        .await
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, state, version, locale);
+        Err("update.installAsAdministratorUnavailable".into())
+    }
 }
 
 #[tauri::command]
@@ -255,7 +324,8 @@ pub async fn finish_app_update_recovery(
         state.inner().clone(),
         super::system::ExitAction::OpenRecoveryPage(url),
     )
-    .await
+    .await?;
+    Ok(())
 }
 
 #[tauri::command]

@@ -89,11 +89,14 @@ tar = "0.4.46"
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
 winapi = { version = "0.3", features = [
+    "aclapi",
     "combaseapi",
     "dpapi",
     "errhandlingapi",
     "fileapi",
+    "ioapiset",
     "minwindef",
+    "minwinbase",
     "objbase",
     "shellapi",
     "shlobj",
@@ -103,6 +106,9 @@ winapi = { version = "0.3", features = [
     "winbase",
     "winerror",
     "processthreadsapi",
+    "namedpipeapi",
+    "knownfolders",
+    "sddl",
     "synchapi",
     "winuser",
     "winver",

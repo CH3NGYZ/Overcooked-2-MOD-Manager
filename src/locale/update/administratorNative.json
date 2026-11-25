@@ -1,0 +1,14 @@
+{
+  "en": "Install the verified update to version {version} as administrator? The manager will close and will not reopen automatically.\n\nInstallation path: {path}",
+  "de": "Das geprüfte Update auf Version {version} als Administrator installieren? Der Manager wird geschlossen und nicht automatisch neu geöffnet.\n\nInstallationspfad: {path}",
+  "fr": "Installer la mise à jour vérifiée vers la version {version} en tant qu’administrateur ? Le gestionnaire se fermera et ne se rouvrira pas automatiquement.\n\nChemin d’installation : {path}",
+  "it": "Installare l’aggiornamento verificato alla versione {version} come amministratore? Il gestore si chiuderà e non si riaprirà automaticamente.\n\nPercorso di installazione: {path}",
+  "ko": "검증된 버전 {version} 업데이트를 관리자 권한으로 설치할까요? 관리자가 종료되며 자동으로 다시 열리지 않습니다.\n\n설치 경로: {path}",
+  "es-ES": "¿Instalar la actualización verificada a la versión {version} como administrador? El gestor se cerrará y no se volverá a abrir automáticamente.\n\nRuta de instalación: {path}",
+  "zh-CN": "是否以管理员权限安装已验证的 {version} 版更新？管理器将关闭，安装后不会自动重开。\n\n安装路径：{path}",
+  "zh-TW": "是否以系統管理員權限安裝已驗證的 {version} 版更新？管理器將關閉，安裝後不會自動重新開啟。\n\n安裝路徑：{path}",
+  "ru": "Установить проверенное обновление до версии {version} от имени администратора? Менеджер закроется и не запустится снова автоматически.\n\nПуть установки: {path}",
+  "ja": "検証済みのバージョン {version} への更新を管理者権限でインストールしますか？マネージャーは終了し、自動では再起動しません。\n\nインストール先: {path}",
+  "pl": "Zainstalować zweryfikowaną aktualizację do wersji {version} jako administrator? Menedżer zostanie zamknięty i nie uruchomi się ponownie automatycznie.\n\nŚcieżka instalacji: {path}",
+  "pt-BR": "Instalar a atualização verificada para a versão {version} como administrador? O gerenciador será fechado e não abrirá novamente de forma automática.\n\nCaminho de instalação: {path}"
+}

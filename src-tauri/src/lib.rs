@@ -90,6 +90,10 @@ macro_rules! audited_handler {
 
 pub fn run() {
     #[cfg(windows)]
+    if !app_update::windows_session::complete_unelevated_handoff() {
+        return;
+    }
+    #[cfg(windows)]
     app_update::staged::windows::run_if_requested();
     install_guard::run_if_requested();
     update_migration::run_if_requested();
@@ -448,6 +452,8 @@ pub fn run() {
             commands::update::get_pending_app_update_recovery,
             commands::update::check_app_update,
             commands::update::stage_app_update,
+            commands::update::restart_update_as_user,
+            commands::update::install_update_as_administrator,
             commands::update::finish_app_update_recovery,
             commands::system::apply_staged_app_update,
         ])

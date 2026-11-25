@@ -116,7 +116,7 @@ test('ordinary download cancellation discards queued bytes and never affects a n
     assert.equal(downloadTaskState.running.id, ordinary)
     // The public transition owns this readonly state; raw reset is fixture cleanup only.
     const { beginAppUpdateCheck, finishAppUpdateCheck, finishBackgroundAppUpdate, beginStagedAppUpdate } = await import('../src/appUpdateState.ts')
-    const update = { version: 'fixture', current_version: 'fixture', background_install: true, source_channel: 'fixture' }
+    const update = { version: 'fixture', current_version: 'fixture', install_mode: 'deferred', source_channel: 'fixture' }
     beginAppUpdateCheck()
     finishAppUpdateCheck({ update, all_failed: false })
     assert.equal(state.visible, true, 'background updates do not hide ordinary downloads')

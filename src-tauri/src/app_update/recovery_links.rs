@@ -37,18 +37,29 @@ pub(crate) fn website_recovery_url(locale: &str) -> String {
     format!("https://oc2modmanager.ch3ng.top/?lang={locale}#download")
 }
 
+fn stable_version(value: &str) -> Option<Version> {
+    Version::parse(value)
+        .ok()
+        .filter(|version| version.pre.is_empty() && version.build.is_empty())
+}
+
+pub(crate) fn official_release_url(version: &str) -> String {
+    let github = release_list_url(InstallerRegion::International);
+    if let Some(version) = stable_version(version) {
+        format!("{github}/tag/v{version}")
+    } else {
+        github
+    }
+}
+
 pub(crate) async fn alternate_recovery_url(
     region: InstallerRegion,
     target: UpdateTarget,
     update: &AppUpdateInfo,
 ) -> String {
-    let github = release_list_url(InstallerRegion::International);
-    let Ok(version) = Version::parse(&update.version) else {
-        return github;
+    let Some(version) = stable_version(&update.version) else {
+        return release_list_url(InstallerRegion::International);
     };
-    if !version.pre.is_empty() || !version.build.is_empty() {
-        return github;
-    }
     if region == InstallerRegion::MainlandChina
         && let Some(package) = gitee_recovery_package(target, update, &version)
         && let Ok(client) = crate::releases::build_download_client(RECOVERY_PROBE_TIMEOUT)
@@ -63,7 +74,7 @@ pub(crate) async fn alternate_recovery_url(
     {
         return format!("{}/tag/v{version}", release_list_url(region));
     }
-    format!("{github}/tag/v{version}")
+    official_release_url(&update.version)
 }
 
 fn gitee_recovery_package(
@@ -122,6 +133,22 @@ mod tests {
 
     const RELEASES: &str = "https://github.com/CH3NGYZ/Overcooked-2-MOD-Manager/releases";
 
+    #[test]
+    fn detected_update_opens_its_stable_version_on_the_primary_release_site() {
+        assert_eq!(
+            official_release_url("2.4.8"),
+            format!("{RELEASES}/tag/v2.4.8")
+        );
+        for input in [
+            "2.4.8-beta.1",
+            "2.4.8+dev",
+            "2.4.8/../../other",
+            "https://example.org",
+        ] {
+            assert_eq!(official_release_url(input), RELEASES);
+        }
+    }
+
     fn update(version: &str, installer_type: &str, installer_name: &str) -> AppUpdateInfo {
         let mirror = release_list_url(InstallerRegion::MainlandChina);
         serde_json::from_value(serde_json::json!({
@@ -131,6 +158,7 @@ mod tests {
             "installer_name": installer_name,
             "provider": "gitee",
             "installer_url": format!("{mirror}/download/v{version}/{installer_name}"),
+            "install_mode": "manual",
         }))
         .unwrap()
     }

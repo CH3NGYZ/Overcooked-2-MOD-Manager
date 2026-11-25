@@ -3,7 +3,7 @@ import test from 'node:test'
 import { readFileSync } from 'node:fs'
 
 const source = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
-const offer = { version: '9.9.9', current_version: '2.4.2', background_install: true, source_channel: 'github-direct' }
+const offer = { version: '9.9.9', current_version: '2.4.2', install_mode: 'deferred', source_channel: 'github-direct' }
 const verified = { ...offer, version: '10.0.0', body: 'Verified release notes' }
 const result = (patch = {}) => ({ channels: [], all_failed: false, region: 'cn', update: offer, ...patch })
 let instance = 0
@@ -96,6 +96,45 @@ test('unsupported installer and application failure are checkable but never retr
   assert.equal(state.appUpdateState.stage, 'stageFailed')
   assert.equal(state.retryBackgroundAppUpdate(), undefined)
   assert.equal(state.beginAppUpdateCheck(), true)
+})
+
+test('permission-routed updates expose the action before any privileged staging', async () => {
+  for (const mode of ['restartAsUser', 'installAsAdministrator']) {
+    const state = await fresh()
+    const routed = { ...offer, install_mode: mode, source_channel: 'github-direct' }
+    assert.equal(state.beginAppUpdateCheck(), true)
+    assert.equal(state.finishAppUpdateCheck(result({ update: routed })), mode === 'restartAsUser' ? undefined : 'github-direct')
+    if (mode === 'installAsAdministrator') state.finishBackgroundAppUpdate({ update: routed })
+    assert.equal(state.appUpdateState.stage, 'ready')
+    assert.equal(state.appUpdateState.update.install_mode, mode)
+    assert.equal(state.appUpdateState.notesPending, true)
+    state.dismissAppUpdateNotes()
+    assert.equal(state.beginStagedAppUpdate(), true)
+    state.finishStagedAppUpdate(mode === 'restartAsUser' ? 'update.restartAsUserFailed' : 'update.installAsAdministratorUnavailable')
+    assert.equal(state.appUpdateState.stage, mode === 'restartAsUser' ? 'ready' : 'stageFailed')
+    if (mode === 'restartAsUser') assert.equal(state.appUpdateState.error, 'update.restartAsUserFailed')
+    else assert.equal(state.appUpdateState.error, 'update.installAsAdministratorUnavailable')
+  }
+})
+
+test('a denied ordinary restart stays open and a fresh check can offer administrator confirmation', async () => {
+  const state = await fresh()
+  state.beginAppUpdateCheck()
+  const needsRestart = { ...offer, install_mode: 'restartAsUser' }
+  assert.equal(state.finishAppUpdateCheck(result({ update: needsRestart })), undefined)
+  assert.equal(state.beginStagedAppUpdate(), true)
+  state.finishStagedAppUpdate('update.restartAsUserUnavailable')
+  assert.equal(state.appUpdateNeedsManualInstall(), true)
+  assert.equal(state.appUpdateBlocksOperations(), false)
+  assert.equal(state.canRetryAppUpdateDownload(), false)
+  assert.equal(state.beginAppUpdateCheck(), true)
+  const admin = { ...verified, install_mode: 'installAsAdministrator' }
+  assert.equal(state.finishAppUpdateCheck(result({ update: admin })), admin.source_channel)
+  state.finishBackgroundAppUpdate({ update: admin })
+  assert.equal(state.beginStagedAppUpdate(), true)
+  state.cancelStagedAppUpdate()
+  assert.equal(state.appUpdateState.stage, 'ready')
+  assert.equal(state.appUpdateState.update.version, admin.version)
 })
 
 test('app and settings use one updater, with modal actions distinct from quit and outside the route', () => {

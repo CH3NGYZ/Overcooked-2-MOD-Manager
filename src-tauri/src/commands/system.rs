@@ -36,7 +36,8 @@ pub async fn exit_app(
     } else {
         UpdateOnExit::Skip
     };
-    request_user_exit(app, state.inner().clone(), ExitAction::Update(update)).await
+    request_user_exit(app, state.inner().clone(), ExitAction::Update(update)).await?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -49,22 +50,38 @@ pub async fn apply_staged_app_update(
         state.inner().clone(),
         ExitAction::Update(UpdateOnExit::Restart),
     )
-    .await
+    .await?;
+    Ok(())
 }
 
 pub(super) enum ExitAction {
     Update(UpdateOnExit),
     OpenRecoveryPage(String),
+    #[cfg(windows)]
+    RestartAsUser,
+    #[cfg(windows)]
+    InstallAsAdministrator {
+        version: String,
+        locale: String,
+    },
 }
 
 pub(super) async fn request_user_exit(
     app: AppHandle,
     state: AppState,
     action: ExitAction,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let _exit = archive::begin_app_update()?;
         let closing = state.app_updates.closing()?;
+        #[cfg(windows)]
+        if let ExitAction::InstallAsAdministrator { version, locale } = &action {
+            check_administrator_update()?;
+            let destination = closing.administrator_destination(version)?;
+            if !crate::app_update::admin_consent::confirm(&app, locale, version, &destination)? {
+                return Ok(false);
+            }
+        }
         let compression = crate::level_sets::recompress::quiesce_for_exit();
         let _operation = state.operation.lock().map_err(|_| "lock.poisoned")?;
         restore_map_compression_for_exit(&compression, &state)?;
@@ -73,7 +90,7 @@ pub(super) async fn request_user_exit(
         }
         match action {
             ExitAction::Update(update) => {
-                let update = if update != UpdateOnExit::Skip && closing.has_ready()? {
+                let update = if update != UpdateOnExit::Skip && closing.has_deferred()? {
                     update_after_recovery_check(
                         update,
                         crate::mod_changes::guard::ensure_recovered(&state),
@@ -96,11 +113,61 @@ pub(super) async fn request_user_exit(
                 crate::shell_open::open_web_page(&url, crate::shell_open::WebPageKind::Release)?;
                 log::info!("已交接更新恢复网页，关闭当前管理器");
             }
+            #[cfg(windows)]
+            ExitAction::RestartAsUser => {
+                crate::mod_changes::guard::ensure_recovered(&state)?;
+                restart_for_update()?;
+            }
+            #[cfg(windows)]
+            ExitAction::InstallAsAdministrator { version, .. } => {
+                crate::mod_changes::guard::ensure_recovered(&state)?;
+                check_administrator_update()?;
+                closing
+                    .take_administrator(&version)?
+                    .start_administrator()?;
+            }
         }
         exit_process(&app)
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[cfg(windows)]
+fn check_administrator_update() -> Result<(), String> {
+    use crate::app_update::{UpdateTarget, receipt};
+    use crate::models::AppUpdateInstallMode;
+
+    let target = UpdateTarget::current()?;
+    if target.install_mode() != AppUpdateInstallMode::InstallAsAdministrator {
+        return Err("update.installAsAdministratorUnavailable".into());
+    }
+    if let Some(status) = receipt::status(target)? {
+        return Err(status.update_block_reason().into());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn restart_for_update() -> Result<(), String> {
+    use crate::app_update::{UpdateTarget, windows_session};
+    use crate::models::AppUpdateInstallMode::RestartAsUser;
+
+    let target = UpdateTarget::current()?;
+    if target.install_mode() != RestartAsUser {
+        return Err("update.restartAsUserUnavailable".into());
+    }
+    if let Err(error) = windows_session::launch_unelevated() {
+        log::warn!("普通权限更新未能交接，保留当前窗口：{error}");
+        return Err(if target.install_mode() == RestartAsUser {
+            "update.restartAsUserFailed"
+        } else {
+            "update.restartAsUserUnavailable"
+        }
+        .into());
+    }
+    log::info!("普通权限实例已应答，退出当前管理器以交接启动");
+    Ok(())
 }
 
 fn exit_process(app: &AppHandle) -> ! {

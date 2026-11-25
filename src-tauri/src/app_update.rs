@@ -1,3 +1,5 @@
+#[cfg(windows)]
+pub(crate) mod admin_consent;
 pub(crate) mod cache;
 pub(crate) mod channels;
 pub(crate) mod distribution;
@@ -6,8 +8,10 @@ pub(crate) mod manifest;
 pub(crate) mod receipt;
 pub(crate) mod recovery_links;
 pub(crate) mod staged;
+#[cfg(windows)]
+pub(crate) mod windows_session;
 
-use crate::models::AppUpdateInfo;
+use crate::models::{AppUpdateInfo, AppUpdateInstallMode};
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use minisign_verify::{PublicKey, Signature};
 use semver::Version;
@@ -59,21 +63,42 @@ impl UpdateTarget {
         format!("{}-{}-{kind}", self.os, self.arch)
     }
 
-    pub(crate) fn supports_background_install(self) -> bool {
-        !tauri::is_dev()
-            && match self.os {
-                "windows" => {
-                    !crate::is_elevated()
-                        && matches!(bundle_type(), Some(BundleType::Nsis | BundleType::Msi))
+    pub(crate) fn install_mode(self) -> AppUpdateInstallMode {
+        use AppUpdateInstallMode::{Deferred, Manual};
+
+        if tauri::is_dev() {
+            return Manual;
+        }
+        match (self.os, self.kind, bundle_type()) {
+            #[cfg(windows)]
+            ("windows", "exe", Some(BundleType::Nsis))
+            | ("windows", "msi", Some(BundleType::Msi)) => {
+                use windows_session::PermissionRoute;
+
+                match windows_session::permission_route() {
+                    Ok(PermissionRoute::User) => Deferred,
+                    Ok(PermissionRoute::RestartAsUser) => AppUpdateInstallMode::RestartAsUser,
+                    Ok(PermissionRoute::Administrator)
+                        if self.kind == "exe" && staged::windows::can_install_as_admin() =>
+                    {
+                        AppUpdateInstallMode::InstallAsAdministrator
+                    }
+                    Ok(PermissionRoute::Administrator) => Manual,
+                    Err(error) => {
+                        log::warn!("[update] 无法确认 Windows 更新权限：{error}");
+                        Manual
+                    }
                 }
-                "darwin" => {
-                    matches!(bundle_type(), Some(BundleType::App))
-                        && std::env::current_exe()
-                            .ok()
-                            .is_some_and(|exe| receipt::bundle_root(&exe).is_some())
-                }
-                _ => false,
             }
+            ("darwin", "app", Some(BundleType::App))
+                if std::env::current_exe()
+                    .ok()
+                    .is_some_and(|exe| receipt::bundle_root(&exe).is_some()) =>
+            {
+                Deferred
+            }
+            _ => Manual,
+        }
     }
 
     pub(crate) fn matches_name(self, name: &str, version: &Version) -> bool {

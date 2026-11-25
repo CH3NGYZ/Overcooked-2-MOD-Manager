@@ -62,7 +62,7 @@ const renderer = createRenderer({
   createComment: () => ({}), setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null,
 })
 const result = (patch = {}) => ({ channels: [], all_failed: false, region: 'cn', ...patch })
-const info = { version: '9.9.9', current_version: '2.3.2' }
+const info = { version: '9.9.9', current_version: '2.3.2', install_mode: 'manual' }
 function mounted(t) {
   Object.assign(toRaw(shared.appUpdateState), { distribution: null, update: null, stage: 'idle', error: '', checkingRecovery: false })
   boundary.calls.length = boundary.notices.length = 0
@@ -126,7 +126,7 @@ test('ordinary checks preserve current, update and all-channel failure behavior'
   boundary.result = result({ distribution: 'standalone', update: info })
   await view.checkUpdate()
   assert.equal(shared.appUpdateState.stage, 'stageFailed')
-  assert.equal(shared.appUpdateState.error, 'update.deferredUnsupported')
+  assert.equal(shared.appUpdateState.error, 'update.manualUpdateRequired')
   assert.equal(boundary.calls.filter(([kind]) => kind === 'open').length, 0)
 })
 

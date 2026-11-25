@@ -50,7 +50,7 @@ function setup(t) {
   const originalState = { ...appUpdateState }
   const mode = useAppUpdatePromptMode()
   const app = renderer.createApp({ render: () => include.value ? h(AppModal, { show: show.value }) : null })
-  const offer = { version: 'fixture', current_version: 'current', background_install: true, source_channel: 'fixture' }
+  const offer = { version: 'fixture', current_version: 'current', install_mode: 'deferred', source_channel: 'fixture' }
   const offerResult = { update: offer, all_failed: false }
   app.mount({})
   t.after(() => {

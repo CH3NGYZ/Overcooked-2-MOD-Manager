@@ -168,6 +168,7 @@ fn tauri_manifest_metadata_covers_all_desktop_formats_and_rejects_mismatches() {
             "version": "1.2.0", "current_version": "1.1.0",
             "installer_name": name, "installer_type": kind,
             "installer_url": url, "installer_signature": signature,
+            "install_mode": "manual",
         }))
         .unwrap();
         assert!(validate_update_metadata("1.2.0", url, signature, &info).is_ok());

@@ -384,7 +384,7 @@ export const api = {
   openModFileLocation: (dllFile: string, exact?: boolean) => invoke<OperationResult>('open_mod_file_location', { dllFile, exact }),
   openModLogsDirectory: (dllFile: string) => invoke<OperationResult>('open_mod_logs_directory', { dllFile }),
   openBackupDirectory: (backupPath?: string) => invoke<OperationResult>('open_backup_directory', { backupPath: backupPath ?? null }),
-  openUpdateRepository: () => invoke<OperationResult>('open_update_repository'),
+  openUpdateRepository: (version?: string) => invoke<OperationResult>('open_update_repository', version ? { version } : {}),
   exitApp: (installUpdate: boolean) => invoke<void>('exit_app', { installUpdate }),
   /** 实际管理器数据根，只读展示；清理命令不接受前端路径。 */
   getManagerDataDirectory: () => invoke<string>('get_manager_data_directory'),
@@ -431,6 +431,8 @@ export const api = {
   stageAppUpdate: (channel: string, onProgress: DownloadProgressHandler) =>
     invokeDownload<AppUpdateInfo | null>('stage_app_update', { channel }, onProgress),
   applyStagedAppUpdate: () => invoke<void>('apply_staged_app_update'),
+  restartUpdateAsUser: () => invoke<void>('restart_update_as_user'),
+  installUpdateAsAdministrator: (version: string) => invoke<boolean>('install_update_as_administrator', { version, locale: locale.value }),
   chooseGameDirectory: () => open({ multiple: false, directory: true }),
   /** 选择要导入的地图 ZIP。 */
   chooseLevelSetZip: () => open({

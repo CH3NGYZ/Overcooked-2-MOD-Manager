@@ -2,12 +2,11 @@
 import { computed, shallowRef, watch } from 'vue'
 import { NButton } from 'naive-ui'
 import { RefreshOutline } from '@vicons/ionicons5'
-import { appUpdateState, canCheckAppUpdate, canRetryAppUpdateDownload } from '../appUpdateState'
-import { checkForAppUpdate, retryAppUpdateDownload } from '../composables/useAppUpdates'
+import { appUpdateNeedsManualInstall, appUpdateState, canCheckAppUpdate, canRetryAppUpdateDownload, showAppUpdateNotes } from '../appUpdateState'
+import { checkForAppUpdate, openAppUpdatePage, retryAppUpdateDownload } from '../composables/useAppUpdates'
 import { downloadAmount, downloadPercent, downloadRate } from '../downloadPresentation'
 import { t } from '../i18n'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
-import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import TitleBarProgressTable from './TitleBarProgressTable.vue'
 import TitleBarStatusPopover from './TitleBarStatusPopover.vue'
@@ -26,9 +25,11 @@ const downloadFailed = computed(() => appUpdateState.stage === 'stageFailed')
 const checkFailed = computed(() => appUpdateState.stage === 'checkFailed')
 const recovery = computed(() => ['recovery', 'openingRecovery'].includes(appUpdateState.stage))
 const update = computed(() => appUpdateState.update)
+const shouldReview = computed(() => update.value?.install_mode === 'restartAsUser' || update.value?.install_mode === 'installAsAdministrator')
 const progress = computed(() => appUpdateState.progress)
 const percent = computed(() => downloading.value && progress.value ? downloadPercent(progress.value) : null)
-const progressBar = computed(() => ready.value ? 100 : downloading.value ? percent.value : undefined)
+const progressBar = computed(() => ready.value && update.value?.install_mode !== 'restartAsUser'
+  ? 100 : downloading.value ? percent.value : undefined)
 const tone = computed(() => ready.value ? 'warning'
   : downloadFailed.value || checkFailed.value || recovery.value || appUpdateState.stage === 'restartFailed' ? 'error'
     : checking.value || downloading.value ? 'activity' : undefined)
@@ -40,9 +41,10 @@ const status = computed(() => {
     case 'checkFailed': return t('dialogs.updateCheckFailed')
     case 'downloading': return t(progress.value?.finished || progress.value?.phase === 'finished' || progress.value?.phase === 'verifying'
       ? 'update.verifyingUpdate' : 'update.downloadingInstaller')
-    case 'stageFailed': return t(appUpdateState.error === 'update.installFailedManual'
-      ? 'update.applicationFailedTitle' : 'update.downloadFailed')
-    case 'ready': return t('update.pendingInstall')
+    case 'stageFailed':
+      if (appUpdateState.error === 'update.installFailedManual') return t('update.applicationFailedTitle')
+      return t(appUpdateNeedsManualInstall() ? 'update.manualUpdateTitle' : 'update.downloadFailed')
+    case 'ready': return t(update.value?.install_mode === 'restartAsUser' ? 'update.actionRequired' : 'update.pendingInstall')
     case 'systemReboot': return t('update.rebootRequired')
     case 'restartFailed': return t('update.restartFailed')
     case 'applying': case 'handoff': case 'systemApplying': return t('update.applyingUpdate')
@@ -62,7 +64,7 @@ const rows = computed(() => {
 })
 const canCheck = computed(canCheckAppUpdate)
 const canRetry = computed(canRetryAppUpdateDownload)
-const openRelease = computed(() => checkFailed.value || downloadFailed.value && !canRetry.value)
+const openRelease = computed(() => checkFailed.value || downloadFailed.value)
 
 async function check() {
   try { await checkForAppUpdate() }
@@ -70,15 +72,14 @@ async function check() {
 }
 
 async function openReleasePage() {
-  try {
-    const result = await api.openUpdateRepository()
-    if (!result.ok) notify.error(result.message)
-  } catch (reason) { notify.error(backendMessageOf(reason)) }
+  try { await openAppUpdatePage(update.value?.version) }
+  catch (reason) { notify.error(backendMessageOf(reason)) }
 }
 
 function apply() {
   open.value = false
-  emit('apply-update')
+  if (shouldReview.value) showAppUpdateNotes()
+  else emit('apply-update')
 }
 </script>
 
@@ -92,7 +93,7 @@ function apply() {
     <p v-if="downloadFailed && appUpdateState.error" class="update-detail" role="alert">{{ translateBackendMessage(appUpdateState.error) }}</p>
     <div v-if="ready || canCheck" class="update-actions">
       <NButton v-if="ready" size="small" type="primary" secondary data-testid="app-update-install" @click="apply">
-        {{ t('update.applyNow') }}
+        {{ t(shouldReview ? 'update.actionRequired' : 'update.applyNow') }}
       </NButton>
       <template v-else>
         <NButton v-if="openRelease" size="small" quaternary @click="openReleasePage">{{ t('dialogs.openReleasePage') }}</NButton>

@@ -8,11 +8,5 @@ import type { DomainMessages } from './types'
  * 「任务没跑完」这种异常终止。
  */
 export const metadataRead: DomainMessages = {
-  taskFailed: {
-    'zh-CN': '读取元数据任务异常终止',
-    'zh-TW': '讀取中繼資料任務異常終止',
-    en: 'A metadata read task terminated unexpectedly.',
-    ko: '메타데이터 읽기 작업이 비정상 종료되었습니다.',
-    ja: 'メタデータ読み取りタスクが異常終了しました。',
-  },
+  taskFailed: { 'zh-CN': '读取元数据任务异常终止', 'zh-TW': '讀取中繼資料任務異常終止', en: 'A metadata read task terminated unexpectedly.', ko: '메타데이터 읽기 작업이 비정상 종료되었습니다.', ja: 'メタデータ読み取りタスクが異常終了しました。' },
 }

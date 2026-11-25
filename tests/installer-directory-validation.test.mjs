@@ -8,6 +8,7 @@ import test from 'node:test'
 const source = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const installer = source('src-tauri/nsis/installer.nsi')
 const guard = installer.split('Function OC2ValidateInstallDirectory\n')[1].split('FunctionEnd')[0]
+const { languages } = JSON.parse(source('src-tauri/tauri.conf.json')).bundle.windows.nsis
 
 test('only an explicit unsafe-directory verdict can trigger automatic migration', () => {
   assert.match(guard, /\$\{If\} \$0 == 1\n\s*\$\{AndIf\} \$UpdateMode = 1\n\s*\$\{AndIf\} \$OC2MigrationPlan == ""/)
@@ -32,23 +33,30 @@ test('directory validation keeps diagnostics and blocks unavailable deferred che
   assert.match(installer, /Section Install\n\s*Call OC2ValidateInstallDirectory[^]*?SetOutPath \$INSTDIR/)
 })
 
-test('installer errors separate helper failures from BepInEx restrictions in all five languages', () => {
-  const hooks = source('src-tauri/installer-hooks.nsh')
-  const languages = ['1028', '1033', '1041', '1042', '2052']
-  for (const key of ['OC2InvalidInstallDirectory', 'OC2InstallDirectoryValidationFailed']) {
-    const messages = [...hooks.matchAll(new RegExp(`^LangString ${key} (\\d+) "([^"\\n]+)"$`, 'gm'))]
-    assert.deepEqual(messages.map(match => match[1]).sort(), languages)
+test('installer errors separate helper failures from BepInEx restrictions in all twelve languages', () => {
+  const strings = source('src-tauri/nsis/manager-languages.nsh')
+  const languageIds = ['1028', '1031', '1033', '1034', '1036', '1040', '1041', '1042', '1045', '1046', '1049', '2052']
+  for (const key of ['OC2InvalidInstallDirectory', 'OC2InstallDirectoryValidationFailed', 'OC2MigrationFailed', 'OC2Migrating']) {
+    const messages = [...strings.matchAll(new RegExp(`^LangString ${key} (\\d+) "([^"\\n]+)"$`, 'gm'))]
+    assert.deepEqual(messages.map(match => match[1]).sort(), languageIds, key)
     for (const [, language, message] of messages) {
       if (key === 'OC2InvalidInstallDirectory') {
         assert.match(message, /BepInEx/, language)
         assert.doesNotMatch(message, /plugins|config\./, language)
-      } else {
-        assert.match(message, /\$0/, language)
+      } else if (key === 'OC2InstallDirectoryValidationFailed') {
+        assert.equal(message.match(/\$0/g)?.length, 1, language)
         assert.doesNotMatch(message, /BepInEx/, language)
         const continuation = {
           2052: /跳过此检查并继续安装/, 1028: /略過此檢查並繼續安裝/,
           1033: /check will be skipped so installation can continue/,
           1042: /확인을 건너뛰고 설치를 계속/, 1041: /確認をスキップしてインストールを続行/,
+          1031: /Prüfung wird übersprungen und die Installation fortgesetzt/,
+          1036: /vérification sera ignorée et l’installation continuera/,
+          1040: /verifica verrà saltata e l’installazione proseguirà/,
+          1034: /omitirá esta comprobación y la instalación continuará/,
+          1049: /Проверка будет пропущена, и установка продолжится/,
+          1045: /Sprawdzenie zostanie pominięte, a instalacja będzie kontynuowana/,
+          1046: /verificação será ignorada e a instalação continuará/,
         }
         assert.match(message, continuation[language], language)
       }
@@ -120,11 +128,7 @@ OutFile "${quote(executable)}"
 !define VERSION "2.4.1"
 !include FileFunc.nsh
 !include "${quote(hooks)}"
-LoadLanguageFile "\${NSISDIR}\\Contrib\\Language files\\English.nlf"
-LoadLanguageFile "\${NSISDIR}\\Contrib\\Language files\\SimpChinese.nlf"
-LoadLanguageFile "\${NSISDIR}\\Contrib\\Language files\\TradChinese.nlf"
-LoadLanguageFile "\${NSISDIR}\\Contrib\\Language files\\Korean.nlf"
-LoadLanguageFile "\${NSISDIR}\\Contrib\\Language files\\Japanese.nlf"
+${languages.map(language => `LoadLanguageFile "\${NSISDIR}\\Contrib\\Language files\\${language}.nlf"`).join('\n')}
 Var UpdateMode
 Var OC2MigrationPlan
 Var OC2MigrationTarget

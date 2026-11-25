@@ -51,12 +51,22 @@
         "installMode": "currentUser",
         "template": "nsis/installer.nsi",
         "languages": [
+          "English",
+          "German",
+          "French",
+          "Italian",
+          "Korean",
+          "Spanish",
           "SimpChinese",
           "TradChinese",
-          "English",
-          "Korean",
-          "Japanese"
+          "Russian",
+          "Japanese",
+          "Polish",
+          "PortugueseBR"
         ],
+        "customLanguageFiles": {
+          "Polish": "nsis/Polish.nsh"
+        },
         "displayLanguageSelector": true,
         "startMenuFolder": "OC2 MOD Manager",
         "installerHooks": "installer-hooks.nsh"

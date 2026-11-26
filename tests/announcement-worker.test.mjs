@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
 import { ADMIN_API, ADMIN_ORIGIN, noticeAssets, PUBLIC_API, PUBLIC_ORIGIN, serveAdmin, servePublic } from '../workers/announcements/handlers.mjs'
+import { LOCALE_LABELS } from '../src/locale/types.ts'
 
 const migration = readFileSync(new URL('../workers/announcements/migrations/0001_notice_feed.sql', import.meta.url), 'utf8')
 const email = 'notice-admin@example.test'
@@ -192,6 +193,9 @@ test('authenticated translation is opt-in and returns exactly the requested cano
     assert.equal(payload.messages[0].role, 'system')
     assert.match(payload.messages[0].content, /en.*English/)
     assert.match(payload.messages[0].content, /zh-TW.*繁體中文/)
+    assert.deepEqual(JSON.parse(payload.messages[0].content.split('\n').at(-1)), {
+      translations: { en: { title: '', body: '' }, 'zh-TW': { title: '', body: '' } },
+    })
     assert.equal(payload.messages[1].role, 'user')
     assert.deepEqual(JSON.parse(payload.messages[1].content), translationInput)
     return completion(translations)
@@ -210,6 +214,26 @@ test('authenticated translation is opt-in and returns exactly the requested cano
   assert.equal(translated.headers.get('Cloudflare-CDN-Cache-Control'), null)
   assert.deepEqual(await translated.json(), { translations })
   assert.equal(upstream.mock.callCount(), 1)
+})
+
+test('all eleven missing languages are translated in one request with an exact JSON example', async context => {
+  const targets = Object.keys(LOCALE_LABELS).filter(locale => locale !== translationInput.language)
+  assert.equal(targets.length, 11)
+  const input = { ...translationInput, targets }
+  const translations = Object.fromEntries(targets.map(locale => [locale, { title: `Title (${locale})`, body: `Body (${locale})` }]))
+  const model = 'provider-test-model'
+  const upstream = context.mock.method(globalThis, 'fetch', async () => completion(translations))
+  const response = await postTranslation({ ...translationEnv, NOTICE_TRANSLATION_MODEL: model }, input)
+  assert.equal(response.status, 200)
+  assert.equal(upstream.mock.callCount(), 1)
+  const request = upstream.mock.calls[0].arguments[1]
+  const payload = JSON.parse(request.body)
+  assert.equal(payload.model, model)
+  assert.deepEqual(JSON.parse(payload.messages[1].content), input)
+  assert.deepEqual(JSON.parse(payload.messages[0].content.split('\n').at(-1)), {
+    translations: Object.fromEntries(targets.map(locale => [locale, { title: '', body: '' }])),
+  })
+  assert.deepEqual(await response.json(), { translations })
 })
 
 test('invalid or unauthorized translation requests never contact the provider', async t => {
@@ -245,6 +269,7 @@ test('translation never exposes provider errors or partial, extra, oversized, or
     () => Response.json({ choices: [{ message: { content: '```json\n{}\n```' } }] }),
     () => completion({ en: valid.en }),
     () => completion({ ...valid, 'zh-CN': valid['zh-TW'] }),
+    () => completion({ en: { title: '', body: '' }, 'zh-TW': { title: '', body: '' } }),
     () => completion({ ...valid, en: { ...valid.en, body: 'a'.repeat(1537) } }),
     () => completion({ ...valid, en: { ...valid.en, extra: 'x' } }),
   ]
@@ -254,7 +279,7 @@ test('translation never exposes provider errors or partial, extra, oversized, or
     assert.equal(response.status, 502)
     assert.deepEqual(await response.json(), { error: 'translation_failed' })
   }
-  assert.equal(upstream.mock.callCount(), 7)
+  assert.equal(upstream.mock.callCount(), 8)
   const timeout = t.mock.method(AbortSignal, 'timeout', () => AbortSignal.abort())
   upstream.mock.mockImplementation(async (_url, { signal }) => signal.throwIfAborted())
   const response = await postTranslation(translationEnv)

@@ -137,7 +137,7 @@ test('exact note-only acknowledgment applies once and stale consent never applie
    calls.push(name)
    if(name==='planModChanges')return scopedPlan(++plans===1?'first':'fresh',false,[])
    if(name==='prepareModChanges')return scopedPlan(args[0],true,[args[0]==='first'?note:revised])
-   if(name==='executeModChanges')return {ok:++executions===2,message:'modChanges.inventoryChanged'}
+   if(name==='executeModChanges')return {ok:++executions===2,message:'modChanges.inventoryChanged',replan_available:executions===1}
  }
  const store=useModChanges(),pending=store.run({roots:[{node_id:'mod:root',candidate_id:'release:root:v1',enabled:true}]})
  await tick()

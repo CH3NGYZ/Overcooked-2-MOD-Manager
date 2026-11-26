@@ -167,7 +167,7 @@ export interface ChangeNode extends ChangeLabel {
   candidates: { id: string; tag?: string | null }[]
 }
 export interface EvaluationSubject { repository_id?: string; tag?: string; map_id?: string; dll_file?: string; map_dir_name?: string }
-export interface ChangeExecutionResult { ok: boolean; message: string }
+export interface ChangeExecutionResult { ok: boolean; message: string; replan_available: boolean }
 export interface ChangeExecutionOutcome extends ChangeExecutionResult { progress: ChangeExecutionProgress }
 export type ChangeExecutionStage = 'applying' | 'processed' | 'applied' | 'failed' | 'rolled_back' | 'not_applied'
 /** Changes since the previous update of this execute call, keyed by the trusted action's target. */

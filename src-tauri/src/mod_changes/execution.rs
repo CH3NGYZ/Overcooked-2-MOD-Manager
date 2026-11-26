@@ -21,12 +21,21 @@ pub(crate) fn execute(
     mut report: impl FnMut(ChangeApplicationProgress),
 ) -> ChangeApplicationOutcome {
     let mut progress = ChangeApplicationProgress::new(id);
-    let result = execute_inner(app, state, id, recovery_approval, |update| {
-        progress.retain_terminal(&update);
-        report(update);
-    });
+    let mut replan_available = false;
+    let result = execute_inner(
+        app,
+        state,
+        id,
+        recovery_approval,
+        |update| {
+            progress.retain_terminal(&update);
+            report(update);
+        },
+        &mut replan_available,
+    );
     ChangeApplicationOutcome {
         result: result.unwrap_or_else(|message| OperationResult { ok: false, message }),
+        replan_available,
         progress,
     }
 }
@@ -37,10 +46,14 @@ fn execute_inner(
     id: &str,
     recovery_approval: Option<&str>,
     report: impl FnMut(ChangeApplicationProgress),
+    replan_available: &mut bool,
 ) -> Result<OperationResult, String> {
     let mut lease = SessionLease::take(state, id)?;
     let session = lease.session.as_mut().ok_or("modChanges.planExpired")?;
-    commit_with_recovery(state, session, recovery_approval, report)?;
+    if let Err(error) = commit_with_recovery(state, session, recovery_approval, report) {
+        *replan_available = can_replan_failure(session, &error);
+        return Err(error);
+    }
     // Only a completed solution can scope the notification. A map request may
     // also enable or replace MODs, so the original intent alone is insufficient.
     let actions = &session.plan.result.actions;
@@ -72,6 +85,15 @@ fn execute_inner(
         ok: true,
         message: "modChanges.completed".into(),
     })
+}
+
+pub(super) fn can_replan_failure(session: &PlanSession, error: &str) -> bool {
+    session.plan.prepared
+        && session.mutations.is_some()
+        && matches!(
+            crate::locale_tag::diagnostic_tag(error),
+            "modChanges.targetChanged" | "modChanges.inventoryChanged"
+        )
 }
 
 /// The write boundary is also used by isolated real-file orchestration tests.

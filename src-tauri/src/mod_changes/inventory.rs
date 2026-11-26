@@ -2,17 +2,18 @@
 use super::{install_notes::ManagedMods, model::*};
 use crate::{app_state::AppState, archive, game, level_sets, models::*, mods};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
-    hash::{Hash, Hasher},
     path::{Path, PathBuf},
-    sync::{Arc, OnceLock},
+    sync::Arc,
 };
 
 mod declared_bundles;
 mod duplicate_releases;
+mod revision;
 pub(super) use duplicate_releases::{DuplicateReleaseUpgrade, DuplicateReleases};
+pub(crate) use revision::revision;
+pub(super) use revision::{disk_revision, replan_scope, revision_for_disk};
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct MemberSummary {
@@ -130,72 +131,6 @@ pub(crate) fn key(path: &str) -> String {
     } else {
         normalized
     }
-}
-
-pub(super) fn replan_scope(
-    state: &AppState,
-    root: &Path,
-    config: &AppConfig,
-) -> Result<String, String> {
-    static KEY: OnceLock<uuid::Uuid> = OnceLock::new();
-    let selection = state.config.data_selection();
-    if selection.0 != config.data_provider {
-        return Err("modChanges.targetChanged".into());
-    }
-    let mut hash = Sha256::new();
-    hash.update(KEY.get_or_init(uuid::Uuid::new_v4).as_bytes());
-    hash.update(selection.1.to_le_bytes());
-    for path in [root, state.config.config_path().as_path()] {
-        let bytes = path.as_os_str().as_encoded_bytes();
-        hash.update((bytes.len() as u64).to_le_bytes());
-        hash.update(bytes);
-    }
-    hash.update(
-        serde_json::to_vec(&(config, config.data_provider))
-            .map_err(|_| "modChanges.targetChanged")?,
-    );
-    Ok(format!("{:x}", hash.finalize()))
-}
-
-pub(crate) fn revision(
-    state: &AppState,
-    root: &Path,
-    config: &AppConfig,
-) -> Result<String, String> {
-    revision_for_scope(state, root, &replan_scope(state, root, config)?)
-}
-
-pub(super) fn revision_for_scope(
-    state: &AppState,
-    root: &Path,
-    scope: &str,
-) -> Result<String, String> {
-    let mut hash = std::collections::hash_map::DefaultHasher::new();
-    scope.hash(&mut hash);
-    for directory in [
-        root.join("BepInEx/plugins"),
-        level_sets::disabled_root(root),
-        state.config.manifests_dir(),
-    ] {
-        if !directory.exists() {
-            continue;
-        }
-        let mut entries = Vec::new();
-        for entry in walkdir::WalkDir::new(&directory).follow_links(false) {
-            let entry = entry.map_err(|e| e.to_string())?;
-            // Windows directory enumeration may retain the parent's timestamp
-            // from before its newest child was closed. Read current metadata by
-            // path rather than hashing WalkDir's cached enumeration metadata.
-            let meta = std::fs::symlink_metadata(entry.path()).map_err(|e| e.to_string())?;
-            if meta.file_type().is_symlink() {
-                return Err("archive.pathEscape".into());
-            }
-            entries.push((entry.path().to_path_buf(), meta.len(), meta.modified().ok()));
-        }
-        entries.sort_by(|a, b| a.0.cmp(&b.0));
-        entries.hash(&mut hash);
-    }
-    Ok(format!("{:016x}", hash.finish()))
 }
 
 pub(crate) fn owned(
@@ -336,7 +271,7 @@ pub(crate) fn build(state: &AppState) -> Result<TrustedInventory, String> {
     let detected = game::detect_game(&config).path.ok_or("game.notFound")?;
     let game_root = game::resolve_existing_ancestor(Path::new(&detected))?;
     let scope = replan_scope(state, &game_root, &config)?;
-    let stamp = revision_for_scope(state, &game_root, &scope)?;
+    let stamp = revision_for_disk(&config, disk_revision(state, &game_root, &scope)?)?;
     let installed =
         mods::scan_mods_with_manifests(&game_root, &config, Some(&state.config.manifests_dir()));
     let managed_mods = ManagedMods::from_scan(&installed);

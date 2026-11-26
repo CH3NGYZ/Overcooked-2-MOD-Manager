@@ -116,7 +116,10 @@ function canApplyPackage(request: ChangeRequest, plan: ChangePlan, previous?: Ch
     && plan.impacts.every(id => actionTargets.has(id))
 }
 
-const inventoryChanged = 'modChanges.inventoryChanged'
+function isStalePreparation(error: unknown) {
+  const message = error instanceof Error ? error.message : error
+  return typeof message === 'string' && /^modChanges\.(?:inventoryChanged|targetChanged)(?:$|[?:：])/.test(message)
+}
 
 export function createChangeWorkflow(backend: ChangeBackend, publish: (state: ChangeWorkflowState | null) => void) {
   let generation = 0
@@ -184,12 +187,16 @@ export function createChangeWorkflow(backend: ChangeBackend, publish: (state: Ch
     const request = originalRequest!
     const initialPlanId = plan.plan_id
     const silent = mode === 'toggle'
+    let preparing = false
+    let replanAvailable = false
     try {
       ensureOperationsAllowed()
       let prepared = plan
       if (!plan.prepared) {
         update({ phase: 'preparing', plan, error: null, silent })
+        preparing = true
         prepared = await backend.prepare(plan.plan_id)
+        preparing = false
         if (mine !== generation) { await backend.cancel(prepared.plan_id).catch(() => undefined); return }
       }
       const changed = prepared.plan_id !== initialPlanId || (mode === 'toggle' && !canApplyToggle(request, prepared))
@@ -224,14 +231,17 @@ export function createChangeWorkflow(backend: ChangeBackend, publish: (state: Ch
       const executionArgs: [planId: string, recoveryApproval?: string] = recoveryApproval ? [plan.plan_id, recoveryApproval] : [plan.plan_id]
       const result = await backend.execute(...executionArgs)
       if (mine !== generation) return
-      if (!result.ok) throw result.message
+      if (!result.ok) {
+        replanAvailable = result.replan_available === true
+        throw result.message
+      }
       finish(result)
     } catch (error) {
       if (mine !== generation) return
-      const tag = error instanceof Error ? error.message : error
-      if (tag === inventoryChanged && !manifestOverwrite && !automaticReplanUsed && plan.replan_scope && isPackageRequest(request)) {
+      if (!automaticReplanUsed && plan.replan_scope && (replanAvailable || preparing && isStalePreparation(error))) {
         automaticReplanUsed = true
-        await planRequest(request, mine, plan, !!applyReview || requireReview)
+        const { manifestOverwrite: _expired, ...intent } = request
+        await planRequest(intent, mine, plan, requireReview || !!applyReview || !!manifestOverwrite)
       } else {
         update({ phase: 'failed', plan, error, applyReview,
           manifestOverwrite: error instanceof ChangePreparationError ? error.manifestOverwrite : undefined })

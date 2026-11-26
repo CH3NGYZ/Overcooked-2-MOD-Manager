@@ -199,27 +199,120 @@ test('high-impact and unproven actions get one final review', async () => {
   }
 })
 
-for (const stalePhase of ['prepare', 'execute']) test(`refreshes typed ${stalePhase} staleness once with the exact original asset`, async () => {
+for (const [stalePhase, message] of [
+  ['prepare', 'modChanges.inventoryChanged'],
+  ['prepare', 'modChanges.targetChanged?path=BepInEx%2Fplugins%2FExample.dll'],
+  ['execute', 'modChanges.inventoryChanged'],
+  ['execute', 'modChanges.targetChanged'],
+]) test(`refreshes ${stalePhase} ${message} once with the exact original asset`, async () => {
   const calls = [], ids = ['original', 'replanned'], scope = 'game/source/intent'
   let plans = 0
   const submitted = { roots: [{ ...request.roots[0], asset_name: 'exact.zip' }] }
   const f = fixture({
     plan: async value => { calls.push(structuredClone(value)); return plan(ids[plans++], { replan_scope: scope }) },
     prepare: async id => {
-      if (id === ids[0] && stalePhase === 'prepare') throw new Error('modChanges.inventoryChanged')
+      if (id === ids[0] && stalePhase === 'prepare') throw new Error(message)
       return plan(id, { prepared: true, replan_scope: scope, actions: [rootInstall] })
     },
     execute: async id => {
       calls.push(id)
-      return id === ids[0] && stalePhase === 'execute' ? { ok: false, message: 'modChanges.inventoryChanged' } : { ok: true, message: '' }
+      return id === ids[0] && stalePhase === 'execute'
+        ? { ok: false, message, replan_available: true } : { ok: true, message: '' }
     },
   })
   const pending = f.run(submitted)
   submitted.roots[0].asset_name = 'different.zip'
+  await tick()
+  assert.equal(f.state, null, 'a routine replan must not ask for another click')
   assert.equal((await pending).ok, true)
   const frozen = { roots: [{ ...request.roots[0], asset_name: 'exact.zip' }] }
   assert.deepEqual(calls, stalePhase === 'prepare' ? [frozen, frozen, 'replanned'] : [frozen, 'original', frozen, 'replanned'])
   assert.deepEqual(f.calls, [['cancel', 'original']])
+})
+
+test('execution errors after entering the transaction are never automatically replayed', async () => {
+  const f = fixture({
+    plan: async () => plan('original', { replan_scope: 'same' }),
+    prepare: async id => plan(id, { prepared: true, replan_scope: 'same', actions: [rootInstall] }),
+    execute: async id => {
+      f.calls.push(['execute', id])
+      return { ok: false, message: 'modChanges.targetChanged' }
+    },
+  })
+  const pending = f.run(request)
+  await tick()
+  assert.equal(f.state.phase, 'failed')
+  assert.deepEqual(f.calls, [['execute', 'original']])
+  await f.cancel(); assert.equal(await pending, null)
+})
+
+test('the one automatic refresh is shared by prepare and execute', async () => {
+  let attempts = 0
+  const f = fixture({
+    plan: async () => plan(`plan-${++attempts}`, { replan_scope: 'same' }),
+    prepare: async id => {
+      if (id === 'plan-1') throw new Error('modChanges.targetChanged')
+      return plan(id, { prepared: true, replan_scope: 'same', actions: [rootInstall] })
+    },
+    execute: async id => {
+      f.calls.push(['execute', id])
+      return { ok: false, message: 'modChanges.inventoryChanged', replan_available: true }
+    },
+  })
+  const pending = f.run(request)
+  await tick()
+  assert.equal(f.state.phase, 'failed')
+  assert.equal(attempts, 2)
+  assert.deepEqual(f.calls, [['cancel', 'plan-1'], ['execute', 'plan-2']])
+  await f.cancel(); assert.equal(await pending, null)
+})
+
+test('cancelling an automatic refresh while old staging is released does not replace a newer request', async () => {
+  const releasing = deferred(), submitted = []
+  const f = fixture({
+    plan: async input => { submitted.push(input); return plan(input === submitted[0] ? 'original' : 'newer', { replan_scope: 'same' }) },
+    prepare: async () => { throw new Error('modChanges.targetChanged') },
+    cancel: async id => { f.calls.push(['cancel', id]); if (id === 'original') await releasing.promise },
+  })
+  const pending = f.run(request)
+  await tick()
+  assert.equal(f.state.phase, 'planning')
+  await assert.rejects(f.run(manualRequest), /modChanges.busy/)
+  await f.cancel()
+  const newer = f.run(manualRequest)
+  await tick()
+  releasing.resolve()
+  assert.equal(await pending, null)
+  assert.deepEqual(submitted, [request, manualRequest])
+  assert.equal(f.state.phase, 'confirming')
+  assert.equal(f.state.plan.plan_id, 'newer')
+  await f.cancel(); assert.equal(await newer, null)
+})
+
+test('a safe stale reply replans a recovered conflict without carrying its approval', async () => {
+  let attempts = 0
+  const f = fixture({
+    plan: async () => plan(`plan-${++attempts}`, { replan_scope: 'same' }),
+    prepare: async id => plan(id, { prepared: true, replan_scope: 'same', actions: [rootInstall],
+      recovery_conflicts: recoveryConflict, recovery_approval: `${id}-proof` }),
+    execute: async (...args) => {
+      f.calls.push(['execute', ...args])
+      return args[0] === 'plan-1' ? { ok: false, message: 'modChanges.targetChanged', replan_available: true }
+        : { ok: true, message: '' }
+    },
+  })
+  const pending = f.run(request)
+  await tick()
+  await f.confirmRecovery('plan-1', 'plan-1-proof')
+  assert.equal(f.state.phase, 'reconfirming')
+  assert.equal(f.state.plan.plan_id, 'plan-2')
+  await f.confirm()
+  await f.confirmRecovery('plan-2', 'plan-1-proof')
+  assert.deepEqual(f.calls, [['execute', 'plan-1', 'plan-1-proof'], ['cancel', 'plan-1']])
+  await Promise.all([f.confirmRecovery('plan-2', 'plan-2-proof'), f.confirmRecovery('plan-2', 'plan-2-proof')])
+  assert.equal((await pending).ok, true)
+  assert.deepEqual(f.calls.at(-1), ['execute', 'plan-2', 'plan-2-proof'])
+  assert.equal(f.calls.filter(([method]) => method === 'execute').length, 2)
 })
 
 for (const change of ['new-upgrade', 'different-version', 'different-candidate', 'different-files', 'same-upgrade']) {
@@ -263,7 +356,7 @@ for (const [tag, previous, fresh, refreshes] of [
   ['modChanges.inventoryChanged', undefined, 'same', false],
   ['modChanges.inventoryChanged', 'same', undefined, true],
   ['modChanges.inventoryChanged', 'old', 'new', true],
-  ['modChanges.targetChanged', 'same', 'same', false],
+  ['modChanges.targetChanged', 'same', 'same', true],
   ['modChanges.recoveryRequired', 'same', 'same', false],
   ['download.cancelled', 'same', 'same', false],
 ]) test(`bounded refresh when ${tag} with ${previous} -> ${fresh}`, async () => {
@@ -287,7 +380,7 @@ test('auto-replanning cancels the old plan and discards destructive consent', as
     plan: async () => plan(++plans === 1 ? 'original' : 'new', { replan_scope: 'same' }),
     prepare: async id => plan(id, { prepared: true, replan_scope: 'same', actions: [rootInstall],
       untracked_overwrites: [{ node_id: 'mod:owner', path: id === 'original' ? 'old.dll' : 'new.dll' }] }),
-    execute: async () => ({ ok: ++executions > 1, message: 'modChanges.inventoryChanged' }),
+    execute: async () => ({ ok: ++executions > 1, message: 'modChanges.inventoryChanged', replan_available: true }),
   })
   const pending = f.run(request)
   await tick()

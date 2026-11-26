@@ -35,9 +35,10 @@ pub(super) fn check_revision(
     recovered: bool,
     frozen: Option<&[super::application_progress::OwnedMutation]>,
 ) -> Result<(), String> {
-    let revision = inventory::revision_for_scope(state, root, scope)?;
+    let disk = inventory::disk_revision(state, root, scope)?;
     let (current_root, config) = current_target(state)?;
     check_scope(state, session, &current_root, &config)?;
+    let revision = inventory::revision_for_disk(&config, disk)?;
     if revision == session.trusted.revision {
         return Ok(());
     }

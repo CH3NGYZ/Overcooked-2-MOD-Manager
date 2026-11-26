@@ -95,7 +95,7 @@ test('a changed target scope stops an overwrite retry before preparation', async
   await result
 })
 
-test('stale overwrite consent never automatically replans or carries into a generic retry', async () => {
+test('an unqualified stale reply never automatically replans or carries overwrite consent into a generic retry', async () => {
   const flow = fixture({ executeResult: { ok: false, message: 'modChanges.inventoryChanged' } }), result = flow.run(release)
   await tick()
   await flow.forceOverwriteManifest()
@@ -107,6 +107,19 @@ test('stale overwrite consent never automatically replans or carries into a gene
   assert.deepEqual(flow.calls.slice(-2), [['plan', release], ['prepare', 'plan-3']])
   await flow.cancel()
   await result
+})
+
+test('a replayable stale overwrite replans the original request but discards the old fingerprint', async () => {
+  const flow = fixture({ executeResult: { ok: false, message: 'modChanges.targetChanged', replan_available: true } })
+  const result = flow.run(release)
+  await tick()
+  await flow.forceOverwriteManifest()
+  await flow.confirm()
+  assert.equal(flow.state.phase, 'reconfirming')
+  assert.equal(flow.state.manifestOverwrite, undefined)
+  assert.deepEqual(flow.calls.slice(-4), [['execute', 'plan-2'], ['cancel', 'plan-2'], ['plan', release], ['prepare', 'plan-3']])
+  await flow.cancel()
+  assert.equal(await result, null)
 })
 
 test('the presence of an install note cannot turn the overwrite review into read-and-apply', async () => {

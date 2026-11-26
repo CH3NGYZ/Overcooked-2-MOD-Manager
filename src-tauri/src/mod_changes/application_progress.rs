@@ -91,6 +91,7 @@ impl ChangeApplicationProgress {
 pub(crate) struct ChangeApplicationOutcome {
     #[serde(flatten)]
     pub result: crate::models::OperationResult,
+    pub replan_available: bool,
     pub progress: ChangeApplicationProgress,
 }
 

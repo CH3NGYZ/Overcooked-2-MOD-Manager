@@ -7,7 +7,14 @@ pub(in crate::mod_changes::mutations) struct LooseFile {
     pub relative: String,
     pub expected: Fingerprint,
     pub(super) loose_node: Option<String>,
-    pub(super) changes_content: bool,
+    pub(super) replacement: FileReplacement,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FileReplacement {
+    Identical,
+    VerifiedSource,
+    UnverifiedSource,
 }
 
 #[derive(Clone, Copy)]
@@ -166,7 +173,7 @@ impl Builder<'_> {
                         relative,
                         expected,
                         loose_node: None,
-                        changes_content: true,
+                        replacement: FileReplacement::VerifiedSource,
                     },
                 );
                 continue;
@@ -204,8 +211,8 @@ impl Builder<'_> {
                     failure.report(&node.id, &physical)
                 }
             })?;
-            let changes_content = scope
-                .changes_file(payload, source, &key, &physical, &before, own)
+            let replacement = scope
+                .file_replacement(payload, source, &key, &physical, &before, own)
                 .map_err(|reason| {
                     if foreign_manifest {
                         claimed()
@@ -283,7 +290,7 @@ impl Builder<'_> {
                     relative: physical,
                     expected: before,
                     loose_node,
-                    changes_content,
+                    replacement,
                 },
             );
         }

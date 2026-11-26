@@ -54,6 +54,7 @@ impl MapBatch {
                 .map(|(path, _)| super::session::UntrackedOverwrite {
                     node_id: external.node_id.clone(),
                     path: path.clone(),
+                    unverified_source: false,
                 })
         })
     }

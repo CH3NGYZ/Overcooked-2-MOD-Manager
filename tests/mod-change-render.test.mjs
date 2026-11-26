@@ -274,6 +274,29 @@ test('only the apply review groups replacements by package and shows every disti
   assert.equal(notice(), undefined)
 })
 
+test('source uncertainty exposes a risk warning and an explicit overwrite action in the final review', async t => {
+  const root = mounted(t)
+  const fixturePath = 'BepInEx/plugins/OC2DIYLevel/common'
+  const verified = { ...plan, prepared: true, untracked_overwrites: [
+    { node_id: 'level', path: fixturePath, unverified_source: true },
+  ] }
+  const button = action => find(root, node => node.props?.['data-plan-action'] === action)[0]
+  fixture.state.value = { phase: 'confirming', plan: verified, error: null }
+  await nextTick()
+  assert.doesNotMatch(text(root), /继续覆盖|找不到可核对的来源/)
+  fixture.state.value = { phase: 'reconfirming', plan: verified, applyReview: 'prepared', error: null }
+  await nextTick()
+  assert.match(text(root), /找不到可核对的来源.*本地修改可能丢失/)
+  assert.match(text(root), /BepInEx\/plugins\/OC2DIYLevel\/common/)
+  assert.equal(text(button('confirm')), '继续覆盖')
+  assert.equal(button('confirm').props.type, 'warning')
+  assert.deepEqual(fixture.calls, [])
+  button('cancel').props.onClick()
+  assert.deepEqual(fixture.calls, ['cancel'])
+  button('confirm').props.onClick()
+  assert.deepEqual(fixture.calls, ['cancel', 'confirm'])
+})
+
 test('the only view is a six-column table with separate actions, version changes, and readable reasons', async t => {
   const root = mounted(t)
   fixture.state.value = { phase: 'confirming', plan: { ...plan, impacts: ['mod:opaque'], actions: [

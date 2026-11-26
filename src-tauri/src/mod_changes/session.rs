@@ -66,6 +66,8 @@ pub(crate) struct RelationLabel {
 pub(crate) struct UntrackedOverwrite {
     pub node_id: String,
     pub path: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub unverified_source: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

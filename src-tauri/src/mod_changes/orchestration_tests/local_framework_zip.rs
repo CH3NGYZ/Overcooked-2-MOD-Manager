@@ -240,11 +240,15 @@ async fn real_local_diylevel_zip_installs_mod_and_preserves_the_existing_map_tre
         let fixture = fixture(repositories);
         let package = fixture.game.join("BepInEx/plugins/OC2DIYLevel");
         let core = package.join("OC2DIYLevel.dll");
+        let common = package.join("common");
         let story = package.join("levels/oc1_story");
         let test_level = package.join("levels/test_level");
         let original_marker = story.join("local-marker");
         if keep_old {
             write(&original_marker, b"user content");
+        }
+        if online {
+            write(&common, b"unverified old common resource");
         }
         let old_core = (!online && keep_old).then(|| {
             let bytes = mods::plugin_blob(FRAMEWORK_GUID, "DIYLevel", "0.10.0");
@@ -275,6 +279,20 @@ async fn real_local_diylevel_zip_installs_mod_and_preserves_the_existing_map_tre
         let outcome = preparation::prepare(fixture.state.clone(), plan.plan_id, |_| {}).await;
         assert_eq!(outcome.error, None);
         let prepared = outcome.plan.unwrap();
+        if online {
+            let [overwrite] = prepared.untracked_overwrites.as_slice() else {
+                panic!(
+                    "expected only the common resource: {:?}",
+                    prepared.untracked_overwrites
+                );
+            };
+            assert_eq!(overwrite.path, "BepInEx/plugins/OC2DIYLevel/common");
+            assert!(overwrite.unverified_source);
+            assert_eq!(
+                fs::read(&common).unwrap(),
+                b"unverified old common resource"
+            );
+        }
         if old_core.is_some() {
             assert_framework_upgrade(&prepared);
         }
@@ -293,6 +311,14 @@ async fn real_local_diylevel_zip_installs_mod_and_preserves_the_existing_map_tre
         }));
         assert_uncommitted();
         super::super::execution::commit(&fixture.state, &mut session, |_| {}).unwrap();
+        let mut release = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
+        let mut release_common = Vec::new();
+        std::io::Read::read_to_end(
+            &mut release.by_name("OC2DIYLevel/common").unwrap(),
+            &mut release_common,
+        )
+        .unwrap();
+        assert_eq!(fs::read(common).unwrap(), release_common);
         assert_eq!(
             mods::read_dll_details(&core, "OC2DIYLevel.dll")
                 .version

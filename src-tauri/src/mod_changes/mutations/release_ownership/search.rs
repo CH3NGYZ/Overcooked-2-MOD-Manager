@@ -92,7 +92,7 @@ impl<'a> LooseReleaseSearch<'a> {
                     continue;
                 };
                 if scope
-                    .changes_file(payload, source, &key, &physical, &before, false)
+                    .file_replacement(payload, source, &key, &physical, &before, false)
                     .is_err()
                     || !builder
                         .loose_owner(id, payload, incoming, &key, &physical)

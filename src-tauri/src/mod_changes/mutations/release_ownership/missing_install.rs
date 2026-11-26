@@ -188,15 +188,17 @@ impl Builder<'_> {
                 return Err(InstallBlock::AliasesOrLink.report(owner, incoming).into());
             }
         }
-        let changes_content = !expected.same_content(digest);
-        if changes_content && proof.allowed.is_none() {
-            return Err(InstallBlock::ResidueDiffers.report(owner, &physical).into());
-        }
         Ok(Some(LooseFile {
             relative: physical,
+            replacement: if expected.same_content(digest) {
+                FileReplacement::Identical
+            } else if proof.allowed.is_some() {
+                FileReplacement::VerifiedSource
+            } else {
+                FileReplacement::UnverifiedSource
+            },
             expected,
             loose_node: None,
-            changes_content,
         }))
     }
 

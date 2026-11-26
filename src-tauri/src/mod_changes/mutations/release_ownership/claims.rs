@@ -61,10 +61,11 @@ impl ReleaseTargetClaims {
     pub fn overwrites(&self) -> Vec<UntrackedOverwrite> {
         self.loose
             .iter()
-            .filter(|(_, file)| file.changes_content)
+            .filter(|(_, file)| file.replacement != FileReplacement::Identical)
             .map(|((id, _), file)| UntrackedOverwrite {
                 node_id: id.clone(),
                 path: file.relative.clone(),
+                unverified_source: file.replacement == FileReplacement::UnverifiedSource,
             })
             .collect()
     }

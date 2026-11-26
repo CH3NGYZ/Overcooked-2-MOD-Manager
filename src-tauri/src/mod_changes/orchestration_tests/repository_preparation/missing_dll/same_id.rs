@@ -8,6 +8,49 @@ const IDENTICAL: &str = "BepInEx/plugins/FixtureMod/prefer.example.txt";
 const OLD_ONLY: &str = "BepInEx/plugins/FixtureMod/previous.txt";
 const USER_FILE: &str = "BepInEx/plugins/FixtureMod/prefer.txt";
 
+#[tokio::test]
+async fn missing_core_without_record_offers_overwrite_only_for_the_packaged_resource() {
+    const RESOURCE: &str = "BepInEx/plugins/FixtureMod/common";
+    let test = setup_asset(
+        true,
+        zip(&[
+            ("FixtureMod/Fixture.dll", &mod_dll()),
+            ("FixtureMod/common", b"new release resource"),
+        ]),
+    );
+    let game = &test.fixture.game;
+    write(&game.join(RESOURCE), b"unverified older resource");
+    write(&game.join(USER_FILE), b"user customizations");
+    let before = test.fingerprints();
+
+    let plan = select_plan(&test.fixture, REPO, TAG, ASSET);
+    assert!(plan.untracked_overwrites.is_empty());
+    let outcome = preparation::prepare(test.fixture.state.clone(), plan.plan_id, |_| {}).await;
+    let ready = prepared_plan(outcome, TAG);
+    assert_eq!(test.server.request_count(), 1);
+    assert_eq!(test.fingerprints(), before);
+    assert_eq!(
+        serde_json::to_value(&ready).unwrap()["untracked_overwrites"],
+        serde_json::json!([{
+            "node_id": format!("mod:{REPO}"),
+            "path": RESOURCE,
+            "unverified_source": true,
+        }]),
+    );
+
+    let mut session = take(&test.fixture, &ready);
+    execution::commit(&test.fixture.state, &mut session, |_| {}).unwrap();
+    assert_eq!(fs::read(game.join(DLL_PATH)).unwrap(), mod_dll());
+    assert_eq!(
+        fs::read(game.join(RESOURCE)).unwrap(),
+        b"new release resource"
+    );
+    assert_eq!(
+        fs::read(game.join(USER_FILE)).unwrap(),
+        b"user customizations"
+    );
+}
+
 fn residual_package() -> ReinstallFixture {
     let test = setup_asset(
         true,
@@ -48,14 +91,12 @@ async fn same_id_reinstall_keeps_files_and_record_when_cancelled_or_changed() {
             write(&test.fixture.game.join(path), b"changed after confirmation");
             let changed = test.fingerprints();
             let error = execution::commit(&test.fixture.state, &mut session, |_| {}).unwrap_err();
-            let tag = if path == CHANGED {
-                "modChanges.installTargetVerificationChanged"
-            } else {
-                "modChanges.installTargetResidueDiffers"
-            };
             assert_eq!(
                 error,
-                crate::locale_tag::with_params(tag, &[("path", path)])
+                crate::locale_tag::with_params(
+                    "modChanges.installTargetVerificationChanged",
+                    &[("path", path)],
+                )
             );
             assert_eq!(test.fingerprints(), changed);
         } else {
@@ -68,7 +109,17 @@ async fn same_id_reinstall_keeps_files_and_record_when_cancelled_or_changed() {
 #[tokio::test]
 async fn same_id_reinstall_rolls_back_resources_if_the_missing_dll_reappears_during_apply() {
     let test = residual_package();
+    write(
+        &test.fixture.game.join(IDENTICAL),
+        b"modified without record",
+    );
     let ready = prepared_plan(test.prepare().await, TAG);
+    assert!(
+        ready
+            .untracked_overwrites
+            .iter()
+            .any(|file| { file.path == IDENTICAL && file.unverified_source })
+    );
     let mut session = take(&test.fixture, &ready);
     let game = &test.fixture.game;
     let disabled = mods::disabled_dll_file(DLL_PATH);
@@ -108,19 +159,18 @@ async fn same_id_reinstall_rolls_back_resources_if_the_missing_dll_reappears_dur
         fs::read(game.join(CHANGED)).unwrap(),
         b"older local resource"
     );
+    assert_eq!(
+        fs::read(game.join(IDENTICAL)).unwrap(),
+        b"modified without record"
+    );
     assert_eq!(fs::read(game.join(&disabled)).unwrap(), b"external DLL");
     assert!(!game.join(DLL_PATH).exists());
     assert!(!game.join(MISSING).exists());
 }
 
 #[tokio::test]
-async fn same_id_reinstall_refuses_foreign_or_unverified_overwrites() {
-    for obstacle in [
-        "other record",
-        "modified without record",
-        "hard link",
-        "directory",
-    ] {
+async fn same_id_reinstall_refuses_foreign_or_unsafe_overwrites() {
+    for obstacle in ["other record", "hard link", "directory"] {
         let test = residual_package();
         let game = &test.fixture.game;
         let expected = match obstacle {
@@ -132,10 +182,6 @@ async fn same_id_reinstall_refuses_foreign_or_unverified_overwrites() {
                     ..test.old_record()
                 });
                 ("modChanges.installTargetClaimedWithManifests", CHANGED)
-            }
-            "modified without record" => {
-                write(&game.join(IDENTICAL), b"different unregistered file");
-                ("modChanges.installTargetResidueDiffers", IDENTICAL)
             }
             "hard link" => {
                 fs::hard_link(game.join(CHANGED), game.join("external.txt")).unwrap();
@@ -181,6 +227,7 @@ async fn same_id_reinstall_offers_verified_overwrites_and_preserves_other_files(
         );
     };
     assert_eq!(overwrite.path, CHANGED);
+    assert!(!overwrite.unverified_source);
     assert_eq!(test.fingerprints(), before);
 
     let mut session = take(&test.fixture, &ready);

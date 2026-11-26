@@ -102,7 +102,7 @@ mod search;
 mod source_switch;
 pub(in crate::mod_changes) use claims::ReleaseTargetClaims;
 pub(in crate::mod_changes) use endpoints::verify_missing_dll_variant;
-use loose_files::AllowedClaim;
+use loose_files::{AllowedClaim, FileReplacement};
 pub(in crate::mod_changes) use search::LooseReleaseSearch;
 pub(in crate::mod_changes) use source_switch::related_release_source;
 
@@ -122,7 +122,7 @@ impl ReleaseCore<'_, '_> {
 }
 
 enum PackageProof {
-    /// The live core is absent, so the precise bytes must prove provenance.
+    /// The live core is absent; only identical bytes prove provenance.
     Residue,
     /// Same installed and verified incoming core, at the exact same path.
     Replacement,
@@ -163,7 +163,7 @@ impl From<InstallBlock> for ScopeFailure {
 }
 
 impl PackageScope<'_> {
-    fn changes_file(
+    fn file_replacement(
         &self,
         payload: &Payload,
         source: &str,
@@ -171,7 +171,7 @@ impl PackageScope<'_> {
         physical: &str,
         before: &Fingerprint,
         own: bool,
-    ) -> Result<bool, InstallBlock> {
+    ) -> Result<FileReplacement, InstallBlock> {
         let digest = payload
             .release_files
             .as_ref()
@@ -182,8 +182,24 @@ impl PackageScope<'_> {
         }
         let changed = !before.same_content(digest);
         match self.proof {
-            PackageProof::Replacement => Ok(changed),
-            PackageProof::Residue if key != self.primary_key && !changed && !own => Ok(false),
+            PackageProof::Replacement => Ok(if changed {
+                FileReplacement::VerifiedSource
+            } else {
+                FileReplacement::Identical
+            }),
+            PackageProof::Residue if key != self.primary_key && !changed && !own => {
+                Ok(FileReplacement::Identical)
+            }
+            PackageProof::Residue
+                if changed
+                    && !own
+                    && payload.downloaded
+                    && !mods::file_state::is_mod_file(Path::new(source))
+                    && matches!(before, Fingerprint::File { .. })
+                    && matches!(digest, Fingerprint::File { .. }) =>
+            {
+                Ok(FileReplacement::UnverifiedSource)
+            }
             PackageProof::Residue
                 if changed
                     && matches!(before, Fingerprint::File { .. })

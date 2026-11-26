@@ -54,8 +54,11 @@ const overwriteGroups = computed(() => {
   }
   return [...groups]
 })
+const unverifiedOverwrite = computed(() => overwriteGroups.value.length > 0
+  && !!plan.value?.untracked_overwrites?.some(file => file.unverified_source))
 const needsPreparation = computed(() => !applyReview.value && plan.value?.actions.some(isPackageAction))
 const confirmLabel = computed(() => overwriteReview.value ? 'modChanges.manifestOverwrite.confirm'
+  : unverifiedOverwrite.value ? 'modChanges.overwrite.action'
   : applyReview.value === 'changed' && plan.value?.prepared ? 'modChanges.reconfirm'
   : needsPreparation.value ? 'modChanges.confirmPreparation' : 'modChanges.confirm')
 const names = computed(() => plan.value && changePlanLabels(plan.value, currentProgress.value, pickI18n, locale.value))
@@ -145,7 +148,7 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
       </NAlert>
       <NAlert v-if="overwriteGroups.length" type="warning" :bordered="false"
         :title="t('modChanges.overwrite.title')" data-untracked-overwrites>
-        {{ t('modChanges.overwrite.description') }}
+        {{ t(unverifiedOverwrite ? 'modChanges.overwrite.unverifiedSource' : 'modChanges.overwrite.description') }}
         <ul class="overwrite-groups" role="list">
           <li v-for="[nodeId, paths] in overwriteGroups" :key="nodeId">
             <strong>{{ names?.nodes.get(nodeId) ?? t('modChanges.unnamedItem') }}</strong>
@@ -246,7 +249,7 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
             @click="changes.retry">{{ t('modChanges.retry') }}</NButton>
           <TransactionConflictConfirmation v-else-if="recoveryReview && plan && !showTransactionRecovery"
             :plan="plan" @approve="changes.confirmRecovery" />
-          <NButton v-else data-plan-action="confirm" :type="overwriteReview ? 'warning' : 'primary'" :loading="working" :disabled="working || completedPreparation || plan?.status !== 'ready' || recoveryReview"
+          <NButton v-else data-plan-action="confirm" :type="overwriteReview || unverifiedOverwrite ? 'warning' : 'primary'" :loading="working" :disabled="working || completedPreparation || plan?.status !== 'ready' || recoveryReview"
             @click="changes.confirm">{{ t(confirmLabel) }}</NButton>
         </div>
       </div>

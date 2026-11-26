@@ -1,0 +1,52 @@
+# 公告服务运维
+
+| 部署名 | 域名 | 用途 |
+|---|---|---|
+| `oc2modmanager-notice` | `oc2modmanager-notice.ch3ng.top` | 公开公告页和 `GET /api/announcements` |
+| `oc2modmanager-notice-admin` | `oc2modmanager-notice-admin.ch3ng.top` | Access 保护的编辑页和后台 API |
+
+两个 Worker 共用一个 D1 `oc2modmanager-notice`，绑定名均为 `DB`。源码和迁移随管理器仓库维护；编辑数据写 D1，不修改 Git，不需要部署 Pages，也不调用 GitHub 或 `OC2-GH-API`。公开读成功才缓存，后台不缓存。后台资源由 Worker 直接返回，不要改用会丢失 `ctx.access` 的 Static Assets 路由器或服务绑定转发。
+
+## 本地检查
+
+从仓库根目录执行以下命令。`--local` 迁移只初始化本机 SQLite；它不会创建或更新线上 D1。两个 `wrangler dev` 需要指向同一个 `--persist-to` 目录，才能读到同一份本机数据。
+
+```powershell
+node --test tests/announcement-worker.test.mjs
+npx wrangler@4.162.0 d1 migrations apply DB --config workers/announcements/wrangler.public.jsonc --local --persist-to .tmp/notice-d1
+npx wrangler@4.162.0 deploy --config workers/announcements/wrangler.public.jsonc --dry-run --outdir .tmp/notice-public-bundle
+npx wrangler@4.162.0 deploy --config workers/announcements/wrangler.admin.jsonc --dry-run --outdir .tmp/notice-admin-bundle
+```
+
+在两个终端分别启动 Worker；通过 `--connect-to` 仅把请求导向回环，同时保留应用校验的 HTTPS 域名。`--insecure` 仅用于本机自签证书，线上验收不要使用。
+
+```powershell
+npx wrangler@4.162.0 dev --config workers/announcements/wrangler.public.jsonc --local-protocol https --port 5921 --persist-to .tmp/notice-d1
+npx wrangler@4.162.0 dev --config workers/announcements/wrangler.admin.jsonc --local-protocol https --port 5922 --persist-to .tmp/notice-d1
+curl.exe -isS --insecure --noproxy '*' --connect-to oc2modmanager-notice.ch3ng.top:443:127.0.0.1:5921 https://oc2modmanager-notice.ch3ng.top/api/announcements
+curl.exe -isS --insecure --noproxy '*' --connect-to oc2modmanager-notice-admin.ch3ng.top:443:127.0.0.1:5922 https://oc2modmanager-notice-admin.ch3ng.top/
+```
+
+首个请求应返回 `200` 和 `{"revision":0,"announcements":[]}`（空库），并有 `Cloudflare-CDN-Cache-Control: public, s-maxage=300`；第二个应返回 `403`。真实边缘缓存不在本机模拟。若需模拟后台登录，按 [Wrangler 本地 Access 模拟](https://developers.cloudflare.com/workers/configuration/cloudflare-access/#test-ctxaccess-locally) 在仅本机的配置中添加 `access.dev`，并用本机测试邮箱设置 `ADMIN_EMAIL`；不要提交或部署该配置。
+
+## 首次上线顺序
+
+上线前确认 Wrangler 账号、`ch3ng.top` 所属 Zone、两个 Worker 和 D1 的归属一致。以下是待执行清单，不是上线回执。
+
+1. `npx wrangler@4.162.0 whoami` 核对账号。确认同名 D1 不存在后，用 `npx wrangler@4.162.0 d1 create oc2modmanager-notice` 创建。两份 Wrangler 配置在本机部署副本中填同一个真实 `database_id`，其余保持原值；模板的全零 ID 不能上线。配置副本可与原文件同目录以保留相对路径，但不得提交。
+2. 在部署副本上执行 `npx wrangler@4.162.0 d1 migrations apply DB --config <公开部署配置> --remote`。`--remote` 会写线上 D1；只对已核对的目标执行一次，两站之后共享该表。已有数据时先备份并核对迁移记录，不重建或清空数据库。
+3. 先用 `npx wrangler@4.162.0 deploy --config <后台部署配置>` 部署后台，首次不要设置 `ADMIN_EMAIL`，此时代码拒绝访问。进入 **Workers & Pages → oc2modmanager-notice-admin → Access**，为该 Worker 启用 **All traffic**，在 Zero Trust 细化为只允许指定维护邮箱。不要使用 **Everyone**、整个邮箱域或 **Bypass**；若已有该后台域名的单独 Access 应用，先检查它不会覆盖 Worker 级规则。不要把账号级保护附加到公开入口。
+4. 在 **Zero Trust → Integrations → Identity providers** 启用 **Passkeys**，在该应用的 **Login methods** 中明确选择它。首次在登录页选 **Sign in with a passkey → Don't have a passkey? Set one up**；如果只允许 Passkeys，Access 会把首次验证 PIN 发到邮箱，验证后在系统安全提示中保存通行密钥。后续可直接用设备验证。邮箱策略仍须命中，不因为持有 Passkey 就放行。通过 `npx wrangler@4.162.0 secret put ADMIN_EMAIL --config <后台部署配置>` 交互输入相同维护邮箱，不写入命令行参数、仓库或日志。无配置、不匹配或 Access 身份缺失时，Worker 仍返回 `403`。
+5. 确认后台匿名拒绝、授权维护者可打开编辑器后，再执行 `npx wrangler@4.162.0 deploy --config <公开部署配置>`。复核两站都只有自定义域名；`workers_dev: false`、`preview_urls: false` 必须保持关闭，只有公开站启用 Workers Cache。
+
+## 上线验收
+
+- 无痕打开后台和后台 API，应由 Access 要求登录，不得返回页面内容或 JSON；非维护邮箱不得通过。用维护邮箱注册、退出并再次用 Passkey 登录，核对后台读写。Access 原生退出路径为后台域名下的 `/cdn-cgi/access/logout`，会注销同一 Zero Trust 团队中的其他 Access 会话，旧令牌约 20–30 秒后失效。
+- 公告 API 以无 Cookie、无认证头、无查询串的同一 URL 连续 `GET`；记录 `Cf-Ray` 的机房、`Cf-Cache-Status` 和 `Age`，同一机房观察 `MISS → HIT`，超过 300 秒后确认返新版本。线上 `Cloudflare-CDN-Cache-Control` 会被边缘消费，不一定出现在回包；浏览器收到的仍是 `Cache-Control: no-store`。后台、错误和页面资源都不应 `HIT`。公开域名不能返回后台脚本或后台 API。
+- 发布、编辑和撤下会改变 `revision`。推荐在测试环境验证从写入到公开读的全链；生产只按确认过的内容发布，不为测试给用户推假公告。撤下仍可能在旧缓存过期前可见，正常操作等缓存更新，不要通过随机查询参数绕缓存。
+- 已核对的客户端仍应能在公告域或网络不可用时正常启动；发布前从大陆和境外网络分别实测域名与 HTTPS。自定义域名、缓存和少量请求只能降低压力，不能保证可达或保证不受限。
+
+## 配额与限流
+
+- 不从 GitHub 拉公告、不占 GitHub API 额度。边缘命中不执行 Worker、不读 D1，但请求本身仍计入 Workers 用量。按当前 [Workers 限额](https://developers.cloudflare.com/workers/platform/limits/#daily-requests)，Free 为账号每日 100,000 次（UTC 零时重置）；[D1 Free](https://developers.cloudflare.com/d1/platform/pricing/#billing-metrics) 每日 500 万行读、10 万行写。投产前按账户套餐重新核对，并监控请求、命中率、D1 行数和错误率。
+- 流量异常先核对 Metrics、机房和请求来源，再按 [Cloudflare Rate Limiting](https://developers.cloudflare.com/waf/rate-limiting-rules/) 对公开公告 API 配置限流（能力依套餐）。阈值以正常峰值为基准，避免按低阈值误伤共享出口；桌面请求被限流时不应要求通过浏览器挑战或密集重试。不要轮换身份或域名以绕过服务限制。

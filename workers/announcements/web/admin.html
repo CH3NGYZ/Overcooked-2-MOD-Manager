@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>发布公告 · OC2 MOD Manager</title>
+  <link rel="stylesheet" href="/notice.css">
+  <script type="module" src="/notice-admin.js"></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="wrap brand"><span class="brand-mark" aria-hidden="true"></span>OC2 MOD Manager</div>
+  </header>
+  <main class="wrap admin-page">
+    <div class="page-heading">
+      <div><h1>发布公告</h1><p>公开页面有 5 分钟缓存；管理器在启动时检查公告。</p></div>
+      <a href="https://oc2modmanager-notice.ch3ng.top/" target="_blank" rel="noopener noreferrer">查看公开公告</a>
+    </div>
+    <p id="status" class="message" role="status">正在读取公告…</p>
+    <div class="workspace">
+      <section class="pane" aria-labelledby="history-title">
+        <div class="pane-heading"><h2 id="history-title">已发布公告</h2><span id="count" class="count"></span></div>
+        <p id="history-empty" hidden>暂无公告</p>
+        <ul id="history" class="history"></ul>
+        <button type="button" id="new" hidden>新建公告</button>
+        <button type="button" id="reload" hidden>重新读取</button>
+      </section>
+      <form id="editor" class="pane" hidden>
+        <fieldset id="editor-fields">
+          <legend id="editor-title">新建公告</legend>
+          <label for="language">原文语言</label>
+          <select id="language" name="language"></select>
+          <div class="language-tools">
+            <div>
+              <label for="editing-language">正在编辑</label>
+              <select id="editing-language"></select>
+            </div>
+            <div>
+              <label for="add-language">添加译文（可选）</label>
+              <select id="add-language"></select>
+            </div>
+          </div>
+          <button type="button" id="remove-language" class="subtle danger" hidden>移除此译文</button>
+          <div class="field-heading"><label for="title">标题</label><output id="title-count" for="title"></output></div>
+          <input id="title" name="title" aria-describedby="title-count" type="text" autocomplete="off" required>
+          <div class="field-heading"><label for="body">正文</label><output id="body-count" for="body"></output></div>
+          <textarea id="body" name="body" aria-describedby="body-count" rows="7" required></textarea>
+          <p class="help">正文为纯文本，保留换行。</p>
+          <details class="preview" id="preview">
+            <summary>预览公告</summary>
+            <label for="preview-language">预览语言</label>
+            <select id="preview-language"></select>
+            <p id="preview-empty" class="help">填写标题和正文后即可预览。</p>
+            <article id="preview-content" class="notice" hidden></article>
+          </details>
+          <div class="actions">
+            <button type="submit" id="submit" class="primary">发布公告</button>
+            <button type="button" id="withdraw" class="danger" hidden>撤下公告</button>
+          </div>
+        </fieldset>
+      </form>
+    </div>
+  </main>
+  <dialog id="confirm" aria-labelledby="confirm-title" aria-describedby="confirm-body">
+    <h2 id="confirm-title"></h2>
+    <p id="confirm-body"></p>
+    <form method="dialog" class="actions">
+      <button value="cancel" autofocus>取消</button>
+      <button id="confirm-action" class="primary" value="confirm"></button>
+    </form>
+  </dialog>
+</body>
+</html>

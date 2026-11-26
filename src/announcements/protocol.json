@@ -1,0 +1,8 @@
+{
+  "origin": "https://oc2modmanager-notice.ch3ng.top",
+  "path": "/api/announcements",
+  "maxItems": 5,
+  "maxResponseBytes": 131072,
+  "maxTitleBytes": 160,
+  "maxBodyBytes": 1536
+}

@@ -20,7 +20,9 @@
  * 每个域一个文件，按使用它的界面区域归属，而不是按控件类型。
  * 新增文案时先找它「在哪个页面出现」，再加到对应域文件。
  */
-export const LOCALE_LABELS = { en: 'English', de: 'Deutsch', fr: 'Français', it: 'Italiano', ko: '한국어', 'es-ES': 'Español (España)', 'zh-CN': '简体中文', 'zh-TW': '繁體中文', ru: 'Русский', ja: '日本語', pl: 'Polski', 'pt-BR': 'Português (Brasil)' } as const
+import labels from './labels.json' with { type: 'json' }
+
+export const LOCALE_LABELS = Object.freeze(labels)
 
 export type Locale = keyof typeof LOCALE_LABELS
 export const LOCALE_CODES: readonly Locale[] = Object.keys(LOCALE_LABELS) as Locale[]
@@ -48,6 +50,7 @@ export const DOMAINS = [
   // —— 界面域：按页面/区域归属 ——
   'common',      // 通用：确定/取消/保存/删除 等跨页面复用的词
   'nav',         // 侧栏、标题栏、页面标题
+  'announcements', // 标题栏公告和公开公告页
   'overlays',    // 全屏遮罩（备份/恢复/卸载整目录拷贝的等待提示）
   'overview',    // 总览
   'modsOnline',  // MOD 安装页

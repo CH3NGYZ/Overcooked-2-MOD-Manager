@@ -35,6 +35,7 @@ import { community, proxy } from './network.ts'
 import { source } from './source.ts'
 import { migrate, update } from './update.ts'
 import { nav } from './nav.ts'
+import { announcements } from './announcements.ts'
 import { overview } from './overview.ts'
 import { frameworkUi } from './frameworkUi.ts'
 import { overlays } from './overlays.ts'
@@ -112,6 +113,7 @@ interface DomainTable {
 }
 
 export const TABLES: DomainTable[] = [
+  { domain: 'announcements', messages: announcements },
   { domain: 'modChanges', messages: modChanges },
   { domain: 'modChanges', messages: modChangeEvidence },
   { domain: 'modChanges', messages: modChangeRecovery },

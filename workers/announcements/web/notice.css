@@ -56,13 +56,29 @@ legend { margin-bottom: .65rem; padding: 0; }
 label { display: block; font-weight: 640; }
 input, textarea, select { width: 100%; max-width: 100%; padding: .45rem .6rem; border: 1px solid var(--line); border-radius: .28rem; background: var(--paper); }
 textarea { min-height: 6rem; resize: vertical; }
-.language-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .65rem; margin-block: .75rem; }
+.language-versions { margin-block: 1rem .8rem; }
+.language-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 7rem), 1fr)); gap: .4rem; }
+.language-grid label { position: relative; cursor: pointer; }
+.language-grid input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.language-grid span { display: flex; flex-direction: column; align-items: start; justify-content: center; height: 100%; min-height: 3.25rem; padding: .35rem .6rem; border: 1px solid var(--line); border-radius: .28rem; }
+.language-grid small { color: var(--muted); font-size: .78rem; }
+.language-grid [data-version="partial"] small { color: var(--danger); }
+.language-grid [data-version="source"] small { color: var(--accent); }
+.language-grid input:checked + span { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
+.language-grid input:focus-visible + span { outline: 3px solid var(--accent); outline-offset: 2px; }
+.language-grid input:disabled + span { opacity: .55; }
+.translation-tools { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .7rem; }
+.translation-tools [data-tone="error"] { color: var(--danger); }
+.version-heading { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: .8rem; }
+.source-reference { margin-top: .45rem; padding: .4rem .65rem; background: var(--paper); }
+.source-reference summary { cursor: pointer; color: var(--accent); }
+.source-reference .notice { margin-top: .5rem; padding: .6rem 0; }
 .field-heading { margin-top: .85rem; }
 output[data-over="true"] { color: var(--danger); font-weight: 680; }
 .preview { margin-block: .95rem; border-block: 1px solid var(--line); padding: .65rem 0; }
 .preview summary { cursor: pointer; font-weight: 640; }
 .preview label { margin-top: .55rem; }
-.preview .notice, #preview-empty { margin-top: .7rem; }
+.preview .notice, #preview-status { margin-top: .7rem; }
 .actions { justify-content: flex-start; margin-top: .85rem; }
 button { cursor: pointer; min-height: 2.6rem; border: 1px solid var(--line); border-radius: .32rem; padding: .35rem .72rem; background: transparent; }
 button:hover:not(:disabled) { border-color: var(--ink); }

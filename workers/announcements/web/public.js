@@ -25,7 +25,7 @@ byId('page-title').textContent = heading
 status.textContent = NOTICE_COPY.loading[locale]
 
 try {
-  const { announcements } = await requestSnapshot(PUBLIC_API)
+  const { announcements } = await requestSnapshot(`${PUBLIC_API}?lang=${locale}`)
   const articles = announcements.map(announcement => {
     const article = document.createElement('article')
     article.className = 'notice'

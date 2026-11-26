@@ -12,6 +12,13 @@ const publicAssets = noticeAssets(asset, 'body {}', 'export {}', '/notice-public
 const adminAssets = noticeAssets('<h1>Editor</h1>', 'body {}', 'export {}', '/notice-admin.js', 'export {}')
 const ctx = { access: { getIdentity: async () => ({ email }) } }
 const original = { language: 'zh-CN', title: '公告', body: '正文', translations: { en: { title: 'Notice', body: 'Body' } } }
+const translatePath = '/api/admin/translate'
+const translationEnv = {
+  ADMIN_EMAIL: email,
+  NOTICE_TRANSLATION_ENDPOINT: 'https://provider.example.test/v1/chat/completions',
+  NOTICE_TRANSLATION_API_KEY: 'fixture-only-key',
+}
+const translationInput = { language: 'zh-CN', title: '公告', body: '第一行\nOC2 MOD Manager', targets: ['en', 'zh-TW'] }
 
 function fixture(t) {
   const sqlite = new DatabaseSync(':memory:')
@@ -51,6 +58,14 @@ function postAdmin(env, value, { origin = ADMIN_ORIGIN, destination = ADMIN_ORIG
 
 const publish = (revision = 0, changes = {}) => ({ revision, action: 'publish', ...original, ...changes })
 
+function postTranslation(env, value = translationInput, options = {}) {
+  return postAdmin(env, value, { destination: ADMIN_ORIGIN + translatePath, ...options })
+}
+
+function completion(translations) {
+  return Response.json({ choices: [{ message: { content: JSON.stringify({ translations }) }, finish_reason: 'stop' }] })
+}
+
 test('valid public snapshots alone receive the 300-second edge policy, including empty data', async t => {
   const { env, sqlite } = fixture(t)
   const response = await getPublic(env)
@@ -71,6 +86,64 @@ test('valid public snapshots alone receive the 300-second edge policy, including
   assert.equal(corrupt.headers.get('Cloudflare-CDN-Cache-Control'), null)
 })
 
+test('public responses select one translation or the original without exposing the translation map', async t => {
+  const { env } = fixture(t)
+  const saved = await postAdmin(env, publish(0, {
+    translations: { ...original.translations, de: { title: 'Hinweis', body: 'Meldung' } },
+  }))
+  assert.equal(saved.status, 200)
+  const { id, published_at } = (await saved.json()).announcements[0]
+  for (const [query, language, title, body] of [
+    ['', 'en', 'Notice', 'Body'],
+    ['?lang=en', 'en', 'Notice', 'Body'],
+    ['?lang=de', 'de', 'Hinweis', 'Meldung'],
+    ['?lang=zh-CN', 'zh-CN', '公告', '正文'],
+    ['?lang=fr', 'zh-CN', '公告', '正文'],
+  ]) {
+    const response = await getPublic(env, PUBLIC_API + query)
+    assert.equal(response.status, 200, query)
+    assert.equal(response.headers.get('Cloudflare-CDN-Cache-Control'), 'public, s-maxage=300', query)
+    assert.deepEqual(await response.json(), { revision: 1, announcements: [{ id, published_at, language, title, body }] }, query)
+  }
+  const snapshot = await (await getAdmin(env)).json()
+  assert.deepEqual(snapshot.announcements[0].translations, {
+    en: { title: 'Notice', body: 'Body' }, de: { title: 'Hinweis', body: 'Meldung' },
+  })
+})
+
+test('manual refresh reads the new revision in its own uncached URL after an ordinary feed read', async t => {
+  const { env } = fixture(t)
+  const ordinary = `${PUBLIC_API}?lang=en`
+  const fresh = `${ordinary}&fresh=1`
+  const cached = await getPublic(env, ordinary)
+  assert.equal(cached.headers.get('Cloudflare-CDN-Cache-Control'), 'public, s-maxage=300')
+  assert.deepEqual(await cached.json(), { revision: 0, announcements: [] })
+  assert.equal((await postAdmin(env, publish())).status, 200)
+  for (const method of ['GET', 'HEAD']) {
+    const response = await getPublic(env, fresh, method)
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('Cache-Control'), 'no-store')
+    assert.equal(response.headers.get('Cloudflare-CDN-Cache-Control'), null)
+    if (method === 'HEAD') assert.equal(await response.text(), '')
+    else {
+      const snapshot = await response.json()
+      assert.equal(snapshot.revision, 1)
+      assert.equal(snapshot.announcements[0].title, 'Notice')
+    }
+  }
+  const response = await getPublic(env, ordinary)
+  assert.equal(response.headers.get('Cloudflare-CDN-Cache-Control'), 'public, s-maxage=300')
+})
+
+test('only canonical locale and manual-refresh queries can reach the public feed', async () => {
+  for (const query of ['?lang=', '?lang=EN', '?lang=en-US', '?lang=en&lang=de', '?lang=%65n', '?%6cang=en', '?lang=en&',
+    '?lang=en&other=1', '?fresh=1', '?fresh=1&lang=en', '?lang=en&fresh=0', '?lang=en&fresh=1&fresh=1']) {
+    const response = await getPublic({}, PUBLIC_API + query)
+    assert.equal(response.status, 400, query)
+    assert.equal(response.headers.get('Cloudflare-CDN-Cache-Control'), null)
+  }
+})
+
 test('origin, path and method constrain the public feed and static assets', async t => {
   const { env } = fixture(t)
   const page = await getPublic(env, '/')
@@ -79,7 +152,7 @@ test('origin, path and method constrain the public feed and static assets', asyn
   const localeScript = await getPublic(env, '/notice-locales.js')
   assert.match(await localeScript.text(), /export const LOCALE_LABELS.*"pt-BR"/)
   for (const response of [page, localeScript]) assert.equal(response.headers.get('Cloudflare-CDN-Cache-Control'), null)
-  for (const path of [`${PUBLIC_API}?lang=en`, `${PUBLIC_API}/`, ADMIN_API, '/notice-admin.js']) {
+  for (const path of [`${PUBLIC_API}/`, ADMIN_API, translatePath, '/notice-admin.js']) {
     assert.equal((await getPublic(env, path)).status, 404)
   }
   assert.equal((await getPublic(env, PUBLIC_API, 'POST')).status, 405)
@@ -104,6 +177,90 @@ test('admin validates platform identity, public host, and same-origin writes', a
   assert.deepEqual(await valid.json(), { revision: 0, announcements: [] })
   assert.equal(valid.headers.get('Cache-Control'), 'no-store')
   assert.equal(valid.headers.get('Cloudflare-CDN-Cache-Control'), null)
+})
+
+test('authenticated translation is opt-in and returns exactly the requested canonical locales', async t => {
+  const translations = { en: { title: 'Notice', body: 'First line\nOC2 MOD Manager' }, 'zh-TW': { title: '公告', body: '第一行\nOC2 MOD Manager' } }
+  const upstream = t.mock.method(globalThis, 'fetch', async (url, init) => {
+    assert.equal(String(url), translationEnv.NOTICE_TRANSLATION_ENDPOINT)
+    assert.equal(init.method, 'POST')
+    assert.equal(init.redirect, 'error')
+    assert.equal(init.headers.Authorization, `Bearer ${translationEnv.NOTICE_TRANSLATION_API_KEY}`)
+    assert.ok(init.signal instanceof AbortSignal)
+    const payload = JSON.parse(init.body)
+    assert.equal(payload.model, 'gpt-6.2-sol')
+    assert.equal(payload.messages[0].role, 'system')
+    assert.match(payload.messages[0].content, /en.*English/)
+    assert.match(payload.messages[0].content, /zh-TW.*繁體中文/)
+    assert.equal(payload.messages[1].role, 'user')
+    assert.deepEqual(JSON.parse(payload.messages[1].content), translationInput)
+    return completion(translations)
+  })
+  const off = await getAdmin({ ADMIN_EMAIL: email }, ctx, translatePath)
+  assert.equal(off.status, 200)
+  assert.deepEqual(await off.json(), { enabled: false, model: 'gpt-6.2-sol' })
+  const on = await getAdmin(translationEnv, ctx, translatePath)
+  assert.equal(on.status, 200)
+  assert.deepEqual(await on.json(), { enabled: true, model: 'gpt-6.2-sol' })
+  assert.equal(on.headers.get('Cache-Control'), 'no-store')
+  assert.equal(upstream.mock.callCount(), 0)
+  const translated = await postTranslation(translationEnv)
+  assert.equal(translated.status, 200)
+  assert.equal(translated.headers.get('Cache-Control'), 'no-store')
+  assert.equal(translated.headers.get('Cloudflare-CDN-Cache-Control'), null)
+  assert.deepEqual(await translated.json(), { translations })
+  assert.equal(upstream.mock.callCount(), 1)
+})
+
+test('invalid or unauthorized translation requests never contact the provider', async t => {
+  const upstream = t.mock.method(globalThis, 'fetch', async () => {
+    throw new Error('Unexpected upstream request')
+  })
+  for (const context of [{}, { access: { getIdentity: async () => ({ email: 'other@example.test' }) } }]) {
+    assert.equal((await getAdmin(translationEnv, context, translatePath)).status, 403)
+    assert.equal((await postTranslation(translationEnv, translationInput, { context, headers: { 'Cf-Access-Authenticated-User-Email': email } })).status, 403)
+  }
+  assert.equal((await postTranslation(translationEnv, translationInput, { origin: null })).status, 403)
+  assert.equal((await getAdmin(translationEnv, ctx, `${translatePath}?lang=en`)).status, 404)
+  assert.equal((await postTranslation(translationEnv, translationInput, { headers: { 'Content-Type': 'text/plain' } })).status, 400)
+  assert.equal((await postTranslation(translationEnv, translationInput, { raw: ' '.repeat(131073) })).status, 400)
+  for (const value of [null, { ...translationInput, model: 'another-model' }, { ...translationInput, language: 'zh' },
+    { ...translationInput, body: '  ' }, { ...translationInput, title: '\u0000blocked' }, { ...translationInput, targets: [] },
+    { ...translationInput, targets: ['zh-CN'] }, { ...translationInput, targets: ['en', 'en'] }, { ...translationInput, targets: ['pt-PT'] }]) {
+    assert.equal((await postTranslation(translationEnv, value)).status, 400)
+  }
+  for (const env of [{ ADMIN_EMAIL: email }, { ...translationEnv, NOTICE_TRANSLATION_ENDPOINT: 'http://provider.example.test/' }]) {
+    const response = await postTranslation(env)
+    assert.equal(response.status, 503)
+    assert.deepEqual(await response.json(), { error: 'translation_unavailable' })
+  }
+  assert.equal(upstream.mock.callCount(), 0)
+})
+
+test('translation never exposes provider errors or partial, extra, oversized, or malformed results', async t => {
+  const valid = { en: { title: 'Notice', body: 'Body' }, 'zh-TW': { title: '標題', body: '正文' } }
+  const invalidResponses = [
+    () => new Response('Provider-only detail', { status: 401 }),
+    () => new Response('x'.repeat(131073)),
+    () => Response.json({ choices: [{ message: { content: '```json\n{}\n```' } }] }),
+    () => completion({ en: valid.en }),
+    () => completion({ ...valid, 'zh-CN': valid['zh-TW'] }),
+    () => completion({ ...valid, en: { ...valid.en, body: 'a'.repeat(1537) } }),
+    () => completion({ ...valid, en: { ...valid.en, extra: 'x' } }),
+  ]
+  const upstream = t.mock.method(globalThis, 'fetch', async () => invalidResponses.shift()())
+  while (invalidResponses.length) {
+    const response = await postTranslation(translationEnv)
+    assert.equal(response.status, 502)
+    assert.deepEqual(await response.json(), { error: 'translation_failed' })
+  }
+  assert.equal(upstream.mock.callCount(), 7)
+  const timeout = t.mock.method(AbortSignal, 'timeout', () => AbortSignal.abort())
+  upstream.mock.mockImplementation(async (_url, { signal }) => signal.throwIfAborted())
+  const response = await postTranslation(translationEnv)
+  assert.equal(response.status, 504)
+  assert.deepEqual(await response.json(), { error: 'translation_timeout' })
+  assert.deepEqual(timeout.mock.calls[0].arguments, [80_000])
 })
 
 test('malformed, oversized, invalid Unicode and partially translated content never changes D1', async t => {

@@ -2,10 +2,30 @@
 
 | 部署名 | 域名 | 用途 |
 |---|---|---|
-| `oc2modmanager-notice` | `oc2modmanager-notice.ch3ng.top` | 公开公告页和 `GET /api/announcements` |
-| `oc2modmanager-notice-admin` | `oc2modmanager-notice-admin.ch3ng.top` | Access 保护的编辑页和后台 API |
+| `oc2modmanager-notice` | `oc2modmanager-notice.ch3ng.top` | 公开公告页、按语言读取的公告 API |
+| `oc2modmanager-notice-admin` | `oc2modmanager-notice-admin.ch3ng.top` | Access 保护的编辑页、发布和翻译 API |
 
 两个 Worker 共用一个 D1 `oc2modmanager-notice`，绑定名均为 `DB`。源码和迁移随管理器仓库维护；编辑数据写 D1，不修改 Git，不需要部署 Pages，也不调用 GitHub 或 `OC2-GH-API`。公开读成功才缓存，后台不缓存。后台资源由 Worker 直接返回，不要改用会丢失 `ctx.access` 的 Static Assets 路由器或服务绑定转发。
+
+## 日常发公告
+
+1. 登录[公告后台](https://oc2modmanager-notice-admin.ch3ng.top/)，选原文语言，填标题和正文。
+2. 用语言卡片手动补充译文，或在翻译服务配置后点「生成缺少的译文」。已有译文和只填了一部分的译文都不会被覆盖。生成结果只填草稿，逐种检查后再保存。
+3. 展开「预览公告」切换语言；缺译时预览原文。确认「发布公告」或「保存修改」才写入 D1。编辑已有公告不改变 ID 和发布时间，不会重复提醒玩家。要撤下则选择对应公告并确认。
+
+同一条记录保存 `id`、`published_at`、原文 `language/title/body` 和按语言码索引的 `translations`，不需要 D1 迁移。管理器使用当前界面语言请求 `GET /api/announcements?lang=zh-CN`，未指定语言时默认请求英语。每条结果只返回 `id`、`published_at`、实际展示的 `language/title/body`；没有对应译文就返回原文。普通读取按语言分别缓存 300 秒，管理器点「重新获取」用 `?lang=zh-CN&fresh=1` 直接读 D1，不读写边缘缓存。
+
+## 配置自动翻译
+
+在 **Cloudflare → Workers & Pages → oc2modmanager-notice-admin → Settings → Variables and Secrets** 添加以下绑定；不要加到公开 Worker，不要把密钥写入源码、URL 或聊天。
+
+| 名称 | 类型 | 值 |
+|---|---|---|
+| `NOTICE_TRANSLATION_ENDPOINT` | 文本 | 供应商完整 HTTPS Chat Completions URL，通常以 `/v1/chat/completions` 结尾；不是只填 `/v1`，也不是 `/v1/responses` |
+| `NOTICE_TRANSLATION_API_KEY` | Secret | 该端点的 Bearer API 密钥 |
+| `NOTICE_TRANSLATION_MODEL` | 文本，可省略 | 默认 `gpt-6.2-sol`；端点必须实际支持该模型 ID，可改为供应商接受的名称 |
+
+应用后台 Worker 设置后重新读取编辑器。端点／密钥未配时仍可手动编辑。生成时后台将原文标题、正文和空白目标语言一次发送给所配置的兼容端点，原文加其余目标最多覆盖全部 12 语；只接受响应 `choices[0].message.content` 中的合法 JSON。不会随输入自动请求，也不会自动重试、写入公告或发布。调用可能计费；限时 80 秒，失败后草稿不变。
 
 ## 本地检查
 
@@ -29,7 +49,19 @@ curl.exe -isS --insecure --noproxy '*' --connect-to oc2modmanager-notice-admin.c
 
 首个请求应返回 `200` 和 `{"revision":0,"announcements":[]}`（空库），并有 `Cloudflare-CDN-Cache-Control: public, s-maxage=300`；第二个应返回 `403`。真实边缘缓存不在本机模拟。若需模拟后台登录，按 [Wrangler 本地 Access 模拟](https://developers.cloudflare.com/workers/configuration/cloudflare-access/#test-ctxaccess-locally) 在仅本机的配置中添加 `access.dev`，并用本机测试邮箱设置 `ADMIN_EMAIL`；不要提交或部署该配置。
 
-## 首次上线顺序
+## 已上线环境更新代码
+
+已上线的两个 Worker 不需要再建 D1、跑迁移或关联域名。先按本地检查验收并核对 `whoami`、现网部署、域名和两端共同的 `DB`。从本次提交导出一份部署副本，仅在副本填现有 D1 ID，使用固定 Wrangler 版本：
+
+```powershell
+npx wrangler@4.162.0 versions upload --keep-vars --strict --config <部署副本配置>
+npx wrangler@4.162.0 versions view <上传返回的版本ID> --config <部署副本配置>
+npx wrangler@4.162.0 versions deploy <已核对的版本ID>@100% --config <部署副本配置>
+```
+
+切流前确认该候选属于对应 Worker、D1 不变，后台现有 `ADMIN_EMAIL` 和翻译设置均保留；不要复制含密钥的配置或原始输出。切流后回读 `deployments status`。仅更新代码时不要运行 `triggers deploy`、普通 `deploy` 或远程迁移。
+
+## 首次上线顺序（仅新环境）
 
 上线前确认 Wrangler 账号、`ch3ng.top` 所属 Zone、两个 Worker 和 D1 的归属一致。以下是待执行清单，不是上线回执。
 
@@ -42,8 +74,8 @@ curl.exe -isS --insecure --noproxy '*' --connect-to oc2modmanager-notice-admin.c
 ## 上线验收
 
 - 无痕打开后台和后台 API，应由 Access 要求登录，不得返回页面内容或 JSON；非维护邮箱不得通过。用维护邮箱注册、退出并再次用 Passkey 登录，核对后台读写。Access 原生退出路径为后台域名下的 `/cdn-cgi/access/logout`，会注销同一 Zero Trust 团队中的其他 Access 会话，旧令牌约 20–30 秒后失效。
-- 公告 API 以无 Cookie、无认证头、无查询串的同一 URL 连续 `GET`；记录 `Cf-Ray` 的机房、`Cf-Cache-Status` 和 `Age`，同一机房观察 `MISS → HIT`，超过 300 秒后确认返新版本。线上 `Cloudflare-CDN-Cache-Control` 会被边缘消费，不一定出现在回包；浏览器收到的仍是 `Cache-Control: no-store`。后台、错误和页面资源都不应 `HIT`。公开域名不能返回后台脚本或后台 API。
-- 发布、编辑和撤下会改变 `revision`。推荐在测试环境验证从写入到公开读的全链；生产只按确认过的内容发布，不为测试给用户推假公告。撤下仍可能在旧缓存过期前可见，正常操作等缓存更新，不要通过随机查询参数绕缓存。
+- 公告 API 以管理器的 User-Agent、无 Cookie 和无认证头，对两个不同 `lang` 的 URL 分别连续 `GET`；核对对应译文或原文。记录 `Cf-Ray` 的机房、`Cf-Cache-Status` 和 `Age`，同一机房观察 `MISS → HIT`。手动重取 URL `?lang=zh-CN&fresh=1`、后台、错误和页面资源都不应 `HIT`。线上 `Cloudflare-CDN-Cache-Control` 会被边缘消费，不一定出现在回包；浏览器收到的仍是 `Cache-Control: no-store`。公开域名不能返回后台脚本或后台 API。
+- 发布、编辑和撤下会改变 `revision`。推荐在本机 D1 验证从写入到公开读的全链；生产只按确认过的内容发布，不为测试给用户推假公告。普通读取在缓存过期前可能看到旧版本，管理器可点「重新获取」立即重读。
 - 已核对的客户端仍应能在公告域或网络不可用时正常启动；发布前从大陆和境外网络分别实测域名与 HTTPS。自定义域名、缓存和少量请求只能降低压力，不能保证可达或保证不受限。
 
 ## 配额与限流

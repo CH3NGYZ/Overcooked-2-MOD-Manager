@@ -26,6 +26,29 @@ export function error(status, head = false, headers) {
   return json({ error: ERROR_CODES[status] }, { status, head, headers })
 }
 
+export async function readJson(message, maxBytes) {
+  const length = message.headers.get('Content-Length')
+  if (!message.body || (length !== null && (!/^\d+$/.test(length) || Number(length) > maxBytes))) return null
+  const reader = message.body.getReader()
+  try {
+    const decoder = new TextDecoder('utf-8', { fatal: true })
+    let remaining = maxBytes
+    let text = ''
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) return JSON.parse(text + decoder.decode())
+      remaining -= value.byteLength
+      if (remaining < 0) {
+        await reader.cancel()
+        return null
+      }
+      text += decoder.decode(value, { stream: true })
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
 export function assetResponse(asset, method) {
   if (!asset) return error(404, method === 'HEAD')
   if (method !== 'GET' && method !== 'HEAD') return error(405, false, { Allow: 'GET, HEAD' })

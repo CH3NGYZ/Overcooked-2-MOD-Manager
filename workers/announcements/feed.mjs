@@ -29,6 +29,30 @@ function content(value) {
   return title && body ? { title, body } : null
 }
 
+export function parseTranslationInput(value) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['language', 'title', 'body', 'targets'])) return null
+  const { language, targets } = value
+  if (!isLocale(language) || !Array.isArray(targets) || !targets.length
+    || targets.some(target => !isLocale(target) || target === language) || new Set(targets).size !== targets.length) return null
+  const original = content(value)
+  return original ? { language, ...original, targets } : null
+}
+
+export function parseTranslationResult(value, targets) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['translations'])) return null
+  const { translations } = value
+  if (!isRecord(translations) || Object.keys(translations).length !== targets.length || !hasOnlyKeys(translations, targets)) return null
+  const normalized = {}
+  for (const target of targets) {
+    const entry = translations[target]
+    if (!isRecord(entry) || !hasOnlyKeys(entry, ['title', 'body'])) return null
+    const translated = content(entry)
+    if (!translated) return null
+    normalized[target] = translated
+  }
+  return { translations: normalized }
+}
+
 function draft(value) {
   if (!isLocale(value.language) || !isRecord(value.translations)) return null
   const original = content(value)
@@ -78,4 +102,13 @@ export function parseSnapshot(revision, stored) {
   }
   const snapshot = { revision, announcements }
   return byteLength(JSON.stringify(snapshot)) <= NOTICE_LIMITS.payloadBytes ? snapshot : null
+}
+
+export function localizeSnapshot({ revision, announcements }, locale) {
+  return { revision, announcements: announcements.map(({ id, published_at, language, title, body, translations }) => {
+    const translation = translations[locale]
+    return translation
+      ? { id, published_at, language: locale, title: translation.title, body: translation.body }
+      : { id, published_at, language, title, body }
+  }) }
 }

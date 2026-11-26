@@ -4,17 +4,12 @@ export { LOCALE_LABELS, NOTICE_LIMITS }
 
 export const byId = id => document.getElementById(id)
 
-export function localizedNotice(announcement, locale) {
-  const translation = Object.hasOwn(announcement.translations, locale) && announcement.translations[locale]
-  return translation ? { ...translation, language: locale } : announcement
-}
-
 export function noticeDate(value, locale) {
   return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 }
 
 export function renderNotice(article, announcement, locale) {
-  const { title, body, language } = localizedNotice(announcement, locale)
+  const { title, body, language } = announcement
   const heading = document.createElement('h2')
   heading.textContent = title
   heading.lang = language
@@ -38,14 +33,19 @@ export class NoticeRequestError extends Error {
   }
 }
 
-export async function requestSnapshot(path, mutation) {
+export async function requestNoticeJson(path, mutation, { timeout = 10_000, signal } = {}) {
+  const deadline = AbortSignal.timeout(timeout)
   const response = await fetch(path, {
     redirect: 'error',
-    signal: AbortSignal.timeout(10_000),
+    signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
     ...(mutation && { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(mutation) }),
   })
   if (response.status !== 200) throw new NoticeRequestError(response.status)
-  const snapshot = await response.json()
+  return response.json()
+}
+
+export async function requestSnapshot(path, mutation) {
+  const snapshot = await requestNoticeJson(path, mutation)
   if (!Number.isSafeInteger(snapshot?.revision) || snapshot.revision < 0 || !Array.isArray(snapshot.announcements)
     || snapshot.announcements.length > NOTICE_LIMITS.maxAnnouncements) {
     throw new Error('Invalid announcement response')

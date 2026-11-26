@@ -224,7 +224,7 @@ impl Builder<'_> {
         crate::level_sets::checked_registered_plugins(&self.roots.data_root.join("manifests"), true)
     }
 
-    fn ensure_physically_unclaimed<'a>(
+    pub(super) fn ensure_physically_unclaimed<'a>(
         &self,
         relative: &str,
         real_path: &Path,

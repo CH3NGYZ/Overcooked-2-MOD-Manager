@@ -439,6 +439,12 @@ fn attach_exact_root(
         return Err(missing_root_error(trusted, root));
     };
     let node = &mut trusted.inventory.nodes[index];
+    if node.is_registered_map_plugin()
+        || (node.kind == NodeKind::Map
+            && (root.intent.candidate_id.is_some() || root.intent.member_key.is_some()))
+    {
+        return Err("modChanges.installationBlocked".into());
+    }
     let Some(candidate_id) = &root.intent.candidate_id else {
         return Ok(());
     };

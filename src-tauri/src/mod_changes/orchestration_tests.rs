@@ -32,6 +32,8 @@ mod local_framework_zip;
 mod map_runtime_duplicate;
 #[path = "orchestration_tests/recovery_control.rs"]
 mod recovery_control;
+#[path = "orchestration_tests/registered_map_plugins.rs"]
+mod registered_map_plugins;
 #[path = "orchestration_tests/repair_cycle.rs"]
 mod repair_cycle;
 #[path = "orchestration_tests/repository_preparation.rs"]

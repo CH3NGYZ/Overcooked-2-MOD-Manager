@@ -1,4 +1,4 @@
-//! Map ownership and physical DLL activation are distinct facts.
+//! Map ownership comes from registration; runtime state comes from disk.
 use super::{inventory::*, model::*};
 use crate::{app_state::AppState, archive, level_sets, models::*};
 use std::{
@@ -29,7 +29,11 @@ pub(crate) fn append_at(
     files: &mut BTreeMap<String, NodeFiles>,
 ) -> Result<BTreeSet<String>, String> {
     let snapshots = archive::read_map_relation_snapshots(manifests);
-    let registered = level_sets::read_registered_plugins(manifests);
+    let (registered, registry_known) = match level_sets::checked_registered_plugins(manifests, true)
+    {
+        Ok(entries) => (entries, true),
+        Err(_) => (level_sets::read_registered_plugins(manifests), false),
+    };
     let sets = level_sets::scan_level_sets_with_progress(
         roots,
         Some(manifests),
@@ -41,6 +45,7 @@ pub(crate) fn append_at(
         *names.entry(key(&set.dir_name)).or_default() += 1;
     }
     let mut toggle_unbound_nodes = BTreeSet::new();
+    let mut map_indices = Vec::with_capacity(sets.len());
     for set in &sets {
         let path = relative(root, &set.path)?;
         let unique = names.get(&key(&set.dir_name)) == Some(&1);
@@ -88,11 +93,12 @@ pub(crate) fn append_at(
         {
             toggle_unbound_nodes.insert(id.clone());
         }
+        map_indices.push(inventory.nodes.len());
         inventory.nodes.push(ChangeNode {
             id: id.clone(),
             kind: NodeKind::Map,
             enabled: set.enabled,
-            mutable: unique && members_unique,
+            mutable: unique && members_unique && registry_known,
             candidates: vec![],
             candidates_complete: true,
             current: Some(Candidate {
@@ -138,39 +144,53 @@ pub(crate) fn append_at(
             },
         );
     }
-    // Registered DLLs may stay in plugins after their map is disabled or removed.
-    // Enumerate the registry itself so every physical loader input survives.
+    let levels_root = roots
+        .package_root()
+        .map(|package| relative(root, &package.join("levels")))
+        .transpose()?;
     for entry in &registered {
         let owners = sets
             .iter()
-            .filter(|set| {
+            .zip(&map_indices)
+            .filter_map(|(set, &index)| {
                 set.metadata
                     .as_ref()
                     .is_some_and(|metadata| entry.owner.matches(metadata))
+                    .then_some(index)
             })
             .collect::<Vec<_>>();
-        let map_id = (owners.len() == 1)
-            .then(|| {
-                let mut info = level_sets::view::level_set_to_info(owners[0].clone());
-                level_sets::view::bind_map_relation_snapshot(&mut info, config, &snapshots);
-                info.map_id
-            })
-            .flatten();
-        let parent_id = (owners.len() == 1)
-            .then(|| {
-                files.iter().find_map(|(id, node)| {
-                    (node.summary.kind == NodeKind::Map
-                        && node.map_path.as_deref()
-                            == relative(root, &owners[0].path).ok().as_deref())
-                    .then(|| id.clone())
-                })
-            })
-            .flatten();
+        let within = |parent: &str| {
+            super::mutations::within(&entry.dll.to_lowercase(), &parent.to_lowercase())
+        };
+        let in_levels = levels_root.as_deref().is_some_and(within);
+        if in_levels {
+            for &index in &map_indices {
+                if files[&inventory.nodes[index].id]
+                    .map_path
+                    .as_deref()
+                    .is_some_and(within)
+                {
+                    inventory.nodes[index].mutable = false;
+                }
+            }
+        }
+        let external_path = within("BepInEx/plugins")
+            && entry.dll.to_ascii_lowercase().ends_with(".dll")
+            && !in_levels;
+        if !external_path || owners.len() > 1 {
+            for &index in &owners {
+                inventory.nodes[index].mutable = false;
+            }
+        }
+        let parent_id = (owners.len() == 1).then(|| inventory.nodes[owners[0]].id.clone());
+        let map_id = parent_id
+            .as_ref()
+            .and_then(|id| files[id].summary.map_id.clone());
         append_external(
             config,
             root,
             &entry.dll,
-            owners.len() == 1,
+            registry_known && external_path && parent_id.is_some(),
             map_id,
             parent_id,
             inventory,

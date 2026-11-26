@@ -118,6 +118,24 @@ impl Builder<'_> {
         };
         if inventory::key(&from) != inventory::key(&to) {
             self.ensure_owner(&from, owner)?;
+            if owner.starts_with("map-dll:") {
+                let real = game(&from)
+                    .resolve(&self.roots)
+                    .and_then(|path| crate::game::resolve_existing_ancestor(&path))?;
+                let claims = self
+                    .records
+                    .claimed_files()
+                    .map(|(path, record)| (path, InstallBlock::InstallRecord, Some(record)))
+                    .chain(self.ownership_paths.iter().filter_map(|path| {
+                        (inventory::key(&mods::canonical_dll_name(path)) != key).then_some((
+                            path.as_str(),
+                            InstallBlock::PathOwned,
+                            None,
+                        ))
+                    }));
+                self.ensure_physically_unclaimed(&from, &real, claims, Some(owner))
+                    .map_err(|reason| reason.report(owner, &from))?;
+            }
             self.add_move(owner, Some(key), &from, &to)?;
         }
         Ok(())

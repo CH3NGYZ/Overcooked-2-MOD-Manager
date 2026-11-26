@@ -321,7 +321,10 @@ impl Search<'_, '_> {
         pending.sort_by_key(|index| self.node_order(&state, &distances, *index));
         if let Some(index) = pending.first().copied() {
             let node = &state.inventory.nodes[index];
-            if node.kind != NodeKind::Mod || !node.mutable || self.replacement_only.contains(&index)
+            if node.kind != NodeKind::Mod
+                || node.is_registered_map_plugin()
+                || !node.mutable
+                || self.replacement_only.contains(&index)
             {
                 let mut next = state;
                 next.decided.insert(index);

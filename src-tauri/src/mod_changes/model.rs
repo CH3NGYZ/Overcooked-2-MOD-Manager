@@ -73,7 +73,9 @@ impl ChangeNode {
     }
 
     pub(super) fn can_repair_dependencies(&self) -> bool {
-        self.current.is_some() && (self.enabled || self.kind == NodeKind::Map)
+        !self.is_registered_map_plugin()
+            && self.current.is_some()
+            && (self.enabled || self.kind == NodeKind::Map)
     }
 }
 

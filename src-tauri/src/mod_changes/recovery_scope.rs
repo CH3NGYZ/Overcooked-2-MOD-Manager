@@ -2,6 +2,7 @@ use super::{
     application_progress::OwnedMutation,
     evaluate::{relation_active, targets},
     guard, inventory,
+    model::{ActionKind, NodeKind},
     session::PlanSession,
     transaction::{
         Mutation, RecoveryEntry, RecoveryPathKind, RootKind, TransactionPath, TransactionRoots,
@@ -200,6 +201,40 @@ fn read_paths(
             }
         }
     }
+    let switched_maps: BTreeSet<_> = session
+        .request
+        .roots
+        .iter()
+        .filter(|root| root.candidate_id.is_none() && root.member_key.is_none())
+        .map(|root| root.node_id.as_str())
+        .chain(
+            session
+                .plan
+                .result
+                .actions
+                .iter()
+                .filter(|action| {
+                    action.member_key.is_none()
+                        && matches!(action.kind, ActionKind::Enable | ActionKind::Disable)
+                })
+                .map(|action| action.node_id.as_str()),
+        )
+        .filter(|id| {
+            session
+                .trusted
+                .files
+                .get(*id)
+                .is_some_and(|files| files.summary.kind == NodeKind::Map)
+        })
+        .collect();
+    reads.extend(session.trusted.files.iter().filter_map(|(id, files)| {
+        files
+            .summary
+            .bundle_parent_node_id
+            .as_deref()
+            .filter(|parent| switched_maps.contains(parent))
+            .map(|_| id.as_str())
+    }));
     for files in reads
         .into_iter()
         .filter_map(|id| session.trusted.files.get(id))

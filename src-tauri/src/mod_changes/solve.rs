@@ -30,6 +30,15 @@ enum DisableSource {
     DependencyFallback,
 }
 
+impl DisableSource {
+    fn guids(self, state: &mut SearchState) -> &mut BTreeSet<String> {
+        match self {
+            Self::Immediate => &mut state.disabled_guids,
+            Self::DependencyFallback => &mut state.fallback_disabled_guids,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SearchPass {
     LimitReplacements(usize),
@@ -60,11 +69,14 @@ struct Search<'a, 'session> {
     preference_pruned: bool,
     installed_runtimes: BTreeSet<usize>,
     detached_map_members: BTreeSet<usize>,
+    map_bundles: map_bundle_switches::MapBundleSwitches,
+    map_switches: BTreeSet<usize>,
     runtime_replacement_limit: usize,
     runtime_replacement_pruned: bool,
 }
 
 mod diagnostics;
+mod map_bundle_switches;
 mod package_switches;
 mod policy;
 mod reasons;
@@ -289,6 +301,15 @@ impl Search<'_, '_> {
             let previous = protected.len();
             for index in protected.clone() {
                 let node = &state.inventory.nodes[index];
+                if self.map_switches.contains(&index) && node.enabled {
+                    protected.extend(
+                        self.map_bundles
+                            .members(index)
+                            .iter()
+                            .copied()
+                            .filter(|&member| state.inventory.nodes[member].enabled),
+                    );
+                }
                 for owned in scoped_relations(node, self.readiness(index, node)) {
                     // As in evaluation, a required edge is only satisfied by
                     // a unique enabled provider, regardless of version matches.
@@ -478,6 +499,13 @@ impl Search<'_, '_> {
         source: DisableSource,
     ) -> Option<SearchState> {
         let node = &state.inventory.nodes[index];
+        if node.is_registered_map_plugin() {
+            let owner = self.map_bundles.owner(index)?;
+            if self.fixed.contains(&index) || protected.contains(&index) {
+                return None;
+            }
+            return self.disable(state, owner, None, reason, protected, source);
+        }
         if self.fixed.contains(&index) || !node.mutable || self.replacement_only.contains(&index) {
             self.trace.branch(node, "skip_protected_switch", None);
             return None;
@@ -488,16 +516,16 @@ impl Search<'_, '_> {
             guid
         };
         let mut next = state.clone();
+        let disable_guids = match source {
+            DisableSource::Immediate => &mut next.disabled_guids,
+            DisableSource::DependencyFallback => &mut next.fallback_disabled_guids,
+        };
         let target = &mut next.inventory.nodes[index];
         let candidate = target.current.as_mut()?;
         let mut switched = false;
         for plugin in &mut candidate.provides {
             if plugin.enabled && guid.is_none_or(|guid| same_guid(&plugin.guid, guid)) {
-                match source {
-                    DisableSource::Immediate => &mut next.disabled_guids,
-                    DisableSource::DependencyFallback => &mut next.fallback_disabled_guids,
-                }
-                .insert(plugin.guid.trim().to_lowercase());
+                disable_guids.insert(plugin.guid.trim().to_lowercase());
                 plugin.enabled = false;
                 switched = true;
             }
@@ -542,6 +570,12 @@ impl Search<'_, '_> {
         }
         next.reasons
             .record(index, node, &next.inventory.nodes[index], reason);
+        if node.kind == NodeKind::Map && node.enabled && !next.inventory.nodes[index].enabled {
+            self.map_bundles
+                .synchronize(&mut next, index, source, |member| {
+                    self.fixed.contains(&member) || protected.contains(&member)
+                })?;
+        }
         Some(next)
     }
 
@@ -642,6 +676,9 @@ impl Search<'_, '_> {
         });
         for index in indices {
             let node = &state.inventory.nodes[index];
+            if node.is_registered_map_plugin() {
+                continue;
+            }
             // Deciding a package fixes its version, not every sibling's switch.
             // Later requirements may still enable members of that exact candidate.
             if self.repair_owner != Some(index)
@@ -918,6 +955,7 @@ fn solve_inner<'a>(
         projected_loose_providers: BTreeSet::new(),
     };
     let mut roots = BTreeSet::new();
+    let map_bundles = map_bundle_switches::MapBundleSwitches::installed(inventory, trusted);
     // Repair keeps the owner's version and switches fixed. Only maps can be
     // repaired while disabled; a disabled MOD is checked when it is enabled.
     let repair_owner = match request.repair_dependencies_of.as_deref() {
@@ -942,6 +980,7 @@ fn solve_inner<'a>(
         None => None,
     };
     let mut seen_roots = BTreeMap::new();
+    let mut map_switches = BTreeSet::new();
     let requested = reasons::requested();
     for root in &request.roots {
         let Some(index) = state
@@ -974,7 +1013,8 @@ fn solve_inner<'a>(
             || !node.mutable
                 && (root.candidate_id.is_some()
                     || node.enabled != root.enabled
-                    || root.member_key.is_some())
+                    || root.member_key.is_some()
+                    || node.kind == NodeKind::Map)
         {
             return Err(diagnostic("root_ownership_unsafe", Some(&node.id), true).into());
         }
@@ -1043,7 +1083,25 @@ fn solve_inner<'a>(
         }
         state.decided.insert(index);
         roots.insert(index);
+        if node.kind == NodeKind::Map && root.candidate_id.is_none() && root.member_key.is_none() {
+            map_switches.insert(index);
+        }
         state.reasons.record(index, &before, node, &requested);
+    }
+    for &index in &map_switches {
+        if map_bundles
+            .synchronize(&mut state, index, DisableSource::Immediate, |member| {
+                roots.contains(&member)
+            })
+            .is_none()
+        {
+            return Err(diagnostic(
+                "root_ownership_unsafe",
+                Some(&inventory.nodes[index].id),
+                true,
+            )
+            .into());
+        }
     }
     // Whole-package and member intents can overlap. Check their combined state
     // instead of letting the order of the user's batch silently decide the root.
@@ -1130,6 +1188,8 @@ fn solve_inner<'a>(
         preference_pruned: false,
         installed_runtimes,
         detached_map_members,
+        map_bundles,
+        map_switches,
         runtime_replacement_limit: 0,
         runtime_replacement_pruned: false,
     };

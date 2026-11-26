@@ -163,7 +163,15 @@ pub(crate) fn checked_registered_plugins(
             }
             continue;
         };
-        match seen.entry(dll.to_lowercase()) {
+        let key = dll.to_lowercase();
+        if strict && !key.ends_with(".dll") {
+            log::warn!(
+                "随包插件登记校验失败：stage=entries reason=noncanonical_dll_path registry={:?} entry=entries[{index}].dll",
+                crate::file_check::log_path(&path)
+            );
+            return Err("modChanges.ambiguousOwnership".into());
+        }
+        match seen.entry(key) {
             Entry::Vacant(first) => {
                 first.insert(index);
                 entries.push(RegisteredLevelSetPlugin {

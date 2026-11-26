@@ -74,6 +74,37 @@ fn plugin_registry_round_trips_and_normalizes_paths() {
 }
 
 #[test]
+fn strict_plugin_registry_rejects_a_disabled_path_claimed_by_another_map() {
+    let (root, _game, _recycle) = workspace("strict-registry-disabled-alias");
+    let manifests = root.join("manifests");
+    let path = registry_path(&manifests);
+    let active = "BepInEx/plugins/Fix/Fix.DLL";
+    let inactive = format!("{active}.disabled");
+    let mut entries = vec![serde_json::json!({"dll": active, "owner": {"name": "A"}})];
+    let write = |entries: &[serde_json::Value]| {
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({"version": 1, "entries": entries})).unwrap(),
+        )
+        .unwrap();
+    };
+    write(&entries);
+    assert_eq!(
+        checked_registered_plugins(&manifests, true).unwrap()[0].dll,
+        active
+    );
+
+    entries.push(serde_json::json!({"dll": inactive, "owner": {"name": "B"}}));
+    write(&entries);
+    assert_eq!(
+        checked_registered_plugins(&manifests, true).unwrap_err(),
+        "modChanges.ambiguousOwnership"
+    );
+    assert_eq!(read_registered_plugins(&manifests).len(), 2);
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn strict_plugin_registry_reports_failure_stages_without_untrusted_values() {
     let (root, _game, _recycle) = workspace("strict-registry-log");
     let manifests = root.join("manifests");

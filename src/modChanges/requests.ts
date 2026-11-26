@@ -1,6 +1,6 @@
 import { useDashboard } from '../composables/useDashboardStore'
 import { useModChanges } from './store'
-import type { ChangeExecutionResult, DependencyRepairTarget, RootIntent } from './types'
+import type { ChangeExecutionResult, ChangeNode, DependencyRepairTarget, RootIntent } from './types'
 
 /** Exact release previews still request that release, unlike an installed owner's dependency action. */
 export function requestDependencyRepair(target: DependencyRepairTarget) {
@@ -16,6 +16,10 @@ export interface ToggleTargets {
   wholeNodes?: boolean
 }
 
+function isModToggleTarget(node: ChangeNode): boolean {
+  return node.kind === 'mod' && !node.subject_tag && !node.node_id.startsWith('map-dll:')
+}
+
 /** Resolve physical targets through the backend inventory, never a filtered UI list. */
 export async function requestToggleChanges(targets: ToggleTargets): Promise<ChangeExecutionResult | null> {
   const changes = useModChanges()
@@ -28,7 +32,7 @@ export async function requestToggleChanges(targets: ToggleTargets): Promise<Chan
   const inventory = await changes.refresh()
   const roots: RootIntent[] = []
   for (const dll of targets.dllFiles ?? []) {
-    const matches = inventory.nodes.filter(node => !node.subject_tag && node.dll_files.includes(dll))
+    const matches = inventory.nodes.filter(node => isModToggleTarget(node) && node.dll_files.includes(dll))
     if (matches.length !== 1) throw new Error('modChanges.targetChanged')
     const node = matches[0]!
     const member = node.members?.find(entry => entry.dll_file === dll)
@@ -52,8 +56,9 @@ export async function requestToggleChanges(targets: ToggleTargets): Promise<Chan
 export async function requestAllToggleChanges(kind: 'mod' | 'map', enabled: boolean) {
   const changes = useModChanges()
   const inventory = await changes.refresh()
-  const roots = inventory.nodes.filter(node => !node.subject_tag && node.kind === kind
-    && (kind === 'map' ? !!node.map_dir_name : node.dll_files.length > 0))
+  const roots = inventory.nodes.filter(node => kind === 'map'
+    ? node.kind === 'map' && !node.subject_tag && !!node.map_dir_name
+    : isModToggleTarget(node) && node.dll_files.length > 0)
     .map(node => ({ node_id: node.node_id, enabled }))
   if (!roots.length) return null
   return changes.run({ roots, bulk_toggle: true })

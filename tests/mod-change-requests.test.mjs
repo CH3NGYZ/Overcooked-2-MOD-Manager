@@ -54,7 +54,16 @@ test('a missing local scan or a failed evaluation cannot start a switch plan',as
 })
 for(const kind of ['mod','map'])test(`bulk ${kind} includes all physical installed nodes and excludes display/remote subjects`,async()=>{
  const physical=node('physical',{kind,dll_files:kind==='mod'?['a.dll']:[],map_dir_name:kind==='map'?'Map-A':undefined})
- const calls=fixture([physical,node('other',{kind:kind==='mod'?'map':'mod'}),node('remote',{kind,dll_files:[]}),{...physical,node_id:'subject:version',subject_tag:'v2'}])
+ const calls=fixture([physical,node('other',{kind:kind==='mod'?'map':'mod'}),node('remote',{kind,dll_files:[]}),{...physical,node_id:'subject:version',subject_tag:'v2'},
+   node('map-dll:bundled',{bundle_parent_node_id:'map:actual',dll_files:['bundled.dll']}),
+   node('map-dll:unresolved',{dll_files:['unresolved.dll']})])
  await requestAllToggleChanges(kind,false);assert.deepEqual(calls[1],{roots:[{node_id:'physical',enabled:false}],bulk_toggle:true})
+})
+test('a map-owned DLL cannot be the selected MOD switch', async () => {
+  for (const bundled of [node('map-dll:bundled'), node('map:actual', { kind: 'map' })]) {
+    const calls = fixture([bundled])
+    await assert.rejects(() => requestToggleChanges({ dllFiles: ['a.dll'], enabled: false }), /modChanges.targetChanged/)
+    assert.deepEqual(calls, ['refresh'])
+  }
 })
 test('empty physical inventory makes no bulk request',async()=>{const calls=fixture([]);assert.equal(await requestAllToggleChanges('mod',true),null);assert.deepEqual(calls,['refresh'])})

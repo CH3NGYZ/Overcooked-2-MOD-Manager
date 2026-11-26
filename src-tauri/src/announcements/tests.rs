@@ -13,17 +13,15 @@ fn snapshot() -> Value {
         "announcements": [{
             "id": ID,
             "published_at": "2026-11-26T12:00:00.123Z",
-            "language": "zh-CN",
-            "title": "公告",
-            "body": "第一行\n\t第二行",
-            "translations": { "en": { "title": "Notice", "body": "<strong>plain text</strong>" } }
+            "language": "ja",
+            "title": "お知らせ",
+            "body": "第一行\n\t<strong>plain text</strong>"
         }, {
             "id": "90ea1743-226b-4142-b6a0-000000000002",
             "published_at": "2026-11-25T12:00:00.000Z",
             "language": "en",
             "title": "Previous announcement",
-            "body": "Original text",
-            "translations": {}
+            "body": "Original text"
         }]
     })
 }
@@ -33,7 +31,7 @@ fn parse(value: &Value) -> Result<AnnouncementSnapshot, ReadError> {
 }
 
 #[test]
-fn preserves_order_original_language_translations_and_literal_text() {
+fn preserves_order_resolved_language_and_literal_text() {
     let value = snapshot();
     let parsed = parse(&value).unwrap();
     assert_eq!(serde_json::to_value(parsed).unwrap(), value);
@@ -98,20 +96,7 @@ fn accepts_exact_byte_limits_and_rejects_invalid_localized_content() {
         ("body", json!("字".repeat(PROTOCOL.max_body_bytes / 3 + 1))),
         ("body", json!("\u{7f}")),
         ("body", json!(" \n\t ")),
-        (
-            "translations",
-            json!({ "xx": { "title": "Title", "body": "Body" } }),
-        ),
-        (
-            "translations",
-            json!({ "zh-CN": { "title": "Title", "body": "Body" } }),
-        ),
-        (
-            "translations",
-            json!({ "en": { "title": "Title", "body": "" } }),
-        ),
-        ("translations", json!({ "en": { "title": "Title" } })),
-        ("translations", Value::Null),
+        ("translations", json!({})),
     ] {
         let mut snapshot = snapshot();
         snapshot["announcements"][0][field] = value;
@@ -123,10 +108,11 @@ fn accepts_exact_byte_limits_and_rejects_invalid_localized_content() {
     }
 }
 
-fn fixture(response_headers: String, body: Vec<u8>) -> (String, JoinHandle<()>) {
+fn fixture(query: &str, response_headers: String, body: Vec<u8>) -> (String, JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let endpoint = format!("http://{}{}", listener.local_addr().unwrap(), PROTOCOL.path);
+    let request_line = format!("GET {}?{query} HTTP/1.1\r\n", PROTOCOL.path);
     let worker = thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(5);
         let (mut stream, _) = loop {
@@ -159,7 +145,7 @@ fn fixture(response_headers: String, body: Vec<u8>) -> (String, JoinHandle<()>) 
                 break;
             }
         }
-        assert!(request.starts_with(&format!("GET {} HTTP/1.1\r\n", PROTOCOL.path)));
+        assert!(request.starts_with(&request_line));
         let headers = request.to_ascii_lowercase();
         assert!(headers.contains(&format!("\r\naccept: {JSON_MEDIA_TYPE}\r\n")));
         assert!(headers.contains(&format!(
@@ -175,9 +161,9 @@ fn fixture(response_headers: String, body: Vec<u8>) -> (String, JoinHandle<()>) 
 }
 
 async fn local_fetch(headers: String, body: Vec<u8>) -> Result<AnnouncementSnapshot, ReadError> {
-    let (endpoint, worker) = fixture(headers, body);
+    let (endpoint, worker) = fixture("lang=ja", headers, body);
     let client = client_builder().no_proxy().build().unwrap();
-    let result = fetch_snapshot(&client, &endpoint).await;
+    let result = fetch_snapshot(&client, &endpoint, "ja", false).await;
     worker.join().unwrap();
     result
 }
@@ -186,6 +172,26 @@ fn with_length(status: &str, content_type: &str, length: usize) -> String {
     format!(
         "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n"
     )
+}
+
+#[tokio::test]
+async fn requests_only_supported_languages_and_marks_explicit_refresh() {
+    let client = client_builder().no_proxy().build().unwrap();
+    assert_eq!(
+        fetch_snapshot(&client, "invalid URL", "en&fresh=1", false)
+            .await
+            .unwrap_err(),
+        ReadError::Language
+    );
+    let body = serde_json::to_vec(&snapshot()).unwrap();
+    let (endpoint, worker) = fixture(
+        "lang=zh-TW&fresh=1",
+        with_length("200 OK", JSON_MEDIA_TYPE, body.len()),
+        body,
+    );
+    let result = fetch_snapshot(&client, &endpoint, "zh-TW", true).await;
+    worker.join().unwrap();
+    assert_eq!(result.unwrap().revision, 3);
 }
 
 #[tokio::test]

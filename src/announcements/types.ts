@@ -1,15 +1,11 @@
 import type { Locale } from '../locale/types.ts'
 
-export interface AnnouncementText {
-  title: string
-  body: string
-}
-
-export interface Announcement extends AnnouncementText {
+export interface Announcement {
   id: string
   published_at: string
   language: Locale
-  translations: Partial<Record<Locale, AnnouncementText>>
+  title: string
+  body: string
 }
 
 export interface AnnouncementSnapshot {

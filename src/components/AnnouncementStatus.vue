@@ -2,7 +2,7 @@
 import { computed, shallowRef, useTemplateRef, watch } from 'vue'
 import { NButton } from 'naive-ui'
 import { MegaphoneOutline } from '@vicons/ionicons5'
-import { announcementSnapshot, announcementsUnread, markAnnouncementsRead } from '../announcements/state'
+import { announcementSnapshot, announcementsUnread, loadAnnouncements, markAnnouncementsRead } from '../announcements/state'
 import protocol from '../announcements/protocol.json' with { type: 'json' }
 import { locale, t } from '../i18n'
 import { backendMessageOf } from '../locale/backend'
@@ -16,10 +16,6 @@ const open = shallowRef(false)
 const list = useTemplateRef<HTMLOListElement>('list')
 const label = computed(() => announcementsUnread.value ? t('announcements.unread') : t('announcements.title'))
 const dateFormatter = computed(() => new Intl.DateTimeFormat(locale.value, { dateStyle: 'medium', timeStyle: 'short' }))
-const displayedNotices = computed(() => announcementSnapshot.value?.announcements.map(notice => {
-  const translated = notice.translations[locale.value]
-  return { id: notice.id, publishedAt: notice.published_at, language: translated ? locale.value : notice.language, text: translated ?? notice }
-}) ?? [])
 
 watch(() => props.disabled, disabled => { if (disabled) open.value = false })
 watch([open, list, announcementSnapshot], ([visible, rendered]) => {
@@ -30,13 +26,22 @@ async function openAnnouncementPage() {
   try { await api.openExternalPage(protocol.origin) }
   catch (reason) { notify.error(backendMessageOf(reason)) }
 }
+
+function refresh() {
+  if (announcementSnapshot.value !== undefined) void loadAnnouncements(locale.value, api.announcements, true)
+}
 </script>
 
 <template>
-  <TitleBarStatusPopover v-model:open="open" :label="label" :title="label"
+  <TitleBarStatusPopover v-model:open="open" :label="label" :title="label" :heading="t('announcements.title')"
     :tone="announcementsUnread ? 'warning' : undefined" :disabled="props.disabled" data-testid="announcement-status">
     <template #icon><MegaphoneOutline width="17" height="17" aria-hidden="true" /></template>
-    <strong>{{ t('announcements.title') }}</strong>
+    <template #heading-action>
+      <NButton size="small" secondary :loading="announcementSnapshot === undefined"
+        :aria-disabled="announcementSnapshot === undefined" data-testid="announcement-refresh" @click="refresh">
+        {{ t('common.action.refetch') }}
+      </NButton>
+    </template>
     <p v-if="announcementSnapshot === undefined" role="status">{{ t('announcements.loading') }}</p>
     <template v-else-if="announcementSnapshot === null">
       <p role="status">{{ t('announcements.unavailable') }}</p>
@@ -44,12 +49,12 @@ async function openAnnouncementPage() {
         {{ t('announcements.open') }}
       </NButton>
     </template>
-    <p v-else-if="!displayedNotices.length">{{ t('announcements.empty') }}</p>
+    <p v-else-if="!announcementSnapshot.announcements.length">{{ t('announcements.empty') }}</p>
     <ol v-else ref="list" class="announcement-list" :aria-label="t('announcements.title')" tabindex="0" data-testid="announcement-list">
-      <li v-for="notice in displayedNotices" :key="notice.id">
-        <h3 :lang="notice.language">{{ notice.text.title }}</h3>
-        <time :datetime="notice.publishedAt">{{ dateFormatter.format(new Date(notice.publishedAt)) }}</time>
-        <p class="announcement-body" :lang="notice.language">{{ notice.text.body }}</p>
+      <li v-for="notice in announcementSnapshot.announcements" :key="notice.id">
+        <h3 :lang="notice.language">{{ notice.title }}</h3>
+        <time :datetime="notice.published_at">{{ dateFormatter.format(new Date(notice.published_at)) }}</time>
+        <p class="announcement-body" :lang="notice.language">{{ notice.body }}</p>
       </li>
     </ol>
   </TitleBarStatusPopover>

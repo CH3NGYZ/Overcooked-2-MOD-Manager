@@ -19,7 +19,7 @@ const open = shallowRef(false)
 const stagedForExit = computed(() => appUpdateState.stage === 'ready' && appUpdateState.deferred)
 watch(appUpdatePromptOpen, visible => { if (visible) open.value = false })
 const storeManaged = computed(() => appUpdateState.distribution === 'microsoft_store')
-const checking = computed(() => appUpdateState.stage === 'checking')
+const checking = computed(() => appUpdateState.stage === 'checking' || appUpdateState.recheckingStatus)
 const downloading = computed(() => appUpdateState.stage === 'downloading')
 const checkFailed = computed(() => appUpdateState.stage === 'checkFailed')
 const tone = computed(() => appUpdateState.error || checkFailed.value || appUpdateState.stage === 'restartFailed' ? 'error'
@@ -27,8 +27,8 @@ const tone = computed(() => appUpdateState.error || checkFailed.value || appUpda
     : checking.value || downloading.value ? 'activity' : undefined)
 const status = computed(() => {
   if (storeManaged.value) return t('update.microsoftStoreOnly')
+  if (checking.value) return t('update.checking')
   switch (appUpdateState.stage) {
-    case 'checking': return t('update.checking')
     case 'current': return t('update.alreadyLatest')
     case 'checkFailed': return t('dialogs.updateCheckFailed')
     case 'downloading': return t(appUpdateState.progress?.finished || appUpdateState.progress?.phase === 'verifying'
@@ -55,6 +55,7 @@ const rows = computed(() => {
 })
 const percent = computed(() => downloading.value ? (appUpdateState.progress ? downloadPercent(appUpdateState.progress) : null) : undefined)
 const canCheck = computed(canCheckAppUpdate)
+const showCheck = computed(() => (canCheck.value || checking.value || storeManaged.value) && !appUpdatePromptOpen.value)
 
 function applyUpdate() {
   if (!canExitForAppUpdate('apply')) return
@@ -63,6 +64,7 @@ function applyUpdate() {
 }
 
 async function check() {
+  if (!canCheck.value && !storeManaged.value) return
   try { await checkForAppUpdate() }
   catch (reason) { notify.error(backendMessageOf(reason)) }
 }
@@ -74,10 +76,15 @@ async function openReleasePage() {
 </script>
 
 <template>
-  <TitleBarStatusPopover v-model:open="open" :label="t('update.managerUpdate')" :title="status"
+  <TitleBarStatusPopover v-model:open="open" :label="t('update.managerUpdate')" :title="status" :heading="t('update.managerUpdate')"
     :tone="tone" :rotating="downloading" data-testid="app-update-status" :data-update-stage="appUpdateState.stage">
     <template #icon><RefreshOutline width="17" height="17" aria-hidden="true" /></template>
-    <strong>{{ t('update.managerUpdate') }}</strong>
+    <template #heading-action>
+      <NButton v-if="showCheck" size="small" secondary :loading="checking" :aria-disabled="checking"
+        data-testid="app-update-check" @click="check">
+        {{ storeManaged ? t('overview.check') : t('common.action.refetch') }}
+      </NButton>
+    </template>
     <TitleBarProgressTable :label="t('update.managerUpdate')" :rows="rows" :progress="percent" />
     <template v-if="stagedForExit">
       <AppUpdateNotes class="update-notes-preview" :update="appUpdateState.update" tabindex="0" data-testid="app-update-notes-preview" />
@@ -89,11 +96,8 @@ async function openReleasePage() {
     <NButton v-else-if="appUpdateState.resolvingExitBlock" size="small" secondary data-testid="app-update-show" @click="presentAppUpdate">
       {{ t('update.managerUpdate') }}
     </NButton>
-    <div v-if="(canCheck || storeManaged) && !appUpdatePromptOpen" class="update-actions">
-      <NButton v-if="checkFailed" size="small" quaternary @click="openReleasePage">{{ t('dialogs.openReleasePage') }}</NButton>
-      <NButton size="small" secondary data-testid="app-update-check" @click="check">
-        {{ storeManaged ? t('overview.check') : t('update.checkAgain') }}
-      </NButton>
+    <div v-if="checkFailed && showCheck" class="update-actions">
+      <NButton size="small" quaternary @click="openReleasePage">{{ t('dialogs.openReleasePage') }}</NButton>
     </div>
   </TitleBarStatusPopover>
 </template>

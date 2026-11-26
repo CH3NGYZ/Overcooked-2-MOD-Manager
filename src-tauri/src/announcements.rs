@@ -46,18 +46,11 @@ struct Announcement {
     language: String,
     title: String,
     body: String,
-    translations: BTreeMap<String, Translation>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct Translation {
-    title: String,
-    body: String,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 enum ReadError {
+    Language,
     Client,
     Request,
     Status(u16),
@@ -102,11 +95,6 @@ fn parse_snapshot(bytes: &[u8]) -> Result<AnnouncementSnapshot, ReadError> {
             || previous.is_some_and(|previous| time > previous)
             || !LOCALES.contains_key(&announcement.language)
             || !valid_content(&announcement.title, &announcement.body)
-            || announcement.translations.iter().any(|(language, entry)| {
-                language == &announcement.language
-                    || !LOCALES.contains_key(language)
-                    || !valid_content(&entry.title, &entry.body)
-            })
         {
             return Err(ReadError::InvalidSnapshot);
         }
@@ -125,10 +113,20 @@ fn client_builder() -> ClientBuilder {
 async fn fetch_snapshot(
     client: &Client,
     endpoint: &str,
+    language: &str,
+    fresh: bool,
 ) -> Result<AnnouncementSnapshot, ReadError> {
-    let mut response = client
+    if !LOCALES.contains_key(language) {
+        return Err(ReadError::Language);
+    }
+    let mut request = client
         .get(endpoint)
-        .header(header::ACCEPT, JSON_MEDIA_TYPE)
+        .query(&[("lang", language)])
+        .header(header::ACCEPT, JSON_MEDIA_TYPE);
+    if fresh {
+        request = request.query(&[("fresh", "1")]);
+    }
+    let mut response = request
         .send_logged_metadata()
         .await
         .map_err(|_| ReadError::Request)?;
@@ -162,17 +160,17 @@ async fn fetch_snapshot(
     parse_snapshot(&bytes)
 }
 
-async fn read_snapshot() -> Result<AnnouncementSnapshot, ReadError> {
+async fn read_snapshot(language: &str, fresh: bool) -> Result<AnnouncementSnapshot, ReadError> {
     let client = client_builder()
         .https_only(true)
         .build()
         .map_err(|_| ReadError::Client)?;
     let endpoint = format!("{}{}", PROTOCOL.origin, PROTOCOL.path);
-    fetch_snapshot(&client, &endpoint).await
+    fetch_snapshot(&client, &endpoint, language, fresh).await
 }
 
-pub(crate) async fn load() -> Option<AnnouncementSnapshot> {
-    match read_snapshot().await {
+pub(crate) async fn load(language: &str, fresh: bool) -> Option<AnnouncementSnapshot> {
+    match read_snapshot(language, fresh).await {
         Ok(snapshot) => Some(snapshot),
         Err(error) => {
             log::warn!("读取公告失败：类别={error:?}");

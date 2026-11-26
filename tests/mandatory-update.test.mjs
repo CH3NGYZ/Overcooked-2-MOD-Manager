@@ -132,12 +132,24 @@ test('system installation and reboot block another installer; a failed recheck d
   assert.equal(state.appUpdateState.stage, 'systemReboot')
   assert.equal(state.appUpdateState.error, 'assetBundle.recoveryPending')
   assert.equal(state.canExitForAppUpdate('reboot'), true)
-  state.beginAppUpdateCheck()
+  assert.equal(state.beginAppUpdateCheck(), true)
+  assert.equal(state.appUpdateState.stage, 'systemReboot')
+  assert.equal(state.appUpdateState.recheckingStatus, true)
+  assert.equal(state.beginAppUpdateCheck(), false)
   state.finishAppUpdateCheck(result({ update: null, installation_status: 'restart_failed' }))
   assert.equal(state.appUpdateState.stage, 'stageFailed')
   assert.equal(state.appUpdateState.update.version, offer.version)
   assert.equal(state.canExitForAppUpdate('download'), true)
   assert.equal(state.canCheckAppUpdate(), false)
+})
+
+test('the update popover keeps its check button and shows checking while a required update is rechecked', () => {
+  const component = source('src/components/AppUpdateStatus.vue')
+  assert.match(component, /const checking = computed\(\(\) => appUpdateState\.stage === 'checking' \|\| appUpdateState\.recheckingStatus\)/)
+  assert.match(component, /if \(checking\.value\) return t\('update\.checking'\)/)
+  assert.match(component, /const showCheck = computed\(\(\) => \(canCheck\.value \|\| checking\.value \|\| storeManaged\.value\)/)
+  assert.match(component, /v-if="showCheck".*:loading="checking" :aria-disabled="checking"/)
+  assert.match(component, /if \(!canCheck\.value && !storeManaged\.value\) return/)
 })
 
 test('unavailable staging and verified failed installation use the manual download destinations', async () => {

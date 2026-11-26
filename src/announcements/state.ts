@@ -1,6 +1,7 @@
 import { computed, shallowRef } from 'vue'
 import protocol from './protocol.json' with { type: 'json' }
 import type { AnnouncementSnapshot } from './types.ts'
+import type { Locale } from '../locale/types.ts'
 
 const READ_KEY = 'oc2-announcement-read-ids'
 const READ_LIMIT = protocol.maxItems * 4
@@ -20,13 +21,27 @@ export const announcementSnapshot = shallowRef<AnnouncementSnapshot | null | und
 export const announcementsUnread = computed(() =>
   announcementSnapshot.value?.announcements.some(({ id }) => !readIds.value.has(id)) ?? false)
 
-let startupFetch: Promise<void> | undefined
+type AnnouncementLoader = (language: Locale, fresh: boolean) => Promise<AnnouncementSnapshot | null>
+const pending = new Map<Locale, { fresh: boolean; done: Promise<void> }>()
+let current: Promise<void> | undefined
 
-export function initializeAnnouncements(load: () => Promise<AnnouncementSnapshot | null>): Promise<void> {
-  startupFetch ??= Promise.resolve().then(load).then(snapshot => {
-    announcementSnapshot.value = snapshot
-  }).catch(() => { announcementSnapshot.value = null })
-  return startupFetch
+export function loadAnnouncements(language: Locale, load: AnnouncementLoader, fresh = false): Promise<void> {
+  let request = pending.get(language)
+  if (!request || (fresh && !request.fresh)) {
+    const done: Promise<void> = Promise.resolve().then(() => load(language, fresh)).catch(() => null).then(snapshot => {
+      if (pending.get(language)?.done === done) pending.delete(language)
+      if (current !== done) return
+      current = undefined
+      announcementSnapshot.value = snapshot
+    })
+    request = { fresh, done }
+    pending.set(language, request)
+  }
+  if (current !== request.done) {
+    current = request.done
+    announcementSnapshot.value = undefined
+  }
+  return request.done
 }
 
 export function markAnnouncementsRead(): void {

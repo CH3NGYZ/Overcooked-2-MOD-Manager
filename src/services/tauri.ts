@@ -12,6 +12,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { invoke } from './invoke'
 // 只读当前界面语言（用于让后端选择仓库的本地化名称）；不引入任何 UI 依赖
 import { locale } from '../i18n'
+import type { Locale } from '../locale/types'
 import type {
   StartupProbe,
   AppDistribution,
@@ -426,7 +427,7 @@ export const api = {
    * 否则他会看到一次「已是最新」的旧结论。
    */
   checkAppUpdate: (force = false) => invoke<AppUpdateCheckResult>('check_app_update', { force }),
-  announcements: () => invoke<AnnouncementSnapshot | null>('get_announcements'),
+  announcements: (language: Locale, fresh: boolean) => invoke<AnnouncementSnapshot | null>('get_announcements', { language, fresh }),
   stageAppUpdate: (channel: string, onProgress: DownloadProgressHandler) =>
     invokeDownload<AppUpdateInfo | null>('stage_app_update', { channel }, onProgress),
   applyStagedAppUpdate: () => invoke<void>('apply_staged_app_update'),

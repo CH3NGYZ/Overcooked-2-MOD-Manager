@@ -12,7 +12,7 @@ test('About reads the native version at startup while update initialization wait
   const onboarding = app.slice(app.indexOf('async function startOnboarding()'), app.indexOf('function finishLanguageSelection()'))
   assert.match(onboarding, /if \(desktop\) initializeAppUpdates\(\)/)
   const mount = app.slice(app.indexOf('onMounted(() => {'), app.indexOf('</script>'))
-  assert.match(mount, /if \(isTauri\(\)\) getVersion\(\)\.then\([^\n]*\n\s*if \(!choosingLanguage\.value\) void startOnboarding\(\)/)
+  assert.match(mount, /if \(isTauri\(\)\) \{\s*void initializeAnnouncements\(api\.announcements\)\s*getVersion\(\)\.then\([^\n]*\n\s*\}\s*if \(!choosingLanguage\.value\) void startOnboarding\(\)/)
   assert.doesNotMatch(mount, /initializeAppUpdates\(\)|checkForAppUpdate\(/)
   assert.match(app, /function finishLanguageSelection\(\) \{\s*choosingLanguage\.value = false\s*void startOnboarding\(\)\s*\}/)
   assert.match(app, /<StartupLanguageDialog v-if="choosingLanguage" @confirmed="finishLanguageSelection" \/>/)

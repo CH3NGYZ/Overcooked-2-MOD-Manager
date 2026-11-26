@@ -246,7 +246,7 @@ test('one application modal owns update actions; the title bar owns background p
   assert.match(status, /function applyUpdate\(\) \{\s*if \(!canExitForAppUpdate\('apply'\)\) return\s*open.value = false\s*emit\('update-exit', 'apply'\)/)
   const title = source('src/components/AppTitleBar.vue')
   assert.match(title, /computed\(\(\) => appUpdateBlocksOperations\(\)\)/)
-  assert.match(title, /<AppUpdateStatus @update-exit="emit\('update-exit', \$event\)"\s*\/>\s*<LevelCompressionStatus \/>\s*<RecycleBinStatus \/>/)
+  assert.match(title, /<AppUpdateStatus @update-exit="emit\('update-exit', \$event\)"\s*\/>\s*<AnnouncementStatus\b[^>]+\/>\s*<LevelCompressionStatus \/>\s*<RecycleBinStatus \/>/)
   assert.match(title, /\.titlebar--mac \.toolbar-group \{ flex-direction: row-reverse; \}/)
   assert.match(source('src/components/LevelCompressionStatus.vue'), /<TitleBarProgressTable\b/)
 })

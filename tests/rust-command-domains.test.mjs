@@ -13,7 +13,8 @@ test('commands root only declares domains; registered IPC points at the real imp
   const handler = read('lib.rs').match(/audited_handler!\s*\[([\s\S]*?)\]/)?.[1]
   assert.ok(handler)
   const paths = [...handler.matchAll(/\bcommands::([a-z_]+)::([a-z_]+)\b/g)]
-  assert.equal(paths.length, 149, '包含独立版更新预约、退出与 Windows 普通权限交接 IPC')
+  assert.equal(paths.length, 150, '包含启动公告、更新预约、退出与 Windows 普通权限交接 IPC')
+  assert.ok(paths.some(([, domain, name]) => domain === 'announcements' && name === 'get_announcements'))
   assert.ok(paths.some(([, domain, name]) => domain === 'logs' && name === 'record_ipc_failure'))
   assert.ok(paths.some(([, domain, name]) => domain === 'logs' && name === 'record_file_drop'))
   assert.ok(paths.some(([, domain, name]) => domain === 'system' && name === 'open_external_page'))

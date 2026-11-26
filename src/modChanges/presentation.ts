@@ -279,7 +279,10 @@ export function changePlanDetails(plan: DeepReadonly<ChangePlan>, progress?: Dee
   for (const [parentId, bundled] of bundledByNode) {
     if (!bundled.length || rows.some(row => row.nodeId === parentId && !row.bundled)) continue
     const parent = nodes.get(parentId)
-    if (parent) rows.push({ key: `bundled-parent:${parentId}`, nodeId: parentId, label: labels.get(parentId), category: nodeCategory(parent) })
+    if (parent) {
+      coveredNodes.add(parentId)
+      rows.push({ key: `bundled-parent:${parentId}`, nodeId: parentId, label: labels.get(parentId), category: nodeCategory(parent) })
+    }
     appendBundled(parentId)
   }
   for (const [nodeId, item] of items) {

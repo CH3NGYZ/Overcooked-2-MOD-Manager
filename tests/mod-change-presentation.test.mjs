@@ -198,6 +198,22 @@ test('bundle rows preserve independent execution keys and group only verified ma
   assert.equal(children.find(row => row.member.path === registered).statusKey, changeStatusKey(registeredId))
 })
 
+test('a selected map without its own action appears once above its switching DLL', () => {
+  const mapId = 'map:Young'
+  const dll = 'BepInEx/plugins/YoungLevelRuntimeLoader/YoungLevels.dll'
+  const dllId = `map-dll:${dll.toLowerCase()}`
+  const { rows } = changePlanDetails({ ...plan,
+    nodes: [{ ...node(mapId, 'Young'), kind: 'map' }, node(dllId, 'YoungLevelsRuntime')],
+    roots: [{ node_id: mapId, label: 'Young' }],
+    actions: [action(dllId, 'disable')],
+    bundled_dlls: { [mapId]: [{ parent_node_id: mapId, node_id: dllId, member_key: dll.toLowerCase(),
+      dll_file: dll, action_kind: 'disable', kind: 'disable' }] },
+  })
+  assert.deepEqual(rows.map(row => [row.nodeId, row.bundledParentId, row.kind]), [
+    [mapId, undefined, undefined], [dllId, mapId, 'disable'],
+  ])
+})
+
 test('verified member versions follow the active candidate and clear when a new solve has no actions', () => {
   const oldAction = action('web', 'upgrade', { to_candidate_id: 'old', from_tag: 'v1', to_tag: 'v4' })
   const newAction = action('web', 'upgrade', { to_candidate_id: 'new', from_tag: 'v1', to_tag: 'v3' })

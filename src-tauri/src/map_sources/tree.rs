@@ -539,12 +539,7 @@ async fn load_deferred(
             }
             Err(error) => {
                 if let Some(observer) = ctx.observer {
-                    observer.publish(
-                        &target.label.id,
-                        "error",
-                        Some(error.to_string()),
-                        collected,
-                    );
+                    observer.publish(&target.label.id, "error", Some(error), collected);
                 }
             }
         }

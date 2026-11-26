@@ -38,9 +38,9 @@ pub(super) async fn load_release_tag_maps(
     builtin: bool,
     origin: &SourceLocation,
     ctx: &MapSourceContext<'_>,
-) -> Result<Vec<MapRepositoryConfig>, ConfigError> {
+) -> Result<Vec<MapRepositoryConfig>, String> {
     let probe = declaration_request(declaration);
-    let releases = match crate::releases::cached_releases(
+    let releases = crate::releases::cached_releases(
         ctx.cache,
         ctx.client,
         &probe,
@@ -50,17 +50,13 @@ pub(super) async fn load_release_tag_maps(
         ctx.force,
     )
     .await
-    {
-        Ok(releases) => releases,
-        Err(error) => {
-            log::warn!(
-                "按 Release note 生成地图失败：源={}，原因={}",
-                label.id,
-                error
-            );
-            return Err(ConfigError::Invalid(error));
-        }
-    };
+    .inspect_err(|error| {
+        log::warn!(
+            "按 Release note 生成地图失败：源={}，原因={}",
+            label.id,
+            error
+        );
+    })?;
 
     Ok(project_release_tag_maps(
         declaration,

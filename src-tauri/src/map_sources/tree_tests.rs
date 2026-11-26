@@ -40,6 +40,102 @@ async fn root_document(
 }
 
 #[tokio::test]
+async fn release_tags_source_propagates_fetch_errors_and_preserves_other_branches() {
+    let origin = SourceLocation::parse("maps.toml").unwrap();
+    let document = parse_document(
+        r#"
+[[map_sources]]
+id='limited-fixture'
+mode='release-tags'
+provider='gitcode'
+username='fixture'
+repository='rate-limited-maps'
+
+[[map_sources]]
+id='working-fixture'
+mode='release-tags'
+provider='gitcode'
+username='fixture'
+repository='working-maps'
+"#,
+        &origin,
+        &Default::default(),
+    )
+    .unwrap();
+    let observer = SourceObserver::new("cn", |_| {});
+    let mut config = crate::config::default_config();
+    config.region = "cn".into();
+    let cache = crate::release_cache::RepoReleaseCache::default();
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let mut targets = Vec::new();
+    for mut declaration in document.map_sources {
+        if declaration.id == "limited-fixture" {
+            declaration.network_plan = toml::from_str("mainland = 'missing-plan'").unwrap();
+        } else {
+            let probe = super::super::release_tags::declaration_request(&declaration);
+            let key = crate::releases::release_cache_key_for_test(&probe, &config.region, None);
+            cache
+                .list(key, None, false, || async { Ok(Vec::new()) })
+                .await
+                .unwrap();
+        }
+        let label = SourceLabel::default().child(&declaration);
+        let node = SourceNode {
+            id: label.id.clone(),
+            parent_id: None,
+            label: declaration.id.clone(),
+            label_i18n: Default::default(),
+            note_i18n: Default::default(),
+            url: String::new(),
+            status: "pending".into(),
+            error: None,
+        };
+        observer.declare(node.clone());
+        targets.push(SourceTarget {
+            node,
+            sequence: 0,
+            origin: origin.clone(),
+            label,
+            builtin: false,
+            depth: 1,
+            declaration: Some(declaration),
+        });
+    }
+    let ctx = MapSourceContext {
+        observer: Some(&observer),
+        cache: &cache,
+        client: &client,
+        config: &config,
+        github_token: None,
+        gitee_token: None,
+        gitcode_token: None,
+        pass_id: None,
+        force: false,
+        previous: &[],
+    };
+    let mut collected = Vec::new();
+    load_deferred(targets, &mut collected, &ctx, "cn").await;
+    let progress = observer.finish(Vec::new());
+    let limited = progress
+        .nodes
+        .iter()
+        .find(|node| node.id == "limited-fixture")
+        .unwrap();
+    let working = progress
+        .nodes
+        .iter()
+        .find(|node| node.id == "working-fixture")
+        .unwrap();
+    assert_eq!(limited.status, "error");
+    assert_eq!(
+        limited.error.as_deref(),
+        Some("Release operation failed: proxy.validationFailed")
+    );
+    assert_eq!(working.status, "ready");
+    assert!(working.error.is_none());
+}
+
+#[tokio::test]
 async fn root_failures_keep_branch_retry_targets_until_a_successful_root_replaces_them() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();

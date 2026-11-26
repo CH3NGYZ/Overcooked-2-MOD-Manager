@@ -1,6 +1,8 @@
 use reqwest::{StatusCode, header::HeaderMap};
+use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use url::{Origin, Url};
 
 use crate::models::Provider;
 
@@ -14,7 +16,7 @@ use crate::models::Provider;
  * 两把锁对应两类凭据：
  *   anonymous —— 不带 Token 的官方直连
  *   token     —— 带个人 Token 的官方请求
- * 代理请求不参与限流（它们不消耗官方配额）。
+ * GitCode 代理的 429 单独冷却该代理端点，不消耗官方配额。
  */
 
 /// Gitee 匿名 403 + 正文含 “Rate Limit Exceeded” 后锁定的时长。
@@ -26,14 +28,23 @@ const GITHUB_FALLBACK_BLOCK: Duration = Duration::from_secs(60);
 /// 二级限流的指数退避上限。
 const SECONDARY_BACKOFF_CAP: Duration = Duration::from_secs(15 * 60);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GateKind {
+#[derive(Clone, Copy)]
+pub enum GateKind<'a> {
     /// 不带 Token 的官方直连。
     Anonymous,
     /// 带个人 Token 的官方请求。
     Token,
-    /// 代理请求：不消耗官方配额，不受闸门约束。
-    Proxy,
+    Proxy(&'a str),
+}
+
+impl GateKind<'_> {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Anonymous => "official_direct",
+            Self::Token => "official_token",
+            Self::Proxy(_) => "proxy",
+        }
+    }
 }
 
 /// 闸门状态：某 provider 某类凭据在什么时间点之前不允许再请求。
@@ -45,6 +56,7 @@ struct GateState {
     github_token: Option<Instant>,
     gitcode_anonymous: Option<Instant>,
     gitcode_token: Option<Instant>,
+    gitcode_proxies: HashMap<Origin, Instant>,
     /// 连续二级限流次数，用于指数退避。
     github_secondary_hits: u32,
 }
@@ -115,8 +127,8 @@ fn now_epoch_secs() -> u64 {
 
 impl ApiRateGate {
     /// 该请求现在能不能发：返回 Ok 或需要等待的时长。
-    pub fn check(&self, provider: &Provider, kind: GateKind) -> Result<(), Duration> {
-        if kind == GateKind::Proxy {
+    pub fn check(&self, provider: &Provider, kind: GateKind<'_>) -> Result<(), Duration> {
+        if matches!(kind, GateKind::Proxy(_)) && *provider != Provider::Gitcode {
             return Ok(());
         }
         let now = Instant::now();
@@ -132,7 +144,10 @@ impl ApiRateGate {
             (Provider::Github, GateKind::Token) => state.github_token,
             (Provider::Gitcode, GateKind::Anonymous) => state.gitcode_anonymous,
             (Provider::Gitcode, GateKind::Token) => state.gitcode_token,
-            (_, GateKind::Proxy) => None,
+            (Provider::Gitcode, GateKind::Proxy(url)) => {
+                proxy_origin(url).and_then(|origin| state.gitcode_proxies.get(&origin).copied())
+            }
+            (_, GateKind::Proxy(_)) => None,
         };
         match until {
             Some(deadline) if deadline > now => Err(deadline - now),
@@ -144,12 +159,12 @@ impl ApiRateGate {
     pub fn record_limit(
         &self,
         provider: &Provider,
-        kind: GateKind,
+        kind: GateKind<'_>,
         status: StatusCode,
         signal: &RateLimitSignal,
     ) -> Option<Duration> {
         let gitcode_429 = *provider == Provider::Gitcode && status == StatusCode::TOO_MANY_REQUESTS;
-        if kind == GateKind::Proxy || !(gitcode_429 || signal.has_limit_evidence()) {
+        if !gitcode_429 && (matches!(kind, GateKind::Proxy(_)) || !signal.has_limit_evidence()) {
             return None;
         }
         let mut state = match self.state.lock() {
@@ -209,7 +224,13 @@ impl ApiRateGate {
                 let slot = match kind {
                     GateKind::Anonymous => &mut state.gitcode_anonymous,
                     GateKind::Token => &mut state.gitcode_token,
-                    GateKind::Proxy => return None,
+                    GateKind::Proxy(url) => {
+                        let origin = proxy_origin(url)?;
+                        state.gitcode_proxies.retain(|_, until| *until > now);
+                        let until = state.gitcode_proxies.entry(origin).or_insert(deadline);
+                        *until = (*until).max(deadline);
+                        return Some(*until - now);
+                    }
                 };
                 let deadline = slot.map_or(deadline, |current| current.max(deadline));
                 *slot = Some(deadline);
@@ -221,8 +242,8 @@ impl ApiRateGate {
     }
 
     /// 请求成功：清掉对应通道的退避计数（恢复正常节流节奏）。
-    pub fn record_success(&self, provider: &Provider, kind: GateKind) {
-        if kind == GateKind::Proxy {
+    pub fn record_success(&self, provider: &Provider, kind: GateKind<'_>) {
+        if matches!(kind, GateKind::Proxy(_)) {
             return;
         }
         let mut state = match self.state.lock() {
@@ -247,9 +268,16 @@ impl ApiRateGate {
 
     /// 当前剩余的锁定时间（供测试查询）。
     #[cfg_attr(not(test), allow(dead_code))]
-    pub fn remaining(&self, provider: &Provider, kind: GateKind) -> Option<Duration> {
+    pub fn remaining(&self, provider: &Provider, kind: GateKind<'_>) -> Option<Duration> {
         self.check(provider, kind).err()
     }
+}
+
+fn proxy_origin(url: &str) -> Option<Origin> {
+    Url::parse(url)
+        .ok()
+        .map(|url| url.origin())
+        .filter(Origin::is_tuple)
 }
 
 /// 从正文里识别限流文案。

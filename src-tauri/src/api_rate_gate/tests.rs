@@ -133,22 +133,18 @@ fn success_clears_lock_and_backoff() {
 }
 
 #[test]
-fn proxy_requests_ignore_the_gate() {
+fn github_proxy_requests_ignore_the_gate() {
     let gate = ApiRateGate::default();
+    let proxy = GateKind::Proxy("https://proxy.example.invalid/repos/owner/repo/releases");
     let signal = RateLimitSignal {
         body_limit_message: true,
         ..Default::default()
     };
     assert!(
-        gate.record_limit(
-            &Provider::Github,
-            GateKind::Proxy,
-            StatusCode::FORBIDDEN,
-            &signal
-        )
-        .is_none()
+        gate.record_limit(&Provider::Github, proxy, StatusCode::FORBIDDEN, &signal)
+            .is_none()
     );
-    assert!(gate.check(&Provider::Github, GateKind::Proxy).is_ok());
+    assert!(gate.check(&Provider::Github, proxy).is_ok());
 }
 
 #[test]
@@ -177,15 +173,6 @@ fn gitcode_429_needs_no_extra_evidence_but_plain_403_does() {
     assert_eq!(
         gate.record_limit(
             &provider,
-            GateKind::Proxy,
-            StatusCode::TOO_MANY_REQUESTS,
-            &signal
-        ),
-        None
-    );
-    assert_eq!(
-        gate.record_limit(
-            &provider,
             GateKind::Anonymous,
             StatusCode::TOO_MANY_REQUESTS,
             &signal
@@ -194,8 +181,40 @@ fn gitcode_429_needs_no_extra_evidence_but_plain_403_does() {
     );
     assert!(gate.check(&provider, GateKind::Anonymous).is_err());
     assert!(gate.check(&provider, GateKind::Token).is_ok());
-    assert!(gate.check(&provider, GateKind::Proxy).is_ok());
+    let proxy = GateKind::Proxy("https://proxy.example.invalid/repos/owner/repo/releases");
+    assert!(gate.check(&provider, proxy).is_ok());
     assert!(gate.check(&Provider::Github, GateKind::Anonymous).is_ok());
+}
+
+#[test]
+fn gitcode_proxy_cooldown_is_endpoint_specific_and_expires() {
+    let gate = ApiRateGate::default();
+    let provider = Provider::Gitcode;
+    let proxy = GateKind::Proxy("https://proxy.example.invalid/repos/first/repo/releases?page=1");
+    let same_proxy =
+        GateKind::Proxy("https://proxy.example.invalid/repos/second/repo/releases?page=2");
+    let another_proxy = GateKind::Proxy("https://other.example.invalid/repos/first/repo/releases");
+    let signal = RateLimitSignal {
+        retry_after: Some(120),
+        ..Default::default()
+    };
+    assert_eq!(
+        gate.record_limit(&provider, proxy, StatusCode::FORBIDDEN, &signal),
+        None
+    );
+    assert_eq!(
+        gate.record_limit(&provider, proxy, StatusCode::TOO_MANY_REQUESTS, &signal),
+        Some(Duration::from_secs(120))
+    );
+    assert!(gate.check(&provider, same_proxy).is_err());
+    assert!(gate.check(&provider, another_proxy).is_ok());
+    assert!(gate.check(&provider, GateKind::Anonymous).is_ok());
+    assert!(gate.check(&provider, GateKind::Token).is_ok());
+    gate.state.lock().unwrap().gitcode_proxies.insert(
+        proxy_origin("https://proxy.example.invalid").unwrap(),
+        Instant::now() - Duration::from_secs(1),
+    );
+    assert!(gate.check(&provider, same_proxy).is_ok());
 }
 
 #[test]

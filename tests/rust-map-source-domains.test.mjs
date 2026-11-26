@@ -49,7 +49,9 @@ test('map loading shares transport and cache while retaining tag assets and runt
   }
   const tags = read('release_tags.rs')
   assert.doesNotMatch(tags, /"\{\}::all"/)
-  assert.match(tags, /return Err\(ConfigError::Invalid\(error\)\)/)
+  assert.match(tags, /load_release_tag_maps\([\s\S]*?Result<Vec<MapRepositoryConfig>, String>/)
+  assert.match(tags, /\.inspect_err\([\s\S]*?\}\)\?;/)
+  assert.match(read('tree.rs'), /observer\.publish\(&target\.label\.id, "error", Some\(error\), collected\)/)
   assert.doesNotMatch(tags, /return Ok\(previous\)/)
   assert.match(read('community.rs'), /load_release_tag_maps\(&declaration, &label, false, origin, ctx\)/)
   const state = read('state.rs')

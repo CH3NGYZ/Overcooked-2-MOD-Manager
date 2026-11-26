@@ -12,9 +12,9 @@ use serde_json::Value;
 
 const REPOSITORY_API_ATTEMPTS: usize = 3;
 
-fn gate_kind(official_url: &str, target_url: &str, token: Option<&str>) -> GateKind {
+fn gate_kind<'a>(official_url: &str, target_url: &'a str, token: Option<&str>) -> GateKind<'a> {
     if target_url != official_url {
-        GateKind::Proxy
+        GateKind::Proxy(target_url)
     } else if token.is_some() {
         GateKind::Token
     } else {
@@ -27,11 +27,7 @@ pub(super) fn api_target_kind(
     target_url: &str,
     request_token: Option<&str>,
 ) -> &'static str {
-    match gate_kind(official_url, target_url, request_token) {
-        GateKind::Anonymous => "official_direct",
-        GateKind::Token => "official_token",
-        GateKind::Proxy => "proxy",
-    }
+    gate_kind(official_url, target_url, request_token).label()
 }
 
 pub(super) fn repository_api_targets<'a>(
@@ -108,7 +104,7 @@ pub(super) struct RepositoryApiTarget<'a> {
     url: &'a str,
     provider: &'a Provider,
     token: Option<&'a str>,
-    gate: Option<(&'a ApiRateGate, GateKind)>,
+    gate: Option<(&'a ApiRateGate, GateKind<'a>)>,
 }
 
 impl<'a> RepositoryApiTarget<'a> {
@@ -132,8 +128,9 @@ impl<'a> RepositoryApiTarget<'a> {
             && let Err(wait) = gate.check(self.provider, kind)
         {
             log::warn!(
-                "Release API 被限流闸门跳过: provider={:?} channel={kind:?} 剩余等待={}秒",
+                "Release API 被限流闸门跳过: provider={:?} channel={} 剩余等待={}秒",
                 self.provider,
+                kind.label(),
                 wait.as_secs()
             );
             return Err(ReleaseError::Cooldown);
@@ -146,8 +143,9 @@ impl<'a> RepositoryApiTarget<'a> {
             && let Some(block) = gate.record_limit(self.provider, kind, status, signal)
         {
             log::warn!(
-                "Release API 触发限流锁: provider={:?} channel={kind:?} 锁定={}秒",
+                "Release API 触发限流锁: provider={:?} channel={} 锁定={}秒",
                 self.provider,
+                kind.label(),
                 block.as_secs()
             );
         }

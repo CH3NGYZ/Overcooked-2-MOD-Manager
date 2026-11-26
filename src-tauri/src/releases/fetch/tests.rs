@@ -438,7 +438,7 @@ async fn all_providers_paginate_using_raw_response_counts_and_explicit_page_one(
 #[tokio::test]
 async fn gitcode_429_routes_around_a_cooling_official_across_repositories_and_default_branch() {
     let official = ApiTestServer::new(vec![("429 Too Many Requests", ""), ("200 OK", "[]")]);
-    let limited_proxy = ApiTestServer::new(vec![("429 Too Many Requests", ""); 2]);
+    let limited_proxy = ApiTestServer::new(vec![("429 Too Many Requests\r\nRetry-After: 120", "")]);
     let working_proxy = ApiTestServer::new(vec![
         ("200 OK", r#"[{"tag_name":"v1.0.0"}]"#),
         ("200 OK", r#"[{"tag_name":"v2.0.0"}]"#),
@@ -448,17 +448,22 @@ async fn gitcode_429_routes_around_a_cooling_official_across_repositories_and_de
     let client = api_test_client();
     let mut repo = api_test_repository();
     repo.provider = Provider::Gitcode;
-    let targets = |official_url: &str| {
+    let targets = |official_url: &str, page: u32| {
         vec![
             (official_url.to_owned(), None),
-            (limited_proxy.url.clone(), None),
-            (working_proxy.url.clone(), None),
+            (format!("{}?page={page}", limited_proxy.url), None),
+            (format!("{}?page={page}", working_proxy.url), None),
         ]
     };
-    let (releases, _) =
-        fetch_releases_from_targets(&client, &repo, &official.url, targets(&official.url), &gate)
-            .await
-            .unwrap();
+    let (releases, _) = fetch_releases_from_targets(
+        &client,
+        &repo,
+        &official.url,
+        targets(&official.url, 1),
+        &gate,
+    )
+    .await
+    .unwrap();
     assert_eq!(releases[0].tag_name, "v1.0.0");
     assert_eq!(official.requests().len(), 1);
     assert_eq!(limited_proxy.requests().len(), 1);
@@ -466,22 +471,17 @@ async fn gitcode_429_routes_around_a_cooling_official_across_repositories_and_de
     repo.id = "another-gitcode-repo".into();
     repo.repository = "AnotherRepo".into();
     let (releases, _) =
-        fetch_releases_from_targets(&client, &repo, &address, targets(&address), &gate)
+        fetch_releases_from_targets(&client, &repo, &address, targets(&address, 2), &gate)
             .await
             .unwrap();
     assert_eq!(releases[0].tag_name, "v2.0.0");
-    let branch = fetch_default_branch_from_targets(
-        &client,
-        &repo,
-        &address,
-        vec![(address.clone(), None), (working_proxy.url.clone(), None)],
-        &gate,
-    )
-    .await
-    .unwrap();
+    let branch =
+        fetch_default_branch_from_targets(&client, &repo, &address, targets(&address, 2), &gate)
+            .await
+            .unwrap();
     assert_eq!(branch, "main");
     assert_eq!(official.requests().len(), 1);
-    assert_eq!(limited_proxy.requests().len(), 2);
+    assert_eq!(limited_proxy.requests().len(), 1);
     assert_eq!(working_proxy.requests().len(), 3);
 
     let error = fetch_releases_from_targets(

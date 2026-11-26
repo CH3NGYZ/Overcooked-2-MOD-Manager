@@ -58,14 +58,43 @@ impl ReleaseTargetClaims {
             .map(|relative| game(&relative))
     }
 
-    pub fn overwrites(&self) -> Vec<UntrackedOverwrite> {
+    pub fn overwrites(&self, operation: &str) -> Vec<UntrackedOverwrite> {
         self.loose
             .iter()
             .filter(|(_, file)| file.replacement != FileReplacement::Identical)
             .map(|((id, _), file)| UntrackedOverwrite {
                 node_id: id.clone(),
                 path: file.relative.clone(),
-                unverified_source: file.replacement == FileReplacement::UnverifiedSource,
+                unverified_source: matches!(
+                    file.replacement,
+                    FileReplacement::UnverifiedSource | FileReplacement::BackupConflict
+                ),
+                backup_path: file.backup_target(operation).map(|target| target.relative),
+            })
+            .collect()
+    }
+
+    pub(in crate::mod_changes::mutations) fn conflict_backups(
+        &self,
+        roots: &TransactionRoots,
+        operation: &str,
+    ) -> Result<Vec<OwnedMutation>, String> {
+        self.loose
+            .values()
+            .filter_map(|file| Some((file, file.backup_target(operation)?)))
+            .map(|(file, target)| {
+                Ok(OwnedMutation {
+                    items: BTreeSet::new(),
+                    mutation: Mutation::File(FileChange {
+                        target,
+                        source: Some(StagedFile {
+                            path: game(&file.relative).resolve(roots)?,
+                            fingerprint: file.expected.clone(),
+                        }),
+                        expected: Fingerprint::Missing,
+                        require_single_link: false,
+                    }),
+                })
             })
             .collect()
     }
@@ -152,9 +181,19 @@ impl ReleaseTargetClaims {
     pub fn guarded_original_files(
         &self,
     ) -> Vec<(TransactionPath, crate::file_metadata::FileIdentity)> {
-        self.orphan_records
+        self.loose
             .values()
-            .map(|record| (data(&record.relative), record.stamp.identity.clone()))
+            .filter_map(|file| {
+                Some((
+                    game(&file.relative),
+                    file.conflict.as_ref()?.original_identity.clone(),
+                ))
+            })
+            .chain(
+                self.orphan_records
+                    .values()
+                    .map(|record| (data(&record.relative), record.stamp.identity.clone())),
+            )
             .chain(
                 self.missing_records
                     .values()
@@ -253,6 +292,7 @@ impl ReleaseTargetClaims {
         state: &AppState,
         roots: &TransactionRoots,
         written: &BTreeMap<String, String>,
+        changes: &[OwnedMutation],
     ) -> Result<(), String> {
         let config = self
             .missing_records
@@ -278,6 +318,26 @@ impl ReleaseTargetClaims {
         }
         for (owner, record) in &self.orphan_records {
             record.verify_vacancy(owner, roots)?;
+        }
+        for ((owner, _), file) in &self.loose {
+            let Some(conflict) = &file.conflict else {
+                continue;
+            };
+            for dll in [&conflict.core, &file.relative] {
+                let canonical = mods::canonical_dll_name(dll);
+                for variant in endpoints(&canonical) {
+                    let key = path_key(Path::new(&variant));
+                    let installed = changes.iter().any(|owned| {
+                        matches!(&owned.mutation, Mutation::File(change)
+                            if change.target.root == RootKind::Game
+                                && change.source.is_some()
+                                && path_key(Path::new(&change.target.relative)) == key)
+                    });
+                    if !installed {
+                        verify_missing_dll_variant(roots, owner, &canonical, &variant)?;
+                    }
+                }
+            }
         }
         Ok(())
     }

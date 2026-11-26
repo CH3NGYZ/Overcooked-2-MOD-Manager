@@ -43,22 +43,25 @@ const recoveryEntry = computed(() => needsRecoveryApproval(plan.value) || recove
 const offerOverwrite = computed(() => state.value?.phase === 'failed' && !!manifestOverwrite.value && !recoveryEntry.value)
 const overwriteReview = computed(() => !!applyReview.value && !!manifestOverwrite.value)
 const sourceSwitch = computed(() => manifestOverwrite.value?.sourceSwitch)
-const overwriteGroups = computed(() => {
+const reviewedOverwrites = computed(() => {
   const verified = plan.value
   if (state.value?.phase !== 'reconfirming' || !applyReview.value || verified?.status !== 'ready' || !verified.prepared) return []
+  return verified.untracked_overwrites ?? []
+})
+const overwriteGroups = computed(() => {
   const groups = new Map<string, Set<string>>()
-  for (const { node_id: nodeId, path } of verified.untracked_overwrites ?? []) {
+  for (const { node_id: nodeId, path } of reviewedOverwrites.value) {
     const paths = groups.get(nodeId) ?? new Set<string>()
     paths.add(path)
     groups.set(nodeId, paths)
   }
   return [...groups]
 })
-const unverifiedOverwrite = computed(() => overwriteGroups.value.length > 0
-  && !!plan.value?.untracked_overwrites?.some(file => file.unverified_source))
+const backupPaths = computed(() => [...new Set(reviewedOverwrites.value.flatMap(file => file.backup_path ? [file.backup_path] : []))])
+const unverifiedOverwrite = computed(() => reviewedOverwrites.value.some(file => file.unverified_source && !file.backup_path))
 const needsPreparation = computed(() => !applyReview.value && plan.value?.actions.some(isPackageAction))
 const confirmLabel = computed(() => overwriteReview.value ? 'modChanges.manifestOverwrite.confirm'
-  : unverifiedOverwrite.value ? 'modChanges.overwrite.action'
+  : backupPaths.value.length ? 'modChanges.overwrite.backupAction' : unverifiedOverwrite.value ? 'modChanges.overwrite.action'
   : applyReview.value === 'changed' && plan.value?.prepared ? 'modChanges.reconfirm'
   : needsPreparation.value ? 'modChanges.confirmPreparation' : 'modChanges.confirm')
 const names = computed(() => plan.value && changePlanLabels(plan.value, currentProgress.value, pickI18n, locale.value))
@@ -148,13 +151,23 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
       </NAlert>
       <NAlert v-if="overwriteGroups.length" type="warning" :bordered="false"
         :title="t('modChanges.overwrite.title')" data-untracked-overwrites>
-        {{ t(unverifiedOverwrite ? 'modChanges.overwrite.unverifiedSource' : 'modChanges.overwrite.description') }}
+        <template v-if="!backupPaths.length">
+          {{ t(unverifiedOverwrite ? 'modChanges.overwrite.unverifiedSource' : 'modChanges.overwrite.description') }}
+        </template>
+        <template v-else>
+          {{ t('modChanges.overwrite.backupDescription') }}
+          <p v-if="unverifiedOverwrite" class="diagnostic-note">{{ t('modChanges.overwrite.withoutBackup') }}</p>
+        </template>
         <ul class="overwrite-groups" role="list">
           <li v-for="[nodeId, paths] in overwriteGroups" :key="nodeId">
             <strong>{{ names?.nodes.get(nodeId) ?? t('modChanges.unnamedItem') }}</strong>
             <ChangeEvidenceList :rows="Array.from(paths, path => ({ path }))" />
           </li>
         </ul>
+        <template v-if="backupPaths.length">
+          <p class="diagnostic-note">{{ t('modChanges.overwrite.backupLocation') }}</p>
+          <ChangeEvidenceList :rows="backupPaths.map(path => ({ path }))" />
+        </template>
       </NAlert>
       <NAlert v-if="plan && plan.status !== 'ready'" type="error" :bordered="false">
         {{ t(plan.status === 'incomplete' ? 'modChanges.incomplete' : 'modChanges.unsatisfiable') }}
@@ -249,7 +262,7 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
             @click="changes.retry">{{ t('modChanges.retry') }}</NButton>
           <TransactionConflictConfirmation v-else-if="recoveryReview && plan && !showTransactionRecovery"
             :plan="plan" @approve="changes.confirmRecovery" />
-          <NButton v-else data-plan-action="confirm" :type="overwriteReview || unverifiedOverwrite ? 'warning' : 'primary'" :loading="working" :disabled="working || completedPreparation || plan?.status !== 'ready' || recoveryReview"
+          <NButton v-else data-plan-action="confirm" :type="overwriteReview || backupPaths.length || unverifiedOverwrite ? 'warning' : 'primary'" :loading="working" :disabled="working || completedPreparation || plan?.status !== 'ready' || recoveryReview"
             @click="changes.confirm">{{ t(confirmLabel) }}</NButton>
         </div>
       </div>

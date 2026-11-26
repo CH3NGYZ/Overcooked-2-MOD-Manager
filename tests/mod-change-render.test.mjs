@@ -297,6 +297,38 @@ test('source uncertainty exposes a risk warning and an explicit overwrite action
   assert.deepEqual(fixture.calls, ['cancel', 'confirm'])
 })
 
+test('reinstall offers to back up the exact conflict only after preparation', async t => {
+  const root = mounted(t)
+  const path = 'BepInEx/plugins/OC2DIYLevel/LevelEditorStub.dll'
+  const backupPath = `backups/mod-reinstall/78dac972-0024-4669-a598-3bc59131aa98/${path}`
+  const conflict = { node_id: 'level', path, unverified_source: true, backup_path: backupPath }
+  const verified = { ...plan, prepared: true, untracked_overwrites: [conflict] }
+  const button = action => find(root, node => node.props?.['data-plan-action'] === action)[0]
+  fixture.state.value = { phase: 'confirming', plan: verified, error: null }
+  await nextTick()
+  assert.doesNotMatch(text(root), /备份冲突文件并重装|mod-reinstall/)
+  fixture.state.value = { phase: 'reconfirming', applyReview: 'prepared', plan: verified, error: null }
+  await nextTick()
+  assert.match(text(root), /无法核对.*来源.*重装前.*备份到管理器数据目录/)
+  assert.doesNotMatch(text(root), /本地修改可能丢失/)
+  assert.deepEqual(find(root, node => node.props && Object.hasOwn(node.props, 'data-evidence-path')).map(text), [path, backupPath])
+  assert.equal(text(button('confirm')), '备份冲突文件并重装')
+  assert.equal(button('confirm').props.type, 'warning')
+  assert.deepEqual(fixture.calls, [])
+
+  fixture.state.value = { ...fixture.state.value, plan: { ...verified, untracked_overwrites: [conflict,
+    { node_id: 'level', path: 'BepInEx/plugins/OC2DIYLevel/common', unverified_source: true },
+  ] } }
+  await nextTick()
+  assert.match(text(root), /本地修改可能丢失/)
+  assert.ok(text(root).includes(backupPath))
+  assert.equal(text(button('confirm')), '备份冲突文件并重装')
+  button('cancel').props.onClick()
+  assert.deepEqual(fixture.calls, ['cancel'])
+  button('confirm').props.onClick()
+  assert.deepEqual(fixture.calls, ['cancel', 'confirm'])
+})
+
 test('the only view is a six-column table with separate actions, version changes, and readable reasons', async t => {
   const root = mounted(t)
   fixture.state.value = { phase: 'confirming', plan: { ...plan, impacts: ['mod:opaque'], actions: [

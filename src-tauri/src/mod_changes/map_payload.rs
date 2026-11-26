@@ -55,6 +55,7 @@ impl MapBatch {
                     node_id: external.node_id.clone(),
                     path: path.clone(),
                     unverified_source: false,
+                    backup_path: None,
                 })
         })
     }

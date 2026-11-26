@@ -430,7 +430,9 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
     if live_game::touches_mods(session, &roots, &changes)? {
         guard::ensure_game_stopped(state, &roots.game_root)?;
     }
-    session.plan.untracked_overwrites = session.release_target_claims.overwrites();
+    session.plan.untracked_overwrites = session
+        .release_target_claims
+        .overwrites(session.operation_id());
     if let Some(batch) = &session.map_payload {
         session.plan.untracked_overwrites.extend(batch.overwrites());
     }

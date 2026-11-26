@@ -1,6 +1,7 @@
 //! Freeze existing loose endpoints for the selected Release and its final solve.
 use super::claims::ReleaseTargetError;
 use super::*;
+use crate::file_metadata::FileIdentity;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::mod_changes::mutations) struct LooseFile {
@@ -8,6 +9,13 @@ pub(in crate::mod_changes::mutations) struct LooseFile {
     pub expected: Fingerprint,
     pub(super) loose_node: Option<String>,
     pub(super) replacement: FileReplacement,
+    pub(super) conflict: Option<ConflictBackup>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ConflictBackup {
+    pub(super) core: String,
+    pub(super) original_identity: FileIdentity,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,6 +23,18 @@ pub(super) enum FileReplacement {
     Identical,
     VerifiedSource,
     UnverifiedSource,
+    BackupConflict,
+}
+
+impl LooseFile {
+    pub(super) fn backup_target(&self, operation: &str) -> Option<TransactionPath> {
+        self.conflict.as_ref().map(|_| {
+            data(&format!(
+                "backups/mod-reinstall/{operation}/{}",
+                self.relative
+            ))
+        })
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -174,6 +194,7 @@ impl Builder<'_> {
                         expected,
                         loose_node: None,
                         replacement: FileReplacement::VerifiedSource,
+                        conflict: None,
                     },
                 );
                 continue;
@@ -251,7 +272,7 @@ impl Builder<'_> {
                     None
                 } else {
                     let loose = self
-                        .loose_owner(&node.id, payload, incoming, &key, &physical)
+                        .loose_owner(&node.id, payload, incoming, &key, &physical, replacement)
                         .map_err(report)?;
                     let after = solved
                         .nodes
@@ -284,6 +305,23 @@ impl Builder<'_> {
                 Some(&node.id),
             )
             .map_err(report)?;
+            let conflict = if replacement == FileReplacement::BackupConflict {
+                let PackageProof::Residue {
+                    legacy_diylevel_core: Some(core),
+                } = scope.proof
+                else {
+                    return Err(unknown().into());
+                };
+                let path = game(&physical).resolve(&self.roots)?;
+                Some(ConflictBackup {
+                    core: core.into(),
+                    original_identity: FileIdentity::capture(&path)
+                        .map_err(|_| report(InstallBlock::Unreadable))?
+                        .ok_or_else(|| report(InstallBlock::VerificationChanged))?,
+                })
+            } else {
+                None
+            };
             result.loose.insert(
                 (node.id.clone(), key),
                 LooseFile {
@@ -291,6 +329,7 @@ impl Builder<'_> {
                     expected: before,
                     loose_node,
                     replacement,
+                    conflict,
                 },
             );
         }
@@ -354,14 +393,14 @@ impl Builder<'_> {
         &self,
         incoming: &ProvidedPlugin,
         physical: &str,
-    ) -> Result<(), InstallBlock> {
+    ) -> Result<DllRole, InstallBlock> {
         let path = game(physical)
             .resolve(&self.roots)
             .map_err(|_| InstallBlock::Unverified)?;
         let old = mods::read_dll_details(&path, physical);
         let old_guid = old.guid.as_deref().unwrap_or_default();
         if same_guid(old_guid, &incoming.guid) {
-            Ok(())
+            Ok(old.role)
         } else if old_guid.trim().is_empty() || incoming.guid.trim().is_empty() {
             Err(InstallBlock::PluginIdentityUnknown)
         } else {
@@ -376,6 +415,7 @@ impl Builder<'_> {
         verified: &ProvidedPlugin,
         key: &str,
         physical: &str,
+        replacement: FileReplacement,
     ) -> Result<&ChangeNode, InstallBlock> {
         let unknown = InstallBlock::Unverified;
         let owners = self.ownership.get(key).ok_or(InstallBlock::Unrecognized)?;
@@ -435,7 +475,12 @@ impl Builder<'_> {
         if member.key != key || other_bundle_claim {
             return Err(unknown);
         }
-        self.verify_member(verified, physical)?;
+        let role = self.verify_member(verified, physical)?;
+        if replacement == FileReplacement::BackupConflict
+            && (role != DllRole::Dependency || member.role != Some(DllRole::Dependency))
+        {
+            return Err(InstallBlock::PluginIdentityUnknown);
+        }
         if member.enabled == physical.to_ascii_lowercase().ends_with(".disabled") {
             return Err(InstallBlock::VerificationChanged);
         }

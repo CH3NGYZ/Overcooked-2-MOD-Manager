@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "legacy_library/reinstall.rs"]
+mod reinstall;
+
 const FRAMEWORK: &str = "Overcooked2-LevelEditor";
 const FRAMEWORK_GUID: &str = mods::plugin_target::DIYLEVEL_GUID;
 const CORE_PATH: &str = "BepInEx/plugins/OC2DIYLevel/OC2DIYLevel.dll";

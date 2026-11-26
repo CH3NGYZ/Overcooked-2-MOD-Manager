@@ -163,7 +163,12 @@ fn matching_verified_web_resources_join_new_manifest_as_both_packages_upgrade() 
     );
     let changes = freeze_writes(&mut f)
         .expect("the online package already contains the identical loose files");
-    assert!(f.session.release_target_claims.overwrites().is_empty());
+    assert!(
+        f.session
+            .release_target_claims
+            .overwrites(f.session.operation_id())
+            .is_empty()
+    );
     assert_eq!(fingerprint(&f), before);
     transaction::prepare(
         &f.roots.data_root.join("transactions"),
@@ -243,7 +248,10 @@ fn verified_replacement_lists_same_size_changed_resources_for_confirmation() {
     write(&f.roots.game_root, WEB_RESOURCE_6, b"new-runtime-X");
     let before = fingerprint(&f);
     let changes = freeze_writes(&mut f).unwrap();
-    let overwrites = f.session.release_target_claims.overwrites();
+    let overwrites = f
+        .session
+        .release_target_claims
+        .overwrites(f.session.operation_id());
     assert_eq!(overwrites.len(), 1);
     assert_eq!(overwrites[0].node_id, "web");
     assert_eq!(overwrites[0].path, WEB_RESOURCE_6);

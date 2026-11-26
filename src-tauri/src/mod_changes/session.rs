@@ -68,6 +68,9 @@ pub(crate) struct UntrackedOverwrite {
     pub path: String,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub unverified_source: bool,
+    /// Durable backup path relative to the manager's data root.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backup_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

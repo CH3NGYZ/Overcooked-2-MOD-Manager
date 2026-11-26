@@ -91,12 +91,14 @@ impl<'a> LooseReleaseSearch<'a> {
                 let Ok(Some((physical, before))) = builder.live_endpoint(&dll, true) else {
                     continue;
                 };
-                if scope
-                    .file_replacement(payload, source, &key, &physical, &before, false)
-                    .is_err()
-                    || !builder
-                        .loose_owner(id, payload, incoming, &key, &physical)
-                        .is_ok_and(|loose| loose.id == nodes[index].id)
+                let Ok(replacement) =
+                    scope.file_replacement(payload, source, &key, &physical, &before, false)
+                else {
+                    continue;
+                };
+                if !builder
+                    .loose_owner(id, payload, incoming, &key, &physical, replacement)
+                    .is_ok_and(|loose| loose.id == nodes[index].id)
                 {
                     continue;
                 }

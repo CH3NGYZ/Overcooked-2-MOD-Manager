@@ -137,7 +137,7 @@ export interface ChangePlan {
   /** Independently installed older copies removed as part of an approved upgrade. */
   retired_mod_copies?: Record<string, RetiredModCopy[]>
   /** Existing files that require overwrite approval in the prepared plan. */
-  untracked_overwrites?: { node_id: string; path: string; unverified_source?: boolean }[]
+  untracked_overwrites?: { node_id: string; path: string; unverified_source?: boolean; backup_path?: string }[]
   recovery_conflicts?: ChangeRecoveryConflict[]
   recovery_approval?: string
   provider_choices?: ProviderEvidence[]

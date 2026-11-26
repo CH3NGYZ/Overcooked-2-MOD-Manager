@@ -316,7 +316,7 @@ fn commit_inner(
                 }
                 session
                     .release_target_claims
-                    .verify_reinstalled_paths(state, &roots, &written)?;
+                    .verify_reinstalled_paths(state, &roots, &written, &changes)?;
                 transaction_stage.set("persist_commit");
                 Ok(())
             },

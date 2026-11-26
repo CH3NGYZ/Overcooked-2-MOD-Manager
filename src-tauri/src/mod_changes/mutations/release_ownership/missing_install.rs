@@ -199,6 +199,7 @@ impl Builder<'_> {
             },
             expected,
             loose_node: None,
+            conflict: None,
         }))
     }
 

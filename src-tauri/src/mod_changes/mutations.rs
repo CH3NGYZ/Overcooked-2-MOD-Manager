@@ -162,7 +162,11 @@ pub(super) fn assemble(
     if session.map_payload.is_some() {
         result.extend(super::map_payload::mutations(&builder.roots, session)?);
     }
-    Ok(order::for_apply(session, result))
+    let mut ordered = session
+        .release_target_claims
+        .conflict_backups(&builder.roots, session.operation_id())?;
+    ordered.extend(order::for_apply(session, result));
+    Ok(ordered)
 }
 
 impl Builder<'_> {

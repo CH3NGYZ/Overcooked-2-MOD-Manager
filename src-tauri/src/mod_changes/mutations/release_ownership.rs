@@ -89,7 +89,7 @@ impl Builder<'_> {
 }
 use crate::mod_changes::evaluate::same_guid;
 use crate::mod_changes::session::Payload;
-use crate::models::{ModRepositoryBinding, ModRepositoryConfig};
+use crate::models::{DllRole, ModRepositoryBinding, ModRepositoryConfig};
 use same_file::Handle;
 use std::io::ErrorKind;
 
@@ -121,9 +121,10 @@ impl ReleaseCore<'_, '_> {
     }
 }
 
-enum PackageProof {
-    /// The live core is absent; only identical bytes prove provenance.
-    Residue,
+enum PackageProof<'a> {
+    Residue {
+        legacy_diylevel_core: Option<&'a str>,
+    },
     /// Same installed and verified incoming core, at the exact same path.
     Replacement,
 }
@@ -131,7 +132,7 @@ enum PackageProof {
 struct PackageScope<'a> {
     directory: &'a str,
     primary_key: &'a str,
-    proof: PackageProof,
+    proof: PackageProof<'a>,
 }
 
 struct ScopeFailure {
@@ -187,27 +188,31 @@ impl PackageScope<'_> {
             } else {
                 FileReplacement::Identical
             }),
-            PackageProof::Residue if key != self.primary_key && !changed && !own => {
+            PackageProof::Residue { .. } if key != self.primary_key && !changed && !own => {
                 Ok(FileReplacement::Identical)
             }
-            PackageProof::Residue
-                if changed
-                    && !own
-                    && payload.downloaded
-                    && !mods::file_state::is_mod_file(Path::new(source))
-                    && matches!(before, Fingerprint::File { .. })
-                    && matches!(digest, Fingerprint::File { .. }) =>
+            PackageProof::Residue {
+                legacy_diylevel_core,
+            } if changed
+                && matches!(before, Fingerprint::File { .. })
+                && matches!(digest, Fingerprint::File { .. }) =>
             {
-                Ok(FileReplacement::UnverifiedSource)
+                if own || !payload.downloaded {
+                    return Err(InstallBlock::ResidueDiffers);
+                }
+                if !mods::file_state::is_mod_file(Path::new(source)) {
+                    Ok(FileReplacement::UnverifiedSource)
+                } else if payload.member_roles.get(key) == Some(&DllRole::Dependency)
+                    && legacy_diylevel_core.is_some_and(|core| {
+                        mods::legacy_diylevel_stub(core, &mods::canonical_dll_name(physical))
+                    })
+                {
+                    Ok(FileReplacement::BackupConflict)
+                } else {
+                    Err(InstallBlock::ResidueDiffers)
+                }
             }
-            PackageProof::Residue
-                if changed
-                    && matches!(before, Fingerprint::File { .. })
-                    && matches!(digest, Fingerprint::File { .. }) =>
-            {
-                Err(InstallBlock::ResidueDiffers)
-            }
-            PackageProof::Residue => Err(InstallBlock::Unverified),
+            PackageProof::Residue { .. } => Err(InstallBlock::Unverified),
         }
     }
 }
@@ -406,13 +411,23 @@ impl Builder<'_> {
             })
             .filter(|(_, _, member)| same_guid(&member.guid, guid));
         let Some((installed_node, candidate, installed_core)) = installed.next() else {
+            let legacy_diylevel_core = (payload.downloaded
+                && same_guid(guid, mods::plugin_target::DIYLEVEL_GUID)
+                && path_key(Path::new(directory))
+                    == path_key(Path::new(crate::framework::DIYLEVEL_DIR))
+                && self
+                    .live_endpoint(&mods::canonical_dll_name(core.path), true)
+                    .is_ok_and(|live| live.is_none()))
+            .then_some(core.path);
             return old
                 .manifests
                 .is_empty()
                 .then_some(PackageScope {
                     directory,
                     primary_key,
-                    proof: PackageProof::Residue,
+                    proof: PackageProof::Residue {
+                        legacy_diylevel_core,
+                    },
                 })
                 .ok_or_else(|| unknown.into());
         };

@@ -5,6 +5,7 @@
 #[link(name = "resource", kind = "static")]
 unsafe extern "C" {}
 
+mod announcements;
 mod api_rate_gate;
 mod api_scheduler;
 mod app_state;
@@ -438,6 +439,7 @@ pub fn run() {
             commands::mod_settings::save_bepinex_config,
             commands::paths::open_backup_directory,
             commands::system::open_external_page,
+            commands::announcements::get_announcements,
             commands::update::open_release_page,
             commands::update::get_app_distribution,
             commands::update::open_update_repository,

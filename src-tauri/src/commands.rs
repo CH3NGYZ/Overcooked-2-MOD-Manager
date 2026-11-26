@@ -1,5 +1,6 @@
 //! IPC 按业务域注册；共享业务不依赖命令层。
 
+pub(crate) mod announcements;
 pub(crate) mod avatars;
 pub(crate) mod bepinex;
 pub(crate) mod clipboard;

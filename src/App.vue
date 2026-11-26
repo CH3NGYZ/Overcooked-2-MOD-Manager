@@ -29,6 +29,7 @@ import { api, watchDataProvider } from './services/tauri'
 import { isTauri } from './runtime'
 import { appUpdateBlocksOperations } from './appUpdateState'
 import { initializeAppUpdates } from './composables/useAppUpdates'
+import { initializeAnnouncements } from './announcements/state'
 import { naiveTheme, themeOverrides } from './theme'
 import { naiveDateLocale, naiveLocale, t } from './i18n'
 import { hasStoredLocale } from './locale/state'
@@ -150,7 +151,10 @@ onMounted(() => {
   setTutorialProgressSink((ids) => {
     api.saveSettings({ tutorial_watched_steps: ids }).catch(() => undefined)
   })
-  if (isTauri()) getVersion().then((value) => { version.value = value }).catch(() => undefined)
+  if (isTauri()) {
+    void initializeAnnouncements(api.announcements)
+    getVersion().then((value) => { version.value = value }).catch(() => undefined)
+  }
   if (!choosingLanguage.value) void startOnboarding()
 })
 </script>

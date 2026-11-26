@@ -2,6 +2,7 @@ import type { LevelPreview, LevelPreviewDetail } from '../types'
 import type { ChangeRequest, ChangePlan, ChangePreparationOutcome, ChangePreparationProgress, EvaluationSnapshot, EvaluationSubject, ChangeExecutionOutcome, ChangeExecutionProgress } from '../modChanges/types'
 import { ChangePreparationError } from '../modChanges/types'
 import type { TransactionRecoveryEntry } from '../modChanges/transactionRecoveryTypes'
+import type { AnnouncementSnapshot } from '../announcements/types'
 import type { LocalModSnapshot, ChefEditorOpen, ChefEditorSnapshot, ChefDraft, ChefValidation, ChefFilesChanged } from '../diychef/types'
 import type { ChefPreviewScene } from '../diychef/preview/types'
 import type { PublishProvider } from '../types'
@@ -425,6 +426,7 @@ export const api = {
    * 否则他会看到一次「已是最新」的旧结论。
    */
   checkAppUpdate: (force = false) => invoke<AppUpdateCheckResult>('check_app_update', { force }),
+  announcements: () => invoke<AnnouncementSnapshot | null>('get_announcements'),
   stageAppUpdate: (channel: string, onProgress: DownloadProgressHandler) =>
     invokeDownload<AppUpdateInfo | null>('stage_app_update', { channel }, onProgress),
   applyStagedAppUpdate: () => invoke<void>('apply_staged_app_update'),

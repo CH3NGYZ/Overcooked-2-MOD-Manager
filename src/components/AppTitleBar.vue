@@ -20,6 +20,7 @@ import appIcon from '../assets/app-icon.png'
 import LevelCompressionStatus from './LevelCompressionStatus.vue'
 import RecycleBinStatus from './RecycleBinStatus.vue'
 import AppUpdateStatus from './AppUpdateStatus.vue'
+import AnnouncementStatus from './AnnouncementStatus.vue'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { demoActive, withDemoGame } from '../tutorial/demo'
 import { openTransactionRecovery, transactionRecoveries, transactionRecoveryReadError, transactionRecoveryUnavailable } from '../modChanges/transactionRecovery'
@@ -238,6 +239,7 @@ defineExpose({ onUnmountedCleanup })
     -->
     <div class="toolbar-group" :inert="props.choosingLanguage || updateBusy">
       <AppUpdateStatus @update-exit="emit('update-exit', $event)" />
+      <AnnouncementStatus v-if="canControlWindow" :disabled="props.choosingLanguage || updateBusy" />
       <LevelCompressionStatus />
       <RecycleBinStatus />
       <button v-if="transactionRecoveries.length || transactionRecoveryReadError" type="button"
@@ -261,8 +263,9 @@ defineExpose({ onUnmountedCleanup })
       <n-dropdown :options="localeOptions.map(o => ({ label: o.label, key: o.value }))" :value="locale"
         trigger="click" :z-index="TITLEBAR_MENU_Z_INDEX"
         @select="(key: Locale) => setLocale(key)">
-        <button class="pill" type="button" data-tutorial="titlebar-language" :title="t('nav.language')">
-          <LanguageOutline width="15" height="15" />
+        <button class="pill language-pill" type="button" data-tutorial="titlebar-language"
+          :title="`${t('nav.language')} · ${currentLocaleLabel}`" :aria-label="`${t('nav.language')} · ${currentLocaleLabel}`">
+          <LanguageOutline width="15" height="15" aria-hidden="true" />
           <span>{{ currentLocaleLabel }}</span>
           <span class="caret">▾</span>
         </button>
@@ -487,6 +490,10 @@ defineExpose({ onUnmountedCleanup })
 .pill > .swatch { flex: 0 0 auto; }
 .pill:hover { border-color: var(--oc2-accent); color: var(--oc2-text-1); }
 .pill.icon-only { padding: 0; width: 32px; max-width: 32px; justify-content: center; }
+@media (max-width: 740px) {
+  .language-pill { padding: 0; width: 32px; justify-content: center; }
+  .language-pill > span { display: none; }
+}
 .transaction-recovery-pending { color: var(--oc2-status-warning); }
 .caret { color: var(--oc2-text-4); font-size: 10px; }
 .swatch {

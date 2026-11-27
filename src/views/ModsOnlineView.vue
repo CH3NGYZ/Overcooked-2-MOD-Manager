@@ -66,8 +66,8 @@ const { linkToLocalMods } = useLocalModLink()
 const { highlightId, focus: focusRepository } = useFocusHighlight()
 const installing = ref<Record<string, boolean>>({})
 const search = ref('')
-/** 当前展开详情的仓库（同页展开，不做二级路由）。 */
-const detailId = ref<string | null>(null)
+const detailRequest = shallowRef<{ id: string; tab: 'info' | 'install'; tag?: string }>()
+const detailId = computed(() => detailRequest.value?.id)
 const detailReady = shallowRef(false)
 /** 手动来源先解析，再由全局整链方案确认与执行。 */
 const {
@@ -93,7 +93,7 @@ const { dragActive } = useFileDrop({
   onDrop: path => { void handleInstallSourceSelect({ kind: 'local', value: path }, 'drop') },
 })
 
-/** 仓库卡片 / 详情抽屉的「安装 / 重装 / 更新」：先检查关系，再下载预览。 */
+/** 详情抽屉确认所选版本后进入整链安装预览。 */
 const { previewModRepository } = useModRepositoryPreview({
   gameBlocked,
   onBusyChange: (repositoryId, busy) => {
@@ -144,13 +144,17 @@ function installLabel(repo: ModRepository) {
 
 
 
-/** 主按钮：刷新失败时重试该仓库的 Release，其余走安装预览链路。 */
+function openDetail(id: string, tab: 'info' | 'install' = 'info', tag?: string) {
+  detailRequest.value = { id, tab, tag }
+}
+
 function runCardAction(repo: ModRepository) {
-  if (installActionOf(repo) === 'refresh') void refreshModRepository(repo)
-  else {
-    const replacement = statusOf(repo).replacement
-    if (!replacement || replacement.updateTag) void install(repo, replacement?.updateTag)
+  if (installActionOf(repo) === 'refresh') {
+    void refreshModRepository(repo)
+    return
   }
+  const replacement = statusOf(repo).replacement
+  if (!replacement || replacement.updateTag) openDetail(repo.id, 'install', replacement?.updateTag)
 }
 
 /** 卡片的主按钮（给共享卡片组件用）。 */
@@ -414,12 +418,15 @@ const { target: installGuide, cancel: cancelInstallGuide } = useDependencyInstal
     if (group) setOpenGroups([...new Set([...groupsExpanded.value, group.key])])
   },
   focus: focusRepository,
-  open: id => { detailReady.value = !!detailId.value; detailId.value = id },
+  open: id => {
+    detailReady.value = !!detailRequest.value
+    openDetail(id, 'install')
+  },
   unavailable: () => message.warning(t('tools.dependencyTargetUnavailable')),
 })
 function closeDetail() {
   cancelInstallGuide()
-  detailId.value = null
+  detailRequest.value = undefined
 }
 
 /*
@@ -542,17 +549,12 @@ function isRefreshing(repo: ModRepository): boolean {
 }
 
 
-/** 仓库卡片与详情共用精确根版本的整链变更入口。 */
-function install(repo: ModRepository, tag?: string, asset?: string) {
-  return previewModRepository(repo, tag, asset)
-}
-
 /** 收起详情后展示包含根版本与全部影响的共享方案。 */
 function installFromDetail(tag?: string, asset?: string) {
   const repo = detailRepo.value
   if (!repo) return
   closeDetail()
-  return install(repo, tag, asset)
+  return previewModRepository(repo, tag, asset)
 }
 
 defineExpose({ refreshAll, visibleCount })
@@ -618,7 +620,7 @@ defineExpose({ refreshAll, visibleCount })
                       :action="cardAction(repo)"
                       :error="repo.last_error" :active="detailId === repo.id"
                       :focus-flash="highlightId === repo.id"
-                      @open="detailId = repo.id"
+                      @open="openDetail(repo.id)"
                       @status-click="openInLocalMods(repo)"
                       @dependency-click="jumpToRelationRepository(repo)"
                       @action="runCardAction(repo)" />
@@ -666,7 +668,7 @@ defineExpose({ refreshAll, visibleCount })
                   :action="cardAction(repo)"
                   :error="repo.last_error" :active="detailId === repo.id"
                   :focus-flash="highlightId === repo.id"
-                  @open="detailId = repo.id"
+                  @open="openDetail(repo.id)"
                   @status-click="openInLocalMods(repo)"
                   @dependency-click="jumpToRelationRepository(repo)"
                   @action="runCardAction(repo)" />
@@ -696,13 +698,14 @@ defineExpose({ refreshAll, visibleCount })
 
   </PageLoading>
 
-  <!-- 点击卡片：从右侧滑出仓库详情（指标 / 链接 / 备注 / README） -->
-  <n-drawer :show="!!detailRepo" :width="720" placement="right"
+  <!-- 点击卡片：从右侧滑出说明与下载安装面板 -->
+  <n-drawer :show="!!detailRepo" width="min(720px, 100%)" placement="right"
     @after-enter="detailReady = true" @after-leave="detailReady = false"
     @update:show="(value: boolean) => { if (!value) closeDetail() }">
     <n-drawer-content v-if="detailRepo" :native-scrollbar="false" body-content-class="drawer-detail-body">
       <ModRepositoryDetail :repo="detailRepo" :installing="!!installing[detailRepo.id]" :game-blocked="false"
         :mods="mods" :repositories="repositories" :install-guide="installGuide" :guide-ready="detailReady"
+        :initial-tab="detailRequest?.tab" :initial-tag="detailRequest?.tag"
         @close="closeDetail" @install="(tag?: string, asset?: string) => installFromDetail(tag, asset)" />
     </n-drawer-content>
   </n-drawer>

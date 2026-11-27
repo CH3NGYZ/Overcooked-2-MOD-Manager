@@ -1,34 +1,32 @@
 <script setup lang="ts">
-import { repositoryHomepage, repositoryRawUrl } from '../providers'
 /**
  * MOD 安装页的仓库详情（右侧抽屉的内容）。
  *
  * 版式在 `ReleaseDetailPanel.vue` —— 与地图下载页共用同一套骨架
  * （头部 / 说明·下载安装 tabs / 依赖表 / 版本选择与绑定 / 提交日志 / 资产下拉 / 主按钮）。
- * 这里只留 MOD 侧真正独有的数据：缓存 Release、资产规则匹配、依赖关系判定、
- * 仓库链接地址。
+ * 这里只留 MOD 侧真正独有的数据：缓存 Release、资产规则匹配、依赖关系判定。
  *
  * README 的拉取与取消在 `useModRepositoryReadme`：只有 MOD 详情需要它。地图详情
  * 用条目自己的 `note_i18n` 当说明，仓库 README 不参与（仓库级内容会串味）。
  */
 import { computed, ref, shallowRef, watch } from 'vue'
+import { pickI18n, t } from '../i18n'
 import { useEvaluationSubject } from '../modChanges/useEvaluationSubject'
 import type { DependencyInstallTarget } from '../composables/useDependencyInstallGuide'
-import { api } from '../services/tauri'
-import { pickI18n, t } from '../i18n'
 import { formatVersion, isPrereleaseVersion } from '../modStatus'
-import { matchedReleaseAssets } from '../repositoryAssets'
+import { cachedInstallRelease, matchedReleaseAssets } from '../repositoryAssets'
 import { relationsForRelease } from '../modRelations'
 import { dependencyRowsFor } from '../dependencyRows'
 import { useModRepositoryLink } from '../crossLink'
 import { useModRepositoryReadme } from '../composables/useModRepositoryReadme'
 import ReleaseDetailPanel from './ReleaseDetailPanel.vue'
-import type { ReleaseDetailLink } from './ReleaseDetailPanel.vue'
 import type { DependencyRow } from '../dependencyRows'
 import type { InstalledMod, ModRepository } from '../types'
 
 const props = withDefaults(defineProps<{
   repo: ModRepository | null
+  initialTab?: 'info' | 'install'
+  initialTag?: string
   installing?: boolean
   gameBlocked?: boolean
   /**
@@ -45,6 +43,7 @@ const props = withDefaults(defineProps<{
   installGuide?: DependencyInstallTarget
   guideReady?: boolean
 }>(), {
+  initialTab: 'info',
   installing: false,
   gameBlocked: false,
   mods: () => [],
@@ -62,21 +61,20 @@ const note = computed(() => (props.repo ? pickI18n(props.repo.note_i18n, props.r
 const { readme, loading, error } = useModRepositoryReadme(() => props.repo?.id ?? null)
 
 /* ===== 版本选择 + 资产规则命中 ===== */
-/** 当前选中的 Release（默认最新一个）。 */
-const selectedTag = ref<string | null>(null)
+const selectedTagOverride = ref<string | null>(null)
 const guided = shallowRef(false)
-watch([() => props.repo?.id, () => props.installGuide?.request], ([id], previous) => {
-  guided.value = props.installGuide?.repositoryId === props.repo?.id && !!props.installGuide?.tag
-  const list = props.repo?.cached_releases ?? []
-  selectedTag.value = guided.value ? props.installGuide!.tag
-    : previous?.[0] === id && list.some(release => release.tag_name === selectedTag.value)
-      ? selectedTag.value : list[0]?.tag_name ?? null
+watch([() => props.repo?.id, () => props.installGuide?.request, () => props.initialTag], ([id, , initialTag], previous) => {
+  const guide = props.installGuide?.repositoryId === id ? props.installGuide : undefined
+  guided.value = !!guide?.tag
+  const requestedTag = guide?.tag || initialTag
+  if (requestedTag) selectedTagOverride.value = requestedTag
+  else if (previous?.[0] !== id || previous?.[2]) selectedTagOverride.value = null
 }, { immediate: true })
 const selectedRelease = computed(() => {
-  const list = props.repo?.cached_releases ?? []
-  const found = list.find((entry) => entry.tag_name === selectedTag.value)
-  return found ?? (guided.value ? null : list[0] ?? null)
+  const repo = props.repo
+  return repo ? cachedInstallRelease(repo.cached_releases, selectedTagOverride.value, repo.pinned_version) ?? null : null
 })
+const selectedTag = computed(() => selectedTagOverride.value ?? selectedRelease.value?.tag_name ?? null)
 const relationSubject = computed(() => props.repo && selectedRelease.value?.tag_name
   ? { repository_id: props.repo.id, tag: selectedRelease.value.tag_name } : undefined)
 useEvaluationSubject(relationSubject)
@@ -88,17 +86,6 @@ const releaseOptions = computed(() =>
     value: entry.tag_name,
   })),
 )
-// 仓库首次加载/刷新出 Release 后，把选中版本落到最新一个（否则下拉显示空）
-watch(
-  () => props.repo?.cached_releases,
-  (list) => {
-    if (!list?.length) return
-    const exists = list.some((entry) => entry.tag_name === selectedTag.value)
-    if (!exists && !guided.value) selectedTag.value = list[0].tag_name
-  },
-  { immediate: true },
-)
-
 /**
  * 无下拉时的版本文本，跟随「当前选中的版本」。
  *
@@ -163,11 +150,12 @@ function openDependencyJump(row: DependencyRow) {
 
 function selectVersion(value: string) {
   guided.value = false
-  selectedTag.value = value
+  selectedTagOverride.value = value
 }
-const guideMissing = computed(() => guided.value && !selectedRelease.value)
+const exactTagMissing = computed(() => props.repo?.download_mode === 'release' && !selectedRelease.value
+  && (selectedTagOverride.value !== null || props.repo.pinned_version != null))
 function installSelected(tag?: string, asset?: string) {
-  if (guideMissing.value) return
+  if (exactTagMissing.value) return
   emit('install', tag, asset)
 }
 
@@ -185,28 +173,6 @@ const disabledLabel = computed(() => {
   return repo.download_mode !== 'repository_file' && !repo.enabled ? t('modsOnline.disabled') : ''
 })
 
-/* ===== 链接 ===== */
-const sourceUrl = computed(() => {
-  const repo = props.repo
-  if (!repo) return ''
-  return repositoryHomepage(repo.provider, repo.username, repo.repository)
-})
-const releaseUrl = computed(() => (sourceUrl.value ? `${sourceUrl.value}/releases/latest` : ''))
-/** Raw 地址：指向仓库的文件列表（release 模式）或具体文件（repository_file 模式）。 */
-const rawUrl = computed(() => {
-  const repo = props.repo
-  if (!repo) return ''
-  return repositoryRawUrl(repo.provider, repo.username, repo.repository, repo.branch || (repo.provider === 'gitee' ? 'master' : 'main'), repo.download_mode === 'repository_file' ? repo.file_path || '' : '')
-})
-/** 头部第三段链接：release 模式给 Release 页，仓库文件模式给 Raw 文件。 */
-const metaLinks = computed<ReleaseDetailLink[]>(() => {
-  const repo = props.repo
-  if (!repo) return []
-  return repo.download_mode === 'release'
-    ? [{ label: 'Release', url: releaseUrl.value }]
-    : [{ label: 'Raw', url: rawUrl.value }]
-})
-
 /* ===== 提交日志 / 预发布 ===== */
 const releaseNotes = computed(() => selectedRelease.value?.body ?? '')
 /**
@@ -220,17 +186,13 @@ const selectedReleaseIsPrerelease = computed(() => {
   return isPrereleaseVersion(release.tag_name || release.version, release.apiPrerelease, release.prerelease)
 })
 
-async function openUrl(url: string) {
-  if (!url) return
-  await api.openReleasePage(url).catch(() => undefined)
-}
 </script>
 
 <template>
-  <!-- `:key` 让切换仓库时重建面板：分段选择回到「说明」页，资产/版本下拉状态一起重置 -->
   <ReleaseDetailPanel v-if="repo" :key="repo.id"
-    :title="name" :provider="repo.provider" :owner="repo.username" :repository="repo.repository"
-    :meta-links="metaLinks" :note="note"
+    :title="name" tabs-only-header
+    :provider="repo.provider" :owner="repo.username" :repository="repo.repository"
+    :initial-tab="initialTab" dependencies-tab="install" :note="note"
     :readme-content="readme?.content ?? ''" :readme-exists="!!readme?.exists"
     :readme-loading="loading" :readme-error="error"
     :dependencies="dependencyRows"
@@ -241,11 +203,10 @@ async function openUrl(url: string) {
     :release-notes="releaseNotes"
     :assets="matchedAssets" :asset-value="primaryAsset?.name ?? null" :file-label="fileLabel"
     :disabled-label="disabledLabel" :installing="installing" :game-blocked="gameBlocked"
-    :install-guide="guided ? installGuide : undefined" :guide-ready="guideReady" :action-disabled="guideMissing"
-    :action-hint="guideMissing ? t('tools.dependencyTargetUnavailable') : ''"
+    :install-guide="guided ? installGuide : undefined" :guide-ready="guideReady" :action-disabled="exactTagMissing"
+    :action-hint="exactTagMissing ? t(guided ? 'tools.dependencyTargetUnavailable' : 'modsOnline.requestedReleaseUnavailable') : ''"
     @update:version="selectVersion"
     @update:asset="(value: string) => (selectedAssetName = value)"
-    @open-link="(url: string) => { void openUrl(url) }"
     @dependency-jump="openDependencyJump"
     @close="emit('close')"
     @install="installSelected" />

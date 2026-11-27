@@ -38,7 +38,7 @@ export interface ReleaseDetailVersion {
  * 分段 tabs（说明 / 下载安装）+ 版本下拉 + 提交日志 + 资产行 + 安装按钮；
  * 地图侧 `MapDetail.vue` 是扁平 section 拼贴，资产行只有名字和大小。
  * 同一个仓库点进去，两边长得完全不一样 —— 这个组件就是那条共享的骨架：
- * 头部、tabs、版本选择、版本绑定、提交日志（带日期）、资产区、主按钮。
+ * 头部、tabs、版本选择、依赖表、提交日志、资产区、主按钮。
  *
  * ## 边界：只做版式，不做数据
  *
@@ -52,9 +52,8 @@ export interface ReleaseDetailVersion {
  *   **只有 MOD 详情拉**（`get_repository_readme`）；地图详情不传这些 prop，
  *   于是整块不渲染 —— 仓库 README 是仓库级的，一个仓库多张地图时会串味，
  *   地图的说明只来自这张图自己的 `note_i18n`，长文跟着版本走（提交日志）。
- * - **依赖表**：`dependencies` 由调用方算好（地图是 `required_frameworks`，
- *   MOD 是 `relations`），固定排在**说明 tab 的备注上方**，与备注之间用
- *   分割线隔开。为空时整块不渲染。
+ * - **依赖表**：`dependencies` 由调用方按当前版本算好，`dependenciesTab`
+ *   决定放在说明还是下载安装页。为空时整块不渲染。
  * - **版本绑定**：`binding-value` 留空则整个第二列不渲染（地图没有插件绑定）。
  * - **资产区**：两个页面都是同一个下拉选择（`assets` + `assetValue`）——
  *   地图的资产规则在后端与前端各有一份镜像判定（`repositoryAssets.ts`），
@@ -64,12 +63,13 @@ export interface ReleaseDetailVersion {
  *
  * 任何可选数据缺失都只是「那块不渲染」，不会有空白占位或塌版。
  */
-import { computed, h, nextTick, ref, shallowRef, watch } from 'vue'
+import { computed, h, nextTick, ref, shallowRef, watch, type HTMLAttributes } from 'vue'
 import type { DependencyInstallTarget } from '../composables/useDependencyInstallGuide'
 import { NButton, NDivider, NSelect, NSkeleton, NTabPane, NTabs, NTag } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
 import { CloseOutline, DownloadOutline } from '@vicons/ionicons5'
-import { t } from '../i18n'
+import { locale, t } from '../i18n'
+import { packageReleaseBody } from '../packageReleaseNotes'
 import { formatFileSize, formatLocalDateTime } from '../repositoryAssets'
 import DependencyTable, { type DependencyRow } from './DependencyTable.vue'
 import MarkdownBody from './MarkdownBody.vue'
@@ -83,6 +83,7 @@ const props = withDefaults(
     /* ===== 头部 ===== */
     /** 显示名（仓库名 / 地图名，调用方已按当前语言取好）。 */
     title: string
+    tabsOnlyHeader?: boolean
     provider: Provider
     /** 仓库 owner（地图是地图源 owner）。 */
     owner: string
@@ -103,10 +104,14 @@ const props = withDefaults(
     readmeExists?: boolean
     readmeLoading?: boolean
     readmeError?: string
-    /** 依赖声明（调用方算好并翻译）；固定排在备注上方，为空则整块不渲染。 */
+    /** 依赖声明（调用方算好并翻译）；由 dependenciesTab 决定位置，为空不渲染。 */
     dependencies?: DependencyRow[]
     /** 依赖目标名用等宽字体（地图声明的是 GUID；MOD 是仓库名，保持正文字体）。 */
     dependenciesMonoName?: boolean
+    /** 依赖表所在页；地图放说明页，MOD 仓库详情放下载安装页。 */
+    dependenciesTab?: 'info' | 'install'
+    /** 打开面板时的默认页。 */
+    initialTab?: 'info' | 'install'
 
     /* ===== 下载安装 tab：版本 ===== */
     /** 版本下拉选项；为空时退化成纯文本（`versionFallback`）。 */
@@ -159,6 +164,7 @@ const props = withDefaults(
   }>(),
   {
     iconSize: 38,
+    tabsOnlyHeader: false,
     metaLinks: () => [],
     note: '',
     readmeContent: '',
@@ -167,6 +173,8 @@ const props = withDefaults(
     readmeError: '',
     dependencies: () => [],
     dependenciesMonoName: false,
+    dependenciesTab: 'info',
+    initialTab: 'info',
     versions: () => [],
     version: null,
     versionFallback: '',
@@ -211,7 +219,17 @@ const emit = defineEmits<{
 }>()
 
 /** 说明 / 下载安装；切换由面板自己持有，调用方换条目时用 `:key` 重置。 */
-const activeTab = ref<'info' | 'install'>('info')
+const activeTab = ref<'info' | 'install'>(props.initialTab)
+function tabButtonProps(tab: typeof activeTab.value): HTMLAttributes {
+  return {
+    role: 'button', tabindex: 0, 'aria-pressed': activeTab.value === tab,
+    onKeydown(event) {
+      if (event.key !== 'Enter' && event.key !== ' ') return
+      event.preventDefault()
+      activeTab.value = tab
+    },
+  }
+}
 const guideHighlighted = shallowRef(false)
 watch([() => props.installGuide, () => props.guideReady, () => props.actionDisabled], async () => {
   const guide = props.installGuide
@@ -223,6 +241,7 @@ watch([() => props.installGuide, () => props.guideReady, () => props.actionDisab
   guideHighlighted.value = true
   panelElement.value?.querySelector<HTMLButtonElement>('.install-primary')?.focus({ preventScroll: true })
 }, { immediate: true, flush: 'post' })
+watch(() => props.initialTab, value => { activeTab.value = value })
 
 const sourceUrl = computed(() =>
   repositoryHomepage(props.provider, props.owner, props.repository),
@@ -244,8 +263,9 @@ const versionText = computed(() => props.versionFallback || props.version || '�
 const bindingText = computed(() => props.bindingLabel || t('tools.versionBinding'))
 /** 资产区用本地时间的时分秒；UTC 的 `published_at` 直接截日期会跨时区错位。 */
 const publishedDateTime = computed(() => formatLocalDateTime(props.publishedAt))
-const logText = computed(() => props.releaseNotes.trim())
+const logText = computed(() => packageReleaseBody(props.releaseNotes, locale.value).trim())
 const emptyLogText = computed(() => props.logEmptyText || t('modsLocal.thisReleaseHasNoNotes'))
+const showInstallDependencies = computed(() => props.dependenciesTab === 'install' && props.dependencies.length > 0)
 
 /** 版本下拉与资产下拉的 Naive 选项（外部传入的是纯数据，`SelectMixedOption` 要求 `type`，这里统一转换）。 */
 const versionOptions = computed<SelectOption[]>(() =>
@@ -366,6 +386,7 @@ const {
     () => props.fileLabel,
     () => props.releaseTag,
     () => props.disabledLabel,
+    () => props.dependenciesTab === 'install' ? props.dependencies : undefined,
   ],
 })
 const setLogBoxElement = (element: unknown) => { logBoxElement.value = element as HTMLElement | null }
@@ -375,7 +396,7 @@ const setLogBoxElement = (element: unknown) => { logBoxElement.value = element a
   <div ref="panelElement" class="detail" data-tutorial="detail-panel"
     :class="{ 'detail--fill': isFitted }"
     :style="panelStyle">
-    <header class="detail-head">
+    <header v-if="!tabsOnlyHeader" class="detail-head">
       <div class="head-main">
         <ProviderIcon :provider="provider" :owner="owner" :size="iconSize" />
         <div class="head-text">
@@ -415,19 +436,24 @@ const setLogBoxElement = (element: unknown) => { logBoxElement.value = element a
       </div>
     </header>
 
-    <!-- 分段切换：说明（依赖表 / 备注 / README）/ 下载安装（版本 / 日志 / 资产 / 安装） -->
+    <!-- 分段切换：条目说明 / 版本、依赖、日志、下载 -->
     <!--
       不用 `animated`：它会给 pane 内容做高度收缩/展开动画，切到说明页时
       日志框高度从最大化被压到 0，看起来就是「突然坍缩」。面板高度已经由
       `useReleasePanelFit` 锁定，这里只需要新内容淡入。
     -->
     <n-tabs v-model:value="activeTab" type="segment" class="detail-tabs">
-      <n-tab-pane name="info" class="info-pane" :tab="t('tools.details')">
-        <!--
-          依赖表固定在备注**上方**并用分割线隔开：先回答「装上要什么」，
-          再讲「这是什么」。依赖为空时整块（含分割线）不渲染。
-        -->
-        <template v-if="dependencies.length">
+      <template v-if="tabsOnlyHeader" #suffix>
+        <n-button class="detail-close detail-close--tab" quaternary circle size="small"
+          :title="t('nav.close')" :aria-label="t('nav.close')" @click="emit('close')">
+          <template #icon><CloseOutline /></template>
+        </n-button>
+      </template>
+      <n-tab-pane name="info" class="info-pane" :tab-props="tabButtonProps('info')">
+        <template #tab>{{ t('tools.details') }}</template>
+        <h3 v-if="tabsOnlyHeader" class="info-title">{{ title }}</h3>
+        <!-- 依赖行只渲染在所配置的说明页或下载安装页。 -->
+        <template v-if="dependencies.length && dependenciesTab === 'info'">
           <DependencyTable :rows="dependencies" :mono-name="dependenciesMonoName"
             @jump="(row) => emit('dependency-jump', row)" />
           <n-divider />
@@ -459,8 +485,9 @@ const setLogBoxElement = (element: unknown) => { logBoxElement.value = element a
         </Transition>
       </n-tab-pane>
 
-      <!-- 面板 2：下载安装（版本选择 / 提交日志 / 资产与安装） -->
-      <n-tab-pane name="install" class="install-pane" :tab="t('tools.download')">
+      <!-- 面板 2：下载安装（版本选择 / 依赖 / 更新日志 / 资产与安装） -->
+      <n-tab-pane name="install" class="install-pane" :tab-props="tabButtonProps('install')">
+        <template #tab>{{ tabsOnlyHeader ? t('modsOnline.downloadAndInstall') : t('tools.download') }}</template>
         <!-- 指标 + 安装合并区：版本下拉 / 版本绑定 / 资产信息 / 安装 -->
         <div class="summary">
           <div class="summary-row">
@@ -477,14 +504,18 @@ const setLogBoxElement = (element: unknown) => { logBoxElement.value = element a
             </div>
           </div>
 
-          <!--
-            第二段：当前版本的提交日志。
-            日志框的最小高度是它自己的文字高度：剩余高度由它吸收，窗口够高时
-            下面的「资产 / 安装」一行正好落在面板底边；窗口变矮时日志少就按
-            内容占位、把省下的空间还给安装行，日志多则照内容撑高，把安装行
-            挤到折叠线以下、由抽屉滚动。
-          -->
-          <div class="release-log">
+          <template v-if="showInstallDependencies">
+            <n-divider />
+            <DependencyTable :rows="dependencies" :mono-name="dependenciesMonoName"
+              @jump="(row) => emit('dependency-jump', row)" />
+          </template>
+
+          <div class="release-log" :class="{ 'release-log--after-dependencies': showInstallDependencies }">
+            <div class="log-head">
+              <b class="log-title">{{ t('dialogs.packageReleaseNotes') }}</b>
+              <b class="mono">{{ releaseTag }}</b>
+              <n-tag v-if="prerelease" size="small" type="warning">{{ t('modsOnline.preRelease') }}</n-tag>
+            </div>
             <div :ref="setLogBoxElement" class="log-box" :class="{ 'log-empty muted': !logText }" :style="logBoxStyle">
               <MarkdownBody v-if="logText" :source="logText" />
               <template v-else>{{ emptyLogText }}</template>
@@ -557,6 +588,7 @@ const setLogBoxElement = (element: unknown) => { logBoxElement.value = element a
  * 撑满容器宽度、选中项自动使用主题色，这里只补一处间距。
  */
 .detail-tabs :deep(.n-tabs-nav) { margin-bottom: 2px; }
+.detail-tabs :deep(.n-tabs-tab:focus-visible) { outline: 2px solid var(--oc2-accent); outline-offset: -2px; }
 /* 面板内部保持纵向间距；Naive 的默认 pane padding 由它自己的变量控制 */
 .detail-tabs :deep(.n-tab-pane) {
   display: flex;
@@ -609,6 +641,7 @@ const setLogBoxElement = (element: unknown) => { logBoxElement.value = element a
 .detail--fill .release-log { flex: 1 1 auto; min-height: 0; }
 /* 固定行不参与伸缩：只有日志框吸收剩余高度 */
 .detail--fill .summary-row,
+.detail--fill .summary > :deep(.dep-block),
 .detail--fill .log-head,
 .detail--fill .install-row { flex: 0 0 auto; }
 /* 日志框吸收剩余高度：内容长了在框内滚，短了长高补齐，安装行靠 margin 贴底 */
@@ -624,10 +657,12 @@ const setLogBoxElement = (element: unknown) => { logBoxElement.value = element a
 /* 右侧一组：状态标签 + 关闭按钮（抽屉自己不再渲染 header） */
 .head-side { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .detail-close { margin: -3px -4px 0 0; color: var(--oc2-text-3); }
+.detail-close--tab { margin: 0; }
 .detail-close:hover { color: var(--oc2-accent); }
 .head-main { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .head-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .head-text b { font-size: 16px; color: var(--oc2-text-1); }
+.info-title { margin: 0; font-size: 16px; line-height: 1.4; color: var(--oc2-text-1); overflow-wrap: anywhere; }
 /* 渠道 · 用户/仓库 · Release/Raw */
 .head-meta {
   display: flex;
@@ -686,6 +721,7 @@ const setLogBoxElement = (element: unknown) => { logBoxElement.value = element a
   padding-top: 8px;
   border-top: 1px solid var(--oc2-row-line);
 }
+.release-log--after-dependencies { padding-top: 0; border-top: 0; }
 .log-head {
   display: flex;
   align-items: center;
@@ -701,6 +737,7 @@ const setLogBoxElement = (element: unknown) => { logBoxElement.value = element a
   white-space: nowrap;
   max-width: 100%;
 }
+.log-head .log-title { flex: 0 0 auto; max-width: none; font-size: 12px; }
 /*
  * 日志框：高度由面板的 flex 链分配（`.detail--fill .log-box`），只有下限
  * `RELEASE_LOG_MIN_HEIGHT` 由 `logBoxStyle` 写成内联 `min-height` —— 它是

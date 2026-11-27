@@ -30,11 +30,9 @@ registerHooks({
     }
     if (url.endsWith('.vue')) return fake('export default {}')
     if (url.endsWith('/src/i18n.ts')) return fake(
-      'export const t=key=>key; export const pickI18n=(_values,fallback)=>fallback')
+      'export const locale=globalThis.__dependencyGuideLocale; export const t=key=>key; export const pickI18n=(_values,fallback)=>fallback')
     if (url.endsWith('/src/services/tauri.ts')) return fake(
       'export const api=new Proxy({}, { get(_target,key) { return () => { throw new Error("Unexpected IPC: "+String(key)) } } })')
-    if (url.endsWith('/src/markdown.ts')) return fake(
-      'export const renderReadme=value=>value||""; export const renderMermaidBlocks=async()=>{}')
     if (url.endsWith('/src/composables/useModRepositoryReadme.ts')) return fake(
       'import { shallowRef } from "vue"; export const useModRepositoryReadme=()=>({ readme:shallowRef(null), loading:shallowRef(false), error:shallowRef("") })')
     if (url.endsWith('/src/composables/useReleasePanelFit.ts')) return fake(
@@ -43,6 +41,7 @@ registerHooks({
   },
 })
 
+globalThis.__dependencyGuideLocale = shallowRef('zh-CN')
 const { useDependencyInstallGuide } = await import('../src/composables/useDependencyInstallGuide.ts')
 const { useMapReleaseDetail } = await import('../src/composables/useMapReleaseDetail.ts')
 const { expectPageScroll, endNavigation } = await import('../src/pageTransition.ts')
@@ -318,7 +317,7 @@ test('MOD detail selects a guided old Release and asset, then blocks if the cach
   assert.equal(state.selectedTag, 'v3.10.2')
   assert.equal(state.selectedRelease, null)
   assert.equal(state.primaryAsset, null)
-  assert.equal(state.guideMissing, true)
+  assert.equal(state.exactTagMissing, true)
   state.installSelected('v4.0.0', 'v4.0.0.zip')
   assert.deepEqual(installs, [], 'missing exact target cannot fall back to latest')
 })
@@ -341,6 +340,48 @@ test('ordinary MOD details pick the default tag as data arrives, preserve a canc
   await settle()
   assert.equal(state.selectedTag, 'v0.11.0')
   assert.equal(state.selectedRelease.tag_name, 'v0.11.0')
+})
+
+test('MOD update entry keeps the exact requested cached tag selected', async t => {
+  const installs = []
+  const { props, state } = mountedComponent(t, ModRepositoryDetail, {
+    repo: repository(), initialTab: 'install', initialTag: 'v3.10.2',
+  }, { onInstall: (...args) => installs.push(args) })
+  assert.equal(state.selectedTag, 'v3.10.2')
+  assert.equal(state.selectedRelease.tag_name, 'v3.10.2')
+  props.value = { ...props.value, repo: repository('runtime', ['v4.0.0']) }
+  await settle()
+  assert.equal(state.selectedTag, 'v3.10.2')
+  assert.equal(state.selectedRelease, null, 'a requested tag that disappeared must not silently choose latest')
+  assert.equal(state.exactTagMissing, true)
+  state.installSelected('v3.10.2', 'v3.10.2.zip')
+  assert.deepEqual(installs, [])
+  props.value = { ...props.value, repo: repository() }
+  await settle()
+  assert.equal(state.selectedRelease.tag_name, 'v3.10.2')
+  assert.equal(state.exactTagMissing, false)
+  state.selectVersion('v4.0.0')
+  assert.equal(state.selectedRelease.tag_name, 'v4.0.0')
+  assert.deepEqual(installs, [])
+})
+
+test('MOD install pane follows the pinned version until the user chooses a different tag', async t => {
+  const installs = []
+  const { props, state } = mountedComponent(t, ModRepositoryDetail,
+    { repo: { ...repository(), pinned_version: '3.10.2' }, initialTab: 'install' },
+    { onInstall: (...args) => installs.push(args) })
+  assert.equal(state.selectedTag, 'v3.10.2')
+  assert.equal(state.primaryAsset.name, 'v3.10.2.zip')
+  props.value = { ...props.value, repo: { ...repository('runtime', ['v4.0.0']), pinned_version: '3.10.2' } }
+  await settle()
+  assert.equal(state.selectedTag, null)
+  assert.equal(state.exactTagMissing, true)
+  state.installSelected()
+  assert.deepEqual(installs, [])
+  state.selectVersion('v4.0.0')
+  assert.equal(state.selectedTag, 'v4.0.0')
+  assert.equal(state.exactTagMissing, false)
+  assert.deepEqual(installs, [])
 })
 
 test('explicit version changes cancel the old guide and select the chosen version without installing', async t => {
@@ -465,12 +506,36 @@ test('cancelling a prepared panel clears its highlight and ordinary details keep
   assert.equal(plain.state.guideHighlighted, false)
 })
 
+test('details panel accepts an initial install tab without starting work and updates its log locale', async t => {
+  t.after(() => { globalThis.__dependencyGuideLocale.value = 'zh-CN' })
+  const { props, state } = mountedComponent(t, ReleaseDetailPanel, {
+    title: 'Runtime', tabsOnlyHeader: true, provider: 'github', owner: 'sample', repository: 'runtime',
+    initialTab: 'install', dependenciesTab: 'install', dependencies: [{ key: 'loader', name: 'Loader' }],
+    releaseNotes: '# English\nEnglish notes\n\n# 简体中文\n简体说明',
+    versions: [{ label: 'v4.0.0', value: 'v4.0.0' }], version: 'v4.0.0', assets: [{ name: 'runtime.zip' }],
+  })
+  assert.equal(state.activeTab, 'install')
+  assert.equal(state.logText, '简体说明')
+  assert.equal(state.actionIsRefresh, false)
+  globalThis.__dependencyGuideLocale.value = 'en'
+  await settle()
+  assert.equal(state.logText, 'English notes')
+  globalThis.__dependencyGuideLocale.value = 'de'
+  await settle()
+  assert.equal(state.logText, '# English\nEnglish notes\n\n# 简体中文\n简体说明')
+  props.value = { ...props.value, initialTab: 'info' }
+  await settle()
+  assert.equal(state.activeTab, 'info')
+  assert.equal(state.guideHighlighted, false)
+  assert.equal(state.logText, '# English\nEnglish notes\n\n# 简体中文\n简体说明')
+})
+
 test('production templates connect exact version preparation and primary click through existing installation events', () => {
   const mod = readFileSync(new URL('../src/components/ModRepositoryDetail.vue', import.meta.url), 'utf8')
   const panel = readFileSync(new URL('../src/components/ReleaseDetailPanel.vue', import.meta.url), 'utf8')
   assert.match(mod, /:version="selectedTag"/)
   assert.match(mod, /@update:version="selectVersion"/)
-  assert.match(mod, /:action-disabled="guideMissing"/)
+  assert.match(mod, /:action-disabled="exactTagMissing"/)
   assert.match(mod, /@install="installSelected"/)
   assert.match(panel, /@click="runPrimaryAction"/)
 })

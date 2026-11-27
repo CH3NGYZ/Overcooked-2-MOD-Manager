@@ -129,7 +129,7 @@ export function useReleasePanelFit(options: UseReleasePanelFitOptions) {
     /* Do not observe the panel itself: writing its height would self-trigger. */
     fitObserver = new ResizeObserver(() => scheduleFitInstallPanel())
     fitObserver.observe(viewport)
-    for (const selector of ['.detail-head', '.n-tabs-nav', '.summary-row', '.log-head', '.install-row']) {
+    for (const selector of ['.detail-head', '.n-tabs-nav', '.summary-row', '.dep-block', '.log-head', '.install-row']) {
       const element = panel.querySelector(selector)
       if (element) fitObserver.observe(element)
     }

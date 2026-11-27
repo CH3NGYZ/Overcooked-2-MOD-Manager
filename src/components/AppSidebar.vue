@@ -6,7 +6,7 @@ import {
   CloudDownloadOutline, FileTrayFullOutline, GridOutline, BuildOutline, SettingsOutline,
   ColorWandOutline, MapOutline, AlbumsOutline, ShirtOutline,
 } from '@vicons/ionicons5'
-import { t } from '../i18n'
+import { locale, t } from '../i18n'
 
 const route = useRoute()
 
@@ -75,16 +75,42 @@ async function revealActive() {
   await nextTick()
   sidebar.value?.querySelector('.nav-scroll .nav-item.active')?.scrollIntoView({ block: 'nearest', behavior: 'auto' })
 }
+function fitNavLabels() {
+  const labels = sidebar.value?.querySelectorAll<HTMLElement>('.nav-label')
+  if (!labels) return
+  for (const label of labels) label.style.removeProperty('font-size')
+  const metrics = [...labels].map(label => ({ label,
+    width: label.getBoundingClientRect().width,
+    available: label.parentElement?.getBoundingClientRect().width ?? 0,
+  }))
+  for (const { label, width, available } of metrics) {
+    if (available <= 0 || width <= available) continue
+    const baseSize = parseFloat(getComputedStyle(label).fontSize)
+    let size = Math.floor(baseSize * available / width * 10) / 10
+    while (size > 0) {
+      label.style.fontSize = `${size}px`
+      if (label.getBoundingClientRect().width <= available) break
+      size -= 0.1
+    }
+  }
+}
 onMounted(() => {
+  fitNavLabels()
   void revealActive()
   const scroll = sidebar.value?.querySelector('.nav-scroll')
   if (scroll) {
-    resizeObserver = new ResizeObserver(() => { void revealActive() })
+    resizeObserver = new ResizeObserver(() => {
+      fitNavLabels()
+      void revealActive()
+    })
     resizeObserver.observe(scroll)
   }
 })
 onBeforeUnmount(() => resizeObserver?.disconnect())
-watch(activeName, revealActive)
+watch([activeName, locale], () => {
+  fitNavLabels()
+  void revealActive()
+}, { flush: 'post' })
 </script>
 
 <template>
@@ -98,7 +124,7 @@ watch(activeName, revealActive)
           <router-link v-for="item in section.items" :key="item.name" :to="{ name: item.name }" class="nav-item"
             :class="{ active: activeName === item.name }" :data-tutorial="'nav-' + item.name">
             <component :is="item.icon" width="20" height="20" />
-            <span>{{ t(item.title) }}</span>
+            <span class="nav-label">{{ t(item.title) }}</span>
           </router-link>
         </template>
 
@@ -107,7 +133,7 @@ watch(activeName, revealActive)
         <router-link v-for="item in extraItems" :key="item.name" :to="{ name: item.name }" class="nav-item"
           :class="{ active: activeName === item.name }" :data-tutorial="'nav-' + item.name">
           <component :is="item.icon" width="20" height="20" />
-          <span>{{ t(item.title) }}</span>
+          <span class="nav-label">{{ t(item.title) }}</span>
         </router-link>
       </nav>
     </n-scrollbar>
@@ -117,7 +143,7 @@ watch(activeName, revealActive)
       <router-link v-for="item in bottomItems" :key="item.name" :to="{ name: item.name }" class="nav-item"
         :class="{ active: activeName === item.name }" :data-tutorial="'nav-' + item.name">
         <component :is="item.icon" width="20" height="20" />
-        <span>{{ t(item.title) }}</span>
+        <span class="nav-label">{{ t(item.title) }}</span>
       </router-link>
     </nav>
 
@@ -185,9 +211,13 @@ watch(activeName, revealActive)
   color: var(--oc2-text-2);
   text-decoration: none;
   font-size: 11px;
+  line-height: 1.6em;
   transition: background-color .16s ease, color .16s ease;
   /* 侧栏变矮时由外层滚动，而不是把每一项压扁 */
   flex: 0 0 auto;
+}
+.nav-label {
+  white-space: nowrap;
 }
 .nav-item:hover {
   background: var(--oc2-row-hover);

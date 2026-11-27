@@ -15,9 +15,10 @@ registerHooks({
     const modules = {
       '/src/services/tauri.ts': `export const watchLevelSetZipProgress=async()=>()=>{};
         export const api=new Proxy({}, {get:(_,key)=>(...args)=>globalThis.__chainEntry.api(key,args)})`,
-      '/src/modChanges/store.ts': 'export const useModChanges=()=>({run:request=>globalThis.__chainEntry.run(request)})',
-      '/src/composables/useDashboardStore.ts': 'export const useDashboard=()=>({game:{get value(){return {kitchen_running:globalThis.__chainEntry.running}}}})',
+      '/src/modChanges/store.ts': 'export const useModChanges=()=>({reviewPackage:async()=>[],run:request=>globalThis.__chainEntry.run(request)})',
+      '/src/composables/useDashboardStore.ts': 'export const useDashboard=()=>({modsStatus:{value:"ready"},mods:{value:[]},game:{get value(){return {kitchen_running:globalThis.__chainEntry.running}}}})',
       '/src/composables/useMapSources.ts': 'export const useMapSources=()=>({maps:{value:globalThis.__chainEntry.maps}})',
+      '/src/composables/useLevelSetScan.ts': 'export const useLevelSetScan=()=>({hasCurrentResult:{value:false},levelSets:{value:[]}})',
       '/src/composables/useDropRouting.ts': `export const useDropRouting=()=>({acceptDrop:async (path, want)=>{
         const entry=globalThis.__chainEntry;entry.calls.push(['acceptDrop',path,want]);return entry.acceptLocal !== false
       }})`,

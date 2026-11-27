@@ -5,8 +5,8 @@ const read=path=>readFileSync(new URL(`../${path}`,import.meta.url),'utf8')
 const dialog=read('src/modChanges/ChangePlanDialog.vue'),app=read('src/App.vue'),details=read('src/modChanges/ChangePlanDetails.vue')
 test('App owns the only shared plan modal and all pages use its store',()=>{
  assert.equal((app.match(/<ChangePlanDialog\s*\/>/g)||[]).length,1)
- for(const name of ['ModsLocalView','ModsOnlineView','LevelsView','MapsOnlineView'])assert.doesNotMatch(read(`src/views/${name}.vue`),/<(?:ChangePlanDialog|InstallCheckDialog|InstallPlanDialog|ModInstallNoteDialog)/)
- for(const path of ['components/InstallCheckDialog.vue','components/InstallPlanDialog.vue','components/ModInstallDialog.vue','components/ModInstallNoteDialog.vue','composables/useInstallPlanGate.ts'])assert.equal(existsSync(new URL(`../src/${path}`,import.meta.url)),false,path)
+ for(const name of ['ModsLocalView','ModsOnlineView','LevelsView','MapsOnlineView'])assert.doesNotMatch(read(`src/views/${name}.vue`),/<(?:ChangePlanDialog|InstallCheckDialog|InstallPlanDialog|ModInstallNoteDialog|PackageReviewDialog)/)
+ for(const path of ['components/InstallCheckDialog.vue','components/InstallPlanDialog.vue','components/ModInstallDialog.vue','components/ModInstallNoteDialog.vue','modChanges/ModInstallNoteDialog.vue','composables/useInstallPlanGate.ts'])assert.equal(existsSync(new URL(`../src/${path}`,import.meta.url)),false,path)
 })
 test('shared confirmation delegates the single action table and only connects transaction entry points',()=>{
  assert.match(dialog,/<ChangePlanDetails v-if="plan && names" :plan="plan" :progress="currentProgress"[^>]+:names="names"/)
@@ -22,8 +22,9 @@ test('blocked and busy plans cannot confirm; failure can only replan; preparatio
  assert.match(dialog,/@click="changes\.confirm"/)
  assert.match(dialog,/@click="changes\.retry"/)
 })
-test('the shared plan dialog alternates between the first-install note and plan confirmation',()=>{
- assert.match(dialog,/<ModInstallNoteDialog v-if="installNotes\.length && plan" :key="plan\.plan_id" :plan-id="plan\.plan_id"\s+:notes="installNotes" :apply-on-read="!!state\?\.noteOnlyReview"\s+@continue="changes\.acceptInstallNotes" @cancel="changes\.cancel"\s*\/>\s*<AppModal v-else/)
+test('the shared plan dialog owns the preflight and reuses it for an unread first-install note',()=>{
+ assert.match(dialog,/<PackageReviewDialog v-if="packageReview" preflight[\s\S]+?@after-leave="changes\.finishPackageReview" \/>/)
+ assert.match(dialog,/<PackageReviewDialog v-else-if="installNotes\.length && plan" :key="plan\.plan_id" :review-key="plan\.plan_id"\s+:notes="installNotes" :apply-on-read="!!state\?\.noteOnlyReview"\s+@continue="notes => changes\.acceptInstallNotes\(notes, plan!\.plan_id, !!state\?\.noteOnlyReview\)" @cancel="changes\.cancel"\s*\/>\s*<AppModal v-else/)
  assert.doesNotMatch(dialog,/v-html|setInterval|readingSeconds/)
 })
 test('the plan modal keeps the shared content sizing and scroll with 90% caps',()=>{
@@ -35,12 +36,16 @@ test('the plan modal keeps the shared content sizing and scroll with 90% caps',(
 })
 test('map selection and manual preview never pre-uninstall or execute individual rows',()=>{
  const map=read('src/composables/useLevelSetImport.ts'),manual=read('src/composables/useModInstallFlow.ts')
- assert.ok(map.indexOf('await askApproval(staged.path, sets)')<map.indexOf('await changes.run('))
+ assert.match(map,/async function finishStaged[\s\S]*?await changes\.run\(\{ roots: \[\], map_import:/)
+ const online = map.slice(map.indexOf('async function installRelease('))
+ assert.match(online,/await changes\.reviewPackage[\s\S]*?await api\.stageMapRelease[\s\S]*?await finishStaged/)
+ assert.doesNotMatch(map,/askApproval\(/)
  assert.match(map,/map_import:/);assert.match(manual,/node_id: `preview:/)
  for(const source of [map,manual])assert.doesNotMatch(source,/api\.(?:deleteLevelSet|uninstallLocalMod|confirmModInstall|importLevelSets)\(/)
 })
 test('online selection freezes the exact release or RAW candidate before shared confirmation',()=>{
  const source=read('src/composables/useModRepositoryPreview.ts')
+ assert.match(source,/await changes\.reviewPackage[\s\S]*?if \(reviewed === null[^\n]+\n\s+const result = await changes\.run/)
  assert.match(source,/candidate_id: raw \? `raw:/);assert.match(source,/`release:\$\{repo\.id\}:\$\{release!\.tag_name\}`/)
  assert.match(source,/asset_name: assetName/);assert.doesNotMatch(source,/prepareInstall|dialog\.warning|api\.installModRepository/)
 })

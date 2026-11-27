@@ -23,13 +23,18 @@ const localesByHeading = new Map(LOCALE_CODES.flatMap(locale =>
 ))
 
 /** 每个语言段独立渲染；引用式链接的定义也应写在同一语言段。 */
-export function selectReleaseNotes(source: string, locale: Locale): string {
-  if (!source.trim()) return ''
-  const sections = markdownHeadingSections(source).map(({ heading, body }) => ({
-    locale: localesByHeading.get(normalizeHeading(heading)), body,
-  }))
-  if (!sections.some(section => section.locale)) return source
-  return sections.find(section => section.locale === locale && section.body.trim())?.body ?? ''
+export function selectReleaseNotes(source: string, locale: Locale, mode: 'manager' | 'package' = 'manager'): string {
+  if (!source.trim()) return mode === 'package' ? source : ''
+  for (const depth of mode === 'package' ? [1, 2] as const : [1] as const) {
+    const sections = markdownHeadingSections(source, depth).map(({ heading, body }) => ({
+      locale: localesByHeading.get(normalizeHeading(heading)), body,
+    }))
+    if (sections.some(section => section.locale)) {
+      return sections.find(section => section.locale === locale && section.body.trim())?.body
+        ?? (mode === 'package' ? source : '')
+    }
+  }
+  return source
 }
 
 export function updateNotesForLocale(

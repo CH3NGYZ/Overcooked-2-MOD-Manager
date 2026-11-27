@@ -11,7 +11,7 @@ import ChangePlanDetails from './ChangePlanDetails.vue'
 import ChangeEvidenceList from './ChangeEvidenceList.vue'
 import ChangeRecoveryPanel from './ChangeRecoveryPanel.vue'
 import { changeErrorEvidence, formatEvidenceRepository, providerEvidenceAdvice, providerRows } from './evidence'
-import ModInstallNoteDialog from './ModInstallNoteDialog.vue'
+import PackageReviewDialog from './PackageReviewDialog.vue'
 import { changePlanLabels, preparationCompletion } from './presentation'
 import { activeDownloadProgress } from '../downloadTask'
 import { appUpdateBlocksOperations } from '../appUpdateState'
@@ -23,6 +23,8 @@ import TransactionConflictConfirmation from './TransactionConflictConfirmation.v
 const changes = useModChanges()
 useModChangesLifecycle()
 const state = changes.state
+const packageReview = changes.packageReview
+const packageReviewNotes = changes.packageReviewNotes
 const installNotes = changes.installNotes
 const plan = computed(() => state.value?.plan)
 const preparation = changes.preparation
@@ -129,9 +131,12 @@ watch([downloadAbove, () => state.value?.phase, () => installNotes.value.length]
 </script>
 
 <template>
-  <ModInstallNoteDialog v-if="installNotes.length && plan" :key="plan.plan_id" :plan-id="plan.plan_id"
+  <PackageReviewDialog v-if="packageReview" preflight :show="packageReview.show"
+    :release="packageReview.release" :notes="packageReviewNotes"
+    @continue="changes.closePackageReview" @cancel="changes.closePackageReview(null)" @after-leave="changes.finishPackageReview" />
+  <PackageReviewDialog v-else-if="installNotes.length && plan" :key="plan.plan_id" :review-key="plan.plan_id"
     :notes="installNotes" :apply-on-read="!!state?.noteOnlyReview"
-    @continue="changes.acceptInstallNotes" @cancel="changes.cancel" />
+    @continue="notes => changes.acceptInstallNotes(notes, plan!.plan_id, !!state?.noteOnlyReview)" @cancel="changes.cancel" />
   <AppModal v-else :key="applyReview ? 'apply-review' : 'prepare-review'"
     :show="!!state && !state.silent" :title="t(overwriteReview ? 'modChanges.manifestOverwrite.confirm' : applyReview ? 'modChanges.applyTitle' : 'modChanges.title')" :z-index="2599" max-width="90%" max-height="90%"
     :closable="canCancel" :mask-closable="false" :auto-focus="!applyReview" card-class="mod-changes-modal"

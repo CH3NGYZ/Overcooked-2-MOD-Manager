@@ -1,5 +1,5 @@
 import type { LevelPreview, LevelPreviewDetail } from '../types'
-import type { ChangeRequest, ChangePlan, ChangePreparationOutcome, ChangePreparationProgress, EvaluationSnapshot, EvaluationSubject, ChangeExecutionOutcome, ChangeExecutionProgress } from '../modChanges/types'
+import type { ChangeRequest, ChangePlan, ChangeInstallNote, ChangePreparationOutcome, ChangePreparationProgress, EvaluationSnapshot, EvaluationSubject, ChangeExecutionOutcome, ChangeExecutionProgress } from '../modChanges/types'
 import { ChangePreparationError } from '../modChanges/types'
 import type { TransactionRecoveryEntry } from '../modChanges/transactionRecoveryTypes'
 import type { AnnouncementSnapshot } from '../announcements/types'
@@ -86,6 +86,7 @@ async function readDashboard(): Promise<DashboardSummary> {
  */
 export const api = {
   evaluateModChanges: (subjects?: EvaluationSubject[]) => invoke<EvaluationSnapshot>('evaluate_mod_changes', { subjects }),
+  previewModInstallNote: (repositoryId: string) => invoke<ChangeInstallNote | null>('preview_mod_install_note', { repositoryId }),
   planModChanges: (request: ChangeRequest) => invoke<ChangePlan>('plan_mod_changes', { request }),
   prepareModChanges: async (planId: string, onProgress?: (value: ChangePreparationProgress) => void) => {
     const onUpdate = new Channel<ChangePreparationProgress>()

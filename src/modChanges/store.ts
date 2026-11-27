@@ -7,9 +7,27 @@ import { setEvaluationSnapshotReader } from './evaluationProjection'
 import { installNoteKey, localizedInstallNotes, type InstallNote } from './planNotes'
 import { changeStatusKey } from './presentation'
 import type { ChangeWorkflowState } from './workflow'
-import type { ChangeExecutionStage, ChangePreparationProgress, EvaluationSnapshot, EvaluationSubject } from './types'
+import type { PackageReleaseNote } from '../packageReleaseNotes'
+import type { ChangeExecutionStage, ChangeInstallNote, ChangePlan, ChangePreparationProgress, ChangeRequest, EvaluationSnapshot, EvaluationSubject } from './types'
+
+export interface PackageReviewRelease {
+  name: string
+  installedTag?: string
+  releases: readonly PackageReleaseNote[]
+}
+
+interface PackageReview {
+  show: boolean
+  release?: PackageReviewRelease
+  note: ChangeInstallNote | null
+}
 
 const state = shallowRef<ChangeWorkflowState | null>(null)
+const packageReview = shallowRef<PackageReview | null>(null)
+const packageReviewNotes = computed(() => localizedInstallNotes(packageReview.value?.note ? [packageReview.value.note] : []))
+let reviewingPackage = false
+let settleReview: ((notes: readonly InstallNote[] | null) => void) | undefined
+let reviewedNotes: readonly InstallNote[] | null = null
 const preparation = shallowRef<ChangePreparationProgress | null>(null)
 const execution = shallowReactive(new Map<string, ChangeExecutionStage>())
 const cancellingDownload = shallowRef(false)
@@ -17,11 +35,13 @@ const evaluation = shallowRef<EvaluationSnapshot | null>(null)
 const evaluating = shallowRef(false)
 const appliedRevision = shallowRef(0)
 const readNotes = shallowRef<ReadonlySet<string>>(new Set())
+function unreadNotes(plan: Pick<ChangePlan, 'install_notes'>) {
+  return localizedInstallNotes(plan.install_notes).filter(note => !readNotes.value.has(installNoteKey(note)))
+}
 const installNotes = computed<readonly InstallNote[]>(() => {
   const current = state.value
   if (current?.plan?.status !== 'ready' || (current.phase !== 'confirming' && current.phase !== 'reconfirming')) return []
-  return localizedInstallNotes(current.plan.install_notes)
-    .filter(note => !readNotes.value.has(installNoteKey(note)))
+  return unreadNotes(current.plan)
 })
 setEvaluationSnapshotReader(() => evaluation.value)
 let revision = 0
@@ -108,7 +128,48 @@ const workflow = createChangeWorkflow({
   if (!value || value.phase === 'planning') { preparationSequence += 1; preparation.value = null; execution.clear() }
   if (value?.phase === 'reconfirming') preparation.value = null
   if (value?.phase !== 'preparing') cancellingDownload.value = false
-})
+}, plan => unreadNotes(plan).length > 0)
+
+async function reviewPackage(release?: PackageReviewRelease, loadNote?: () => Promise<ChangeInstallNote | null>) {
+  if (reviewingPackage || state.value) throw new Error('modChanges.busy')
+  if (appUpdateBlocksOperations()) throw new Error('update.inProgress')
+  reviewingPackage = true
+  try {
+    const note = loadNote ? await loadNote() : null
+    if (appUpdateBlocksOperations()) throw new Error('update.inProgress')
+    if (!localizedInstallNotes(note ? [note] : []).length && !release?.releases.some(entry => entry.prerelease || entry.body.trim())) return []
+    return await new Promise<readonly InstallNote[] | null>(resolve => {
+      settleReview = resolve
+      packageReview.value = { show: true, release, note }
+    })
+  } finally { reviewingPackage = false }
+}
+
+function closePackageReview(accepted: readonly InstallNote[] | null) {
+  const current = packageReview.value
+  if (!current?.show) return
+  const notes = packageReviewNotes.value
+  if (accepted && (notes.length !== accepted.length || notes.some((note, index) => installNoteKey(note) !== installNoteKey(accepted[index]!)))) return
+  reviewedNotes = accepted
+  packageReview.value = { ...current, show: false }
+}
+
+function finishPackageReview() {
+  if (packageReview.value?.show || !settleReview) return
+  const settle = settleReview
+  settleReview = undefined
+  packageReview.value = null
+  const notes = reviewedNotes
+  reviewedNotes = null
+  settle(appUpdateBlocksOperations() ? null : notes)
+}
+
+async function run(request: ChangeRequest, reviewed: readonly InstallNote[] = []) {
+  if (reviewingPackage || state.value) throw new Error('modChanges.busy')
+  if (appUpdateBlocksOperations()) throw new Error('update.inProgress')
+  readNotes.value = new Set(reviewed.map(installNoteKey))
+  return workflow.run(request)
+}
 
 function acceptInstallNotes(notes: readonly InstallNote[], planId: string, applyOnRead: boolean) {
   const current = state.value
@@ -204,11 +265,12 @@ function invalidate() {
 export function useModChanges() {
   return {
     state: readonly(state), preparation: readonly(preparation), execution: readonly(execution), cancellingDownload: readonly(cancellingDownload),
+    packageReview: readonly(packageReview), packageReviewNotes, reviewPackage, closePackageReview, finishPackageReview,
     canCancelDownload: computed(canCancelPreparation), cancelPreparationDownload,
     installNotes, acceptInstallNotes,
     evaluation: readonly(evaluation), evaluating: readonly(evaluating), appliedRevision: readonly(appliedRevision),
     busy: computed(() => state.value !== null),
-    run: workflow.run, refresh, invalidate, clearEvaluation, setEvaluationPaused, confirm, cancel: workflow.cancel, retry: workflow.retry,
+    run, refresh, invalidate, clearEvaluation, setEvaluationPaused, confirm, cancel: workflow.cancel, retry: workflow.retry,
     forceOverwriteManifest: workflow.forceOverwriteManifest, confirmRecovery, invalidateRecoveryApproval: workflow.invalidateRecoveryApproval,
   }
 }

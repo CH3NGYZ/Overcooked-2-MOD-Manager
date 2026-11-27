@@ -7,11 +7,13 @@ import { createRenderer, nextTick, shallowReactive, shallowRef } from 'vue'
 import { modChanges } from '../src/locale/modChanges.ts'
 import { modChangeEvidence } from '../src/locale/modChangeEvidence.ts'
 import { common } from '../src/locale/common.ts'
+import { dialogs } from '../src/locale/dialogs.ts'
 import { modsOnline } from '../src/locale/modsOnline.ts'
 
 const fixture = globalThis.__changeRender = {
   state: shallowRef(null), preparation: shallowRef(null), cancelDownload: shallowRef(false), cancelling: shallowRef(false),
-  execution: shallowReactive(new Map()), installNotes: shallowRef([]), locale: shallowRef('zh-CN'), messages: { modChanges: { ...modChanges, ...modChangeEvidence }, common, modsOnline }, calls: [],
+  execution: shallowReactive(new Map()), installNotes: shallowRef([]), packageReview: shallowRef(null), packageReviewNotes: shallowRef([]),
+  locale: shallowRef('zh-CN'), messages: { modChanges: { ...modChanges, ...modChangeEvidence }, common, dialogs, modsOnline }, calls: [],
 }
 registerHooks({
   resolve(specifier, context, next) {
@@ -36,11 +38,14 @@ registerHooks({
     }
     if (url.endsWith('/src/modChanges/store.ts')) return fake(`export const useModChanges=()=>{const f=globalThis.__changeRender;
       return{state:f.state,preparation:f.preparation,execution:f.execution,canCancelDownload:f.cancelDownload,cancellingDownload:f.cancelling,
+      packageReview:f.packageReview,packageReviewNotes:f.packageReviewNotes,
+      closePackageReview:notes=>f.calls.push(['package-close',notes]),finishPackageReview:()=>f.calls.push('package-finish'),
       installNotes:f.installNotes,acceptInstallNotes:(notes,planId,applyOnRead)=>f.calls.push(['note-read',notes,planId,applyOnRead]),
       confirm:()=>f.calls.push('confirm'),retry:()=>f.calls.push('retry'),cancel:()=>f.calls.push('cancel'),cancelPreparationDownload:()=>f.calls.push('cancel-download')}}`)
     if (url.endsWith('/src/modChanges/useModChangesLifecycle.ts')) return fake('export const useModChangesLifecycle=()=>{}')
-    if (url.endsWith('/src/components/AppModal.vue')) return fake(`import{h}from'vue';export default{props:['show','cardClass','maxWidth','maxHeight','fill'],setup:(p,{slots})=>()=>p.show?h('modal',{class:p.cardClass,maxWidth:p.maxWidth,maxHeight:p.maxHeight,fill:p.fill},[h('header',{},slots['header-extra']?.()),slots.default?.(),h('footer',{},slots.footer?.())]):null}`)
-    if (url.endsWith('/src/markdown.ts')) return fake('export const renderReadme=String;export const renderMermaidBlocks=async()=>{}')
+    if (url.endsWith('/src/components/AppModal.vue')) return fake(`import{h,watch,nextTick}from'vue';export default{props:['show','title','cardClass','maxWidth','maxHeight','fill'],emits:['afterLeave'],
+      setup:(p,{emit,slots})=>{watch(()=>p.show,(show,previous)=>{if(!show&&previous)void nextTick(()=>emit('afterLeave'))});
+      return()=>p.show?h('modal',{title:p.title,class:p.cardClass,maxWidth:p.maxWidth,maxHeight:p.maxHeight,fill:p.fill},[h('header',{},slots['header-extra']?.()),slots.default?.(),h('footer',{},slots.footer?.())]):null}}`)
     if (url.endsWith('/src/i18n.ts')) return fake(`export const locale=globalThis.__changeRender.locale;
       export const pickI18n=(values,fallback)=>values?.[locale.value]??fallback;
       export const t=(key,args={})=>{const [domain,...path]=key.split('.');let text=globalThis.__changeRender.messages[domain]?.[path.join('.')]?.[locale.value]??key;for(const[k,v]of Object.entries(args))text=text.replaceAll('{'+k+'}',String(v));return text}`)
@@ -50,7 +55,7 @@ registerHooks({
 const { default: Dialog } = await import('../src/modChanges/ChangePlanDialog.vue')
 const { changeStatusKey } = await import('../src/modChanges/presentation.ts')
 const host = createRenderer({
-  createElement: tag => ({ tag, props: {}, children: [], focus() {} }), createText: text => ({ text }), createComment: () => ({}),
+  createElement: tag => ({ tag, props: {}, children: [], focus() {}, querySelectorAll() { return [] } }), createText: text => ({ text }), createComment: () => ({}),
   patchProp: (node, key, _, value) => { node.props[key] = value },
   insert(node, parent, anchor) {
     if (node.parent) node.parent.children.splice(node.parent.children.indexOf(node), 1)
@@ -76,6 +81,7 @@ const plan = { plan_id: 'one', status: 'ready', prepared: false, blockers: [], i
 function mounted(t) {
   fixture.state.value = { phase: 'confirming', plan, error: null }; fixture.preparation.value = null
   fixture.execution.clear(); fixture.calls = []; fixture.cancelDownload.value = false; fixture.installNotes.value = []; fixture.locale.value = 'zh-CN'
+  fixture.packageReview.value = null; fixture.packageReviewNotes.value = []
   const root = { children: [] }, app = host.createApp(Dialog)
   app.mount(root); t.after(() => app.unmount())
   return root
@@ -90,7 +96,7 @@ test('first install hides the entire plan while one five-second note window can 
   await nextTick()
   const modals = find(root, node => node.tag === 'modal')
   assert.equal(modals.length, 1)
-  assert.equal(modals[0].props.class, 'mod-install-note')
+  assert.equal(modals[0].props.class, 'package-review-modal')
   assert.match(text(modals[0]), /街机 MOD 稳定版.*前置/)
   assert.doesNotMatch(text(root), /确认并应用|Web 前置/)
   const [cancel, next] = find(root, node => node.tag === 'button')
@@ -100,6 +106,57 @@ test('first install hides the entire plan while one five-second note window can 
   assert.deepEqual(fixture.calls, [])
   cancel.props.onClick()
   assert.deepEqual(fixture.calls, ['cancel'])
+})
+
+test('a package review renders the selected versions and prerelease marker without a countdown for release notes alone', async context => {
+  const root = mounted(context)
+  fixture.state.value = null
+  fixture.packageReview.value = { show: true, release: { name: 'Arcade', installedTag: 'v1', releases: [
+    { tag: 'v2', body: '# 简体中文\n- **中文变更**\n\n# English\n- **English changes**', prerelease: false },
+    { tag: 'v3', body: '', prerelease: true },
+  ] } }
+  await nextTick()
+  const modals = find(root, node => node.tag === 'modal')
+  assert.deepEqual(modals.map(node => node.props.class), ['package-review-modal'])
+  assert.equal(modals[0].props.title, '更新日志')
+  assert.match(text(root), /Arcade.*v1 →v3/)
+  const releases = find(root, node => node.props?.['data-package-release-tag'])
+  assert.deepEqual(releases.map(node => node.props['data-package-release-tag']), ['v2', 'v3'])
+  const markdown = () => find(root, node => node.props?.class === 'markdown-body').map(node => node.props.innerHTML)
+  assert.deepEqual(markdown(), ['<ul>\n<li><strong>中文变更</strong></li>\n</ul>\n'])
+  assert.equal(find(root, node => node.props?.['data-package-preflight-kind'] === 'prerelease').length, 1)
+  assert.match(text(releases[1]), /本次更新没有提供说明/)
+  fixture.locale.value = 'en'; await nextTick()
+  assert.match(markdown()[0], /<strong>English changes<\/strong>/)
+  const advance = find(root, node => node.props?.['data-package-preflight-action'] === 'continue')[0]
+  assert.equal(advance.props.disabled, false)
+  assert.equal(text(advance), 'Continue')
+  advance.props.onClick()
+  assert.deepEqual(fixture.calls, [['package-close', []]])
+  fixture.packageReview.value = { ...fixture.packageReview.value, show: false }; await nextTick(); await nextTick()
+  assert.deepEqual(fixture.calls, [['package-close', []], 'package-finish'])
+  assert.equal(find(root, node => node.tag === 'modal').length, 0)
+})
+
+test('a first-install note shares the package review and takes precedence over its release history', async context => {
+  const root = mounted(context)
+  fixture.state.value = null
+  fixture.packageReviewNotes.value = [{ id: 'arcade', name: 'Arcade', text: 'Read **before installing**.' }]
+  fixture.packageReview.value = { show: true, release: { name: 'Arcade', releases: [
+    { tag: 'v3', body: 'Release text', prerelease: true },
+  ] } }
+  await nextTick()
+  const modals = find(root, node => node.tag === 'modal')
+  assert.equal(modals.length, 1)
+  assert.equal(modals[0].props.title, '安装说明')
+  assert.equal(find(root, node => node.props?.['data-package-release-tag']).length, 0)
+  const markdown = find(root, node => node.props?.class === 'markdown-body')
+  assert.deepEqual(markdown.map(node => node.props.innerHTML), ['<p>Read <strong>before installing</strong>.</p>\n'])
+  const advance = find(root, node => node.props?.['data-package-preflight-action'] === 'continue')[0]
+  assert.equal(advance.props.disabled, true)
+  const cancel = find(root, node => node.props?.['data-package-preflight-action'] === 'cancel')[0]
+  cancel.props.onClick()
+  assert.deepEqual(fixture.calls, [['package-close', null]])
 })
 
 test('a first-plan duplicate shows one existing file and one planned candidate without leaking repository IDs', async t => {

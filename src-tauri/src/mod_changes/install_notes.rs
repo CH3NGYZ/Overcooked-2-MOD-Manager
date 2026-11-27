@@ -1,6 +1,6 @@
 //! First-install notices belong to the same disk and repository snapshot as the plan.
 use super::{evaluate::same_guid, model::*, session::Payload};
-use crate::{config::mod_repository_is_available, models::*};
+use crate::{app_state::AppState, config::mod_repository_is_available, game, models::*, mods};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -58,6 +58,46 @@ impl ManagedMods {
     }
 }
 
+fn has_note(repo: &ModRepositoryConfig) -> bool {
+    !repo.note.trim().is_empty() || repo.note_i18n.values().any(|note| !note.trim().is_empty())
+}
+
+fn first_install_note(repo: &ModRepositoryConfig, managed: &ManagedMods) -> Option<InstallNote> {
+    (has_note(repo) && !managed.contains(repo)).then(|| InstallNote {
+        id: repo.id.clone(),
+        name: repo.name.clone(),
+        name_i18n: repo.name_i18n.clone(),
+        note: repo.note.clone(),
+        note_i18n: repo.note_i18n.clone(),
+    })
+}
+
+pub(crate) fn preview(
+    state: &AppState,
+    repository_id: &str,
+) -> Result<Option<InstallNote>, String> {
+    let config = state.config.load().map_err(|error| error.to_string())?;
+    let repo = config
+        .repositories
+        .iter()
+        .find(|repo| repo.id == repository_id)
+        .ok_or("source.repositoryMissing")?;
+    if !mod_repository_is_available(&config, repo, &config.region) {
+        return Err("source.repositoryUnavailableInRegion".into());
+    }
+    if !has_note(repo) {
+        return Ok(None);
+    }
+    let detected = game::detect_game_root(&config.game).ok_or("game.notFound")?;
+    let game_root = game::resolve_existing_ancestor(&detected)?;
+    let installed =
+        mods::scan_mods_with_manifests(&game_root, &config, Some(&state.config.manifests_dir()));
+    Ok(first_install_note(
+        repo,
+        &ManagedMods::from_scan(&installed),
+    ))
+}
+
 pub(super) fn for_plan(
     config: &AppConfig,
     managed: &ManagedMods,
@@ -81,20 +121,12 @@ pub(super) fn for_plan(
     let mut seen = HashSet::new();
     let mut notes = Vec::new();
     let mut add = |repo: &ModRepositoryConfig| {
-        if (repo.note.trim().is_empty()
-            && repo.note_i18n.values().all(|note| note.trim().is_empty()))
-            || managed.contains(repo)
-            || !seen.insert(repo.id.clone())
+        if !seen.contains(&repo.id)
+            && let Some(note) = first_install_note(repo, managed)
         {
-            return;
+            seen.insert(repo.id.clone());
+            notes.push(note);
         }
-        notes.push(InstallNote {
-            id: repo.id.clone(),
-            name: repo.name.clone(),
-            name_i18n: repo.name_i18n.clone(),
-            note: repo.note.clone(),
-            note_i18n: repo.note_i18n.clone(),
-        });
     };
     for action in &result.actions {
         if !matches!(

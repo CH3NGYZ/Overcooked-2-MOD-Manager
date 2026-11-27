@@ -22,8 +22,10 @@ import { useNotify } from '../useNotify'
 import { useModChanges } from '../modChanges/store'
 import { backendMessageOf } from '../locale/backend'
 import { cachedInstallRelease } from '../repositoryAssets'
+import { mapReleaseNotesReview } from '../packageReleaseNotes'
 import { beginDownloadTask, endDownloadTask, failDownloadTask, updateDownloadProgress } from '../downloadTask'
 import { useMapSources } from './useMapSources'
+import { useLevelSetScan } from './useLevelSetScan'
 import { useDropRouting, type InstallSourceEntry } from './useDropRouting'
 import type { InstallSource, LevelSetZipProgress, StagedMapSource } from '../types'
 
@@ -31,6 +33,7 @@ export function useLevelSetImport() {
   const message = useNotify()
   const changes = useModChanges()
   const { maps } = useMapSources()
+  const { levelSets, hasCurrentResult } = useLevelSetScan()
   const { acceptDrop } = useDropRouting()
   const sourceOpen = ref(false)
   /** 正在处理一份来源：暂存 / 识别 / 等确认 / 导入，期间入口按钮转圈并禁用。 */
@@ -172,31 +175,31 @@ export function useLevelSetImport() {
     if (importing.value) return false
     const map = maps.value.find((entry) => entry.id === mapId)
     const release = map && cachedInstallRelease(map.cached_releases, tag ?? map.latest_tag ?? undefined)
-    if (!release) {
+    if (!map || !release) {
       message.error(t('mapSource.releaseMissing'))
       return false
     }
     const targetTag = release.tag_name
     importing.value = true
     let stagedFile: string | null = null
-    /*
-     * 重试 = 重新下载并重新走确认链：失败发生在下载这一步时，确认与导入
-     * 都还没开始，不会把已经成功过的步骤再跑一遍。
-     */
-    const token = beginDownloadTask({
-      label: releaseLabel(mapId),
-      retry: () => { void installRelease(mapId, targetTag, assetName, successText) },
-    })
+    let token: number | null = null
     try {
+      const label = releaseLabel(mapId)
+      const history = mapReleaseNotesReview(map, release, hasCurrentResult.value ? levelSets.value : [])
+      if (await changes.reviewPackage({ name: label, ...history }) === null) return false
+      const downloadToken = token = beginDownloadTask({
+        label,
+        retry: () => { void installRelease(mapId, targetTag, assetName, successText) },
+      })
       zipProgress.value = null
-      const staged = await api.stageMapRelease(mapId, targetTag, assetName, progress => updateDownloadProgress(progress, token))
+      const staged = await api.stageMapRelease(mapId, targetTag, assetName, progress => updateDownloadProgress(progress, downloadToken))
       endDownloadTask(token)
       // 下载 + 识别结束：确认弹窗才是接下来的主角
       zipProgress.value = null
       if (staged.staged) stagedFile = staged.path
       return await finishStaged(staged, successText)
     } catch (reason) {
-      failDownloadTask(token, reason)
+      if (token !== null) failDownloadTask(token, reason)
       message.error(backendMessageOf(reason))
       return false
     } finally {

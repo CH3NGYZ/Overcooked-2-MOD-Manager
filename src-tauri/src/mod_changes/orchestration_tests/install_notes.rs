@@ -67,11 +67,15 @@ fn four_channels_with_one_guid_use_only_the_exact_selected_notice() {
     gitee_beta.note = "\n ".into();
     gitee_beta.note_i18n.clear();
     let f = fixture(vec![github_stable, github_beta, gitee_stable, gitee_beta]);
+    let preview = super::super::install_notes::preview(&f.state, "gitee-stable")
+        .unwrap()
+        .unwrap();
     let mut selected = request("gitee-stable", Some("v2.0.0"), true);
     selected.roots[0].asset_name = Some("gitee-stable.dll".into());
     let plan = planning::create(&f.state, selected).unwrap();
     assert_eq!(plan.result.status, SolveStatus::Ready);
     let wire = serde_json::to_value(&plan).unwrap();
+    assert_eq!(wire["install_notes"][0], json!(preview));
     assert_eq!(
         wire["install_notes"],
         json!([{
@@ -92,6 +96,11 @@ fn four_channels_with_one_guid_use_only_the_exact_selected_notice() {
 
     let plan = planning::create(&f.state, request("gitee-beta", Some("v2.0.0"), true)).unwrap();
     assert_eq!(plan.result.status, SolveStatus::Ready);
+    assert!(
+        super::super::install_notes::preview(&f.state, "gitee-beta")
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(
         serde_json::to_value(&plan).unwrap()["install_notes"],
         json!([])
@@ -103,6 +112,11 @@ fn installed_manifest_suppresses_notice_until_its_real_dll_is_removed() {
     let guid = "fixture-managed";
     let f = fixture(vec![noted("managed", guid), noted("mirror", guid)]);
     let file = install(&f, "managed", "Fixture-Managed", "1.0.0", false);
+    assert!(
+        super::super::install_notes::preview(&f.state, "mirror")
+            .unwrap()
+            .is_none()
+    );
     let first = planning::create(&f.state, request("managed", Some("v2.0.0"), true)).unwrap();
     assert_eq!(first.result.status, SolveStatus::Ready);
     assert!(
@@ -115,6 +129,13 @@ fn installed_manifest_suppresses_notice_until_its_real_dll_is_removed() {
     assert!(first.install_notes.is_empty());
     let disabled = mods::disabled_dll_file(&file);
     fs::remove_file(f.game.join(&disabled)).unwrap();
+    assert_eq!(
+        super::super::install_notes::preview(&f.state, "mirror")
+            .unwrap()
+            .unwrap()
+            .id,
+        "mirror"
+    );
     let target = request("mirror", Some("v2.0.0"), true);
     let plan = planning::create(&f.state, target).unwrap();
     assert_eq!(plan.result.status, SolveStatus::Ready);
@@ -149,12 +170,30 @@ fn bare_installed_dll_with_repository_match_still_needs_the_first_notice() {
         &f.game.join("BepInEx/plugins/unmanaged/unmanaged.dll"),
         &mods::plugin_blob(guid, "Unmanaged", "1.0.0"),
     );
+    assert!(
+        super::super::install_notes::preview(&f.state, "unmanaged")
+            .unwrap()
+            .is_some()
+    );
     let plan = planning::create(&f.state, request("unmanaged", Some("v2.0.0"), true)).unwrap();
     assert_eq!(plan.result.status, SolveStatus::Ready);
     assert_eq!(ids(&plan), ["unmanaged"]);
     let toggle = planning::create(&f.state, request("unmanaged", None, false)).unwrap();
     assert_eq!(toggle.result.status, SolveStatus::Ready);
     assert!(toggle.install_notes.is_empty());
+}
+
+#[test]
+fn preview_rejects_unknown_and_unavailable_sources() {
+    let mut hidden = noted("not-visible", "fixture-hidden");
+    hidden.enabled = false;
+    let fixture = fixture(vec![hidden]);
+    let preview = |id| super::super::install_notes::preview(&fixture.state, id);
+    assert_eq!(preview("missing").unwrap_err(), "source.repositoryMissing");
+    assert_eq!(
+        preview("not-visible").unwrap_err(),
+        "source.repositoryUnavailableInRegion"
+    );
 }
 
 #[test]

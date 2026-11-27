@@ -20,7 +20,14 @@ registerHooks({
         globalThis.__cachedDownload.dialogs.push(options)
         options.onPositiveClick()
       }})`)
-    if (url.endsWith('/src/modChanges/store.ts')) return fixture(`export const useModChanges=()=>({run:async request=>{globalThis.__cachedDownload.plans.push(request);return {ok:true,message:''}}})`)
+    if (url.endsWith('/src/modChanges/store.ts')) return fixture(`export const useModChanges=()=>({
+      reviewPackage: (release, loadNote) => globalThis.__cachedDownload.review(release, loadNote),
+      run: async (request, reviewed) => {
+        globalThis.__cachedDownload.plans.push(request)
+        globalThis.__cachedDownload.acknowledged.push(reviewed)
+        return {ok:true,message:''}
+      },
+    })`)
     if (url.endsWith('/src/composables/useDropRouting.ts')) return fixture(`
       export const useDropRouting = () => ({ acceptDrop: () => { throw new Error('Online releases do not enter local package routing') } })`)
     if (url.endsWith('/src/services/tauri.ts')) return fixture(`
@@ -29,6 +36,7 @@ registerHooks({
         const state = globalThis.__cachedDownload
         state.calls.push([key, ...args])
         if (key === 'stageMapRelease') return state.stage(...args)
+        if (key === 'previewModInstallNote') return Promise.resolve(state.note)
         throw new Error('Unexpected API: ' + key)
       }})`)
     if (url.endsWith('/src/useNotify.ts')) return fixture(`
@@ -41,9 +49,11 @@ registerHooks({
       export const backendMessageOf = String
       export const translateBackendMessage = String`)
     if (url.endsWith('/src/composables/useDashboardStore.ts')) return fixture(`
-      export const useDashboard = () => ({config:{value:null},mods:{value:[]},game:{value:null}})`)
+      export const useDashboard = () => ({modsStatus:{value:'ready'},mods:{get value(){return globalThis.__cachedDownload.mods}}})`)
     if (url.endsWith('/src/composables/useMapSources.ts')) return fixture(`
       export const useMapSources = () => ({maps:{get value(){return globalThis.__cachedDownload.maps}}})`)
+    if (url.endsWith('/src/composables/useLevelSetScan.ts')) return fixture(`
+      export const useLevelSetScan = () => ({hasCurrentResult:{value:true},levelSets:{get value(){return globalThis.__cachedDownload.sets}}})`)
     return next(url, context)
   },
 })
@@ -65,7 +75,8 @@ const map = (overrides = {}) => ({
 })
 function reset() {
   globalThis.__cachedDownload = {
-    calls: [], plans: [], errors: [], dialogs: [], maps: [],
+    calls: [], plans: [], errors: [], dialogs: [], maps: [], mods: [], sets: [], reviews: [], acknowledged: [], note: null,
+    async review(release, loadNote) { this.reviews.push(release); await loadNote?.(); return [] },
     stage: async () => ({ staged: false, path: 'fixture.zip', sets: [] }),
   }
   downloadTaskState.running = null
@@ -177,6 +188,46 @@ test('MOD selection freezes the exact cached root version and asset in one batch
     assert.deepEqual(state.calls,[],'version planning and execution are handled by the backend batch')
     assert.deepEqual(state.errors,[]);assert.deepEqual(state.dialogs,[])
   }
+})
+
+test('MOD forwards a reviewed first-install note to the exact plan and rechecks the running-game gate', async () => {
+  const state = reset()
+  const source = repo({ note: 'Read before installing', cached_releases: [release('v3.0'), release('v2.0', { body: 'Selected notes' })] })
+  state.note = { id: source.id, name: source.name, note: source.note }
+  const read = [{ id: source.id, name: source.name, text: source.note }]
+  const busy = []
+  let gameRunning = false
+  state.review = async (selected, loadNote) => {
+    assert.equal(state.plans.length, 0)
+    assert.equal(selected.releases.at(-1).tag, 'v2.0')
+    assert.equal(await loadNote(), state.note)
+    return read
+  }
+  const flow = useModRepositoryPreview({ gameBlocked: () => gameRunning, onBusyChange: (id, on) => busy.push([id, on]) })
+  await flow.previewModRepository(source, 'v2.0', 'chosen.zip')
+  assert.deepEqual(state.acknowledged, [read])
+  assert.equal(state.plans[0].roots[0].candidate_id, 'release:mod:v2.0')
+  assert.deepEqual(state.calls, [['previewModInstallNote', 'mod']])
+  state.review = async () => { gameRunning = true; return read }
+  await flow.previewModRepository(source, 'v2.0')
+  assert.equal(state.plans.length, 1)
+  assert.deepEqual(busy, [['mod', true], ['mod', false], ['mod', true], ['mod', false]])
+})
+
+test('cancelling either online review produces no download task, staging or plan', async () => {
+  const state = reset()
+  let reviewed = 0
+  state.review = async () => { reviewed += 1; return null }
+  state.maps = [map()]
+  await useModRepositoryPreview().previewModRepository(repo())
+  const maps = useLevelSetImport()
+  assert.equal(await maps.installRelease('map', 'v2.0', 'chosen.zip'), false)
+  assert.equal(maps.importing.value, false)
+  assert.equal(reviewed, 2)
+  assert.equal(downloadTaskState.running, null)
+  assert.equal(downloadTaskState.failure, null)
+  assert.deepEqual(state.calls, [])
+  assert.deepEqual(state.plans, [])
 })
 
 test('both map pages reject missing cached versions before staging their exact selected tag', () => {

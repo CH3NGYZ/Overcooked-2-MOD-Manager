@@ -266,6 +266,7 @@ function demoMap(spec: DemoMapSpec): MapInfo {
   const latest = releases[0] ?? null
   return {
     id: spec.id,
+    shared_release_notes: false,
     name: spec.title,
     group: t('tutorial.demo.group'),
     provider: 'github',

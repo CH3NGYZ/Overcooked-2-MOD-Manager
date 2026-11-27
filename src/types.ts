@@ -786,6 +786,7 @@ export interface RequiredFramework {
 export interface MapInfo {
   /** True only for maps generated from a release-tags source's API snapshot. */
   release_derived?: boolean
+  shared_release_notes: boolean
   id: string
   /** Backend identity shared by the same map across multiple sources. */
   map_identity?: string

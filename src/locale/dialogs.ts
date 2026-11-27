@@ -9,6 +9,7 @@ import { common } from './common.ts'
  */
 export const dialogs: DomainMessages = {
   readModNoteFirst: { 'zh-CN': '安装说明', 'zh-TW': '安裝說明', en: 'Installation notes', ko: '설치 안내', ja: 'インストール説明', de: "Installationsangaben", fr: "Notes d'installation", it: "Note di installazione", 'es-ES': "Notas de instalación", ru: "Заметки об установке", pl: "Notatki instalacyjne", 'pt-BR': "Notas de instalação" },
+  packageReleaseNotes: { 'zh-CN': '更新日志', 'zh-TW': '更新日誌', en: 'Release notes', ko: '릴리스 노트', ja: '更新履歴', de: 'Versionshinweise', fr: 'Notes de version', it: 'Note di rilascio', 'es-ES': 'Notas de la versión', ru: 'Примечания к выпуску', pl: 'Informacje o wydaniu', 'pt-BR': 'Notas da versão' },
   continueAfterReading: { 'zh-CN': '继续', 'zh-TW': '繼續', en: 'Continue', ko: '계속', ja: '続行', de: "Weiterfahren", fr: "Continuer", it: "Continua", 'es-ES': "Continuar", ru: "Продолжать", pl: "Kontynuuj", 'pt-BR': "Continuar" },
   // 发现新版本
   updateAvailable: { 'zh-CN': '发现新版本', 'zh-TW': '發現新版本', en: 'Update available', ko: '새 버전 발견', ja: '新しいバージョン', de: "Update verfügbar", fr: "Mise à jour disponible", it: "Aggiornamento disponibile", 'es-ES': "Actualización disponible", ru: "Обновление доступно", pl: "Aktualizacja dostępna", 'pt-BR': "Atualizar disponível" },

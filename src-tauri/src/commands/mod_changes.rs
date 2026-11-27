@@ -4,6 +4,7 @@ use crate::{
     mod_changes::{
         application_progress::{ChangeApplicationOutcome, ChangeApplicationProgress},
         guard::{self, Decision},
+        install_notes::{self, InstallNote},
         planning::{EvaluationSnapshot, EvaluationSubject},
         session::{ChangePlan, PlanRequest},
         transaction::RecoveryEntry,
@@ -22,6 +23,17 @@ pub(crate) async fn evaluate_mod_changes(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn preview_mod_install_note(
+    state: State<'_, AppState>,
+    repository_id: String,
+) -> Result<Option<InstallNote>, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || install_notes::preview(&state, &repository_id))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

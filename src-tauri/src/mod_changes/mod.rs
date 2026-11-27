@@ -9,7 +9,7 @@ pub(crate) mod evidence;
 pub(crate) mod execution;
 mod freshness;
 pub(crate) mod guard;
-mod install_notes;
+pub(crate) mod install_notes;
 pub(crate) mod inventory;
 pub(crate) mod inventory_maps;
 pub(crate) mod level_trees;

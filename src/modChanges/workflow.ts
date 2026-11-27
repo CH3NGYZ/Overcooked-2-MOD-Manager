@@ -121,7 +121,8 @@ function isStalePreparation(error: unknown) {
   return typeof message === 'string' && /^modChanges\.(?:inventoryChanged|targetChanged)(?:$|[?:：])/.test(message)
 }
 
-export function createChangeWorkflow(backend: ChangeBackend, publish: (state: ChangeWorkflowState | null) => void) {
+export function createChangeWorkflow(backend: ChangeBackend, publish: (state: ChangeWorkflowState | null) => void,
+  hasUnreadNotes = (plan: ChangePlan) => plan.install_notes.length > 0) {
   let generation = 0
   let current: ChangeWorkflowState | null = null
   let settle: ((value: ChangeExecutionResult | null) => void) | undefined
@@ -219,7 +220,7 @@ export function createChangeWorkflow(backend: ChangeBackend, publish: (state: Ch
         return
       }
       const routinePackage = !applyReview && mode === 'package' && !requireReview && canApplyPackage(request, prepared, previous)
-      if (!applyReview && (manifestOverwrite || (mode === 'package' ? !routinePackage || prepared.install_notes.length
+      if (!applyReview && (manifestOverwrite || (mode === 'package' ? !routinePackage || hasUnreadNotes(prepared)
         : changed || hasPackages || prepared.untracked_overwrites?.length))) {
         update({ phase: 'reconfirming', plan: prepared, error: null,
           applyReview: mode !== 'package' && prepared.plan_id !== initialPlanId ? 'changed' : 'prepared',

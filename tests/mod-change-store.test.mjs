@@ -65,6 +65,96 @@ test('a map scan publishing just after the evaluation loop exits cannot lose its
 const plan=(id='initial',prepared=false,install_notes=[])=>({plan_id:id,prepared,status:'ready',nodes:[],roots:[],actions:[],evaluations:[],blockers:[],impacts:[],install_notes})
 const note={id:'github-beta',name:'Arcade Beta',name_i18n:{},note:'Read the beta instructions.',note_i18n:{}}
 const readCurrentNotes=(store)=>store.acceptInstallNotes(store.installNotes.value,store.state.value.plan.plan_id,!!store.state.value.noteOnlyReview)
+const packageRequest={roots:[{node_id:'mod:root',candidate_id:'release:root:v2',enabled:true}]}
+const packageRelease={name:'Arcade Beta',installedTag:'v1',releases:[{tag:'v2',body:'Release changes.',prerelease:true}]}
+const rootAction={node_id:'mod:root',kind:'upgrade',from_candidate_id:'release:root:v1',from_tag:'v1',to_candidate_id:'release:root:v2'}
+const packagePlan=(prepared,notes,actions=[rootAction])=>({...plan('package',prepared,notes),roots:[{node_id:'mod:root'}],actions})
+
+test('package review claims one slot during note lookup and leave, and cancellation never plans',async()=>{
+ const store=useModChanges(),calls=[],lookup=deferred()
+ globalThis.__changeStoreApi=async(name)=>{calls.push(name);assert.fail(`Unapproved IPC: ${name}`)}
+ const pending=store.reviewPackage(packageRelease,()=>lookup.promise)
+ assert.equal(store.packageReview.value,null)
+ await assert.rejects(store.reviewPackage(packageRelease),/modChanges\.busy/)
+ await assert.rejects(store.run(packageRequest),/modChanges\.busy/)
+ lookup.resolve(note);await tick()
+ assert.equal(store.packageReview.value.show,true)
+ store.finishPackageReview()
+ assert.equal(store.packageReview.value.show,true)
+ store.closePackageReview(null)
+ assert.equal(store.packageReview.value.show,false)
+ await assert.rejects(store.run(packageRequest),/modChanges\.busy/)
+ await assert.rejects(store.reviewPackage(packageRelease),/modChanges\.busy/)
+ assert.deepEqual(calls,[])
+ store.finishPackageReview()
+ assert.equal(await pending,null)
+ assert.equal(store.packageReview.value,null)
+ assert.deepEqual(await store.reviewPackage(),[])
+})
+
+test('localized root acknowledgment waits for close and prevents a second routine package window',async t=>{
+ const store=useModChanges(),calls=[],preparationDone=deferred()
+ const locale=i18n.global.locale,previousLocale=locale.value
+ t.after(()=>{locale.value=previousLocale})
+ locale.value='zh-CN'
+ const localized={...note,name_i18n:{'zh-CN':'街机测试版'},note_i18n:{'zh-CN':'阅读新的测试版说明。'}}
+ const consent=[{id:note.id,name:'街机测试版',text:'阅读新的测试版说明。'}]
+ globalThis.__changeStoreApi=async(name)=>{
+   calls.push(name)
+   if(name==='planModChanges')return packagePlan(false,[localized])
+   if(name==='prepareModChanges')return preparationDone.promise
+   if(name==='executeModChanges')return {ok:true,message:''}
+   assert.fail(`Unexpected IPC: ${name}`)
+ }
+ const review=store.reviewPackage(packageRelease,async()=>localized)
+ const pending=review.then(reviewed=>reviewed===null?null:store.run(packageRequest,reviewed))
+ await tick();assert.deepEqual(store.packageReviewNotes.value,consent)
+ store.closePackageReview([{...consent[0],text:note.note}])
+ assert.equal(store.packageReview.value.show,true)
+ store.closePackageReview(consent);await tick()
+ assert.equal(store.packageReview.value.show,false)
+ assert.deepEqual(calls,[])
+ store.finishPackageReview()
+ assert.deepEqual(await review,consent)
+ await tick()
+ assert.equal(store.state.value.phase,'preparing')
+ assert.deepEqual(calls,['planModChanges','prepareModChanges'])
+ preparationDone.resolve(packagePlan(true,[localized]));await tick()
+ assert.equal(store.packageReview.value,null)
+ assert.deepEqual(store.installNotes.value,[])
+ assert.equal(store.state.value,null,'no additional approval window for an already acknowledged routine update')
+ assert.deepEqual(calls,['planModChanges','prepareModChanges','executeModChanges'])
+ assert.equal((await pending).ok,true)
+})
+
+test('later dependency and revised root instructions survive preflight consent; overwrite still needs explicit approval',async()=>{
+ const store=useModChanges(),calls=[]
+ const amended={...note,note:'Please read the revised beta instructions.'}
+ const dependency={...note,id:'dependency',name:'Web',note:'New prerequisite instructions.'}
+ const action={node_id:'mod:dep',kind:'install',to_candidate_id:'release:dep:v1',reason_details:[{kind:'required_by',related_node_ids:['mod:root']}]}
+ const acknowledged=[{id:note.id,name:note.name,text:note.note}]
+ const afterPrepare={...packagePlan(true,[note,amended,dependency],[rootAction,action]),
+   untracked_overwrites:[{node_id:'mod:root',path:'BepInEx/plugins/Arcade.dll'}]}
+ globalThis.__changeStoreApi=async(name)=>{
+   calls.push(name)
+   if(name==='planModChanges')return packagePlan(false,[note])
+   if(name==='prepareModChanges')return afterPrepare
+   if(name==='executeModChanges')return {ok:true,message:''}
+   assert.fail(`Unexpected IPC: ${name}`)
+ }
+ const pending=store.run(packageRequest,acknowledged);await tick()
+ assert.equal(store.state.value.phase,'reconfirming')
+ assert.deepEqual(store.installNotes.value.map(({text})=>text),[amended.note,dependency.note])
+ assert.deepEqual(store.state.value.plan.untracked_overwrites,afterPrepare.untracked_overwrites)
+ await store.confirm()
+ assert.deepEqual(calls,['planModChanges','prepareModChanges'])
+ await readCurrentNotes(store)
+ assert.equal(store.state.value.phase,'reconfirming')
+ assert.deepEqual(calls,['planModChanges','prepareModChanges'])
+ await store.confirm()
+ assert.equal((await pending).ok,true)
+ assert.deepEqual(calls,['planModChanges','prepareModChanges','executeModChanges'])
+})
 
 test('pending plan and its first-install note both block preparation until explicit approval',async()=>{
  const planned=deferred(),calls=[]

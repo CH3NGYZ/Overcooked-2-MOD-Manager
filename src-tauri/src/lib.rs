@@ -287,6 +287,7 @@ pub fn run() {
         })
         .invoke_handler(audited_handler![
             commands::mod_changes::evaluate_mod_changes,
+            commands::mod_changes::preview_mod_install_note,
             commands::mod_changes::plan_mod_changes,
             commands::mod_changes::prepare_mod_changes,
             commands::mod_changes::execute_mod_changes,

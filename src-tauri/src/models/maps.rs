@@ -256,6 +256,7 @@ pub(crate) fn default_snapshot_schema_version() -> u32 {
 pub struct MapInfo {
     #[serde(default)]
     pub release_derived: bool,
+    pub shared_release_notes: bool,
     pub id: String,
     #[serde(default)]
     pub map_identity: String,

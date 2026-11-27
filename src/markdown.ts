@@ -114,20 +114,21 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
 
 const markdownStructure = new MarkdownIt({ html: true })
 
-export function markdownHeadingSections(source: string): { heading: string; body: string }[] {
+export function markdownHeadingSections(source: string, depth: 1 | 2 = 1): { heading: string; body: string }[] {
   const tokens = markdownStructure.parse(source, {})
   const headings = tokens.flatMap((token, index) => {
-    if (token.type !== 'heading_open' || token.tag !== 'h1' || token.level !== 0 || !token.map) return []
+    if (token.type !== 'heading_open' || token.level !== 0 || !token.map
+      || (token.tag !== 'h1' && (depth !== 2 || token.tag !== 'h2'))) return []
     const heading = tokens[index + 1]?.children?.map(child =>
       child.type === 'softbreak' || child.type === 'hardbreak' ? ' ' : child.content,
     ).join('') ?? ''
-    return [{ heading, start: token.map[0], end: token.map[1] }]
+    return [{ heading, tag: token.tag, start: token.map[0], end: token.map[1] }]
   })
   const lines = source.split(/\r\n?|\n/)
-  return headings.map(({ heading, end }, index) => ({
+  return headings.flatMap(({ heading, tag, end }, index) => tag !== `h${depth}` ? [] : [{
     heading,
     body: lines.slice(end, headings[index + 1]?.start).join('\n'),
-  }))
+  }])
 }
 
 /** 把 Markdown 渲染成 HTML 字符串。 */

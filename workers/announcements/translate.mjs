@@ -48,7 +48,7 @@ export async function translateNotice(env, input) {
   let response
   try {
     response = await fetch(endpoint, {
-      method: 'POST', redirect: 'error', signal,
+      method: 'POST', redirect: 'manual', signal,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({ model, messages: [{ role: 'system', content: prompt }, { role: 'user', content: JSON.stringify(input) }] }),
     })

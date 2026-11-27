@@ -185,7 +185,7 @@ test('authenticated translation is opt-in and returns exactly the requested cano
   const upstream = t.mock.method(globalThis, 'fetch', async (url, init) => {
     assert.equal(String(url), translationEnv.NOTICE_TRANSLATION_ENDPOINT)
     assert.equal(init.method, 'POST')
-    assert.equal(init.redirect, 'error')
+    assert.equal(init.redirect, 'manual')
     assert.equal(init.headers.Authorization, `Bearer ${translationEnv.NOTICE_TRANSLATION_API_KEY}`)
     assert.ok(init.signal instanceof AbortSignal)
     const payload = JSON.parse(init.body)
@@ -281,6 +281,7 @@ test('translation reports only the failure stage and upstream status, never prov
   const valid = { en: { title: 'Notice', body: 'Body' }, 'zh-TW': { title: '標題', body: '正文' } }
   const warn = t.mock.method(console, 'warn', () => {})
   const providerStatuses = [400, 401, 403, 404, 429, 502, 504]
+  const redirectStatuses = [302, 307, 308]
   const invalidResponses = [
     () => new Response('x'.repeat(131073)),
     () => Response.json({ choices: [{ message: { content: '```json\n{}\n```' } }] }),
@@ -296,11 +297,16 @@ test('translation reports only the failure stage and upstream status, never prov
     const result = await postTranslation(translationEnv)
     assert.equal(result.status, status)
     assert.equal(result.headers.get('Cache-Control'), 'no-store')
+    assert.equal(result.headers.get('Location'), null)
     assert.deepEqual(await result.json(), details)
     assert.deepEqual(warn.mock.calls.at(-1).arguments, ['notice_translation', details])
   }
   for (const status of providerStatuses) {
     upstream.mock.mockImplementation(async () => new Response('Provider-only detail', { status }))
+    await assertFailure(502, { error: 'translation_upstream_http', upstream_status: status })
+  }
+  for (const status of redirectStatuses) {
+    upstream.mock.mockImplementation(async () => Response.redirect('https://other.example.test/next', status))
     await assertFailure(502, { error: 'translation_upstream_http', upstream_status: status })
   }
   for (const makeResponse of invalidResponses) {
@@ -313,7 +319,7 @@ test('translation reports only the failure stage and upstream status, never prov
   upstream.mock.mockImplementation(async (_endpoint, { signal }) => signal.throwIfAborted())
   await assertFailure(504, { error: 'translation_timeout' })
   assert.deepEqual(timeout.mock.calls[0].arguments, [80_000])
-  assert.equal(upstream.mock.callCount(), providerStatuses.length + invalidResponses.length + 2)
+  assert.equal(upstream.mock.callCount(), providerStatuses.length + redirectStatuses.length + invalidResponses.length + 2)
   assert.equal(warn.mock.callCount(), upstream.mock.callCount())
 })
 

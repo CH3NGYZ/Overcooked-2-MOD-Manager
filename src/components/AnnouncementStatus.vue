@@ -49,7 +49,7 @@ function refresh() {
     <p v-else-if="announcementSnapshot === null" role="status">{{ t('announcements.unavailable') }}</p>
     <p v-else-if="!announcementSnapshot.announcements.length">{{ t('announcements.empty') }}</p>
     <ol v-else ref="list" class="announcement-list" :aria-label="t('announcements.title')" tabindex="0" data-testid="announcement-list">
-      <li v-for="notice in announcementSnapshot.announcements" :key="notice.id">
+      <li v-for="notice in announcementSnapshot.announcements" :key="notice.id" class="announcement-card">
         <h3 :lang="notice.language">{{ notice.title }}</h3>
         <time :datetime="notice.published_at">{{ dateFormatter.format(new Date(notice.published_at)) }}</time>
         <p class="announcement-body" :lang="notice.language">{{ notice.body }}</p>
@@ -61,13 +61,16 @@ function refresh() {
 <style scoped>
 p { margin: 0; }
 .announcement-list {
+  display: grid; gap: 8px;
   max-height: min(230px, 47vh); overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
-  padding: 0 6px 0 0; margin: 0; list-style: none; overflow-wrap: anywhere;
+  padding: 0; padding-inline-end: 6px; margin: 0; list-style: none; overflow-wrap: anywhere;
 }
 .announcement-list:focus-visible { outline: 2px solid var(--oc2-accent); outline-offset: 2px; }
-li { border-top: 1px solid var(--oc2-rail-line); padding: 8px 0; }
-li:last-child { padding-bottom: 0; }
-h3 { margin: 0; font-size: 14px; color: var(--oc2-text-1); }
-time { color: var(--oc2-text-3); font-size: 11px; }
-.announcement-body { margin-top: 4px; white-space: pre-wrap; }
+.announcement-card {
+  min-width: 0; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--oc2-rail-line); background: var(--oc2-sunken);
+}
+.announcement-card h3 { margin: 0; font-size: 14px; line-height: 1.4; color: var(--oc2-text-1); }
+.announcement-card time { display: block; margin-top: 2px; font-size: 11px; line-height: 1.4; }
+.announcement-body { margin-top: 6px; font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
 </style>

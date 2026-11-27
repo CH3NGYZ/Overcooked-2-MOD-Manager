@@ -27,9 +27,11 @@ export function renderNotice(article, announcement, locale) {
 }
 
 export class NoticeRequestError extends Error {
-  constructor(status) {
+  constructor(status, details) {
     super(`Announcement request failed: HTTP ${status}`)
     this.status = status
+    this.code = details?.error
+    this.upstreamStatus = details?.upstream_status
   }
 }
 
@@ -40,7 +42,11 @@ export async function requestNoticeJson(path, mutation, { timeout = 10_000, sign
     signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
     ...(mutation && { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(mutation) }),
   })
-  if (response.status !== 200) throw new NoticeRequestError(response.status)
+  if (response.status !== 200) {
+    const details = response.headers.get('Content-Type')?.startsWith('application/json')
+      ? await response.json().catch(() => null) : null
+    throw new NoticeRequestError(response.status, details)
+  }
   return response.json()
 }
 

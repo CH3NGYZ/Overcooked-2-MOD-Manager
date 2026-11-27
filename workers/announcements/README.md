@@ -25,6 +25,8 @@
 | `NOTICE_TRANSLATION_API_KEY` | Secret | 该端点的 Bearer API 密钥 |
 | `NOTICE_TRANSLATION_MODEL` | 文本，可省略 | 默认 `gpt-6.2-sol`；端点必须实际支持该模型 ID，可改为供应商接受的名称 |
 
+[OpenCode Go](https://opencode.ai/docs/go/#where-can-i-use-it) 的文本接口面向编程客户端，不用于本后台；检测到 Go 端点时停用自动生成，不向供应商发请求，也不自动切换计费。请选择允许公告翻译的通用 Chat Completions API。[OpenCode Console 按量接口](https://opencode.ai/docs/console/api/inference/)与 Go 套餐独立计费，地址为 `https://opencode.ai/inference/openai/v1/chat/completions`（无 `/go`），可用文档列出的 `glm-5.3`；使用前需确认工作区密钥、余额和用途符合供应商要求。
+
 应用后台 Worker 设置后重新读取编辑器。端点／密钥未配时仍可手动编辑。点击「生成缺少的译文」时，后台一次发送原文标题、正文和所有空白目标语言，最多生成 11 种译文（另 1 种为原文）。提示词按本次目标语言生成 JSON 示例，要求用实际译文替换空值。例如只缺 `en`、`zh-TW` 时，模型应返回：
 
 ```json
@@ -32,6 +34,8 @@
 ```
 
 后台从 `choices[0].message.content` 解析 JSON，校验语言码集合、标题和正文。多出、缺少语言或照抄空值都会拒绝，不改变草稿。不会随输入自动请求，也不会自动重试、写入公告或发布。调用可能计费，限时 80 秒。
+
+失败时编辑器会区分无法连接、上游 HTTP 错误、译文格式错误和超时。实时日志中可按 `notice_translation` 查失败类型及上游 HTTP 状态，不记录原文、密钥、上游响应正文或端点。
 
 ## 本地检查
 
@@ -57,7 +61,7 @@ curl.exe -isS --insecure --noproxy '*' --connect-to oc2modmanager-notice-admin.c
 
 ## 已上线环境更新代码
 
-已上线的两个 Worker 不需要再建 D1、跑迁移或关联域名。先按本地检查验收并核对 `whoami`、现网部署、域名和两端共同的 `DB`。从本次提交导出一份部署副本，仅在副本填现有 D1 ID，使用固定 Wrangler 版本：
+已上线的两个 Worker 不需要再建 D1、跑迁移或关联域名。先按本地检查验收并核对 `whoami`、现网部署、域名和两端共同的 `DB`。从本次提交导出一份部署副本，仅在副本填现有 D1 ID。确认**最近上传的版本就是当前承接 100% 流量的版本**时，使用固定 Wrangler 版本：
 
 ```powershell
 npx wrangler@4.162.0 versions upload --keep-vars --strict --config <部署副本配置>
@@ -65,7 +69,9 @@ npx wrangler@4.162.0 versions view <上传返回的版本ID> --config <部署副
 npx wrangler@4.162.0 versions deploy <已核对的版本ID>@100% --config <部署副本配置>
 ```
 
-切流前确认该候选属于对应 Worker、D1 不变，后台现有 `ADMIN_EMAIL` 和翻译设置均保留；不要复制含密钥的配置或原始输出。切流后回读 `deployments status`。仅更新代码时不要运行 `triggers deploy`、普通 `deploy` 或远程迁移。
+如果最近上传的版本与生产版不同，不要用 `--keep-vars` 从最近上传的版本继承。用 [Workers Versions API](https://developers.cloudflare.com/api/resources/workers/subresources/beta/subresources/workers/subresources/versions/methods/create/) 只上传候选，给每个 `inherit` 绑定指定当前生产版的 `version_id`。配置来源不明确时不要切流。
+
+切流前确认候选属于对应 Worker、D1 不变，后台现有 `ADMIN_EMAIL` 和翻译设置均保留；不要复制含密钥的配置或原始输出。切流后回读 `deployments status`。仅更新代码时不要运行 `triggers deploy`、普通 `deploy` 或远程迁移。
 
 ## 首次上线顺序（仅新环境）
 

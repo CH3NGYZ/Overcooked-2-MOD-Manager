@@ -19,6 +19,7 @@ const encoder = new TextEncoder()
 const available = Object.keys(LOCALE_LABELS)
 const emptyText = Object.freeze({ title: '', body: '' })
 const versionLabels = { source: '原文', ready: '已翻译', partial: '待补全', missing: '缺译' }
+const goUnsupported = 'OpenCode Go 的文本模型面向编程客户端，不支持当前公告后台。请在 Worker 设置中改用 OpenCode Console 按量接口或其他通用翻译 API。'
 
 const versions = new Map(available.map(code => {
   const label = document.createElement('label')
@@ -207,6 +208,7 @@ function renderTranslationControls() {
     : translationJob ? '可以继续编辑。生成结果不会覆盖已有译文，也不会自动发布。'
     : translationResult?.message ?? (translationService === undefined ? '正在检查翻译服务…'
       : translationService === null ? '未能检查翻译服务，请重新读取。'
+      : translationService.error === 'translation_opencode_go_unsupported' ? goUnsupported
       : !translationService.enabled ? '未配置翻译服务。请在后台 Worker 设置 API 地址和密钥。'
       : !validSource ? '填完原文的标题和正文后可生成译文。'
       : !missing ? '已无空白语言。未完成的译文可手动补全。'
@@ -227,6 +229,32 @@ function markTranslationEdit(code) {
   if (!translationJob) return
   if (code === translationJob.language) translationJob.sourceChanged = true
   else translationJob.targets.delete(code)
+}
+
+function translationErrorMessage(error) {
+  if (error.code === 'translation_opencode_go_unsupported') return goUnsupported
+  if (error.code === 'translation_connection') return '无法连接翻译服务。请检查 HTTPS 地址是否可直接访问、无需重定向。'
+  if (error.code === 'translation_invalid_result') return '翻译服务返回的译文不完整或格式不符，未填入草稿。请检查模型是否能返回完整 JSON。'
+  const upstream = error.upstreamStatus
+  if (error.code === 'translation_upstream_http' && Number.isInteger(upstream) && upstream >= 300 && upstream < 600) {
+    const hints = {
+      400: '请检查模型和 Chat Completions 接口是否匹配。',
+      401: '请检查密钥是否有效、是否属于该端点。',
+      402: '请检查余额或计费状态。',
+      403: '请检查套餐、模型权限及地区设置。',
+      404: '请检查完整 API 地址和模型 ID。',
+      429: '请检查服务额度或稍后重试。',
+    }
+    return `翻译服务拒绝了请求（上游 HTTP ${upstream}）。${hints[upstream] ?? '请查看供应商状态或稍后重试。'}`
+  }
+  const messages = {
+    400: '无法生成译文。请检查原文标题、正文和字节数。',
+    403: '没有生成译文的权限，请重新登录。',
+    429: '后台请求过于频繁，请稍后重试。',
+    503: '翻译服务不可用，请检查后台 Worker 配置。',
+    504: '翻译服务响应超时，请重试。',
+  }
+  return messages[error.status] ?? '未能生成译文，已保留现有文案。请稍后重试。'
 }
 
 async function generateTranslations() {
@@ -261,13 +289,7 @@ async function generateTranslations() {
     translationResult = { message: count ? `已填入 ${count} 种译文。请审核后再保存。` : '没有填入新译文，已保留手动编辑的内容。' }
   } catch (error) {
     if (translationJob !== job) return
-    const messages = {
-      400: '无法生成译文。请检查原文标题、正文和字节数。',
-      403: '没有生成译文的权限，请重新登录。',
-      503: '翻译服务不可用，请检查后台 Worker 配置。',
-      504: '翻译服务响应超时，请重试。',
-    }
-    translationResult = { error: true, message: messages[error.status] ?? '未能生成译文，已保留现有文案。请稍后重试。' }
+    translationResult = { error: true, message: translationErrorMessage(error) }
   } finally {
     if (translationJob === job) {
       translationJob = null

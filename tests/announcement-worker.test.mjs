@@ -202,7 +202,7 @@ test('authenticated translation is opt-in and returns exactly the requested cano
   })
   const off = await getAdmin({ ADMIN_EMAIL: email }, ctx, translatePath)
   assert.equal(off.status, 200)
-  assert.deepEqual(await off.json(), { enabled: false, model: 'gpt-6.2-sol' })
+  assert.deepEqual(await off.json(), { enabled: false, model: 'gpt-6.2-sol', error: 'translation_unavailable' })
   const on = await getAdmin(translationEnv, ctx, translatePath)
   assert.equal(on.status, 200)
   assert.deepEqual(await on.json(), { enabled: true, model: 'gpt-6.2-sol' })
@@ -261,31 +261,60 @@ test('invalid or unauthorized translation requests never contact the provider', 
   assert.equal(upstream.mock.callCount(), 0)
 })
 
-test('translation never exposes provider errors or partial, extra, oversized, or malformed results', async t => {
+test('OpenCode Go text inference is unavailable without using its coding agent plan or changing billing', async t => {
+  const model = 'deepseek-v4.1-flash'
+  const endpoint = 'https://opencode.ai/inference/go/openai/v1/chat/completions'
+  const env = { ...translationEnv, NOTICE_TRANSLATION_ENDPOINT: endpoint, NOTICE_TRANSLATION_MODEL: model }
+  const upstream = t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 403 }))
+  const status = await getAdmin(env, ctx, translatePath)
+  assert.equal(status.status, 200)
+  assert.deepEqual(await status.json(), { enabled: false, model, error: 'translation_opencode_go_unsupported' })
+  const failure = await postTranslation(env)
+  assert.equal(failure.status, 503)
+  assert.deepEqual(await failure.json(), { error: 'translation_opencode_go_unsupported' })
+  assert.equal(upstream.mock.callCount(), 0)
+  const paidEnv = { ...env, NOTICE_TRANSLATION_ENDPOINT: 'https://opencode.ai/inference/openai/v1/chat/completions' }
+  assert.deepEqual(await (await getAdmin(paidEnv, ctx, translatePath)).json(), { enabled: true, model })
+})
+
+test('translation reports only the failure stage and upstream status, never provider details or incomplete translations', async t => {
   const valid = { en: { title: 'Notice', body: 'Body' }, 'zh-TW': { title: '標題', body: '正文' } }
+  const warn = t.mock.method(console, 'warn', () => {})
+  const providerStatuses = [400, 401, 403, 404, 429, 502, 504]
   const invalidResponses = [
-    () => new Response('Provider-only detail', { status: 401 }),
     () => new Response('x'.repeat(131073)),
     () => Response.json({ choices: [{ message: { content: '```json\n{}\n```' } }] }),
+    () => Response.json({ choices: [{ message: { content: 'response started' }, finish_reason: 'length' }] }),
     () => completion({ en: valid.en }),
     () => completion({ ...valid, 'zh-CN': valid['zh-TW'] }),
     () => completion({ en: { title: '', body: '' }, 'zh-TW': { title: '', body: '' } }),
     () => completion({ ...valid, en: { ...valid.en, body: 'a'.repeat(1537) } }),
     () => completion({ ...valid, en: { ...valid.en, extra: 'x' } }),
   ]
-  const upstream = t.mock.method(globalThis, 'fetch', async () => invalidResponses.shift()())
-  while (invalidResponses.length) {
-    const response = await postTranslation(translationEnv)
-    assert.equal(response.status, 502)
-    assert.deepEqual(await response.json(), { error: 'translation_failed' })
+  const upstream = t.mock.method(globalThis, 'fetch')
+  async function assertFailure(status, details) {
+    const result = await postTranslation(translationEnv)
+    assert.equal(result.status, status)
+    assert.equal(result.headers.get('Cache-Control'), 'no-store')
+    assert.deepEqual(await result.json(), details)
+    assert.deepEqual(warn.mock.calls.at(-1).arguments, ['notice_translation', details])
   }
-  assert.equal(upstream.mock.callCount(), 8)
+  for (const status of providerStatuses) {
+    upstream.mock.mockImplementation(async () => new Response('Provider-only detail', { status }))
+    await assertFailure(502, { error: 'translation_upstream_http', upstream_status: status })
+  }
+  for (const makeResponse of invalidResponses) {
+    upstream.mock.mockImplementation(async () => makeResponse())
+    await assertFailure(502, { error: 'translation_invalid_result' })
+  }
+  upstream.mock.mockImplementation(async () => { throw new Error('Provider-only connection detail') })
+  await assertFailure(502, { error: 'translation_connection' })
   const timeout = t.mock.method(AbortSignal, 'timeout', () => AbortSignal.abort())
-  upstream.mock.mockImplementation(async (_url, { signal }) => signal.throwIfAborted())
-  const response = await postTranslation(translationEnv)
-  assert.equal(response.status, 504)
-  assert.deepEqual(await response.json(), { error: 'translation_timeout' })
+  upstream.mock.mockImplementation(async (_endpoint, { signal }) => signal.throwIfAborted())
+  await assertFailure(504, { error: 'translation_timeout' })
   assert.deepEqual(timeout.mock.calls[0].arguments, [80_000])
+  assert.equal(upstream.mock.callCount(), providerStatuses.length + invalidResponses.length + 2)
+  assert.equal(warn.mock.callCount(), upstream.mock.callCount())
 })
 
 test('malformed, oversized, invalid Unicode and partially translated content never changes D1', async t => {

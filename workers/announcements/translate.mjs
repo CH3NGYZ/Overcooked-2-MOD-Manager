@@ -18,31 +18,48 @@ function configuration(env) {
   const apiKey = typeof env.NOTICE_TRANSLATION_API_KEY === 'string' && env.NOTICE_TRANSLATION_API_KEY.trim()
   try {
     const endpoint = new URL(env.NOTICE_TRANSLATION_ENDPOINT)
-    if (endpoint.protocol === 'https:' && !endpoint.username && !endpoint.password && !endpoint.hash && apiKey) {
-      return { endpoint, apiKey, model }
+    if (endpoint.protocol === 'https:' && !endpoint.username && !endpoint.password && !endpoint.hash) {
+      if (endpoint.hostname === 'opencode.ai' && /^\/inference\/go(?:\/|$)/.test(endpoint.pathname)) {
+        return { model, error: 'translation_opencode_go_unsupported' }
+      }
+      if (apiKey) return { endpoint, apiKey, model }
     }
   } catch {}
-  return { model }
+  return { model, error: 'translation_unavailable' }
 }
 
 export function translationStatus(env) {
-  const { endpoint, model } = configuration(env)
-  return { enabled: !!endpoint, model }
+  const { endpoint, model, error } = configuration(env)
+  return { enabled: !!endpoint, model, error }
+}
+
+function translationFailure(error, status, upstreamStatus) {
+  const details = { error, ...(upstreamStatus && { upstream_status: upstreamStatus }) }
+  console.warn('notice_translation', details)
+  return json(details, { status })
 }
 
 export async function translateNotice(env, input) {
-  const { endpoint, apiKey, model } = configuration(env)
-  if (!endpoint) return json({ error: 'translation_unavailable' }, { status: 503 })
+  const { endpoint, apiKey, model, error } = configuration(env)
+  if (!endpoint) return json({ error }, { status: 503 })
   const example = { translations: Object.fromEntries(input.targets.map(locale => [locale, { title: '', body: '' }])) }
   const prompt = `${PROMPT}\n${JSON.stringify(example)}`
   const signal = AbortSignal.timeout(TIMEOUT_MS)
+  let response
   try {
-    const response = await fetch(endpoint, {
+    response = await fetch(endpoint, {
       method: 'POST', redirect: 'error', signal,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({ model, messages: [{ role: 'system', content: prompt }, { role: 'user', content: JSON.stringify(input) }] }),
     })
-    if (!response.ok) return json({ error: 'translation_failed' }, { status: 502 })
+  } catch {
+    return signal.aborted ? translationFailure('translation_timeout', 504) : translationFailure('translation_connection', 502)
+  }
+  if (!response.ok) {
+    void response.body?.cancel().catch(() => {})
+    return translationFailure('translation_upstream_http', 502, response.status)
+  }
+  try {
     const choices = (await readJson(response, NOTICE_LIMITS.payloadBytes))?.choices
     const completion = Array.isArray(choices) ? choices[0] : null
     if (typeof completion?.message?.content === 'string' && (completion.finish_reason == null || completion.finish_reason === 'stop')) {
@@ -50,7 +67,7 @@ export async function translateNotice(env, input) {
       if (result) return json(result)
     }
   } catch {
-    if (signal.aborted) return json({ error: 'translation_timeout' }, { status: 504 })
+    if (signal.aborted) return translationFailure('translation_timeout', 504)
   }
-  return json({ error: 'translation_failed' }, { status: 502 })
+  return translationFailure('translation_invalid_result', 502)
 }

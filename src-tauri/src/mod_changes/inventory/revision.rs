@@ -1,7 +1,7 @@
 use crate::{
     app_state::AppState,
     level_sets,
-    models::{AppConfig, ModDownloadMode, ModRepositoryConfig, ReleaseInfo},
+    models::{AppConfig, ModDownloadMode, ModRepositoryConfig, ReleaseInfo, ReplacedModRepository},
     releases::repository_cache_key,
 };
 use sha2::{Digest, Sha256};
@@ -45,8 +45,18 @@ pub(in crate::mod_changes) fn replan_scope(
         repository.last_error = None;
     }
     settings.staged_release_cache.clear();
-    hash.update(serde_json::to_vec(&settings).map_err(|_| "modChanges.targetChanged")?);
+    hash.update(settings_bytes(&settings)?);
     Ok(format!("{:x}", hash.finalize()))
+}
+
+fn settings_bytes(config: &AppConfig) -> Result<Vec<u8>, String> {
+    let replacements: Vec<(&str, &[ReplacedModRepository])> = config
+        .repositories
+        .iter()
+        .filter(|repo| repo.replaces_revision.is_some() && !repo.replaces.is_empty())
+        .map(|repo| (repo.id.as_str(), repo.replaces.as_slice()))
+        .collect();
+    serde_json::to_vec(&(config, replacements)).map_err(|_| "modChanges.targetChanged".into())
 }
 
 pub(crate) fn revision(
@@ -128,9 +138,7 @@ pub(in crate::mod_changes) fn revision_for_disk(
     normalize_cache_metadata(&mut config);
     let mut hash = DefaultHasher::new();
     disk.hash(&mut hash);
-    serde_json::to_vec(&config)
-        .map_err(|_| "modChanges.targetChanged")?
-        .hash(&mut hash);
+    settings_bytes(&config)?.hash(&mut hash);
     Ok(format!("{:016x}", hash.finish()))
 }
 

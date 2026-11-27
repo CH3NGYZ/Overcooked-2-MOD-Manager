@@ -124,6 +124,7 @@ fn reconcile_local_mods(state: &AppState, mut installed: Vec<InstalledMod>) -> V
                 installed.iter().any(|item| {
                     item.repository_id.as_deref() == Some(repo.id.as_str())
                         || item.repository_ids.contains(&repo.id)
+                        || item.replacement_repository_id.as_deref() == Some(repo.id.as_str())
                 })
             })
             .map(|repo| {

@@ -87,7 +87,7 @@ test('every shared data/refresh entry stays offline in tutorial and leaves real 
     requestMapSourcesStartupRefresh()
     await repositories.refreshOne({ id: 'real-repo' })
     await repositories.refreshMany([{ id: 'real-repo' }])
-    await repositories.refreshBoundRepositories([{ id: 'real-repo' }])
+    await repositories.refreshBoundRepositories()
     await repositories.refreshSource('real-source')
     await repositories.refreshSourceChain('real-source')
     await repositories.refreshSourceDocuments()

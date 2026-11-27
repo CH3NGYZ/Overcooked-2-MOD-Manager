@@ -1,6 +1,7 @@
 use super::*;
 
 mod declared_package;
+mod declared_replacement;
 
 #[test]
 fn real_manifest_scan_keeps_dll_metadata_but_selects_owner_repository_tag_first() {

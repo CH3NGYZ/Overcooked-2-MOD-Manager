@@ -109,6 +109,10 @@ pub(crate) fn scan_mods(
      * 只影响它自己那一行（占位成纯依赖）。
      */
     let workers = crate::concurrency::workers_from(config.mod_metadata_concurrency);
+    let twin_keys: HashSet<_> = twins
+        .iter()
+        .map(|path| manifest_dll_key(&canonical_dll_file(path, game)))
+        .collect();
     let mut installed =
         read_plugin_metadata(&plugins, paths, workers, |items, packages, map_info| {
             if let Some(scanned) = scanned_paths {
@@ -130,7 +134,13 @@ pub(crate) fn scan_mods(
             }
         })
         .into_iter()
-        .map(|(path, outcome)| inspect_dll(&path, &outcome, game, config, &manifests))
+        .map(|(path, outcome)| {
+            let mut item = inspect_dll(&path, &outcome, game, config, &manifests);
+            if twin_keys.contains(&manifest_dll_key(&item.dll_file)) {
+                item.repository_replacement_eligible = false;
+            }
+            item
+        })
         .collect::<Vec<_>>();
     annotate_package_counts(&mut installed);
     inherit_repository_from_sibling(&mut installed);
@@ -233,14 +243,14 @@ fn inspect_dll(
     let guid = details.guid.clone();
     let dll_file = canonical_dll_file(path, game);
     let manifest_key = manifest_dll_key(&dll_file);
-    let manifest = manifests
-        .iter()
-        .filter(|manifest| {
-            manifest
-                .files
-                .iter()
-                .any(|file| manifest_dll_key(file) == manifest_key)
-        })
+    let claims = manifests.iter().filter(|manifest| {
+        manifest
+            .files
+            .iter()
+            .any(|file| manifest_dll_key(file) == manifest_key)
+    });
+    let manifest = claims
+        .clone()
         .max_by(|left, right| left.installed_at.cmp(&right.installed_at));
     let repository_binding = manifest
         .and_then(|manifest| manifest.repository_binding.as_ref())
@@ -356,6 +366,22 @@ fn inspect_dll(
             && plugin_name.as_deref().is_none_or(str::is_empty),
         repository_ids,
         repository_binding: repository_binding.cloned(),
+        replacement_repository_id: None,
+        repository_replacement_eligible: manifest.zip(repository_binding).is_some_and(
+            |(manifest, binding)| {
+                let Ok(id) = uuid::Uuid::parse_str(&manifest.repository_id) else {
+                    return false;
+                };
+                binding.tag == manifest.release_tag
+                    && manifest.files.len() == 1
+                    && claims.count() == 1
+                    && manifests
+                        .iter()
+                        .filter(|record| uuid::Uuid::parse_str(&record.repository_id) == Ok(id))
+                        .count()
+                        == 1
+            },
+        ),
         package_id,
         bundled_with_dll: None,
         package_name,

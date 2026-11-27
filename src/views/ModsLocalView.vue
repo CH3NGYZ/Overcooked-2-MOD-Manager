@@ -17,10 +17,9 @@ import {
 import { levelSetSearchText, matchesLocalSearch, modSearchText } from '../localItemSearch'
 import { mapForLevelSet } from '../levelSetStatus'
 import { api } from '../services/tauri'
-import { repositoryForMod } from '../modStatus'
+import { isReplacementRepository, repositoryForMod, updateRepositoryForMod } from '../modStatus'
 import { conflictRemovalTarget, dependencyRepairStatus, dependencyTagFor, isRelationCardKey, relationJumpTarget, type RelationStatus } from '../modRelations'
-import { modRepositoryIsAvailable } from '../repositoryAvailability'
-import { installedModTags } from '../statusTags'
+import { installedModTags, modUpdateVerdict } from '../statusTags'
 import {
   buildLocalModGroups,
   filterLocalModGroups,
@@ -164,7 +163,7 @@ const {
  *   · 这里是「我这几个 MOD 有没有新版」，只关心它们各自绑定的仓库。
  *
  * 走引擎的 `refreshBoundRepositories`，不在页面里自己拼一批仓库去刷：
- * 它负责强制绕过 5 分钟 Release 缓存、维护共享的批次态 `checkingBound`，
+ * 它负责重新读取目录、维护共享的批次态 `checkingBound`，
  * 并在批量结束后统一重扫本地 MOD。页面自己拼批次，就会出现「这个页在转、
  * 那个页不转」—— 谁发起请求决定了别的页面看到什么。
  *
@@ -173,40 +172,15 @@ const {
  */
 async function checkUpdates() {
   if (checkingBound.value || refreshingAll.value) return
-  /*
-   * 收集「当前地区可见、且确实有本地 MOD 绑定」的仓库。
-   *
-   * 三点约束：
-   *   · 用 `modRepositoryIsAvailable` 而不是只看 enabled —— 地区不适用等于
-   *     该仓库不存在，不能给它发请求（否则会报「不属于当前下载渠道」）；
-   *   · 跳过 RAW 模式：它没有 Release 可查（引擎入口内部也会跳过，
-   *     这里先滤掉避免无意义的排队）；
-   *   · 同一仓库只刷一次：多个 MOD 常来自同一个仓库（同一个包里的多个 DLL）。
-   */
-  const region = config.value?.region
-  const platform = config.value?.platform
-  const sources = config.value?.repository_sources
-  const targets = new Map<string, ModRepository>()
-  for (const mod of effectiveMods.value) {
-    if (mod.is_dependency) continue
-    const repo = repositoryForMod(repositories.value, mod)
-    if (!repo) continue
-    if (!modRepositoryIsAvailable(repo, sources, region, platform)) continue
-    if (repo.download_mode === 'repository_file') continue
-    targets.set(repo.id, repo)
-  }
-
-  if (!targets.size) {
-    message.warning(t('overview.noInstalledModIsBoundToAnAvailableOnlineRepository'))
-    return
-  }
-  void api.writeFrontendLog('info',
-    `检查更新：匹配到 ${targets.size} 个仓库（已安装 MOD 共 ${effectiveMods.value.length} 个）`)
-
   try {
-    // 批次态（按钮转不转、可否再点）与批次结果都由引擎维护，页面不另存一份
-    const summary = await refreshBoundRepositories([...targets.values()])
+    const summary = await refreshBoundRepositories()
+    void api.writeFrontendLog('info',
+      `检查更新：匹配到 ${summary.targets} 个仓库（已安装 MOD 共 ${effectiveMods.value.length} 个）`)
     summary.errors.forEach((error) => message.error(error))
+    if (!summary.errors.length && !summary.targets) {
+      message.warning(t('overview.noInstalledModIsBoundToAnAvailableOnlineRepository'))
+      return
+    }
     /*
      * 检查结果通过共享文案汇报：
      * 同一批数据在两处永远说同一句话。
@@ -553,7 +527,7 @@ function statusSummary(mod: InstalledMod) {
 
 /** 该 MOD 绑定仓库的 id（优先安装清单，其次身份绑定），用于卡片的跨页定位。 */
 function bindingRepositoryId(mod: InstalledMod): string | undefined {
-  return repositoryForMod(repositories.value, mod)?.id
+  return updateRepositoryForMod(repositories.value, mod)?.id
 }
 
 /**
@@ -571,6 +545,7 @@ function bindingRepositoryId(mod: InstalledMod): string | undefined {
 function actionContext(labels: readonly string[] | undefined, mod: InstalledMod, conflictMod?: InstalledMod): {
   action: StatusActionSpec
   repository?: ModRepository
+  releaseTag?: string
   /** 冲突要卸载的目标：可能是别的 MOD，不一定是当前这张卡片。 */
   conflictMod?: InstalledMod
 } | undefined {
@@ -579,7 +554,7 @@ function actionContext(labels: readonly string[] | undefined, mod: InstalledMod,
   const action = statusActionFor(labels, !!conflictMod)
   if (!action) return undefined
 
-  const repository = repositoryForMod(repositories.value, mod)
+  const repository = updateRepositoryForMod(repositories.value, mod)
   switch (action.kind) {
     case 'uninstall-duplicate':
       // A package's aggregated label must not target a different member.
@@ -587,6 +562,11 @@ function actionContext(labels: readonly string[] | undefined, mod: InstalledMod,
     case 'update':
       // 没有仓库或 RAW 仓库：点下去只会下载一份和本地一样的文件
       if (!repository || repository.download_mode === 'repository_file') return undefined
+      if (isReplacementRepository(mod, repository)) {
+        const verdict = modUpdateVerdict(mod, repositories.value)
+        return verdict.known && verdict.source === 'release' && verdict.updateAvailable
+          ? { action, repository, releaseTag: verdict.tag } : undefined
+      }
       return { action, repository }
     case 'refresh':
       // 刷新针对仓库而不是某个 DLL，解析不出仓库就不给按钮
@@ -616,7 +596,8 @@ const actionByDll = computed<Record<string, StatusActionSpec>>(() => {
 
 /** 包标题的快捷动作：用包对外公开的状态集合判断。 */
 function packageAction(pkg: ModPackageNode) {
-  const base = pkg.coreMods.find(mod => repositoryForMod(repositories.value, mod)) ?? pkg.coreMods[0]
+  const base = pkg.coreMods.find(mod => mod.update_available && bindingRepositoryId(mod))
+    ?? pkg.coreMods.find(bindingRepositoryId) ?? pkg.coreMods[0]
   if (!base) return undefined
   // Only member cards can unambiguously identify the duplicate DLL to remove.
   const keys = pkg.statuses.map(entry => entry.key).filter(key => key !== 'duplicate_lower_version')
@@ -638,7 +619,7 @@ function runCardAction(mod: InstalledMod) {
   if (context.action.kind === 'uninstall-duplicate') {
     removeOlderCopy(mod)
   } else if (context.action.kind === 'update' && context.repository) {
-    void previewModRepository(context.repository)
+    void previewModRepository(context.repository, context.releaseTag)
   } else if (context.action.kind === 'uninstall-conflict' && context.conflictMod) {
     // 冲突目标是对方 MOD；复用右侧垃圾桶的完整确认、整包确认、忙碌与刷新流程。
     remove(context.conflictMod)
@@ -669,7 +650,7 @@ function runPackageAction(pkg: ModPackageNode) {
     remove(context.conflictMod)
     return
   }
-  if (context.repository && context.action.kind === 'update') void previewModRepository(context.repository)
+  if (context.repository && context.action.kind === 'update') void previewModRepository(context.repository, context.releaseTag)
   else if (context.repository) void refreshModRepository(context.repository)
 }
 

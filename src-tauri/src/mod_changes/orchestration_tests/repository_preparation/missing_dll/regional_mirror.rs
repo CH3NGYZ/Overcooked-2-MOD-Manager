@@ -1,5 +1,7 @@
 use super::*;
 
+#[path = "regional_mirror/declared_replacement.rs"]
+mod declared_replacement;
 #[path = "regional_mirror/recovery_scope.rs"]
 mod recovery_scope;
 

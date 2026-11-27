@@ -5,6 +5,7 @@ use crate::models::{
 };
 use crate::repository_sources;
 use crate::repository_sources::SourceLocation;
+use crate::repository_sources::replacements;
 use crate::repository_sources::source_address_key;
 use chrono::Utc;
 use std::collections::HashSet;
@@ -46,10 +47,7 @@ pub(crate) async fn import_repository_source_into_config(
         ) {
             return Err("source.sourceMissing".into());
         }
-        let official_root = source.id == repository_sources::DEFAULT_INDEX_ID
-            && source.url == original_config.data_provider.document("mods.toml")
-            && source.builtin
-            && source.parent_id.is_none();
+        let official_root = replacements::is_official_root(&original_config, source);
         let official_address = official_root
             && crate::models::DataProvider::ALL
                 .into_iter()
@@ -62,6 +60,7 @@ pub(crate) async fn import_repository_source_into_config(
         if builtin_fallback {
             return Err("source.noBuiltinFallback".into());
         }
+        state.config.suspend_repository_replacements(&source_id);
         let source_url = source.url.clone();
         log::info!(
             "仓库源开始读取：源={}，地址={}，父源={}",
@@ -76,10 +75,10 @@ pub(crate) async fn import_repository_source_into_config(
             original_config.network.clone(),
         )
     };
-    let (document, selection) = if official_root {
+    let (document, selection, from_package) = if official_root {
         let root = state.config.official_root(force).await?;
         source_url = root.selection.0.document("mods.toml");
-        (root.document, root.selection)
+        (root.document, root.selection, true)
     } else {
         let location = SourceLocation::parse(&source_url).map_err(|error| {
             log::error!(
@@ -100,7 +99,11 @@ pub(crate) async fn import_repository_source_into_config(
             .in_data_selection(
                 selection,
                 crate::network_policy::NetworkPolicy::in_snapshot(policy, async {
-                    Ok(repository_sources::load_document(&location, &parent_plan, &network).await)
+                    let from_package = repository_sources::SourcePackage::active().is_some()
+                        && repository_sources::package_document_path(&location).is_some();
+                    let document =
+                        repository_sources::load_document(&location, &parent_plan, &network).await;
+                    Ok(document.map(|document| (document, from_package)))
                 }),
             )
             .await?
@@ -124,7 +127,7 @@ pub(crate) async fn import_repository_source_into_config(
                 return Err(error.to_string());
             }
         };
-        (document, selection)
+        (document.0, selection, document.1)
     };
     // The root refresh may have replaced the network policy as well as its
     // package. Import/validation must use that new closure, not the entry copy.
@@ -134,6 +137,33 @@ pub(crate) async fn import_repository_source_into_config(
         .network_policy
         .map(Ok)
         .unwrap_or_else(crate::network_policy::NetworkPolicy::active)?;
+    let mut declarations = if from_package
+        && document
+            .repositories
+            .iter()
+            .any(|repo| !repo.replaces.is_empty())
+    {
+        state
+            .config
+            .in_data_selection(
+                selection,
+                crate::network_policy::NetworkPolicy::in_snapshot(policy.clone(), async {
+                    Ok(repository_sources::SourcePackage::active()
+                        .map(|package| {
+                            replacements::verified_declarations(
+                                &package,
+                                selection.0,
+                                &source_url,
+                                &document.repositories,
+                            )
+                        })
+                        .unwrap_or_default())
+                }),
+            )
+            .await?
+    } else {
+        Default::default()
+    };
     crate::network_policy::NetworkPolicy::in_snapshot(policy, async {
     let repositories = document
         .repositories
@@ -174,6 +204,13 @@ pub(crate) async fn import_repository_source_into_config(
         .ok_or("source.sourceMissing")?;
     if !current_source.url.trim().eq_ignore_ascii_case(source_url.trim()) {
         return Err("source.addressMismatch".into());
+    }
+    let can_declare = from_package && current_source.url == source_url
+        && replacements::is_authorized(&config, current_source, selection.1);
+    if can_declare {
+        replacements::suppress_configured_originals(&mut declarations, &config, &source_id);
+    } else {
+        declarations.clear();
     }
     super::cache::clear_source_repositories(&mut config, &HashSet::from([source_id.clone()]));
     let parent_url = config
@@ -336,6 +373,9 @@ pub(crate) async fn import_repository_source_into_config(
             *source = ordered_children.next().expect("accepted direct child");
         }
     }
+    if can_declare {
+        replacements::authorize_child_sources(&mut config, &source_id, &ordered_child_ids, selection.1);
+    }
     let preview = state
         .config
         .import_bundle(&mut config, &bundle, "overwrite");
@@ -374,6 +414,10 @@ pub(crate) async fn import_repository_source_into_config(
             used_ids.insert(repo.id.clone());
             config.source_repository_ids.insert(key, repo.id.clone());
             repo.source_id = Some(source_id.clone());
+            if let Some(replaces) = declarations.remove(&identity).filter(|aliases| !aliases.is_empty()) {
+                repo.replaces = replaces;
+                repo.replaces_revision = Some(selection.1);
+            }
         }
     }
     // 每次只应用一个源：仅移除上面已认领的条目，保留其他源尚未接回的缓存。

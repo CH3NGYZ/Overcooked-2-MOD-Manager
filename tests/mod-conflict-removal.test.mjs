@@ -33,12 +33,14 @@ registerHooks({
 const { useModRemoval } = await import('../src/composables/useModRemoval.ts')
 const { conflictRemovalTarget, relationStatusesForSubject } = await import('../src/modRelations.ts')
 const { evaluationSnapshot, clearEvaluation } = await import('./helpers/mod-change-evaluations.mjs')
-const { repositoryForMod } = await import('../src/modStatus.ts')
+const { isReplacementRepository, updateRepositoryForMod } = await import('../src/modStatus.ts')
+const { modUpdateVerdict } = await import('../src/statusTags.ts')
 const { statusActionFor } = await import('../src/statusActions.ts')
 const { descriptor } = parse(readFileSync(new URL('../src/views/ModsLocalView.vue', import.meta.url), 'utf8'))
 const script = descriptor.scriptSetup.content
 const ast = ts.createSourceFile('ModsLocalView.ts', script, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-const names = ['actionContext', 'cardAction', 'packageAction', 'packageRelations', 'runCardAction', 'removeOlderCopy', 'runPackageAction']
+const names = ['bindingRepositoryId', 'actionContext', 'cardAction', 'packageAction', 'packageRelations',
+  'runCardAction', 'removeOlderCopy', 'runPackageAction']
 const functions = names.map(name => {
   const statement = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name)
   assert.ok(statement, `production handler ${name} must exist`)
@@ -49,7 +51,7 @@ const removal = ast.statements.find(node => ts.isVariableStatement(node) && node
 assert.ok(removal, 'page must configure its removal through the shared composable')
 const createActions = new Function('environment', `${stripTypeScriptTypes(`
   const { t, useModRemoval, blockModOperation, deleteConfirm, modTitle, busy, load,
-    statusActionFor, repositoryForMod, conflictRemovalTarget, repositories, relationsByDll,
+    statusActionFor, isReplacementRepository, updateRepositoryForMod, modUpdateVerdict, conflictRemovalTarget, repositories, relationsByDll,
     previewModRepository, linkToModRepository, refreshModRepository } = environment
   ${removal.getText(ast)}
   ${functions.join('\n')}
@@ -79,7 +81,7 @@ function setup({ responses = [{ ok: true, message: '' }], blocked = false, kind 
     relationStatusesForSubject({ dll_file: source.dll_file }, [a, b])]))
   clearEvaluation()
   const actions = createActions({
-    t: key => key, useModRemoval, statusActionFor, repositoryForMod, conflictRemovalTarget, busy,
+    t: key => key, useModRemoval, statusActionFor, isReplacementRepository, updateRepositoryForMod, modUpdateVerdict, conflictRemovalTarget, busy,
     blockModOperation: () => state.blocked,
     deleteConfirm: { value: { body: name => `Remove ${name}?`, action: 'Move to recycle bin', done: 'Moved to recycle bin' } },
     modTitle: target => target.name, load: async () => { state.refreshes++ },

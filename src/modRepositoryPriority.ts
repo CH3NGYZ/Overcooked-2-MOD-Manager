@@ -24,6 +24,7 @@ export function prioritizeInstalledModRepositories(
   for (const mod of installed) {
     for (const id of mod.repository_ids ?? []) installedIds.add(id)
     if (mod.repository_id) installedIds.add(mod.repository_id)
+    if (mod.replacement_repository_id) installedIds.add(mod.replacement_repository_id)
   }
 
   const seen = new Set<string>()

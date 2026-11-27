@@ -19,7 +19,7 @@ mod releases;
 mod repositories;
 pub use mod_repositories::{
     ModDownloadMode, ModRepositoryBinding, ModRepositoryBundle, ModRepositoryConfig,
-    ModRepositoryExport, ModRepositoryPatch,
+    ModRepositoryExport, ModRepositoryPatch, ReplacedModRepository,
 };
 
 pub use app::{

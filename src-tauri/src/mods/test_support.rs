@@ -46,6 +46,8 @@ pub(super) fn binding_repository() -> crate::models::ModRepositoryConfig {
         file_path: String::new(),
         region: None,
         channel: crate::models::Channel::All,
+        replaces: Vec::new(),
+        replaces_revision: None,
         platform: None,
         asset_rules: Vec::new(),
         install_target: String::new(),

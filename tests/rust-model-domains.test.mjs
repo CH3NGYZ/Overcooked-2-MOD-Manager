@@ -13,7 +13,7 @@ const owners = {
   game: ['BepInExInfo', 'DiyLevelInfo', 'GameConfig', 'GameInfo', 'GameRuntime', 'WinhttpState'],
   levels: ['LevelCompressionRecovery', 'LevelSetFlattenCandidate', 'LevelSetFlattenReport', 'LevelSetImportResult', 'LevelSetInfo', 'LevelSetLayout', 'LevelSetPlugin', 'LevelSetScanProgress', 'LevelSetZipProgress', 'MapInstallOrigin', 'StagedMapSource', 'ZipLevelSet', 'ZipLevelSetPlugin'],
   maps: ['AssetVersionEntry', 'MapInfo', 'MapRelationSnapshot', 'MapRelationSnapshots', 'MapRepositoryConfig', 'RequiredFramework'],
-  mod_repositories: ['ModDownloadMode', 'ModRepositoryBinding', 'ModRepositoryConfig', 'ModRepositoryExport', 'ModRepositoryBundle', 'ModRepositoryPatch'],
+  mod_repositories: ['ModDownloadMode', 'ModRepositoryBinding', 'ModRepositoryConfig', 'ModRepositoryExport', 'ModRepositoryBundle', 'ModRepositoryPatch', 'ReplacedModRepository'],
   mods: ['DllPluginInfo', 'DllRole', 'InstalledMod', 'InstalledModStatusLabel', 'ModNote', 'ModRecycleEntry', 'RepositoryIdentityMatch', 'UninstallLocalModResult'],
   network: ['GitHubProxy', 'GitHubProxyConfig', 'GitHubProxyManifest', 'NetworkConfig', 'ProxyMode'],
   network_plan: ['NetworkPlanSelection', 'PlanOverride', 'PlanReference', 'PlanStep', 'RepositoryKind', 'RouteOverride'],

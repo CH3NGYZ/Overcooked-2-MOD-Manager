@@ -1,4 +1,5 @@
 //! 本地版本、绑定 Release 与卡片标签；按仓库汇总沿用同一判定。
+use super::replacements::{replacement_release, replacement_targets};
 use crate::models::*;
 use std::cmp::Ordering;
 
@@ -6,15 +7,17 @@ pub(crate) fn collect_update_status(
     config: &AppConfig,
     installed: &[InstalledMod],
 ) -> Vec<UpdateStatus> {
+    let replacements = replacement_targets(config, installed);
     config
         .repositories
         .iter()
         // 不可用的仓库不产生更新状态：它不刷新，缓存的 Release 也就不再可信
         .filter(|repo| crate::config::mod_repository_is_available(config, repo, &config.region))
         .map(|repo| {
-            let local_mod = installed
+            let representative = installed
                 .iter()
-                .filter(|item| {
+                .zip(&replacements)
+                .filter(|(item, replacement)| {
                     (repo.download_mode == ModDownloadMode::RepositoryFile
                         || (item.status != "not_release_asset"
                             && !item.is_dependency
@@ -22,9 +25,10 @@ pub(crate) fn collect_update_status(
                             && !item.duplicate_cleanup_available
                             && item.status != "duplicate_lower_version"))
                         && (item.repository_ids.iter().any(|id| id == &repo.id)
-                            || item.repository_id.as_deref() == Some(repo.id.as_str()))
+                            || item.repository_id.as_deref() == Some(repo.id.as_str())
+                            || replacement.is_some_and(|candidate| candidate.id == repo.id))
                 })
-                .reduce(|best, item| {
+                .reduce(|(best, best_replacement), (item, replacement)| {
                     let compared = local_update_version(item)
                         .zip(local_update_version(best))
                         .and_then(|(item, best)| {
@@ -34,11 +38,12 @@ pub(crate) fn collect_update_status(
                         || (local_update_version(best).is_none()
                             && local_update_version(item).is_some())
                     {
-                        item
+                        (item, replacement)
                     } else {
-                        best
+                        (best, best_replacement)
                     }
                 });
+            let local_mod = representative.map(|(item, _)| item);
             let local = local_mod.and_then(local_update_version).map(str::to_owned);
             if repo.download_mode == ModDownloadMode::RepositoryFile {
                 return UpdateStatus {
@@ -56,10 +61,23 @@ pub(crate) fn collect_update_status(
                     state: "repository_unavailable".into(),
                 };
             }
-            let remote = remote_update_version(repo, local_mod);
-            let state = local_mod
-                .map(|installed| mod_update_state(Some(repo), installed).1)
-                .unwrap_or("unknown");
+            let replacing = representative.is_some_and(|(_, replacement)| {
+                replacement.is_some_and(|candidate| candidate.id == repo.id)
+            });
+            let (remote, state) = if let Some(item) = local_mod.filter(|_| replacing) {
+                let release = replacement_release(repo, item);
+                (
+                    release.map(|release| release.tag_name.clone()),
+                    replacement_update_state(repo, release, item).1,
+                )
+            } else {
+                (
+                    remote_update_version(repo, local_mod),
+                    local_mod.map_or("unknown", |installed| {
+                        mod_update_state(Some(repo), installed).1
+                    }),
+                )
+            };
             UpdateStatus {
                 repository_id: repo.id.clone(),
                 local_version: local,
@@ -68,6 +86,27 @@ pub(crate) fn collect_update_status(
             }
         })
         .collect()
+}
+
+fn replacement_update_state(
+    repo: &ModRepositoryConfig,
+    release: Option<&ReleaseInfo>,
+    installed: &InstalledMod,
+) -> (bool, &'static str) {
+    if repo.last_error.is_some() {
+        return (false, "repository_unavailable");
+    }
+    let Some((release, local)) = release.zip(local_update_version(installed)) else {
+        return (false, "unknown");
+    };
+    if release.tag_name == local {
+        return (false, "latest");
+    }
+    match crate::releases::compare_release_versions(&release.tag_name, local) {
+        Some(Ordering::Greater) => (true, "update_available"),
+        Some(_) => (false, "latest"),
+        None => (false, "unknown"),
+    }
 }
 
 pub(super) fn repository_remote_version(repo: &ModRepositoryConfig) -> Option<String> {
@@ -273,7 +312,15 @@ fn unbound_label(config: &AppConfig, item: &InstalledMod) -> InstalledModStatusL
 }
 
 pub(super) fn refresh_status_labels(config: &AppConfig, mods: &mut [InstalledMod]) {
-    for item in mods {
+    let replacements = replacement_targets(config, mods);
+    for (item, replacement) in mods.iter_mut().zip(replacements) {
+        item.replacement_repository_id = replacement.map(|repo| repo.id.clone());
+        if let Some(repo) = replacement {
+            let (update, status) =
+                replacement_update_state(repo, replacement_release(repo, item), item);
+            item.update_available = update;
+            item.status = status.into();
+        }
         let mut labels = Vec::new();
         /*
          * 纯依赖 DLL（读不出 BepInPlugin）只标「依赖」，不再套用

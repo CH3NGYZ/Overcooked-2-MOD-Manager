@@ -122,6 +122,7 @@ impl ConfigService {
     }
 
     pub(super) fn with_runtime(&self, mut config: AppConfig) -> AppConfig {
+        let selection = self.data_selection();
         config.network.normalize();
         match self.proxies.configuration_snapshot() {
             Ok((provider, proxies, policy, region)) => {
@@ -143,7 +144,21 @@ impl ConfigService {
                 }
             }
         }
+        let unchanged_revision = (selection == self.data_selection()).then_some(selection.1);
+        crate::repository_sources::replacements::retain_current(&mut config, unchanged_revision);
         config
+    }
+
+    pub(crate) fn suspend_repository_replacements(&self, source_id: &str) {
+        if let Ok(mut cache) = self.cache.lock()
+            && let Some(cached) = cache.as_mut()
+        {
+            for repo in &mut cached.config.repositories {
+                if repo.source_id.as_deref() == Some(source_id) {
+                    repo.clear_replacements();
+                }
+            }
+        }
     }
 
     #[cfg(test)]

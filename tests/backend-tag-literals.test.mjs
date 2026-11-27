@@ -57,6 +57,8 @@ const NON_TAG = new Set([
   'new.guid', 'old.guid', 'ranged.guid', 'unknown.guid', 'wide.guid',
   'com.bepis.bepinex.configurationmanager', 'com.valvesoftware.steam',
   'com.ch3ngyz.plugin.HostUtilities', 'com.ch3ngyz.plugin.DIYLevel',
+  'com.ch3ngyz.plugin.skiploading',
+  'com.ch3ngyz.plugin.diylevel.sorting', 'com.ch3ngyz.plugin.overcooked2.modsettings',
   'fixture.configurationmanager',
   // Changed-GUID and recycle-payload regression fixtures, not backend error tags.
   'yang.oc2.diylevel.fastinit', 'fixture.other', 'unrecorded.obj',

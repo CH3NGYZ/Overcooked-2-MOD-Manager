@@ -11,7 +11,8 @@ import { levelSetTagKey } from '../src/levelSetStatusSummary.ts'
 import { conflictRemovalTarget, dependencyRepairStatus, dependencyTagFor, isRelationCardKey,
   relationJumpTarget, relationStatusesForSubject } from '../src/modRelations.ts'
 import { runtimeModStatus } from '../src/modRuntimeStatus.ts'
-import { modsForRepository, repositoryForMod } from '../src/modStatus.ts'
+import { isReplacementRepository, modsForRepository, updateRepositoryForMod } from '../src/modStatus.ts'
+import { modUpdateVerdict } from '../src/statusTags.ts'
 import { evaluationSnapshot, clearEvaluation } from './helpers/mod-change-evaluations.mjs'
 import { statusActionFor } from '../src/statusActions.ts'
 
@@ -57,11 +58,11 @@ const createMap = handlers('../src/views/LevelsView.vue', [
   'dependencyRowFromStatus', 'useDependencyNavigation',
   'linkToModRepository', 'linkToMap', 't', 'pickI18n'])
 const createMod = handlers('../src/views/ModsLocalView.vue', [
-  'actionContext', 'cardAction', 'packageAction', 'packageRelations', 'packageRelationTag', 'currentPackage',
+  'bindingRepositoryId', 'actionContext', 'cardAction', 'packageAction', 'packageRelations', 'packageRelationTag', 'currentPackage',
   'modRepairStatus', 'packageRepairStatus', 'repairModDependencies', 'repairPackageDependencies',
   'packageTagTargetId', 'openPackageTag', 'dependencyRow', 'openDependencyJump',
 ], ['mods', 'effectiveMods', 'repositories', 'groups', 'relationsByDll', 'statusActionFor',
-  'repositoryForMod', 'dependencyRepairStatus', 'dependencyTagFor', 'relationJumpTarget', 'conflictRemovalTarget',
+  'isReplacementRepository', 'updateRepositoryForMod', 'modUpdateVerdict', 'dependencyRepairStatus', 'dependencyTagFor', 'relationJumpTarget', 'conflictRemovalTarget',
   'dependencyRowFromStatus', 'useDependencyNavigation',
   'linkToModRepository', 'isRelationCardKey', 't', 'pickI18n'])
 const createOnlineMap = handlers('../src/views/MapsOnlineView.vue', [
@@ -107,7 +108,7 @@ function fixture(t, currentVersion = '4.0', targetVersion = 'v3.10.2', issueStat
     tagsOf: current => levelSetCardTags(current, maps.value, mods.value, true, repositories.value),
     levelSetCardAction, dependencyRepairStatus, levelSetRelationStatuses, levelSetTagKey,
     dependencyRowFromStatus, useDependencyNavigation, relationJumpTarget, conflictRemovalTarget,
-    statusActionFor, repositoryForMod, isRelationCardKey, dependencyTagFor,
+    statusActionFor, isReplacementRepository, updateRepositoryForMod, modUpdateVerdict, isRelationCardKey, dependencyTagFor,
     linkToModRepository: (...args) => jumps.push(args), linkToMap: () => assert.fail('must target a MOD'),
     t: key => key, pickI18n: (messages, fallback) => fallback }
   const map = scope.run(() => createMap(environment)), mod = scope.run(() => createMod(environment))

@@ -73,9 +73,6 @@ pub(super) fn attach_root(
     ) else {
         return Ok(false);
     };
-    if !related_release_source(&trusted.config, repo, manifest, tag, prerelease) {
-        return Ok(false);
-    }
     let Some(item) = representative(trusted, repo, files).filter(|item| {
         !item.is_dependency
             && item.bundled_with_dll.is_none()
@@ -87,6 +84,9 @@ pub(super) fn attach_root(
     }) else {
         return Ok(false);
     };
+    if !related_release_source(&trusted.config, repo, manifest, tag, prerelease, Some(item)) {
+        return Ok(false);
+    }
     let roots = TransactionRoots {
         game_root: trusted.game_root.clone(),
         data_root: data_root.into(),

@@ -28,6 +28,14 @@ export function repositoryForMod(repositories: readonly ModRepository[], mod: In
   return undefined
 }
 
+export function isReplacementRepository(mod: InstalledMod, repo: ModRepository): boolean {
+  return repo.enabled && repo.download_mode === 'release' && repo.id === mod.replacement_repository_id
+}
+
+export function updateRepositoryForMod(repositories: readonly ModRepository[], mod: InstalledMod): ModRepository | undefined {
+  return repositories.find(repo => isReplacementRepository(mod, repo)) ?? repositoryForMod(repositories, mod)
+}
+
 /** Prefer the disk scan's reconciled version; explicit null is unknown. */
 export function localVersion(mod: InstalledMod): string | undefined {
   return mod.update_version === undefined ? mod.version : mod.update_version ?? undefined
@@ -36,6 +44,7 @@ export function localVersion(mod: InstalledMod): string | undefined {
 /** 同一仓库可能对应多个本地副本（旧版本共存），全部返回以便取最高版本比较。 */
 export function modsForRepository(mods: readonly InstalledMod[], repo: ModRepository): InstalledMod[] {
   return mods.filter((mod) => {
+    if (isReplacementRepository(mod, repo)) return true
     if (mod.repository_id === repo.id) return true
     if (mod.repository_ids?.includes(repo.id)) return true
     const binding = mod.repository_binding

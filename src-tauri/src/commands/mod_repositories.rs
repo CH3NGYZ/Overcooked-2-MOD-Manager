@@ -228,6 +228,8 @@ pub fn save_mod_repository(
         patch.asset_rules
     };
     let mut item = ModRepositoryConfig {
+        replaces: Vec::new(),
+        replaces_revision: None,
         network_plan: patch.network_plan.unwrap_or_else(|| {
             existing
                 .map(|repo| repo.network_plan.clone())

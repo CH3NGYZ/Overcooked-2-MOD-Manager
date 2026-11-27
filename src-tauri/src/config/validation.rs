@@ -70,6 +70,7 @@ pub(crate) fn validate_mod_repository(repo: &ModRepositoryExport) -> Result<(), 
         )));
     }
     validate_bundled_plugin_guids(&repo.name, &repo.plugin_guid, &repo.bundled_plugin_guids)?;
+    validate_repository_replacements(repo)?;
     /*
      * 关系声明校验。
      *
@@ -96,6 +97,52 @@ pub(crate) fn validate_mod_repository(repo: &ModRepositoryExport) -> Result<(), 
     Ok(())
 }
 
+fn valid_plugin_guid(guid: &str) -> bool {
+    !guid.trim().is_empty() && guid.trim().len() <= 256 && !guid.chars().any(char::is_control)
+}
+
+fn validate_repository_replacements(repo: &ModRepositoryExport) -> Result<(), ConfigError> {
+    if repo.replaces.is_empty() {
+        return Ok(());
+    }
+    let invalid = |reason: &str| {
+        ConfigError::Invalid(crate::locale_tag::with_params(
+            "source.tomlInvalid",
+            &[("reason", &format!("{}: replaces: {reason}", repo.name))],
+        ))
+    };
+    if repo.download_mode != ModDownloadMode::Release || !valid_plugin_guid(&repo.plugin_guid) {
+        return Err(invalid(
+            "expected a Release repository with a primary plugin_guid",
+        ));
+    }
+    let mut seen = HashSet::new();
+    for old in &repo.replaces {
+        let (username, repository) =
+            crate::releases::repository_coordinates(&old.username, &old.repository)
+                .map_err(|_| invalid("invalid old repository coordinates"))?;
+        if username != old.username || repository != old.repository {
+            return Err(invalid(
+                "old repository coordinates must not contain surrounding whitespace",
+            ));
+        }
+        if old.channel != repo.channel
+            || old.matches_identity(&repo.provider, repo.username.trim(), repo.repository.trim())
+            || !seen.insert(super::identity::repository_address_key(
+                &old.provider,
+                &old.username,
+                &old.repository,
+                None,
+            ))
+        {
+            return Err(invalid(
+                "expected distinct old repositories in the target channel",
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_bundled_plugin_guids(
     repo: &str,
     primary: &str,
@@ -104,10 +151,7 @@ pub(crate) fn validate_bundled_plugin_guids(
     if bundled.is_empty() {
         return Ok(());
     }
-    let valid = |guid: &str| {
-        !guid.trim().is_empty() && guid.trim().len() <= 256 && !guid.chars().any(char::is_control)
-    };
-    if !valid(primary) {
+    if !valid_plugin_guid(primary) {
         return Err(ConfigError::Invalid(crate::locale_tag::with_params(
             "config.bundledPluginPrimaryRequired",
             &[("repo", repo)],
@@ -115,7 +159,7 @@ pub(crate) fn validate_bundled_plugin_guids(
     }
     let mut seen = HashSet::from([primary.trim().to_ascii_lowercase()]);
     for (index, guid) in bundled.iter().enumerate() {
-        if !valid(guid) || !seen.insert(guid.trim().to_ascii_lowercase()) {
+        if !valid_plugin_guid(guid) || !seen.insert(guid.trim().to_ascii_lowercase()) {
             return Err(ConfigError::Invalid(crate::locale_tag::with_params(
                 "config.bundledPluginGuidInvalid",
                 &[("repo", repo), ("index", &(index + 1).to_string())],

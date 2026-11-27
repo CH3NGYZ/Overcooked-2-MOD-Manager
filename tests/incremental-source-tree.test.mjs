@@ -187,6 +187,83 @@ test('MOD absence needs all current catalog documents and a matching local rebin
   assert.equal(label(), 'unlisted')
 })
 
+test('first bound check refreshes the replacement after catalog import and local rebind', async () => {
+  const source = { id: 'moves', nickname: 'Moves', url: 'moves.toml' }
+  const old = { ...repo('old', source.id), provider: 'gitee' }
+  const next = { ...repo('new', source.id), channel: 'all', asset_rules: [{ type: 'glob', value: '*.zip' }] }
+  const local = { dll_file: 'BepInEx/plugins/Local.dll', repository_id: old.id, version: '1.0.0', labels: [],
+    repository_binding: { provider: old.provider, owner: old.username, repository: old.repository, channel: 'all', tag: 'v1.0.0' } }
+  let config = { repositories: [old], repository_sources: [source], region: 'international', platform: 'windows' }
+  const rebindStarted = deferred(), rebindDone = deferred()
+  const calls = []
+  globalThis.__loadingApi = {
+    dashboard: async () => ({ config: structuredClone(config), game: { kitchen_running: false } }),
+    config: async () => structuredClone(config),
+    localMods: async () => ({ generation: 42, mods: [local] }), modUpdates: async () => [],
+    importRepositorySource: async id => {
+      calls.push(`catalog:${id}`)
+      config = { ...config, repositories: [repo('unrelated', source.id), next] }
+      return { access_error: null }
+    },
+    rebindLocalMods: async mods => {
+      if (!config.repositories.includes(next)) return mods
+      calls.push('rebind')
+      rebindStarted.resolve()
+      await rebindDone.promise
+      return mods.map(mod => ({ ...mod, replacement_repository_id: next.id }))
+    },
+    refreshModRepository: async id => {
+      calls.push(`release:${id}`)
+      return { cached_releases: [{ tag_name: 'v2.0.0', version: '2.0.0', draft: false,
+        assets: [{ name: 'Mod.zip', download_url: 'https://example.invalid/Mod.zip' }] }], release_prerelease_metadata: {} }
+    },
+  }
+  const dashboard = useDashboard(), engine = useModRepositoryRefresh()
+  await dashboard.load()
+  const result = engine.refreshBoundRepositories()
+  await rebindStarted.promise
+  assert.deepEqual(calls, ['catalog:moves', 'rebind'])
+  rebindDone.resolve()
+  assert.deepEqual(await result, { refreshed: 1, updated: 1, targets: 1, errors: [] })
+  assert.deepEqual(calls, ['catalog:moves', 'rebind', 'release:new'])
+  assert.deepEqual(dashboard.mods.value[0], { ...local, replacement_repository_id: next.id })
+})
+
+test('failed built-in source reapply removes the old replacement even with unchanged config', async () => {
+  const source = { id: 'official', nickname: 'Official', url: 'official.toml', builtin: true }
+  const target = { ...repo('new', source.id), channel: 'all' }
+  const local = { dll_file: 'BepInEx/plugins/Mod.dll', repository_id: 'old', replacement_repository_id: target.id,
+    repository_binding: { provider: 'gitee', owner: 'u', repository: 'old', channel: 'all', tag: 'v1.0.0' },
+    status: 'update_available', update_available: true, labels: ['update_available'] }
+  const config = { repositories: [target], repository_sources: [source], region: 'international', platform: 'windows' }
+  let applied = true
+  const calls = []
+  globalThis.__loadingApi = {
+    dashboard: async () => ({ config: structuredClone(config), game: { kitchen_running: false } }),
+    config: async () => structuredClone(config),
+    localMods: async () => ({ generation: 43, mods: [local] }), modUpdates: async () => [],
+    importRepositorySource: async () => {
+      calls.push('reapply failed')
+      applied = false
+      return { access_error: 'offline' }
+    },
+    rebindLocalMods: async mods => {
+      calls.push('rebind')
+      return applied ? mods : mods.map(mod => ({ ...mod, replacement_repository_id: null,
+        status: 'bound_repository_missing', update_available: false, labels: ['bound_repository_missing'] }))
+    },
+    refreshModRepository: async () => { calls.push('release') },
+  }
+  const dashboard = useDashboard(), engine = useModRepositoryRefresh()
+  await dashboard.load()
+  calls.length = 0
+  const result = await engine.refreshBoundRepositories()
+  assert.deepEqual(calls, ['reapply failed', 'rebind'])
+  assert.deepEqual(result, { refreshed: 0, updated: 0, targets: 0, errors: ['Official: offline'] })
+  assert.deepEqual(dashboard.config.value, config)
+  assert.equal(dashboard.mods.value[0].replacement_repository_id, null)
+})
+
 test('cached maps reconstruct source titles and notes before an incremental tree arrives', async () => {
   const e = useMapSources()
   const cached = [

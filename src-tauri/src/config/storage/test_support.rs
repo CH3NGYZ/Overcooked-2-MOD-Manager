@@ -11,4 +11,13 @@ impl ConfigService {
             proxies: Default::default(),
         }
     }
+
+    pub(crate) fn set_official_address_for_test(
+        &self,
+        provider: crate::models::DataProvider,
+        address: String,
+    ) {
+        self.proxies
+            .set_official_address_for_test(provider, address);
+    }
 }

@@ -7,6 +7,7 @@ mod document;
 mod embedded;
 mod location;
 mod package;
+pub(crate) mod replacements;
 mod transport;
 mod verified;
 
@@ -19,6 +20,7 @@ pub(crate) use document::{nickname_fallback, source_address_key};
 pub(crate) use embedded::{BUILTIN_INDEX, DEFAULT_INDEX_ID, bundled_repository_configs};
 pub(crate) use location::SourceLocation;
 pub(crate) use package::{SourcePackage, fetch as fetch_source_package};
+pub(crate) use replacements::ReplacementSource;
 pub(crate) use transport::package_document_path;
 pub(crate) use transport::{load_document, load_text_document};
 #[cfg(test)]

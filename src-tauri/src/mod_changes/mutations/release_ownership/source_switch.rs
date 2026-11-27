@@ -1,14 +1,58 @@
 use super::manifest_replacement::{
     OverwriteConfirmation, overlapping_endpoint, recorded_endpoints,
 };
-use super::missing_install::{MissingInstallRecord, RecordRecovery};
+use super::missing_install::{MissingInstallRecord, RecordRecovery, repository_id_is_configured};
 use super::*;
 use crate::mod_changes::mutations::{
     install_block::report_record_claim,
     records::{RecordStamp, install_record_path},
 };
 use crate::mod_changes::progress::SourceSwitch;
-use crate::models::{AppConfig, RelationKind};
+use crate::models::{AppConfig, Channel, InstalledMod, RelationKind};
+
+fn unique_repository<'a>(config: &'a AppConfig, value: &str) -> Option<&'a ModRepositoryConfig> {
+    let id = uuid::Uuid::parse_str(value).ok()?;
+    let matches = |other: &str| uuid::Uuid::parse_str(other) == Ok(id);
+    if config.map_repositories.iter().any(|repo| matches(&repo.id)) {
+        return None;
+    }
+    let mut repos = config.repositories.iter().filter(|repo| matches(&repo.id));
+    let repo = repos.next()?;
+    (repo.id == value && repos.next().is_none()).then_some(repo)
+}
+
+fn source_binding<'a>(
+    config: &AppConfig,
+    next: &ModRepositoryConfig,
+    manifest: &'a archive::InstallManifest,
+) -> Option<&'a ModRepositoryBinding> {
+    let binding = manifest.repository_binding.as_ref()?;
+    let previous_id = uuid::Uuid::parse_str(&manifest.repository_id).ok()?;
+    (uuid::Uuid::parse_str(&next.id) != Ok(previous_id)
+        && unique_repository(config, &next.id).is_some()
+        && !manifest.is_manual()
+        && binding.is_valid()
+        && binding.tag == manifest.release_tag)
+        .then_some(binding)
+}
+
+fn declared_source(
+    config: &AppConfig,
+    next: &ModRepositoryConfig,
+    manifest: &archive::InstallManifest,
+    binding: &ModRepositoryBinding,
+    prerelease: bool,
+    guid: Option<&str>,
+) -> bool {
+    !repository_id_is_configured(config, &manifest.repository_id)
+        && match next.channel {
+            Channel::All => true,
+            Channel::Stable => !prerelease,
+            Channel::Beta => prerelease,
+        }
+        && mods::replacement_repository(config, binding, guid)
+            .is_some_and(|replacement| replacement.id == next.id)
+}
 
 pub(in crate::mod_changes) fn related_release_source(
     config: &AppConfig,
@@ -16,33 +60,32 @@ pub(in crate::mod_changes) fn related_release_source(
     manifest: &archive::InstallManifest,
     tag: &str,
     prerelease: bool,
+    installed_primary: Option<&InstalledMod>,
 ) -> bool {
     let (Some(source_id), Some(binding)) = (
         next.source_id.as_deref().filter(|id| !id.is_empty()),
-        manifest.repository_binding.as_ref(),
+        source_binding(config, next, manifest),
     ) else {
         return false;
     };
-    let unique = |value: &str| {
-        let id = uuid::Uuid::parse_str(value).ok()?;
-        let matches = |other: &str| uuid::Uuid::parse_str(other) == Ok(id);
-        if config.map_repositories.iter().any(|repo| matches(&repo.id)) {
-            return None;
-        }
-        let mut repos = config.repositories.iter().filter(|repo| matches(&repo.id));
-        let repo = repos.next()?;
-        (repo.id == value && repos.next().is_none()).then_some(repo)
-    };
-    let Some(previous) = unique(&manifest.repository_id) else {
-        return false;
+    let Some(previous) = unique_repository(config, &manifest.repository_id) else {
+        return installed_primary.is_some_and(|item| {
+            item.repository_replacement_eligible
+                && item.prerelease == prerelease
+                && item.package_id.as_deref() == Some(manifest.repository_id.as_str())
+                && item.repository_binding.as_ref() == Some(binding)
+                && declared_source(
+                    config,
+                    next,
+                    manifest,
+                    binding,
+                    prerelease,
+                    item.guid.as_deref(),
+                )
+        });
     };
     let old_region = previous.region.as_deref().unwrap_or(&config.region);
-    if uuid::Uuid::parse_str(&previous.id) == uuid::Uuid::parse_str(&next.id)
-        || unique(&next.id).is_none()
-        || manifest.is_manual()
-        || !binding.is_valid()
-        || !binding.matches_repository(previous)
-        || binding.tag != manifest.release_tag
+    if !binding.matches_repository(previous)
         || previous.source_id.as_deref() != Some(source_id)
         || !previous.username.eq_ignore_ascii_case(&next.username)
         || next.plugin_guid.trim().is_empty()
@@ -82,7 +125,7 @@ pub(in crate::mod_changes) fn related_release_source(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SourceReplacement {
-    pub(super) confirmation: OverwriteConfirmation,
+    pub(super) confirmation: Option<OverwriteConfirmation>,
     pub(super) target: String,
     pub(super) manifest_stamp: RecordStamp,
     pub(super) installed: Option<(String, RecordStamp)>,
@@ -95,21 +138,32 @@ impl Builder<'_> {
         payload: &Payload,
         bundled_levels: Option<&str>,
     ) -> Result<Option<RecordRecovery>, String> {
-        let [root] = self.session.request.roots.as_slice() else {
-            return Ok(None);
-        };
         let Some(zip_digest) = payload.release_zip_sha256.as_ref() else {
             return Ok(None);
         };
         let Ok(core) = self.release_core(payload) else {
             return Ok(None);
         };
-        if !root.enabled
-            || root.node_id != owner
-            || root.member_key.is_some()
-            || root.candidate_id.as_ref() != Some(&payload.candidate.id)
-            || bundled_levels.is_some()
-        {
+        if bundled_levels.is_some() {
+            return Ok(None);
+        }
+        let explicit_root = matches!(self.session.request.roots.as_slice(), [root]
+            if root.enabled && root.node_id == owner && root.member_key.is_none()
+                && root.candidate_id.as_ref() == Some(&payload.candidate.id));
+        let trusted = &self.session.trusted;
+        let vacant_owner = payload.downloaded
+            && !payload.candidate.raw
+            && payload.release_files.is_some()
+            && !trusted.inventory.nodes.iter().any(|node| {
+                node.current.as_ref().is_some_and(|candidate| {
+                    node.id == owner
+                        || candidate
+                            .provides
+                            .iter()
+                            .any(|plugin| same_guid(&plugin.guid, &core.repo.plugin_guid))
+                })
+            });
+        if !explicit_root && !vacant_owner {
             return Ok(None);
         }
         let Some(prerelease) = payload
@@ -125,16 +179,50 @@ impl Builder<'_> {
             .trusted
             .duplicate_releases
             .source_switch(owner, &payload.candidate.id);
-        let mut records = self.records.bound_records().filter(|(record, _)| {
-            related_release_source(
-                &self.session.trusted.config,
-                core.repo,
-                &record.manifest,
-                &core.binding.tag,
-                prerelease,
-            )
+        let installed_primary = projected.and_then(|copy| {
+            self.session.trusted.installed_mods.iter().find(|item| {
+                item.dll_file == mods::canonical_dll_name(&copy.dll_file)
+                    && item.package_id == copy.manifest_id
+                    && item
+                        .guid
+                        .as_deref()
+                        .is_some_and(|guid| same_guid(guid, &core.repo.plugin_guid))
+            })
         });
-        let Some((record, previous_binding)) = records.next() else {
+        let mut records = self
+            .records
+            .bound_records()
+            .filter_map(|(record, previous)| {
+                let manifest = &record.manifest;
+                let explicit = explicit_root
+                    && related_release_source(
+                        &trusted.config,
+                        core.repo,
+                        manifest,
+                        &core.binding.tag,
+                        prerelease,
+                        installed_primary,
+                    );
+                let vacant = !explicit
+                    && vacant_owner
+                    && source_binding(&trusted.config, core.repo, manifest).is_some()
+                    && declared_source(
+                        &trusted.config,
+                        core.repo,
+                        manifest,
+                        previous,
+                        prerelease,
+                        Some(&core.repo.plugin_guid),
+                    )
+                    && mods::installed_prerelease(
+                        &trusted.config,
+                        Some(previous),
+                        manifest.prerelease,
+                        None,
+                    ) == prerelease;
+                (explicit || vacant).then_some((record, previous, explicit))
+            });
+        let Some((record, previous_binding, explicit)) = records.next() else {
             return Ok(None);
         };
         let old_id = &record.manifest.repository_id;
@@ -146,6 +234,7 @@ impl Builder<'_> {
                 .map(|unique| unique.relative.as_str())
                 != Some(record.relative.as_str())
             || record.relative != install_record_path(old_id).relative
+            || (!explicit && self.records.exact_orphan(old_id, self.session).is_none())
             || self.records.records_for_id(&core.repo.id).next().is_some()
             || Fingerprint::capture(&replacement.resolve(&self.roots)?)? != Fingerprint::Missing
             || !payload
@@ -286,25 +375,29 @@ impl Builder<'_> {
             .filter(|path| path.missing)
             .map(|path| path.relative)
             .collect::<BTreeSet<_>>();
-        let confirmation = OverwriteConfirmation::new(
-            self,
-            owner,
-            &core.repo.id,
-            record,
-            (
-                &payload.candidate,
-                zip_digest,
-                &stamp,
-                &installed,
-                &vacant_paths,
-            ),
-            Some(SourceSwitch {
-                previous_source: previous_binding.clone(),
-                next_source: core.binding.clone(),
-                target_path: target.clone(),
-                installed_path: installed.as_ref().map(|(path, _)| path.clone()),
-            }),
-        )?;
+        let confirmation = explicit
+            .then(|| {
+                OverwriteConfirmation::new(
+                    self,
+                    owner,
+                    &core.repo.id,
+                    record,
+                    (
+                        &payload.candidate,
+                        zip_digest,
+                        &stamp,
+                        &installed,
+                        &vacant_paths,
+                    ),
+                    Some(SourceSwitch {
+                        previous_source: previous_binding.clone(),
+                        next_source: core.binding.clone(),
+                        target_path: target.clone(),
+                        installed_path: installed.as_ref().map(|(path, _)| path.clone()),
+                    }),
+                )
+            })
+            .transpose()?;
         Ok(Some(RecordRecovery {
             files: BTreeMap::new(),
             record: MissingInstallRecord {

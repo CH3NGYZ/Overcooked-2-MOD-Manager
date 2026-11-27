@@ -63,6 +63,33 @@ impl ModRepositoryBinding {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ReplacedModRepository {
+    pub provider: Provider,
+    pub username: String,
+    pub repository: String,
+    pub channel: Channel,
+}
+
+impl ReplacedModRepository {
+    pub(crate) fn matches_binding(&self, binding: &ModRepositoryBinding) -> bool {
+        self.channel == binding.channel
+            && self.matches_identity(&binding.provider, &binding.owner, &binding.repository)
+    }
+
+    pub(crate) fn matches_identity(
+        &self,
+        provider: &Provider,
+        owner: &str,
+        repository: &str,
+    ) -> bool {
+        self.provider == *provider
+            && self.username.eq_ignore_ascii_case(owner)
+            && self.repository.eq_ignore_ascii_case(repository)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModRepositoryConfig {
     #[serde(rename = "type", default)]
@@ -100,6 +127,10 @@ pub struct ModRepositoryConfig {
     pub platform: Option<String>,
     #[serde(default)]
     pub channel: Channel,
+    #[serde(skip)]
+    pub(crate) replaces: Vec<ReplacedModRepository>,
+    #[serde(skip)]
+    pub(crate) replaces_revision: Option<u64>,
     #[serde(default)]
     pub asset_rules: Vec<AssetRule>,
     pub install_target: String,
@@ -190,6 +221,13 @@ pub struct ModRepositoryConfig {
     pub last_error: Option<String>,
 }
 
+impl ModRepositoryConfig {
+    pub(crate) fn clear_replacements(&mut self) {
+        self.replaces.clear();
+        self.replaces_revision = None;
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModRepositoryExport {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -221,6 +259,8 @@ pub struct ModRepositoryExport {
     pub download_mode: ModDownloadMode,
     #[serde(default)]
     pub channel: Channel,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replaces: Vec<ReplacedModRepository>,
     #[serde(default = "default_max_release_count")]
     pub max_release_count: u32,
     #[serde(default = "default_download_threads", skip_serializing)]

@@ -13,6 +13,8 @@ use std::collections::BTreeMap;
 pub struct AppConfig {
     #[serde(skip)]
     pub(crate) network_policy: Option<std::sync::Arc<crate::network_policy::NetworkPolicy>>,
+    #[serde(skip)]
+    pub(crate) replacement_sources: BTreeMap<String, crate::repository_sources::ReplacementSource>,
     pub schema_version: u32,
     /// 用户选择的地区；旧配置缺失时由配置服务按系统地区初始化并保存。
     #[serde(default)]

@@ -93,6 +93,7 @@ builtin = true
 #[test]
 fn unsafe_install_target_is_rejected() {
     let result = validate_mod_repository(&ModRepositoryExport {
+        replaces: Vec::new(),
         release_prerelease_metadata: Default::default(),
         network_plan: Default::default(),
         kind: Default::default(),

@@ -9,6 +9,7 @@ import { pickI18n } from '../i18n'
 import { backendMessageOf, translateBackendMessage } from '../locale/backend'
 import { useDashboard } from './useDashboardStore'
 import { prioritizeInstalledModRepositories } from '../modRepositoryPriority'
+import { updateRepositoryForMod } from '../modStatus'
 import { demoActive, isDemoId } from '../tutorial/demo'
 import {
   modRepositoryIsAvailable, sourceMatchesRegion,
@@ -272,22 +273,33 @@ export interface BoundRefreshSummary {
   refreshed: number
   /** 刷新后判定为「有新版」的 MOD 数。 */
   updated: number
+  targets: number
   /** 失败文案（`<仓库名>: <原因>`），调用方逐条提示。 */
   errors: string[]
 }
 
 /** Prepare all source TOMLs first, then refresh only the bound repositories.
  * API refresh supplies update evidence directly; ordinary checks honor cache TTL. */
-async function refreshBoundRepositories(repos: ModRepository[]): Promise<BoundRefreshSummary> {
-  if (demoActive.value || anyRefreshing.value) return { refreshed: 0, updated: 0, errors: [] }
-  const ids = new Set(repos.map((repo) => repo.id))
+async function refreshBoundRepositories(): Promise<BoundRefreshSummary> {
+  if (demoActive.value || anyRefreshing.value) return { refreshed: 0, updated: 0, targets: 0, errors: [] }
+  const { repositories, mods, sources, region, platform } = store()
+  const targets = new Map<string, ModRepository>()
   const result = await runSourceReleaseRefresh({
     state,
     trigger: 'bound',
-    prepare: () => prepareRepositorySources(false),
-    refresh: () => runRepositoryBatch(store().repositories.value.filter((repo) => ids.has(repo.id)), { trigger: 'single' }),
+    prepare: () => prepareRepositorySources({ successful: new Set(), rebuild: false }, true),
+    refresh: () => {
+      if (dashboardStore.modBindingCurrent.value) for (const mod of mods.value) {
+        if (mod.is_dependency || mod.release_companion) continue
+        const repo = updateRepositoryForMod(repositories.value, mod)
+        if (repo?.download_mode === 'release' && modRepositoryIsAvailable(repo, sources.value, region.value, platform.value)) {
+          targets.set(repo.id, repo)
+        }
+      }
+      return runRepositoryBatch([...targets.values()], { trigger: 'single' })
+    },
   })
-  return { refreshed: result.refreshed, updated: result.updated, errors: result.errors }
+  return { refreshed: result.refreshed, updated: result.updated, targets: targets.size, errors: result.errors }
 }
 
 /** 源节点和错误提示共用当前语言的源昵称。 */
@@ -314,7 +326,7 @@ function sourceError(source: RepositorySource, reason: string): string {
  * 不重新探测游戏目录、不重新扫描 DLL。一次刷新要经过父源 + 多个子源，
  * 用 load() 会把全量扫描重复十几次，这是刷新期间卡顿的主要来源。
  */
-interface SourceRefreshPass { successful: Set<string>; rebuild: boolean; rootIds?: Set<string>; force?: boolean }
+interface SourceRefreshPass { successful: Set<string>; rebuild: boolean; rootIds?: Set<string>; force?: boolean; touchedBuiltin?: boolean }
 
 function sourceConfigProjection(rootId: string, sourceId: string, pass?: SourceRefreshPass) {
   const ticket = state.generation.value
@@ -372,6 +384,7 @@ async function refreshSourceChain(sourceId: string, visited = new Set<string>(),
   // this source atomically only after a complete successful document read.
   /* 源级标志也走共享状态机：地图侧用的是同一套写入规则 */
   const importErrors = await state.runSource(sourceId, async () => {
+    if (source.builtin && pass) pass.touchedBuiltin = true
     const loaded = new Map(loadedDocuments.value)
     loaded.delete(sourceId)
     loadedDocuments.value = loaded
@@ -443,16 +456,18 @@ async function refreshSourceDocuments(pass?: SourceRefreshPass): Promise<string[
  * 完整刷新：源文档（父→子）→ 全部启用仓库的 Release（并发 4）。
  * 返回失败清单；调用方决定是否提示。
  */
-async function prepareRepositorySources(rebuild: boolean, pass?: SourceRefreshPass): Promise<string[]> {
-    if (demoActive.value) return []
-    const ticket = state.generation.value
-    const { loadBase, repositories, sources } = store()
-    // 启动时 Dashboard 可能还没读过：先读一次才有源和仓库可刷
-    if (!sources.value.length && !repositories.value.length) await loadBase()
-    if (demoActive.value || ticket !== state.generation.value) return []
-    // Keep the previous tree until its main document commits. Each successful
-    // import publishes the new declarations and its own rows before descending.
-    return refreshSourceDocuments(rebuild ? pass : undefined)
+async function prepareRepositorySources(pass: SourceRefreshPass, reconcile = false): Promise<string[]> {
+  if (demoActive.value) return []
+  const ticket = state.generation.value
+  const { loadBase, repositories, sources } = store()
+  // 启动时 Dashboard 可能还没读过：先读一次才有源和仓库可刷
+  if (!sources.value.length && !repositories.value.length) await loadBase()
+  if (demoActive.value || ticket !== state.generation.value) return []
+  const errors = await refreshSourceDocuments(pass)
+  if (ticket === state.generation.value && (reconcile || pass.touchedBuiltin)) {
+    await dashboardStore.reconcileModBindings(pass.touchedBuiltin)
+  }
+  return errors
 }
 
 async function refreshSource(sourceId: string): Promise<string[]> {
@@ -460,7 +475,12 @@ async function refreshSource(sourceId: string): Promise<string[]> {
   const pass: SourceRefreshPass = { successful: new Set(), rebuild: false }
   const result = await runSourceReleaseRefresh({
     state, trigger: 'partial',
-    prepare: () => refreshSourceChain(sourceId, new Set(), sourceId, pass),
+    prepare: async () => {
+      const ticket = state.generation.value
+      const errors = await refreshSourceChain(sourceId, new Set(), sourceId, pass)
+      if (ticket === state.generation.value && pass.touchedBuiltin) await dashboardStore.reconcileModBindings(true)
+      return errors
+    },
     refresh: () => {
       const { repositories, sources, region, platform } = store()
       return runRepositoryBatch(repositories.value.filter(repo => !!repo.source_id && pass.successful.has(repo.source_id)
@@ -478,7 +498,7 @@ async function refreshEverything(options: { force?: boolean } = {}): Promise<str
   const result = await runSourceReleaseRefresh({
     state,
     trigger: 'full',
-    prepare: () => prepareRepositorySources(true, pass),
+    prepare: () => prepareRepositorySources(pass),
     refresh: async () => {
       const { repositories, sources, region, platform } = store()
       const allowUnsourced = !pass.rootIds?.size || [...pass.rootIds].some(id => pass.successful.has(id))

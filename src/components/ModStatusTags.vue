@@ -9,7 +9,7 @@ import { useModRepositoryLink } from '../crossLink'
 import { installedModTags } from '../statusTags'
 import { runtimeModStatus } from '../modRuntimeStatus'
 import { isRelationCardKey } from '../modRelations'
-import { repositoryForMod } from '../modStatus'
+import { updateRepositoryForMod } from '../modStatus'
 import { dependencyRowFromStatus, dependencyTagTitle } from '../dependencyRows'
 import { useDependencyNavigation } from '../composables/useDependencyNavigation'
 import type { InstalledMod } from '../types'
@@ -63,7 +63,7 @@ function relationRow(tagKey: string) {
 
 const repositoryId = computed(() => {
   const current = mod.value
-  return current && repositoryForMod(repositories.value, current)?.id
+  return current && updateRepositoryForMod(repositories.value, current)?.id
 })
 
 const tags = computed(() => (status.value ? installedModTags(status.value.mod) : []).map(tag => {

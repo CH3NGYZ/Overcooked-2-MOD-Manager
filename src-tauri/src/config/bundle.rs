@@ -193,6 +193,7 @@ impl ConfigService {
                     .unwrap_or(true)
             })
             .map(|repo| ModRepositoryExport {
+                replaces: Vec::new(),
                 release_prerelease_metadata: repo.release_prerelease_metadata.clone(),
                 network_plan: repo.network_plan.clone(),
                 kind: repo.kind,

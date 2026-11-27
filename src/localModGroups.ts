@@ -1,4 +1,4 @@
-import { compareVersions, repositoryForMod } from './modStatus.ts'
+import { compareVersions, repositoryForMod, updateRepositoryForMod } from './modStatus.ts'
 import {
   installedModTags,
   packageStatuses,
@@ -164,7 +164,7 @@ export function buildLocalModGroups(options: LocalModGroupOptions): ModGroupNode
     const enabledCount = ordered.filter((mod) => mod.enabled).length
     const statuses = packageStatuses(ordered)
     const packageRepresentative = representative(ordered)
-    const repo = repositoryForMod(repositories, packageRepresentative)
+    const repo = updateRepositoryForMod(repositories, packageRepresentative)
     return {
       key,
       label: ordered[0] ? displayTitle(ordered[0]) : '',

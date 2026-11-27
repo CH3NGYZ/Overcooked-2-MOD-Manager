@@ -147,16 +147,21 @@ function installLabel(repo: ModRepository) {
 /** 主按钮：刷新失败时重试该仓库的 Release，其余走安装预览链路。 */
 function runCardAction(repo: ModRepository) {
   if (installActionOf(repo) === 'refresh') void refreshModRepository(repo)
-  else void install(repo)
+  else {
+    const replacement = statusOf(repo).replacement
+    if (!replacement || replacement.updateTag) void install(repo, replacement?.updateTag)
+  }
 }
 
 /** 卡片的主按钮（给共享卡片组件用）。 */
 function cardAction(repo: ModRepository): CardAction {
+  const kind = installActionOf(repo)
+  const replacement = statusOf(repo).replacement
   return {
-    kind: installActionOf(repo),
+    kind,
     label: installLabel(repo),
     loading: !!installing.value[repo.id],
-    disabled: isRefreshing(repo),
+    disabled: isRefreshing(repo) || (kind !== 'refresh' && !!replacement && !replacement.updateTag),
   }
 }
 
@@ -477,10 +482,10 @@ function downloadCount(repo: ModRepository) {
  * 卡片状态标签：统一走共享的 statusTags 模块（与 MOD 管理页同一套文案与配色）。
  * 已安装状态依据「已安装 MOD 的版本」与「仓库最新 Release 版本」比较。
  */
-interface RepoStatus { key: string; tone: StatusTone; text: string }
+interface RepoStatus { key: string; tone: StatusTone; text: string; replacement?: { updateTag?: string } }
 function repoStatus(repo: ModRepository): RepoStatus {
   const status = repositoryStatus(repo, mods.value)
-  return { key: status.key, tone: status.tone, text: t(status.text) }
+  return { ...status, text: t(status.text) }
 }
 
 /** 每个仓库只算一次状态，模板与筛选共用。 */

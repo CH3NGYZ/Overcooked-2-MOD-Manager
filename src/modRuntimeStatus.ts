@@ -1,5 +1,5 @@
 import type { InstalledMod, ModRepository } from './types'
-import { repositoryForMod } from './modStatus.ts'
+import { updateRepositoryForMod } from './modStatus.ts'
 import { dependencyTagFor, isRelationCardKey, relationStatusesForSubject, type RelationStatus } from './modRelations.ts'
 import { modUpdateVerdict, replaceVersionConclusion } from './statusTags.ts'
 
@@ -101,7 +101,7 @@ export function runtimeModStatus(
   repositories: readonly ModRepository[],
   state: RuntimeRefreshState,
 ): RuntimeModStatus {
-  const repo = repositoryForMod([...repositories], mod)
+  const repo = updateRepositoryForMod(repositories, mod)
   const relations = mod.is_dependency ? [] : relationStatusesForSubject({ dll_file: mod.dll_file }, mods)
   const relationTag = dependencyTagFor(relations, true)
   const relationState = { relations, relationTag }

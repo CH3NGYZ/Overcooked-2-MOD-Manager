@@ -523,6 +523,7 @@ export interface InstalledMod {
   /** Direct repository identity of this DLL (not the shared install binding). */
   repository_identity_match?: 'guid' | 'metadata'
   repository_binding?: ModRepositoryBinding | null
+  replacement_repository_id?: string | null
   package_id?: string
   /** Display affiliation of a loose plugin; never an installation record. */
   bundled_with_dll?: string

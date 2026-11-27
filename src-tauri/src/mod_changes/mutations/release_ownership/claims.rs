@@ -38,6 +38,12 @@ impl ReleaseTargetClaims {
         self.loose.is_empty() && self.missing_records.is_empty() && self.orphan_records.is_empty()
     }
 
+    pub fn switches_source(&self) -> bool {
+        self.missing_records
+            .values()
+            .any(MissingInstallRecord::switches_source)
+    }
+
     pub(in crate::mod_changes) fn proof_read_paths(&self) -> impl Iterator<Item = TransactionPath> {
         self.loose
             .values()
@@ -140,7 +146,7 @@ impl ReleaseTargetClaims {
                     owner,
                     &record.relative,
                     Some(&switch.target),
-                    &switch.confirmation,
+                    switch.confirmation.as_ref()?,
                 ))
             }));
         if intent

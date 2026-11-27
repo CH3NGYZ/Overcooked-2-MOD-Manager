@@ -36,6 +36,7 @@ pub(crate) use defaults::default_config;
 pub(crate) use defaults::default_ui_zoom;
 pub(crate) use identity::export_key;
 pub(crate) use identity::repo_key;
+pub(crate) use identity::repository_address_key;
 pub(crate) use identity::source_repository_key;
 pub(crate) use metadata::localized_map_name;
 pub(crate) use metadata::localized_mod_repository_name;

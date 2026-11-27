@@ -82,6 +82,10 @@ pub struct InstalledMod {
     pub is_dependency: bool,
     #[serde(default)]
     pub repository_binding: Option<ModRepositoryBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) replacement_repository_id: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) repository_replacement_eligible: bool,
     #[serde(default)]
     pub package_id: Option<String>,
     /// Display-only association with the canonical path of an installed core DLL.

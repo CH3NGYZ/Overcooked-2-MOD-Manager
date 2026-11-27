@@ -317,6 +317,10 @@ fn commit_inner(
                 session
                     .release_target_claims
                     .verify_reinstalled_paths(state, &roots, &written, &changes)?;
+                if session.release_target_claims.switches_source() {
+                    let (current_root, config) = freshness::current_target(state)?;
+                    freshness::check_scope(state, session, &current_root, &config)?;
+                }
                 transaction_stage.set("persist_commit");
                 Ok(())
             },

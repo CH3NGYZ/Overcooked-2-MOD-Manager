@@ -4,7 +4,7 @@ import test from 'node:test'
 /** 共享状态标签：真实源码直接执行（Node 24 类型擦除）。 */
 const {
   STATUS_META, installedModTags, repositoryStatus, replaceVersionConclusion, isVersionConclusion,
-  packageStatuses, summarizeUnits, modUpdateAvailable, repositoryInstallAction,
+  packageStatuses, summarizeUnits, modUpdateAvailable, modUpdateVerdict, repositoryInstallAction,
 } = await import('../src/statusTags.ts')
 
 function repo(overrides = {}) {
@@ -94,6 +94,59 @@ test('后端未绑定该仓库时回退到版本比较', () => {
   assert.equal(status.text, 'tools.update')
   // 可更新属于「中度」
   assert.equal(status.tone, 'moderate')
+})
+
+test('续接保留安装渠道，跳过草稿和预发布，并将精确标签用于新仓库更新', () => {
+  const target = repo({ asset_rules: [{ type: 'glob', value: '*.zip' }] })
+  const release = { ...target.cached_releases[0], assets: [{ name: 'Mod.ZIP', download_url: 'https://example.invalid/Mod.ZIP' }] }
+  target.cached_releases = [{ ...release, tag_name: 'v4.0.0', draft: true },
+    { ...release, tag_name: 'v3.0.0-beta.1', prerelease: true }, release]
+  const installed = mod({ repository_id: 'old', replacement_repository_id: target.id, version: '1.0.0',
+    repository_binding: { provider: 'gitee', owner: 'Owner', repository: 'Repo', tag: 'v1.0.0', channel: 'stable' } })
+  assert.equal(repositoryStatus(target, [installed]).key, 'update_available')
+  assert.equal(modUpdateVerdict(installed, [target]).updateAvailable, true)
+  assert.equal(repositoryStatus(target, [installed]).replacement?.updateTag, 'v2.0.0')
+  const allChannel = { ...installed, repository_binding: { ...installed.repository_binding, channel: 'all' } }
+  assert.equal(repositoryStatus(target, [allChannel]).replacement?.updateTag, 'v2.0.0')
+  assert.equal(repositoryStatus(target, [{ ...allChannel, prerelease: true }]).replacement?.updateTag, 'v3.0.0-beta.1')
+  for (const pinned_version of ['missing', 'v3.0.0-beta.1']) {
+    assert.deepEqual(repositoryStatus({ ...target, pinned_version }, [installed]).replacement, { updateTag: undefined })
+  }
+  for (const version of ['2.0.0', '5.0.0', 'nightly']) {
+    const current = { ...installed, version, repository_binding: { ...installed.repository_binding, tag: version } }
+    assert.equal(modUpdateAvailable(current, [target]), false)
+    assert.deepEqual(repositoryStatus(target, [current]).replacement, { updateTag: undefined })
+  }
+  const unclaimed = { ...installed, replacement_repository_id: null }
+  assert.equal(repositoryStatus(target, [unclaimed]).key, 'not_installed')
+})
+
+test('续接仅推荐首个规则命中的可下载 ZIP，不跳到第二个附件或其他版本', () => {
+  const target = repo()
+  const release = target.cached_releases[0]
+  const zip = { name: 'Mod.zip', download_url: 'https://example.invalid/Mod.zip' }
+  const dll = { name: 'Mod.dll', download_url: 'https://example.invalid/Mod.dll' }
+  const allowed = { type: 'glob', value: 'Mod.*' }
+  const installed = mod({ repository_id: 'old', replacement_repository_id: target.id, version: '1.0.0', update_available: true,
+    repository_binding: { provider: 'gitee', owner: 'Owner', repository: 'Repo', tag: 'v1.0.0', channel: 'all' } })
+  for (const { assets, asset_rules, pinned_version } of [
+    { assets: [zip], asset_rules: [{ type: 'exact', value: 'Other.zip' }] },
+    { assets: [dll, zip], asset_rules: [allowed] },
+    { assets: [{ ...zip, download_url: '' }], asset_rules: [allowed] },
+    { assets: [{ ...zip, download_url: ' ' }], asset_rules: [allowed] },
+    { assets: [dll], asset_rules: [allowed], pinned_version: release.tag_name },
+  ]) {
+    const candidate = { ...target, asset_rules, pinned_version,
+      cached_releases: [{ ...release, assets }, { ...release, tag_name: 'v1.5.0', assets: [zip] }] }
+    assert.equal(modUpdateAvailable(installed, [candidate]), false)
+    assert.equal(repositoryStatus(candidate, [installed]).key, 'unknown')
+    assert.deepEqual(repositoryStatus(candidate, [installed]).replacement, { updateTag: undefined })
+  }
+  const skippedDll = { ...target, asset_rules: [{ type: 'exact', value: zip.name }], pinned_version: release.tag_name,
+    cached_releases: [{ ...release, assets: [dll, zip] }] }
+  assert.equal(repositoryStatus(skippedDll, [installed]).replacement?.updateTag, release.tag_name)
+  const sameOrigin = mod({ repository_id: target.id, version: '1.0.0' })
+  assert.equal(modUpdateAvailable(sameOrigin, [target]), true, '普通仓库维持现有版本判断')
 })
 
 test('每个状态标签都有文案与合法色调', () => {

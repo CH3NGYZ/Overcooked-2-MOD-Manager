@@ -3,6 +3,7 @@ use crate::models::*;
 
 fn base_export(relations: Vec<RepositoryRelation>) -> ModRepositoryExport {
     ModRepositoryExport {
+        replaces: Vec::new(),
         release_prerelease_metadata: Default::default(),
         network_plan: Default::default(),
         kind: Default::default(),

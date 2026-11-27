@@ -1,5 +1,6 @@
 import type { InstalledMod, InstalledModStatusLabel, ModRepository } from './types'
-import { compareVersions, isPrereleaseVersion, localVersion, matchesRepositoryIdentity, modsForRepository, repositoryForMod } from './modStatus.ts'
+import { compareVersions, isPrereleaseVersion, isReplacementRepository, localVersion, matchesRepositoryIdentity, modsForRepository, updateRepositoryForMod } from './modStatus.ts'
+import { cachedInstallRelease, matchedReleaseAssets } from './repositoryAssets.ts'
 import { RELATION_CARD_KEYS, RELATION_STATUS } from './modRelations.ts'
 
 /**
@@ -373,7 +374,7 @@ export function repositoryInstallAction(status: StatusTag, repo: ModRepository):
 }
 
 /** Only the core plugin can represent a Release; compare it with the current cache. */
-export function repositoryStatus(repo: ModRepository, installedMods: InstalledMod[]): StatusTag {
+export function repositoryStatus(repo: ModRepository, installedMods: InstalledMod[]): StatusTag & { replacement?: { updateTag?: string } } {
   const tag = (key: keyof typeof STATUS_META): StatusTag => ({
     key,
     text: STATUS_META[key].text,
@@ -391,11 +392,23 @@ export function repositoryStatus(repo: ModRepository, installedMods: InstalledMo
     if (repo.last_error) return tag('refresh_failed')
   }
 
-  const matches = modsForRepository(installedMods, repo).filter((mod) => mod.repository_binding
-    ? matchesReleaseBinding(repo, mod.repository_binding) : isRaw || mod.status !== 'not_release_asset')
+  const matches = boundInstallations(repo, installedMods)
   if (isRaw && matches.length) return tag('installed')
   if (!matches.length) return tag(isRaw ? 'not_installed_raw' : repo.cached_releases[0] ? 'not_installed' : 'not_refreshed')
-  const installed = matches.reduce<InstalledMod | undefined>((best, mod) => {
+  const installed = newestCoreInstallation(matches)
+  const verdict = installed && releaseUpdateVerdict(installed, repo)
+  const status = tag(!verdict ? 'unknown' : verdict.updateAvailable ? 'update_available' : 'latest')
+  const replacing = installed ? isReplacementRepository(installed, repo) : matches.some(mod => isReplacementRepository(mod, repo))
+  return replacing ? { ...status, replacement: { updateTag: verdict?.updateAvailable ? verdict.release.tag_name : undefined } } : status
+}
+
+function boundInstallations(repo: ModRepository, mods: readonly InstalledMod[]): InstalledMod[] {
+  return modsForRepository(mods, repo).filter(mod => mod.repository_binding
+    ? acceptsReleaseBinding(repo, mod) : repo.download_mode === 'repository_file' || mod.status !== 'not_release_asset')
+}
+
+function newestCoreInstallation(mods: readonly InstalledMod[]): InstalledMod | undefined {
+  return mods.reduce<InstalledMod | undefined>((best, mod) => {
     if (mod.is_dependency || mod.release_companion || mod.duplicate_cleanup_available
       || mod.status === 'duplicate_lower_version') return best
     if (!best) return mod
@@ -403,41 +416,48 @@ export function repositoryStatus(repo: ModRepository, installedMods: InstalledMo
     const bestVersion = localVersion(best)
     return currentVersion && (!bestVersion || compareVersions(currentVersion, bestVersion) === 1) ? mod : best
   }, undefined)
-  const verdict = installed && releaseUpdateVerdict(installed, repo)
-  return tag(verdict === undefined ? 'unknown' : verdict ? 'update_available' : 'latest')
 }
 
-function matchesReleaseBinding(repo: ModRepository, binding: NonNullable<InstalledMod['repository_binding']>): boolean {
-  return repo.download_mode === 'release' && matchesRepositoryIdentity(repo, binding)
-    && (repo.channel === binding.channel || repo.channel === 'all')
+function acceptsReleaseBinding(repo: ModRepository, mod: InstalledMod): boolean {
+  const binding = mod.repository_binding
+  return !binding || (repo.download_mode === 'release' && (repo.channel === binding.channel || repo.channel === 'all')
+    && (matchesRepositoryIdentity(repo, binding) || isReplacementRepository(mod, repo)))
 }
 
 /** The installation card, local card and refresh summary read the latest
  * cache with the same disk-scan version, even while Rust is rebinding it. */
-function releaseUpdateVerdict(mod: InstalledMod, repo: ModRepository): boolean | undefined {
+function releaseUpdateVerdict(mod: InstalledMod, repo: ModRepository) {
   const local = localVersion(mod)
-  if (!local) return undefined
+  if (!local || !acceptsReleaseBinding(repo, mod)) return undefined
   const binding = mod.repository_binding
-  if (binding && !matchesReleaseBinding(repo, binding)) return undefined
+  const replacing = isReplacementRepository(mod, repo)
+  const pinned = replacing && repo.pinned_version != null
+  const pin = pinned ? cachedInstallRelease(repo.cached_releases, undefined, repo.pinned_version) : undefined
+  const installedBeta = mod.prerelease ?? isPrereleaseVersion(binding?.tag ?? local)
   const release = repo.cached_releases.find((release) => {
+    if (pinned && release !== pin) return false
     if (release.draft) return false
     const channel = binding?.channel ?? repo.channel
-    if (channel === 'all') return true
     const beta = isPrereleaseVersion(release.tag_name, release.apiPrerelease, release.prerelease)
-    return channel === 'beta' ? beta : !beta
+    return (!replacing || beta === installedBeta) && (channel === 'all' || (channel === 'beta' ? beta : !beta))
   })
   if (!release) return undefined
+  if (replacing) {
+    const [asset] = matchedReleaseAssets(release, repo.asset_rules)
+    if (!asset?.download_url.trim() || !asset.name.toLowerCase().endsWith('.zip')) return undefined
+  }
   const remote = binding ? release.tag_name : release.version || release.tag_name
-  if (binding && remote === local) return false
+  if (binding && remote === local) return { updateAvailable: false, release }
   const compared = compareVersions(remote, local)
   // Opaque installed Release tags retain exact-tag semantics. An opaque DLL
   // reported after a replacement cannot prove anything about the Release.
-  return compared !== null ? compared > 0 : binding?.tag === local ? true : undefined
+  if (compared !== null) return { updateAvailable: compared > 0, release }
+  return !replacing && binding?.tag === local ? { updateAvailable: true, release } : undefined
 }
 
 export type ModUpdateVerdict =
   /** 能按当前缓存判定。 */
-  | { known: true; updateAvailable: boolean; source: 'release' }
+  | { known: true; updateAvailable: boolean; source: 'release'; tag: string }
   /** 已有可保留的较新本地副本；不为当前文件重新判定线上版本。 */
   | { known: true; updateAvailable: false; source: 'newer_copy' }
   /** 当前渠道已完成刷新，但没有版本可比；以前的结论已失效。 */
@@ -449,14 +469,13 @@ export function modUpdateVerdict(mod: InstalledMod, repositories: readonly ModRe
   // 纯依赖不是 MOD，不参与更新判定
   if (mod.is_dependency || mod.release_companion) return { known: false }
   if (mod.duplicate_cleanup_available) return { known: true, updateAvailable: false, source: 'newer_copy' }
-  const repo = repositoryForMod(repositories, mod)
+  const repo = updateRepositoryForMod(repositories, mod)
   if (!repo || repo.last_error) return { known: false }
   // 仓库文件模式没有版本比较的意义
   if (repo.download_mode === 'repository_file') return { known: false }
-  const updateAvailable = releaseUpdateVerdict(mod, repo)
-  if (updateAvailable !== undefined) return { known: true, updateAvailable, source: 'release' }
-  const binding = mod.repository_binding
-  if (repo.cached_releases_complete === true && (!binding || matchesReleaseBinding(repo, binding))) {
+  const verdict = releaseUpdateVerdict(mod, repo)
+  if (verdict) return { known: true, updateAvailable: verdict.updateAvailable, source: 'release', tag: verdict.release.tag_name }
+  if ((repo.cached_releases_complete === true || isReplacementRepository(mod, repo)) && acceptsReleaseBinding(repo, mod)) {
     return { known: true, updateAvailable: false, source: 'no_comparable_release' }
   }
   return { known: false }

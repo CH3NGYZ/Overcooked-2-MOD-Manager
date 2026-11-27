@@ -24,6 +24,7 @@ pub(crate) fn default_ui_zoom() -> f64 {
 
 pub(crate) fn default_config() -> AppConfig {
     AppConfig {
+        replacement_sources: Default::default(),
         schema_version: CONFIG_SCHEMA_VERSION,
         // Deterministic template; first disk initialization replaces this with
         // the OS region. Valid saved regions never consult the OS again.

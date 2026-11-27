@@ -69,9 +69,15 @@ function gamePathChanged(before: GameInfo | undefined, after: GameInfo) {
 /** Both independently arriving lanes reconcile against the backend's current
  * repository configuration. Coalesce updates; reject responses overtaken by
  * a newer TOML or local scan without blocking either lane's initial display. */
-function rebindLocalMods({ deferForOnline = false } = {}): Promise<void> {
+function rebindLocalMods({ deferForOnline = false, catalogReapplied = false } = {}): Promise<void> {
   if (demoActive.value) return Promise.resolve()
   bindingRevision.value += 1
+  if (catalogReapplied && localMods.value.some(mod => mod.replacement_repository_id)) {
+    const mods = localMods.value.map(mod => mod.replacement_repository_id ? { ...mod, replacement_repository_id: null } : mod)
+    localMods.value = mods
+    const current = dashboard.value
+    if (current) dashboard.value = { ...current, mods }
+  }
   if (!modsLoaded || !localMods.value.length) return Promise.resolve()
   bindingDeferred = deferForOnline && onlineRefreshPending.value
   if (bindingDeferred) return Promise.resolve()
@@ -101,6 +107,10 @@ function rebindLocalMods({ deferForOnline = false } = {}): Promise<void> {
 }
 
 watch(onlineRefreshPending, busy => { if (!busy && bindingDeferred) void rebindLocalMods() })
+
+function reconcileModBindings(catalogReapplied = false) {
+  if (catalogReapplied || !modBindingCurrent.value) return rebindLocalMods({ catalogReapplied })
+}
 
 function publishConfig(config: PublicConfig): Promise<void> | undefined {
   const current = dashboard.value
@@ -403,6 +413,6 @@ export function useDashboard() {
   return {
     dashboard, loading, backgroundLoading, error, modsLoading, modsError, modsGeneration, modsStatus,
     config, game, mods, modBindingCurrent, diyLevelTarget, enabledModCount, updateCount, frameworkOk,
-    load, loadBase, loadLocalMods, checkModUpdates, invalidateModUpdates, reloadConfig, applyConfigSnapshot, ensureLoaded, ensureLocalModsLoaded, refresh, recheckGameState,
+    load, loadBase, loadLocalMods, checkModUpdates, invalidateModUpdates, reloadConfig, applyConfigSnapshot, reconcileModBindings, ensureLoaded, ensureLocalModsLoaded, refresh, recheckGameState,
   }
 }

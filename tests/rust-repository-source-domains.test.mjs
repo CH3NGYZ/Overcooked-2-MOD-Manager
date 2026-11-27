@@ -81,7 +81,7 @@ test('MOD and map sources retain shared reading, verified failure and cache appl
   const apply = read('apply.rs')
   assert.equal([...apply.matchAll(/let _cache_guard = state\.repository_cache\.lock\(\)\.await;/g)].length, 2)
   assert.equal([...apply.matchAll(/let _operation_guard = state\s*\.operation\s*\.lock\(\)/g)].length, 2)
-  ordered(apply, ['let _cache_guard', 'let _operation_guard', 'let (document, selection) = if official_root', 'state.config.official_root(force).await?', 'repository_sources::load_document(&location, &parent_plan, &network).await', 'let _cache_guard', 'let _operation_guard', 'config.staged_release_cache.remove(previous_id)', 'sync_manifest_groups(&state, &config)'])
+  ordered(apply, ['let _cache_guard', 'let _operation_guard', 'if official_root {', 'state.config.official_root(force).await?', 'repository_sources::load_document(&location, &parent_plan, &network).await', 'let _cache_guard', 'let _operation_guard', 'config.staged_release_cache.remove(previous_id)', 'sync_manifest_groups(&state, &config)'])
   assert.match(apply, /state\.config\.data_selection\(\) != selection/)
   ordered(apply, ['repository_sources::load_document(&location, &parent_plan, &network).await', 'super::cache::clear_source_repositories(', 'state.config.save(&config)'])
   assert.doesNotMatch(apply.slice(0, apply.indexOf('repository_sources::load_document(&location, &parent_plan, &network).await')), /clear_source_cache\(|clear_source_repositories\(|state\.config\.save\(/)

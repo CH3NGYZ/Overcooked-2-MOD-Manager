@@ -6,7 +6,7 @@ import test from 'node:test'
  * Node 24 直接执行 TS（类型擦除），这里测的是真实源码，不是副本。
  */
 const {
-  compareVersions, repositoryForMod, modsForRepository, formatVersion, isPrereleaseVersion, versionDisplay,
+  compareVersions, repositoryForMod, updateRepositoryForMod, modsForRepository, formatVersion, isPrereleaseVersion, versionDisplay,
 } = await import('../src/modStatus.ts')
 
 function repo(overrides = {}) {
@@ -55,6 +55,15 @@ test('同一仓库的多个本地副本全部返回，便于取最高版本比�
     mod({ dll_file: 'C.dll', repository_id: 'other' }),
   ]
   assert.deepEqual(modsForRepository(list, target).map((item) => item.dll_file), ['A.dll', 'B.dll'])
+})
+
+test('续接只改变查更新的目标，不改变包的历史仓库身份', () => {
+  const target = repo({ id: 'next' })
+  const installed = mod({ repository_id: 'old', replacement_repository_id: target.id })
+  assert.equal(repositoryForMod([target], installed), undefined)
+  assert.equal(updateRepositoryForMod([target], installed), target)
+  assert.deepEqual(modsForRepository([installed], target), [installed])
+  assert.equal(updateRepositoryForMod([{ ...target, enabled: false }], installed), undefined)
 })
 
 test('第 4 段是 beta 序号：序号间比较，且低于同号正式版', () => {

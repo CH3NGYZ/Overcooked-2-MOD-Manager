@@ -231,7 +231,7 @@ test('source switching rejects new single, group and full refresh work during pa
       mods.refreshMany([repository('blocked-group')]),
       mods.refreshSource('root'), mods.refreshSourceChain('root'),
       mods.refreshSourceDocuments(), mods.refreshEverything(),
-      mods.refreshBoundRepositories([repository('blocked-bound')]),
+      mods.refreshBoundRepositories(),
       maps.refreshReleases([map('blocked-map')]),
       maps.refreshSource({ id: 'maps-root' }), maps.refreshAll(),
       maps.refreshBoundMaps([map('blocked-bound-map')]),

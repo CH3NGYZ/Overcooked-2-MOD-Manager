@@ -60,11 +60,12 @@ function focusOut(event: FocusEvent) {
         <span v-if="tone" class="status-dot" aria-hidden="true" />
       </button>
     </template>
-    <section :id="panelId" ref="panel" class="titlebar-status-panel" role="dialog" :aria-label="label"
+    <section :id="panelId" ref="panel" class="titlebar-status-panel"
+      :class="{ 'with-heading-actions': heading && $slots['heading-action'] }" role="dialog" :aria-label="label"
       tabindex="-1" @keydown.esc.stop="close(true)" @focusout="focusOut">
       <header v-if="heading" class="titlebar-status-heading">
         <strong>{{ heading }}</strong>
-        <slot name="heading-action" />
+        <div v-if="$slots['heading-action']" class="titlebar-status-heading-actions"><slot name="heading-action" /></div>
       </header>
       <slot />
     </section>
@@ -89,9 +90,10 @@ function focusOut(event: FocusEvent) {
 .status-dot { position: absolute; right: 4px; bottom: 4px; width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
 .titlebar-status-button.rotating :deep(svg) { animation: status-orbit 1.6s linear infinite; }
 .titlebar-status-panel { display: flex; flex-direction: column; gap: 9px; width: 272px; max-width: calc(100vw - 40px); color: var(--oc2-text-2); }
-.titlebar-status-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; }
-.titlebar-status-heading strong { min-width: 0; overflow-wrap: anywhere; }
-.titlebar-status-heading :deep(button) { flex: none; }
+.titlebar-status-panel.with-heading-actions { width: 360px; }
+.titlebar-status-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-height: 28px; }
+.titlebar-status-heading strong { flex: 1 1 6rem; min-width: 0; overflow-wrap: anywhere; }
+.titlebar-status-heading-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-inline-start: auto; }
 @keyframes status-orbit { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
   .titlebar-status-button { transition: none; }

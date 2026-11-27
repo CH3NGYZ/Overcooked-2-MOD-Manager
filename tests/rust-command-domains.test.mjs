@@ -13,7 +13,7 @@ test('commands root only declares domains; registered IPC points at the real imp
   const handler = read('lib.rs').match(/audited_handler!\s*\[([\s\S]*?)\]/)?.[1]
   assert.ok(handler)
   const paths = [...handler.matchAll(/\bcommands::([a-z_]+)::([a-z_]+)\b/g)]
-  assert.equal(paths.length, 150, '包含启动公告、更新预约、退出与 Windows 普通权限交接 IPC')
+  assert.equal(paths.length, 151, '包含启动公告、官网入口、更新预约、退出与 Windows 普通权限交接 IPC')
   assert.ok(paths.some(([, domain, name]) => domain === 'announcements' && name === 'get_announcements'))
   assert.ok(paths.some(([, domain, name]) => domain === 'logs' && name === 'record_ipc_failure'))
   assert.ok(paths.some(([, domain, name]) => domain === 'logs' && name === 'record_file_drop'))
@@ -21,7 +21,7 @@ test('commands root only declares domains; registered IPC points at the real imp
   assert.ok(paths.some(([, domain, name]) => domain === 'system' && name === 'apply_staged_app_update'))
   assert.ok(paths.some(([, domain, name]) => domain === 'update' && name === 'get_app_distribution'))
   assert.ok(paths.some(([, domain, name]) => domain === 'download' && name === 'control_download_race'))
-  for (const name of ['stage_app_update', 'restart_update_as_user', 'open_app_update_release_and_exit']) {
+  for (const name of ['stage_app_update', 'restart_update_as_user', 'open_app_update_website', 'open_app_update_release_and_exit']) {
     assert.ok(paths.some(([, domain, actual]) => domain === 'update' && actual === name))
   }
   assert.ok(!paths.some(([, domain, name]) => domain === 'update' && name === 'install_app_update'))

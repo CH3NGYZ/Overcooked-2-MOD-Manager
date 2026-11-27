@@ -443,6 +443,7 @@ pub fn run() {
             commands::announcements::get_announcements,
             commands::update::open_release_page,
             commands::update::get_app_distribution,
+            commands::update::open_app_update_website,
             commands::update::open_update_repository,
             commands::system::exit_app,
             commands::system::open_devtools,

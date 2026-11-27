@@ -7,6 +7,7 @@ import { checkForAppUpdate, openAppUpdatePage, useAppUpdatePromptOpen } from '..
 import { downloadAmount, downloadPercent, downloadRate } from '../downloadPresentation'
 import { t } from '../i18n'
 import { backendMessageOf } from '../locale/backend'
+import { api } from '../services/tauri'
 import { useNotify } from '../useNotify'
 import AppUpdateNotes from './AppUpdateNotes.vue'
 import TitleBarProgressTable from './TitleBarProgressTable.vue'
@@ -73,14 +74,22 @@ async function openReleasePage() {
   try { await openAppUpdatePage() }
   catch (reason) { notify.error(backendMessageOf(reason)) }
 }
+
+async function openWebsite() {
+  try { await api.openAppUpdateWebsite() }
+  catch (reason) { notify.error(backendMessageOf(reason)) }
+}
 </script>
 
 <template>
   <TitleBarStatusPopover v-model:open="open" :label="t('update.managerUpdate')" :title="status" :heading="t('update.managerUpdate')"
     :tone="tone" :rotating="downloading" data-testid="app-update-status" :data-update-stage="appUpdateState.stage">
     <template #icon><RefreshOutline width="17" height="17" aria-hidden="true" /></template>
-    <template #heading-action>
-      <NButton v-if="showCheck" size="small" secondary :loading="checking" :aria-disabled="checking"
+    <template v-if="showCheck" #heading-action>
+      <NButton size="small" secondary data-testid="app-update-open-website" @click="openWebsite">
+        {{ t('update.goToWebsite') }}
+      </NButton>
+      <NButton size="small" secondary :loading="checking" :aria-disabled="checking"
         data-testid="app-update-check" @click="check">
         {{ storeManaged ? t('overview.check') : t('common.action.refetch') }}
       </NButton>

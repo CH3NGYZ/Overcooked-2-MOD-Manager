@@ -37,18 +37,16 @@ function refresh() {
     :tone="announcementsUnread ? 'warning' : undefined" :disabled="props.disabled" data-testid="announcement-status">
     <template #icon><MegaphoneOutline width="17" height="17" aria-hidden="true" /></template>
     <template #heading-action>
+      <NButton size="small" secondary data-testid="announcement-open" @click="openAnnouncementPage">
+        {{ t('announcements.open') }}
+      </NButton>
       <NButton size="small" secondary :loading="announcementSnapshot === undefined"
         :aria-disabled="announcementSnapshot === undefined" data-testid="announcement-refresh" @click="refresh">
         {{ t('common.action.refetch') }}
       </NButton>
     </template>
     <p v-if="announcementSnapshot === undefined" role="status">{{ t('announcements.loading') }}</p>
-    <template v-else-if="announcementSnapshot === null">
-      <p role="status">{{ t('announcements.unavailable') }}</p>
-      <NButton size="small" secondary class="announcement-open" data-testid="announcement-open" @click="openAnnouncementPage">
-        {{ t('announcements.open') }}
-      </NButton>
-    </template>
+    <p v-else-if="announcementSnapshot === null" role="status">{{ t('announcements.unavailable') }}</p>
     <p v-else-if="!announcementSnapshot.announcements.length">{{ t('announcements.empty') }}</p>
     <ol v-else ref="list" class="announcement-list" :aria-label="t('announcements.title')" tabindex="0" data-testid="announcement-list">
       <li v-for="notice in announcementSnapshot.announcements" :key="notice.id">
@@ -62,7 +60,6 @@ function refresh() {
 
 <style scoped>
 p { margin: 0; }
-.announcement-open { align-self: flex-end; }
 .announcement-list {
   max-height: min(230px, 47vh); overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
   padding: 0 6px 0 0; margin: 0; list-style: none; overflow-wrap: anywhere;

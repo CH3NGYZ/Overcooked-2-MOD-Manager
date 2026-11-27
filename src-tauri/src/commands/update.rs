@@ -30,6 +30,14 @@ pub fn get_app_distribution() -> Result<AppDistribution, String> {
 }
 
 #[tauri::command]
+pub fn open_app_update_website() -> Result<(), String> {
+    shell_open::open_web_page(
+        recovery_links::OFFICIAL_WEBSITE,
+        shell_open::WebPageKind::External,
+    )
+}
+
+#[tauri::command]
 pub fn open_update_repository(
     state: State<'_, AppState>,
     version: Option<String>,

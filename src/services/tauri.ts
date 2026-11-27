@@ -433,6 +433,7 @@ export const api = {
   applyStagedAppUpdate: () => invoke<void>('apply_staged_app_update'),
   deferStagedAppUpdate: (version: string) => invoke<void>('defer_staged_app_update', { version }),
   restartUpdateAsUser: () => invoke<void>('restart_update_as_user'),
+  openAppUpdateWebsite: () => invoke<void>('open_app_update_website'),
   openAppUpdateReleaseAndExit: (version: string, destination?: 'website') =>
     invoke<void>('open_app_update_release_and_exit', { version, destination }),
   chooseGameDirectory: () => open({ multiple: false, directory: true }),

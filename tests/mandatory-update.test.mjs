@@ -148,8 +148,20 @@ test('the update popover keeps its check button and shows checking while a requi
   assert.match(component, /const checking = computed\(\(\) => appUpdateState\.stage === 'checking' \|\| appUpdateState\.recheckingStatus\)/)
   assert.match(component, /if \(checking\.value\) return t\('update\.checking'\)/)
   assert.match(component, /const showCheck = computed\(\(\) => \(canCheck\.value \|\| checking\.value \|\| storeManaged\.value\)/)
-  assert.match(component, /v-if="showCheck".*:loading="checking" :aria-disabled="checking"/)
+  assert.match(component, /<template v-if="showCheck" #heading-action>[\s\S]*?<NButton [^>]*:loading="checking" :aria-disabled="checking"/)
   assert.match(component, /if \(!canCheck\.value && !storeManaged\.value\) return/)
+})
+
+test('titlebar popovers put external pages before re-fetch without triggering an update or exit', () => {
+  const update = source('src/components/AppUpdateStatus.vue')
+  const announcement = source('src/components/AnnouncementStatus.vue')
+  assert.match(update, /<template v-if="showCheck" #heading-action>\s*<NButton [^>]*@click="openWebsite"[\s\S]*?data-testid="app-update-check"/)
+  assert.match(update, /async function openWebsite\(\) \{\s*try \{ await api\.openAppUpdateWebsite\(\) \}/)
+  assert.match(source('src/services/tauri.ts'), /openAppUpdateWebsite: \(\) => invoke<void>\('open_app_update_website'\)/)
+  assert.match(source('src-tauri/src/commands/update.rs'), /#\[tauri::command\]\s*pub fn open_app_update_website\(\) -> Result<\(\), String> \{\s*shell_open::open_web_page\(\s*recovery_links::OFFICIAL_WEBSITE,\s*shell_open::WebPageKind::External,\s*\)\s*\}/)
+  assert.match(source('src-tauri/src/lib.rs'), /commands::update::open_app_update_website,/)
+  assert.match(announcement, /<template #heading-action>\s*<NButton [^>]*@click="openAnnouncementPage"[\s\S]*?data-testid="announcement-refresh"/)
+  assert.match(announcement, /api\.openExternalPage\(protocol\.origin\)/)
 })
 
 test('unavailable staging and verified failed installation use the manual download destinations', async () => {

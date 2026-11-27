@@ -505,12 +505,12 @@ const setLogBoxElement = (element: unknown) => { logBoxElement.value = element a
           </div>
 
           <template v-if="showInstallDependencies">
-            <n-divider />
+            <n-divider :theme-overrides="{ color: 'var(--oc2-row-line)' }" />
             <DependencyTable :rows="dependencies" :mono-name="dependenciesMonoName"
               @jump="(row) => emit('dependency-jump', row)" />
           </template>
 
-          <div class="release-log" :class="{ 'release-log--after-dependencies': showInstallDependencies }">
+          <div class="release-log">
             <div class="log-head">
               <b class="log-title">{{ t('dialogs.packageReleaseNotes') }}</b>
               <b class="mono">{{ releaseTag }}</b>
@@ -721,7 +721,6 @@ const setLogBoxElement = (element: unknown) => { logBoxElement.value = element a
   padding-top: 8px;
   border-top: 1px solid var(--oc2-row-line);
 }
-.release-log--after-dependencies { padding-top: 0; border-top: 0; }
 .log-head {
   display: flex;
   align-items: center;

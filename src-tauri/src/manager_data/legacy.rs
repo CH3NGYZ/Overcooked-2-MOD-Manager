@@ -6,7 +6,7 @@ use super::{
 use std::{fs::File, path::Path};
 
 fn legacy_paths(paths: &ResetPaths) -> Result<Option<ResetPaths>, String> {
-    let Ok(default) = crate::user_paths::default_root() else {
+    let Ok(default) = crate::user_paths::accessible_default_root() else {
         return Ok(None);
     };
     legacy_paths_at(paths, &default)
@@ -52,7 +52,7 @@ pub(super) fn exclusive_for_request(
     paths: &ResetPaths,
     record: &ResetRecord,
 ) -> Result<Option<File>, String> {
-    let Ok(default) = crate::user_paths::default_root() else {
+    let Ok(default) = crate::user_paths::accessible_default_root() else {
         return Ok(None);
     };
     exclusive_for_request_at(paths, record, &default)
@@ -389,7 +389,7 @@ mod tests {
         assert_eq!(record.phase, ResetPhase::Completed);
         assert!(matches!(record.action, DataAction::Clear));
         assert_eq!(record.data_root, Some(old.root));
-        assert!(super::super::completed_reset_token(Some(&record)).is_some());
+        assert!(super::super::completed_reset_token(Some(&record), &new.root).is_some());
     }
 
     #[test]

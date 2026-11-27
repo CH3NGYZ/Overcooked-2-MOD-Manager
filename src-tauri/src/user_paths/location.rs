@@ -106,6 +106,16 @@ fn validate_pointer_path(file: &Path) -> Result<(), String> {
 
 fn validate_root(root: &Path, require_exists: bool) -> Result<(), String> {
     validate_root_shape(root)?;
+    #[cfg(windows)]
+    return super::windows_data_root(root, false, !require_exists)
+        .map(|_| ())
+        .map_err(|_| ROOT_UNAVAILABLE.into());
+    #[cfg(not(windows))]
+    validate_root_on_macos(root, require_exists)
+}
+
+#[cfg(not(windows))]
+fn validate_root_on_macos(root: &Path, require_exists: bool) -> Result<(), String> {
     crate::install_guard::validate_install_dir(root).map_err(unavailable)?;
     let parent = root.parent().ok_or(ROOT_UNAVAILABLE)?;
     validate_directory_chain(parent)?;
@@ -127,6 +137,14 @@ fn validate_root(root: &Path, require_exists: bool) -> Result<(), String> {
 }
 
 pub(super) fn read_location(file: &Path) -> Result<Option<PathBuf>, String> {
+    let root = read_location_path(file)?;
+    if let Some(root) = &root {
+        validate_root(root, false)?;
+    }
+    Ok(root)
+}
+
+pub(crate) fn read_location_path(file: &Path) -> Result<Option<PathBuf>, String> {
     validate_pointer_path(file)?;
     let input = match File::open(file) {
         Ok(input) => input,
@@ -148,7 +166,6 @@ pub(super) fn read_location(file: &Path) -> Result<Option<PathBuf>, String> {
     if location.schema_version != SCHEMA_VERSION {
         return Err(ROOT_UNAVAILABLE.into());
     }
-    validate_root(&location.root, false)?;
     Ok(Some(location.root))
 }
 

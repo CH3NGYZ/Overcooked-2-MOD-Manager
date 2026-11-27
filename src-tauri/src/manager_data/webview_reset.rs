@@ -36,36 +36,56 @@ pub(crate) fn webview_reset_script(token: Option<uuid::Uuid>, config: &tauri::Co
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manager_data::storage::{ResetPhase, ResetRecord};
+    use crate::manager_data::completed_reset_token;
+    use crate::manager_data::storage::{DataAction, ResetPaths, ResetPhase, ResetRecord};
 
     #[test]
     fn only_completed_native_reset_exposes_a_token() {
-        assert_eq!(crate::manager_data::completed_reset_token(None), None);
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("OC2ModManager");
+        let paths = ResetPaths::new(&root).unwrap();
+        assert_eq!(completed_reset_token(None, &paths.root), None);
         let token = uuid::Uuid::new_v4();
+        let mut record = ResetRecord {
+            token,
+            owner_pid: 0,
+            owner_started: 0,
+            phase: ResetPhase::Pending,
+            error: None,
+            reported: false,
+            locale: None,
+            failed_from: None,
+            action: DataAction::Clear,
+            fingerprint: None,
+            data_root: Some(paths.root.clone()),
+        };
         for phase in [
             ResetPhase::Pending,
             ResetPhase::Deleting,
             ResetPhase::Failed,
             ResetPhase::Completed,
         ] {
-            let record = ResetRecord {
-                token,
-                owner_pid: 0,
-                owner_started: 0,
-                phase,
-                error: None,
-                reported: false,
-                locale: None,
-                failed_from: None,
-                action: super::super::storage::DataAction::Clear,
-                fingerprint: None,
-                data_root: None,
-            };
+            record.phase = phase;
+            paths.write_record(&record).unwrap();
             assert_eq!(
-                crate::manager_data::completed_reset_token(Some(&record)),
+                completed_reset_token(paths.record().unwrap().as_ref(), &paths.root),
                 (phase == ResetPhase::Completed).then_some(token)
             );
         }
+        let other = paths.parent.join("other").join("OC2ModManager");
+        let reselected = ResetPaths::with_control(&other, &paths.parent).unwrap();
+        assert_eq!(
+            completed_reset_token(reselected.record().unwrap().as_ref(), &reselected.root),
+            None
+        );
+        record.action = DataAction::Migrate {
+            source: paths.root.clone(),
+            target: reselected.root,
+        };
+        assert_eq!(completed_reset_token(Some(&record), &paths.root), None);
+        record.action = DataAction::Clear;
+        record.data_root = None;
+        assert_eq!(completed_reset_token(Some(&record), &paths.root), None);
     }
 
     #[test]

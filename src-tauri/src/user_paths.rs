@@ -4,6 +4,12 @@ use std::sync::OnceLock;
 
 mod location;
 pub(crate) use location::{bootstrap_dir, location_file, read_location_at, write_location_at};
+#[cfg(windows)]
+mod windows_documents;
+#[cfg(windows)]
+pub(crate) use windows_documents::{
+    Problem as DirectoryProblem, resolve_root as windows_data_root,
+};
 
 /// 数据目录名。
 const DATA_DIRECTORY: &str = "OC2ModManager";
@@ -11,7 +17,31 @@ const DATA_DIRECTORY: &str = "OC2ModManager";
 /// 数据根定位失败时返回的 tag（`config` 域：配置目录不可用）。
 const ROOT_UNAVAILABLE: &str = "config.directoryUnavailable";
 
-static SESSION_ROOT: OnceLock<PathBuf> = OnceLock::new();
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct DataRoot {
+    pub(crate) path: PathBuf,
+    pub(crate) custom: bool,
+    pub(crate) documents_alias: Option<PathBuf>,
+}
+
+#[derive(Debug)]
+pub(crate) enum DataRootError {
+    Location(String),
+    #[cfg(windows)]
+    Directory(PathBuf, DirectoryProblem),
+}
+
+impl From<DataRootError> for String {
+    fn from(error: DataRootError) -> Self {
+        match error {
+            DataRootError::Location(error) => error,
+            #[cfg(windows)]
+            DataRootError::Directory(_, _) => ROOT_UNAVAILABLE.into(),
+        }
+    }
+}
+
+static SESSION_ROOT: OnceLock<DataRoot> = OnceLock::new();
 
 /// 管理器自身可执行文件所在目录。
 ///
@@ -33,14 +63,14 @@ pub(crate) fn install_dir() -> Result<PathBuf, String> {
 /// Windows 取系统「文档」已知文件夹，macOS 取 `~/Library/Application Support`。
 /// 两者都走系统 API 而不是拼 `%USERPROFILE%\Documents`：Windows 的文档可能被
 /// 重定向到 OneDrive 或别的盘符，硬拼路径会写到一个用户根本找不到的地方。
+#[cfg(windows)]
 fn data_parent() -> Result<PathBuf, String> {
-    #[cfg(windows)]
-    let parent =
-        dirs::document_dir().or_else(|| dirs::home_dir().map(|home| home.join("Documents")));
-    // macOS 的 data_dir 就是 ~/Library/Application Support。
-    #[cfg(target_os = "macos")]
-    let parent = dirs::data_dir();
-    parent.ok_or_else(|| ROOT_UNAVAILABLE.to_string())
+    windows_documents::default_documents()
+}
+
+#[cfg(target_os = "macos")]
+fn data_parent() -> Result<PathBuf, String> {
+    dirs::data_dir().ok_or_else(|| ROOT_UNAVAILABLE.to_string())
 }
 
 /// 数据根：`<文档|Application Support>/OC2ModManager`。
@@ -65,19 +95,64 @@ pub(crate) fn default_root() -> Result<PathBuf, String> {
 /// 启动恢复结束前读取固定定位文件；正常会话固定使用初始化时的同一数据根。
 pub(crate) fn root() -> Result<PathBuf, String> {
     if let Some(root) = SESSION_ROOT.get() {
-        return Ok(root.clone());
+        return Ok(root.path.clone());
     }
-    location::read_location(&location_file()?)?.map_or_else(default_root, Ok)
+    Ok(locate_root(&location_file()?)?.path)
+}
+
+pub(crate) fn locate_root(file: &Path) -> Result<DataRoot, DataRootError> {
+    locate_root_with_default(file, default_root)
+}
+
+pub(crate) fn locate_root_with_default(
+    file: &Path,
+    default: impl FnOnce() -> Result<PathBuf, String>,
+) -> Result<DataRoot, DataRootError> {
+    #[cfg(windows)]
+    let configured = location::read_location_path(file).map_err(DataRootError::Location)?;
+    #[cfg(not(windows))]
+    let configured = location::read_location(file).map_err(DataRootError::Location)?;
+    let custom = configured.is_some();
+    let requested = configured
+        .map_or_else(default, Ok)
+        .map_err(DataRootError::Location)?;
+    #[cfg(windows)]
+    let (path, documents_alias) = {
+        let (path, redirected) = windows_data_root(&requested, !custom, true)
+            .map_err(|error| DataRootError::Directory(requested.clone(), error))?;
+        (path, redirected.then_some(requested))
+    };
+    #[cfg(not(windows))]
+    let (path, documents_alias) = (requested, None);
+    Ok(DataRoot {
+        path,
+        custom,
+        documents_alias,
+    })
+}
+
+pub(crate) fn accessible_default_root() -> Result<PathBuf, String> {
+    let root = default_root()?;
+    #[cfg(windows)]
+    let root = windows_data_root(&root, true, true)
+        .map_err(|_| ROOT_UNAVAILABLE.to_string())?
+        .0;
+    Ok(root)
 }
 
 /// 必须由启动恢复完成后的 initialize 调用，避免配置与日志在同一会话切根。
-pub(crate) fn freeze_root(root: &Path) -> Result<(), String> {
-    location::validate_root_shape(root)?;
-    match SESSION_ROOT.set(root.to_path_buf()) {
+pub(crate) fn freeze_root(root: DataRoot) -> Result<(), String> {
+    location::validate_root_shape(&root.path)?;
+    match SESSION_ROOT.set(root) {
         Ok(()) => Ok(()),
-        Err(_) if SESSION_ROOT.get().is_some_and(|current| current == root) => Ok(()),
+        Err(candidate) if SESSION_ROOT.get() == Some(&candidate) => Ok(()),
         Err(_) => Err(ROOT_UNAVAILABLE.into()),
     }
+}
+
+pub(crate) fn data_directory_alias() -> Option<(&'static Path, &'static Path)> {
+    let root = SESSION_ROOT.get()?;
+    Some((root.documents_alias.as_deref()?, root.path.as_path()))
 }
 
 pub(crate) fn logs_dir() -> Result<PathBuf, String> {
@@ -141,7 +216,7 @@ fn migrate_between(legacy: &Path, target: &Path) -> std::io::Result<bool> {
         return Ok(false);
     }
     // 目标已经写过配置：这台机器早就在用新版本，任何旧目录都只是残留。
-    if target.join("config.toml").is_file() {
+    if crate::config::existing_config_path(target)?.is_some() {
         return Ok(false);
     }
     fs::create_dir_all(target)?;

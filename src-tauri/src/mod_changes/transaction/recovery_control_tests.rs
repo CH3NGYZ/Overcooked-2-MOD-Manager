@@ -4,6 +4,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(windows)]
+mod documents_alias;
+
 fn get(workspace: &Workspace) -> RecoveryEntry {
     let mut entries = list_recoveries(&workspace.journal_root, Some(&workspace.roots)).unwrap();
     assert_eq!(entries.len(), 1);

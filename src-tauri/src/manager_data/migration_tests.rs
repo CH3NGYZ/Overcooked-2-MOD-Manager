@@ -78,7 +78,7 @@ fn copies_all_data_verifies_then_publishes_pointer_and_removes_old_root() {
     let record = f.paths.record().unwrap().unwrap();
     assert_eq!(record.phase, ResetPhase::Completed);
     assert_eq!(
-        completed_reset_token(Some(&record)),
+        completed_reset_token(Some(&record), &f.target),
         None,
         "migration must retain WebView preferences"
     );

@@ -35,6 +35,10 @@ fn checked(path: &Path) -> Result<PathBuf, String> {
 }
 
 fn validate_pair(paths: &ResetPaths, source: &Path, target: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    for root in [source, target] {
+        crate::user_paths::windows_data_root(root, false, true).map_err(|_| UNSAFE)?;
+    }
     let source = checked(source)?;
     let target = checked(target)?;
     if source

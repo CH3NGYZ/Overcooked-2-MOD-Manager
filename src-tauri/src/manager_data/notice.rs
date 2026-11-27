@@ -26,7 +26,7 @@ fn read_install_language(root: &Path) -> Option<String> {
 }
 
 pub(crate) fn install_language() -> Option<String> {
-    crate::user_paths::default_root()
+    crate::user_paths::accessible_default_root()
         .ok()
         .into_iter()
         .chain(crate::user_paths::root().ok())
@@ -34,7 +34,7 @@ pub(crate) fn install_language() -> Option<String> {
 }
 
 #[cfg(windows)]
-fn system_language() -> Option<&'static str> {
+pub(super) fn system_language() -> Option<&'static str> {
     use winapi::um::winnls::{
         GetUserDefaultLocaleName, GetUserDefaultUILanguage, LCIDToLocaleName,
     };

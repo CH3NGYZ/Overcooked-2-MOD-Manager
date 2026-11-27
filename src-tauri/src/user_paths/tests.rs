@@ -91,6 +91,24 @@ fn skips_when_the_target_is_already_initialized() {
     fs::remove_dir_all(base).unwrap();
 }
 
+#[test]
+fn preserves_the_previous_config_before_loading_a_relocated_root() {
+    let fixture = tempfile::tempdir().unwrap();
+    let legacy = fixture.path().join("install").join(DATA_DIRECTORY);
+    let target = fixture.path().join("documents").join(DATA_DIRECTORY);
+    fs::create_dir_all(&legacy).unwrap();
+    fs::create_dir_all(&target).unwrap();
+    let old = legacy.join("config.toml");
+    let previous = target.join("config.previous.toml");
+    fs::write(&old, b"old installation settings").unwrap();
+    fs::write(&previous, b"current settings").unwrap();
+
+    assert!(!migrate_between(&legacy, &target).unwrap());
+    assert_eq!(fs::read(&old).unwrap(), b"old installation settings");
+    assert_eq!(fs::read(&previous).unwrap(), b"current settings");
+    assert!(!target.join("config.toml").exists());
+}
+
 /// macOS 的旧路径上是一个**文件**（可执行文件本身），不能被当成目录搬走。
 #[test]
 fn ignores_a_legacy_path_that_is_a_file() {

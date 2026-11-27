@@ -104,7 +104,8 @@ pub fn run() {
         return;
     }
     let _data_session = match manager_data::initialize() {
-        Ok(session) => session,
+        Ok(Some(session)) => session,
+        Ok(None) => return,
         Err(error) => {
             manager_data::show_startup_error(&error);
             return;

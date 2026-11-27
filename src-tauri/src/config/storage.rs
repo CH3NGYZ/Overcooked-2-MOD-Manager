@@ -11,13 +11,14 @@ use super::sources::synchronize_builtin_repository_sources;
 use crate::file_check::log_path;
 use crate::models::*;
 use chrono::Utc;
-use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::MutexGuard;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::{fs, io};
 
 const CONFIG_FILE: &str = "config.toml";
+const PREVIOUS_CONFIG_FILE: &str = "config.previous.toml";
 
 #[cfg(test)]
 mod network_tests;
@@ -28,6 +29,18 @@ mod test_support;
 #[cfg(test)]
 mod tests;
 mod transaction;
+
+pub(crate) fn existing_config_path(root: &Path) -> io::Result<Option<PathBuf>> {
+    for name in [CONFIG_FILE, PREVIOUS_CONFIG_FILE] {
+        let path = root.join(name);
+        match fs::symlink_metadata(&path) {
+            Ok(_) => return Ok(Some(path)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(None)
+}
 
 impl ConfigService {
     pub fn new() -> Result<Self, ConfigError> {
@@ -248,18 +261,14 @@ impl ConfigService {
         initialize_session: bool,
     ) -> Result<AppConfig, ConfigError> {
         let path = self.config_path();
-        let previous = self.root.join("config.previous.toml");
-        let main_exists = path.exists();
-        let source = if main_exists {
-            &path
-        } else if previous.exists() {
-            log::warn!(
-                "[config] 主配置不存在，读取上一份配置：主文件={:?}，备份={:?}",
-                log_path(&path),
-                log_path(&previous)
+        let source = existing_config_path(&self.root).map_err(|error| {
+            log::error!(
+                "[config] 检查已有配置失败：文件={:?}，原因={error}",
+                log_path(&path)
             );
-            &previous
-        } else {
+            ConfigError::Read(error.to_string())
+        })?;
+        let Some(source) = source else {
             log::info!(
                 "[config] 主配置与备份均不存在，创建默认配置：文件={:?}",
                 log_path(&path)
@@ -269,10 +278,18 @@ impl ConfigService {
             log_loaded(&config, &path, "默认", false);
             return Ok(config);
         };
-        let text = fs::read_to_string(source).map_err(|e| {
+        let main_exists = source == path;
+        if !main_exists {
+            log::warn!(
+                "[config] 主配置不存在，读取上一份配置：主文件={:?}，备份={:?}",
+                log_path(&path),
+                log_path(&source)
+            );
+        }
+        let text = fs::read_to_string(&source).map_err(|e| {
             log::error!(
                 "[config] 读取配置文件失败：文件={:?}，原因={e}",
-                log_path(source)
+                log_path(&source)
             );
             ConfigError::Read(e.to_string())
         })?;
@@ -304,7 +321,7 @@ impl ConfigService {
                 if changed {
                     log::info!(
                         "[config] 配置迁移或同步：读取={:?}，写入={:?}，schema={}→{}，旧代理字段={}",
-                        log_path(source),
+                        log_path(&source),
                         log_path(&path),
                         original_schema,
                         config.schema_version,
@@ -314,7 +331,7 @@ impl ConfigService {
                 }
                 log_loaded(
                     &config,
-                    source,
+                    &source,
                     if main_exists { "主文件" } else { "备份" },
                     changed,
                 );
@@ -325,10 +342,10 @@ impl ConfigService {
                     "config.corrupt-{}.toml",
                     Utc::now().format("%Y%m%d%H%M%S")
                 ));
-                let archived = fs::rename(source, &backup);
+                let archived = fs::rename(&source, &backup);
                 log::error!(
                     "[config] 配置解析失败，尝试恢复默认配置：文件={:?}，TOML错误字节位置={:?}，损坏文件备份={:?}，备份错误={:?}",
-                    log_path(source),
+                    log_path(&source),
                     error.span(),
                     log_path(&backup),
                     archived

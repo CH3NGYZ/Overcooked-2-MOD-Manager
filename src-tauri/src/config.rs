@@ -16,6 +16,8 @@ mod sources;
 mod storage;
 mod validation;
 
+pub(crate) use storage::existing_config_path;
+
 pub use availability::REGION_CHINESE_MAINLAND;
 pub use availability::REGION_INTERNATIONAL;
 pub(crate) use availability::mod_repository_is_available;

@@ -16,12 +16,45 @@ const CHANGED: &str = "modChanges.recoveryChanged";
 const HIGH_RISK: &str = "modChanges.recoveryHighRiskRequired";
 const MISSING: &str = "missing";
 
+#[cfg(test)]
+thread_local! {
+    pub(super) static DOCUMENTS_ALIAS_FOR_TEST: std::cell::RefCell<Option<(PathBuf, PathBuf)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 struct RecoveryRecord {
     directory: PathBuf,
     entry: RecoveryEntry,
     journal: Option<Journal>,
     validation_error: Option<String>,
     journal_stamp: Option<String>,
+}
+
+fn bind_documents_root(mut journal: Journal, transaction_root: &Path) -> Journal {
+    let Some(data_root) = transaction_root.parent() else {
+        return journal;
+    };
+    if journal.roots.data_root == data_root {
+        return journal;
+    }
+    let matches_alias = |original: &Path, physical: &Path| {
+        journal.roots.data_root.as_os_str() == original.as_os_str()
+            && data_root.as_os_str() == physical.as_os_str()
+            && same_file::is_same_file(original, physical).unwrap_or(false)
+    };
+    let verified = crate::user_paths::data_directory_alias()
+        .is_some_and(|(original, physical)| matches_alias(original, physical));
+    #[cfg(test)]
+    let verified = verified
+        || DOCUMENTS_ALIAS_FOR_TEST.with_borrow(|alias| {
+            alias
+                .as_ref()
+                .is_some_and(|(original, physical)| matches_alias(original, physical))
+        });
+    if verified {
+        journal.roots.data_root = data_root.to_path_buf();
+    }
+    journal
 }
 
 fn records(transaction_root: &Path) -> Result<Vec<PathBuf>, String> {
@@ -71,10 +104,12 @@ fn is_cleaned(directory: &Path) -> bool {
     let Ok(journal) = durable::read_journal(directory) else {
         return false;
     };
+    let Some(root) = directory.parent() else {
+        return false;
+    };
+    let journal = bind_documents_root(journal, root);
     journal.state == JournalState::Cleaned
-        && directory
-            .parent()
-            .is_some_and(|root| validate_journal(&journal, id, root).is_ok())
+        && validate_journal(&journal, id, root).is_ok()
         && match durable::read_record(&directory.join(DECISION_FILE), 4096) {
             Ok(None) => true,
             Ok(Some(bytes)) => parse_decision(id, &bytes)
@@ -127,6 +162,7 @@ fn inspect(directory: PathBuf, roots: Option<&TransactionRoots>) -> Option<Recov
                 journal_stamp = Some(format!("{:x}", Sha256::digest(&bytes)));
                 match durable::parse_journal(&journal_path, &bytes) {
                     Ok(value) => {
+                        let value = bind_documents_root(value, transaction_root);
                         if let Err(error) = validate_journal(&value, &id, transaction_root) {
                             validation_error.get_or_insert(error);
                         }

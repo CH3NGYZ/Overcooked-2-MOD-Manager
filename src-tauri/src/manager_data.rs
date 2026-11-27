@@ -7,11 +7,15 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+#[cfg(windows)]
+mod directory_prompt;
 mod handoff;
 mod legacy;
 mod migration;
 mod notice;
 mod receipt;
+#[cfg(windows)]
+mod startup_directory;
 mod storage;
 #[cfg(test)]
 mod tests;
@@ -71,58 +75,51 @@ fn startup_diagnostics(
     )
 }
 
-fn completed_reset_token(record: Option<&storage::ResetRecord>) -> Option<uuid::Uuid> {
+fn completed_reset_token(record: Option<&storage::ResetRecord>, root: &Path) -> Option<uuid::Uuid> {
     record
         .filter(|record| record.phase == storage::ResetPhase::Completed)
         .filter(|record| matches!(record.action, storage::DataAction::Clear))
+        .filter(|record| record.data_root.as_deref() == Some(root))
         .map(|record| record.token)
 }
 
 /// Shared startup ownership preserves the existing single-instance plugin:
 /// ordinary secondary launches still reach its callback instead of silently exiting.
-pub(crate) fn initialize() -> Result<DataSession, String> {
+pub(crate) fn initialize() -> Result<Option<DataSession>, String> {
     loop {
-        // A pending migration may publish a different root before this retry.
-        let paths = storage::ResetPaths::current()?;
+        let location = crate::user_paths::location_file()?;
+        #[cfg(windows)]
+        let Some(directory) = startup_directory::select(&location)? else {
+            return Ok(None);
+        };
+        #[cfg(not(windows))]
+        let directory = crate::user_paths::locate_root(&location)?;
+        let paths =
+            storage::ResetPaths::with_control(&directory.path, location.parent().ok_or(UNSAFE)?)?;
         let lock = paths.open_lock()?;
         storage::wait_for_lock(&lock, true, LOCK_TIMEOUT)?;
-        let legacy_lock = legacy::session(&paths)?;
-        if storage::normalized(&storage::ResetPaths::current()?.root)
-            != storage::normalized(&paths.root)
-        {
-            drop(lock);
+        let legacy_lock = match legacy::session(&paths) {
+            Ok(lock) => lock,
+            #[cfg(windows)]
+            Err(error) if startup_directory::is_unavailable(&error) => {
+                drop(lock);
+                if startup_directory::retry(&directory.path) {
+                    continue;
+                }
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        };
+        if !crate::user_paths::locate_root(&location).is_ok_and(|current| current == directory) {
             continue;
         }
-        let record = match paths.record() {
-            Ok(record) => record,
-            Err(error) => {
-                // A damaged coordination record must not repeatedly delete data
-                // or strand the application before its diagnostic UI can start.
-                let pointer = paths.parent.join("data-location.json").is_file();
-                let root_dir = pointer.then(|| paths.root.is_dir());
-                if root_dir == Some(false) {
-                    return Err("config.directoryUnavailable".into());
-                }
-                notice::show_unrecorded(&error, None);
-                crate::user_paths::freeze_root(&crate::user_paths::root()?)?;
-                return Ok(DataSession {
-                    _lock: lock,
-                    _legacy_lock: legacy_lock,
-                    skip_legacy_migration: true,
-                    completed_reset_token: None,
-                    startup_diagnostics: startup_diagnostics(&paths, pointer, root_dir, "不可读"),
-                    completed_operation_diagnostics: None,
-                    failure_diagnostics: Some(format!(
-                        "[data] 无法读取管理器数据操作记录：文件={:?}，原因={}",
-                        log_path(&paths.journal()),
-                        notice::diagnostic_reason(&error)
-                    )),
-                    helper_failure_diagnostics: receipt::diagnostics(&paths.parent, None),
-                });
-            }
+        let (record, record_error) = match paths.record() {
+            Ok(record) => (record, None),
+            Err(error) => (None, Some(error)),
         };
-        if record.as_ref().is_some_and(storage::ResetRecord::pending)
-            || legacy::needs_import(&paths)?
+        if record_error.is_none()
+            && (record.as_ref().is_some_and(storage::ResetRecord::pending)
+                || legacy::needs_import(&paths)?)
         {
             // A helper or this startup can win exclusive ownership; both re-read
             // the journal, so a second launch never deletes newly initialized data.
@@ -151,51 +148,77 @@ pub(crate) fn initialize() -> Result<DataSession, String> {
             drop(exclusive);
             continue;
         }
-        let failure_diagnostics = record
-            .as_ref()
-            .filter(|record| record.phase == storage::ResetPhase::Failed)
-            .map(|record| {
-                if !record.reported {
-                    notice::show_once(&paths, record);
-                }
-                notice::diagnostics(record, &paths.root)
-            });
         // Only a completed clear deliberately leaves the selected root absent.
-        let pointer = paths.parent.join("data-location.json").is_file();
-        let root_dir = pointer.then(|| paths.root.is_dir());
-        if root_dir == Some(false)
-            && !record.as_ref().is_some_and(|record| {
-                record.phase == storage::ResetPhase::Completed
-                    && matches!(record.action, storage::DataAction::Clear)
-            })
-        {
+        let completed_reset_token = completed_reset_token(record.as_ref(), &paths.root);
+        let root_dir = directory.custom.then(|| directory.path.is_dir());
+        let missing_custom = root_dir == Some(false) && completed_reset_token.is_none();
+        #[cfg(windows)]
+        if missing_custom || startup_directory::probe_writable(&directory.path).is_err() {
+            drop(legacy_lock);
+            drop(lock);
+            if startup_directory::retry(&directory.path) {
+                continue;
+            }
+            return Ok(None);
+        }
+        #[cfg(not(windows))]
+        if missing_custom {
             return Err("config.directoryUnavailable".into());
         }
-        // Preserve the pre-bootstrap path spelling in existing transaction roots.
-        // Canonical Windows verbatim paths are only used for safety comparisons.
-        crate::user_paths::freeze_root(&crate::user_paths::root()?)?;
-        return Ok(DataSession {
+
+        let failure_diagnostics = if let Some(error) = &record_error {
+            notice::show_unrecorded(error, None);
+            Some(format!(
+                "[data] 无法读取管理器数据操作记录：文件={:?}，原因={}",
+                log_path(&paths.journal()),
+                notice::diagnostic_reason(error)
+            ))
+        } else {
+            record
+                .as_ref()
+                .filter(|record| record.phase == storage::ResetPhase::Failed)
+                .map(|record| {
+                    if !record.reported {
+                        notice::show_once(&paths, record);
+                    }
+                    notice::diagnostics(record, &paths.root)
+                })
+        };
+        let startup_diagnostics = startup_diagnostics(
+            &paths,
+            directory.custom,
+            root_dir,
+            if record_error.is_some() {
+                "不可读"
+            } else if record.is_some() {
+                "存在"
+            } else {
+                "不存在"
+            },
+        );
+        let startup_diagnostics = if let Some(original) = &directory.documents_alias {
+            format!(
+                "{startup_diagnostics}，已解析系统文档目录：原路径={:?}",
+                log_path(original)
+            )
+        } else {
+            startup_diagnostics
+        };
+        let skip_legacy_migration = directory.custom || record.is_some() || record_error.is_some();
+        crate::user_paths::freeze_root(directory)?;
+        return Ok(Some(DataSession {
             _lock: lock,
             _legacy_lock: legacy_lock,
-            skip_legacy_migration: record.is_some(),
-            completed_reset_token: completed_reset_token(record.as_ref()),
-            startup_diagnostics: startup_diagnostics(
-                &paths,
-                pointer,
-                root_dir,
-                if record.is_some() {
-                    "存在"
-                } else {
-                    "不存在"
-                },
-            ),
+            skip_legacy_migration,
+            completed_reset_token,
+            startup_diagnostics,
             completed_operation_diagnostics: record
                 .as_ref()
                 .filter(|record| record.phase == storage::ResetPhase::Completed)
                 .map(|record| notice::diagnostics(record, &paths.root)),
             failure_diagnostics,
             helper_failure_diagnostics: receipt::diagnostics(&paths.parent, record.as_ref()),
-        });
+        }));
     }
 }
 

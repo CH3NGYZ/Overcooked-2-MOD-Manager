@@ -29,7 +29,7 @@ pub(super) fn write_config(root: &Path, target: &Path, text: &[u8]) -> io::Resul
         )
     })?;
     let temporary = temporary.into_temp_path();
-    let previous = root.join("config.previous.toml");
+    let previous = root.join(super::PREVIOUS_CONFIG_FILE);
     let result = replace_with_backup(&temporary, target, &previous);
     let temporary_path = log_path(&temporary);
     if let Err(error) = temporary.close()

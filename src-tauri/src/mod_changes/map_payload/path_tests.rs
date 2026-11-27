@@ -85,7 +85,12 @@ fn rw_fixture() -> (tempfile::TempDir, AppState, PathBuf) {
     );
 
     fs::create_dir(&data).unwrap();
-    crate::user_paths::freeze_root(&data).unwrap();
+    crate::user_paths::freeze_root(crate::user_paths::DataRoot {
+        path: data.clone(),
+        custom: true,
+        documents_alias: None,
+    })
+    .unwrap();
     let state = AppState::with_config(ConfigService::for_test(data));
     archive::write_manifest(
         &state.config.manifests_dir(),
@@ -289,7 +294,12 @@ async fn real_young_info_requires_download_approval_to_adopt_disabled_standalone
     writer.finish().unwrap();
 
     fs::create_dir(&data).unwrap();
-    crate::user_paths::freeze_root(&data).unwrap();
+    crate::user_paths::freeze_root(crate::user_paths::DataRoot {
+        path: data.clone(),
+        custom: true,
+        documents_alias: None,
+    })
+    .unwrap();
     let state = AppState::with_config(ConfigService::for_test(data.clone()));
     let mut config = crate::config::default_config();
     config.game.path = game.to_string_lossy().into_owned();

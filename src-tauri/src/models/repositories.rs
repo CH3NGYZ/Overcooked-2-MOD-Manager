@@ -20,6 +20,12 @@ pub enum Channel {
     All,
 }
 
+impl Channel {
+    pub(crate) fn allows_prerelease(self, prerelease: bool) -> bool {
+        self == Self::All || (self == Self::Beta) == prerelease
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CommunityDiscovery {
     pub repository_ids: Vec<String>,

@@ -60,26 +60,28 @@ fn withdraw_declaration(test: &RegionalFixture) {
 }
 
 #[tokio::test]
-async fn declared_release_replacement_cancels_or_moves_the_removed_gitee_install_atomically() {
-    let mut test = removed_gitee_fixture();
+async fn live_replacement_reaches_final_review_and_moves_the_removed_gitee_install_atomically() {
+    let mut test = verified_orphan();
     let old_dll = test.install_previous_release();
     let before = test.fingerprints();
-    let intent = test.offer().await;
-    let ready = prepared_plan(test.prepare(Some(intent)).await.unwrap(), TAG);
-    assert!(ready.untracked_overwrites.is_empty());
-    assert_eq!(test.fingerprints(), before);
-    execution::cancel(&test.fixture.state, &ready.plan_id).unwrap();
-    assert_eq!(test.fingerprints(), before);
-    assert_eq!(
-        fs::read(test.fixture.game.join(DESTINATION)).unwrap(),
-        old_dll
-    );
-
-    let intent = test.offer().await;
-    let ready = prepared_plan(test.prepare(Some(intent)).await.unwrap(), TAG);
-    assert_eq!(test.fingerprints(), before);
-    let mut session = take(&test.fixture, &ready);
-    execution::commit(&test.fixture.state, &mut session, |_| {}).unwrap();
+    for confirm in [false, true] {
+        let outcome = test.prepare(None).await.unwrap();
+        assert!(outcome.manifest_overwrite.is_none());
+        let ready = prepared_plan(outcome, TAG);
+        assert!(ready.untracked_overwrites.is_empty());
+        assert_eq!(test.fingerprints(), before);
+        if confirm {
+            let mut session = take(&test.fixture, &ready);
+            execution::commit(&test.fixture.state, &mut session, |_| {}).unwrap();
+        } else {
+            execution::cancel(&test.fixture.state, &ready.plan_id).unwrap();
+            assert_eq!(test.fingerprints(), before);
+            assert_eq!(
+                fs::read(test.fixture.game.join(DESTINATION)).unwrap(),
+                old_dll
+            );
+        }
+    }
     test.assert_new_install();
 }
 
@@ -100,17 +102,28 @@ async fn declared_orphan_requires_published_zip_digest_to_claim_a_missing_primar
 }
 
 #[tokio::test]
-async fn withdrawing_declared_replacement_invalidates_prepared_source_switch() {
-    let mut test = removed_gitee_fixture();
+async fn losing_identity_match_invalidates_prepared_live_replacement() {
+    let mut test = verified_orphan();
     test.install_previous_release();
-    let before = test.fingerprints();
-    let intent = test.offer().await;
-    let ready = prepared_plan(test.prepare(Some(intent)).await.unwrap(), TAG);
     withdraw_declaration(&test);
+    let before = test.fingerprints();
+    let outcome = test.prepare(None).await.unwrap();
+    assert!(outcome.manifest_overwrite.is_none());
+    let ready = prepared_plan(outcome, TAG);
+    assert_eq!(test.fingerprints(), before);
+    let state = &test.fixture.state;
+    let mut config = state.config.load().unwrap();
+    let next = config
+        .repositories
+        .iter_mut()
+        .find(|repo| repo.id == CN_ID)
+        .unwrap();
+    next.version_regex = r"^2\.".into();
+    state.config.save(&config).unwrap();
 
     let mut session = take(&test.fixture, &ready);
     assert_eq!(
-        execution::commit(&test.fixture.state, &mut session, |_| {}).unwrap_err(),
+        execution::commit(state, &mut session, |_| {}).unwrap_err(),
         "modChanges.targetChanged"
     );
     assert_eq!(test.fingerprints(), before);
@@ -122,6 +135,8 @@ async fn declared_orphan_leaves_unproven_or_competing_ownership_untouched() {
     for case in [
         "missing declaration",
         "stale beta tag",
+        "installed version mismatches declaration",
+        "competing repository matches recorded filename",
         "other record",
         "live DLL",
     ] {
@@ -144,6 +159,38 @@ async fn declared_orphan_leaves_unproven_or_competing_ownership_untouched() {
                 previous.tag = "v1.0.0-beta.1".into();
                 test.old.release_tag.clone_from(&previous.tag);
                 archive::write_manifest(&state.config.manifests_dir(), &test.old).unwrap();
+            }
+            "installed version mismatches declaration" => {
+                let state = &test.fixture.state;
+                let mut config = state.config.load().unwrap();
+                let next = config
+                    .repositories
+                    .iter_mut()
+                    .find(|repo| repo.id == CN_ID)
+                    .unwrap();
+                next.version_regex = r"^3\.".into();
+                state.config.save(&config).unwrap();
+                test.old
+                    .installed_dll_versions
+                    .insert(mods::manifest_dll_key(DESTINATION), "2.0.0".into());
+                archive::write_manifest(&state.config.manifests_dir(), &test.old).unwrap();
+            }
+            "competing repository matches recorded filename" => {
+                let state = &test.fixture.state;
+                let mut config = state.config.load().unwrap();
+                let mut other = config
+                    .repositories
+                    .iter()
+                    .find(|repo| repo.id == CN_ID)
+                    .unwrap()
+                    .clone();
+                other.id = "28eda744-fbb9-4481-9bf2-2b83c51354cd".into();
+                other.repository = "OtherFixture".into();
+                other.replaces.clear();
+                other.replaces_revision = None;
+                other.local_original_filename = "Fixture.dll".into();
+                config.repositories.push(other);
+                state.config.save(&config).unwrap();
             }
             "other record" => test.add_other_claim(),
             "live DLL" => write(&test.disabled_dll(), b"existing disabled file"),

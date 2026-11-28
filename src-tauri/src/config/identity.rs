@@ -5,6 +5,33 @@ use super::availability::normalize_repository_region;
 use super::availability::normalize_repository_region_for_storage;
 use crate::models::*;
 
+pub(crate) fn repository_id_is_configured(config: &AppConfig, old_id: &str) -> bool {
+    let retired_id = uuid::Uuid::parse_str(old_id).ok();
+    config
+        .repositories
+        .iter()
+        .map(|repo| &repo.id)
+        .chain(config.map_repositories.iter().map(|repo| &repo.id))
+        .any(|id| {
+            id.eq_ignore_ascii_case(old_id)
+                || retired_id.is_some_and(|retired| uuid::Uuid::parse_str(id) == Ok(retired))
+        })
+}
+
+pub(crate) fn unique_mod_repository_by_id<'a>(
+    config: &'a AppConfig,
+    value: &str,
+) -> Option<&'a ModRepositoryConfig> {
+    let id = uuid::Uuid::parse_str(value).ok()?;
+    let matches = |other: &str| uuid::Uuid::parse_str(other) == Ok(id);
+    if config.map_repositories.iter().any(|repo| matches(&repo.id)) {
+        return None;
+    }
+    let mut repos = config.repositories.iter().filter(|repo| matches(&repo.id));
+    let repo = repos.next()?;
+    (repo.id == value && repos.next().is_none()).then_some(repo)
+}
+
 pub(crate) fn repository_address_key(
     provider: &Provider,
     username: &str,

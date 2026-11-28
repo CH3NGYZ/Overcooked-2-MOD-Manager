@@ -420,8 +420,8 @@ function newestCoreInstallation(mods: readonly InstalledMod[]): InstalledMod | u
 
 function acceptsReleaseBinding(repo: ModRepository, mod: InstalledMod): boolean {
   const binding = mod.repository_binding
-  return !binding || (repo.download_mode === 'release' && (repo.channel === binding.channel || repo.channel === 'all')
-    && (matchesRepositoryIdentity(repo, binding) || isReplacementRepository(mod, repo)))
+  return isReplacementRepository(mod, repo) || !binding || (repo.download_mode === 'release'
+    && (repo.channel === binding.channel || repo.channel === 'all') && matchesRepositoryIdentity(repo, binding))
 }
 
 /** The installation card, local card and refresh summary read the latest
@@ -434,12 +434,12 @@ function releaseUpdateVerdict(mod: InstalledMod, repo: ModRepository) {
   const pinned = replacing && repo.pinned_version != null
   const pin = pinned ? cachedInstallRelease(repo.cached_releases, undefined, repo.pinned_version) : undefined
   const installedBeta = mod.prerelease ?? isPrereleaseVersion(binding?.tag ?? local)
+  const channel = replacing ? repo.channel : binding?.channel ?? repo.channel
   const release = repo.cached_releases.find((release) => {
     if (pinned && release !== pin) return false
     if (release.draft) return false
-    const channel = binding?.channel ?? repo.channel
     const beta = isPrereleaseVersion(release.tag_name, release.apiPrerelease, release.prerelease)
-    return (!replacing || beta === installedBeta) && (channel === 'all' || (channel === 'beta' ? beta : !beta))
+    return channel === 'all' ? !replacing || beta === installedBeta : beta === (channel === 'beta')
   })
   if (!release) return undefined
   if (replacing) {

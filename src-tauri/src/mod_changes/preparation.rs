@@ -433,6 +433,11 @@ pub(super) fn finish(state: &AppState, session: &mut PlanSession) -> Result<(), 
     session.plan.untracked_overwrites = session
         .release_target_claims
         .overwrites(session.operation_id());
+    for notice in session.release_target_claims.source_switch_notices() {
+        if !session.plan.result.notices.contains(&notice) {
+            session.plan.result.notices.push(notice);
+        }
+    }
     if let Some(batch) = &session.map_payload {
         session.plan.untracked_overwrites.extend(batch.overwrites());
     }

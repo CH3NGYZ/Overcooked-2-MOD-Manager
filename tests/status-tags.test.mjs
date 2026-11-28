@@ -109,6 +109,9 @@ test('续接保留安装渠道，跳过草稿和预发布，并将精确标签�
   const allChannel = { ...installed, repository_binding: { ...installed.repository_binding, channel: 'all' } }
   assert.equal(repositoryStatus(target, [allChannel]).replacement?.updateTag, 'v2.0.0')
   assert.equal(repositoryStatus(target, [{ ...allChannel, prerelease: true }]).replacement?.updateTag, 'v3.0.0-beta.1')
+  const betaTarget = { ...target, channel: 'beta' }
+  assert.equal(repositoryStatus(betaTarget, [installed]).replacement?.updateTag, 'v3.0.0-beta.1')
+  assert.equal(modUpdateVerdict(installed, [betaTarget]).tag, 'v3.0.0-beta.1')
   for (const pinned_version of ['missing', 'v3.0.0-beta.1']) {
     assert.deepEqual(repositoryStatus({ ...target, pinned_version }, [installed]).replacement, { updateTag: undefined })
   }

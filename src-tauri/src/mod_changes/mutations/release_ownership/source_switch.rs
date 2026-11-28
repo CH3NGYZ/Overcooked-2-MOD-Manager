@@ -1,25 +1,15 @@
 use super::manifest_replacement::{
     OverwriteConfirmation, overlapping_endpoint, recorded_endpoints,
 };
-use super::missing_install::{MissingInstallRecord, RecordRecovery, repository_id_is_configured};
+use super::missing_install::{MissingInstallRecord, RecordRecovery};
 use super::*;
+use crate::config::unique_mod_repository_by_id;
 use crate::mod_changes::mutations::{
     install_block::report_record_claim,
     records::{RecordStamp, install_record_path},
 };
 use crate::mod_changes::progress::SourceSwitch;
-use crate::models::{AppConfig, Channel, InstalledMod, RelationKind};
-
-fn unique_repository<'a>(config: &'a AppConfig, value: &str) -> Option<&'a ModRepositoryConfig> {
-    let id = uuid::Uuid::parse_str(value).ok()?;
-    let matches = |other: &str| uuid::Uuid::parse_str(other) == Ok(id);
-    if config.map_repositories.iter().any(|repo| matches(&repo.id)) {
-        return None;
-    }
-    let mut repos = config.repositories.iter().filter(|repo| matches(&repo.id));
-    let repo = repos.next()?;
-    (repo.id == value && repos.next().is_none()).then_some(repo)
-}
+use crate::models::{AppConfig, Channel, RelationKind};
 
 fn source_binding<'a>(
     config: &AppConfig,
@@ -29,29 +19,11 @@ fn source_binding<'a>(
     let binding = manifest.repository_binding.as_ref()?;
     let previous_id = uuid::Uuid::parse_str(&manifest.repository_id).ok()?;
     (uuid::Uuid::parse_str(&next.id) != Ok(previous_id)
-        && unique_repository(config, &next.id).is_some()
+        && unique_mod_repository_by_id(config, &next.id).is_some()
         && !manifest.is_manual()
         && binding.is_valid()
         && binding.tag == manifest.release_tag)
         .then_some(binding)
-}
-
-fn declared_source(
-    config: &AppConfig,
-    next: &ModRepositoryConfig,
-    manifest: &archive::InstallManifest,
-    binding: &ModRepositoryBinding,
-    prerelease: bool,
-    guid: Option<&str>,
-) -> bool {
-    !repository_id_is_configured(config, &manifest.repository_id)
-        && match next.channel {
-            Channel::All => true,
-            Channel::Stable => !prerelease,
-            Channel::Beta => prerelease,
-        }
-        && mods::replacement_repository(config, binding, guid)
-            .is_some_and(|replacement| replacement.id == next.id)
 }
 
 pub(in crate::mod_changes) fn related_release_source(
@@ -60,7 +32,6 @@ pub(in crate::mod_changes) fn related_release_source(
     manifest: &archive::InstallManifest,
     tag: &str,
     prerelease: bool,
-    installed_primary: Option<&InstalledMod>,
 ) -> bool {
     let (Some(source_id), Some(binding)) = (
         next.source_id.as_deref().filter(|id| !id.is_empty()),
@@ -68,21 +39,8 @@ pub(in crate::mod_changes) fn related_release_source(
     ) else {
         return false;
     };
-    let Some(previous) = unique_repository(config, &manifest.repository_id) else {
-        return installed_primary.is_some_and(|item| {
-            item.repository_replacement_eligible
-                && item.prerelease == prerelease
-                && item.package_id.as_deref() == Some(manifest.repository_id.as_str())
-                && item.repository_binding.as_ref() == Some(binding)
-                && declared_source(
-                    config,
-                    next,
-                    manifest,
-                    binding,
-                    prerelease,
-                    item.guid.as_deref(),
-                )
-        });
+    let Some(previous) = unique_mod_repository_by_id(config, &manifest.repository_id) else {
+        return false;
     };
     let old_region = previous.region.as_deref().unwrap_or(&config.region);
     if !binding.matches_repository(previous)
@@ -151,9 +109,9 @@ impl Builder<'_> {
             if root.enabled && root.node_id == owner && root.member_key.is_none()
                 && root.candidate_id.as_ref() == Some(&payload.candidate.id));
         let trusted = &self.session.trusted;
-        let vacant_owner = payload.downloaded
-            && !payload.candidate.raw
-            && payload.release_files.is_some()
+        let verified_download =
+            payload.downloaded && !payload.candidate.raw && payload.release_files.is_some();
+        let vacant_owner = verified_download
             && !trusted.inventory.nodes.iter().any(|node| {
                 node.current.as_ref().is_some_and(|candidate| {
                     node.id == owner
@@ -163,9 +121,6 @@ impl Builder<'_> {
                             .any(|plugin| same_guid(&plugin.guid, &core.repo.plugin_guid))
                 })
             });
-        if !explicit_root && !vacant_owner {
-            return Ok(None);
-        }
         let Some(prerelease) = payload
             .manifest
             .as_ref()
@@ -184,6 +139,9 @@ impl Builder<'_> {
             .trusted
             .duplicate_releases
             .source_switch(owner, &payload.candidate.id);
+        if !explicit_root && !vacant_owner && projected.is_none() {
+            return Ok(None);
+        }
         let installed_primary = projected.and_then(|copy| {
             self.session.trusted.installed_mods.iter().find(|item| {
                 item.dll_file == mods::canonical_dll_name(&copy.dll_file)
@@ -194,39 +152,44 @@ impl Builder<'_> {
                         .is_some_and(|guid| same_guid(guid, &core.repo.plugin_guid))
             })
         });
+        let channel_allows = core.repo.channel.allows_prerelease(prerelease);
         let mut records = self
             .records
             .bound_records()
             .filter_map(|(record, previous)| {
                 let manifest = &record.manifest;
-                let explicit = explicit_root
+                let automatic = verified_download
+                    && channel_allows
+                    && source_binding(&trusted.config, core.repo, manifest).is_some()
+                    && (installed_primary.is_some_and(|item| {
+                        item.package_id.as_deref() == Some(manifest.repository_id.as_str())
+                            && item.repository_binding.as_ref() == Some(previous)
+                            && item.replacement_repository_id.as_deref()
+                                == Some(core.repo.id.as_str())
+                    }) || (vacant_owner
+                        && mods::orphan_replacement_repository(
+                            &trusted.config,
+                            manifest,
+                            &target,
+                            selected_prerelease
+                                || mods::installed_prerelease(
+                                    &trusted.config,
+                                    Some(previous),
+                                    manifest.prerelease,
+                                    None,
+                                ) == prerelease,
+                        )
+                        .is_some_and(|repo| repo.id == core.repo.id)));
+                let explicit = !automatic
+                    && explicit_root
                     && related_release_source(
                         &trusted.config,
                         core.repo,
                         manifest,
                         &core.binding.tag,
                         prerelease,
-                        installed_primary,
                     );
-                let vacant = !explicit
-                    && vacant_owner
-                    && source_binding(&trusted.config, core.repo, manifest).is_some()
-                    && declared_source(
-                        &trusted.config,
-                        core.repo,
-                        manifest,
-                        previous,
-                        prerelease,
-                        Some(&core.repo.plugin_guid),
-                    )
-                    && (selected_prerelease
-                        || mods::installed_prerelease(
-                            &trusted.config,
-                            Some(previous),
-                            manifest.prerelease,
-                            None,
-                        ) == prerelease);
-                (explicit || vacant).then_some((record, previous, explicit))
+                (automatic || explicit).then_some((record, previous, explicit))
             });
         let Some((record, previous_binding, explicit)) = records.next() else {
             return Ok(None);
@@ -240,7 +203,9 @@ impl Builder<'_> {
                 .map(|unique| unique.relative.as_str())
                 != Some(record.relative.as_str())
             || record.relative != install_record_path(old_id).relative
-            || (!explicit && self.records.exact_orphan(old_id, self.session).is_none())
+            || (projected.is_none()
+                && !explicit
+                && self.records.exact_orphan(old_id, self.session).is_none())
             || self.records.records_for_id(&core.repo.id).next().is_some()
             || Fingerprint::capture(&replacement.resolve(&self.roots)?)? != Fingerprint::Missing
             || !payload
@@ -271,11 +236,20 @@ impl Builder<'_> {
                 .flatten()
                 .ok_or_else(changed)?;
             let fingerprint = Fingerprint::capture(&absolute)?;
+            let details = mods::read_dll_details(&absolute, &copy.dll_file);
             if fingerprint != copy.fingerprint
-                || !mods::read_dll_details(&absolute, &copy.dll_file)
+                || !details
                     .guid
                     .as_deref()
                     .is_some_and(|guid| same_guid(guid, &core.repo.plugin_guid))
+                || (!explicit
+                    && !mods::repository_matches_mod(
+                        core.repo,
+                        details.guid.as_deref(),
+                        details.product_name.as_deref(),
+                        details.original_filename.as_deref(),
+                        details.version.as_deref(),
+                    ))
                 || Fingerprint::capture(&absolute)? != fingerprint
                 || crate::file_metadata::FileIdentity::capture(&absolute)
                     .ok()

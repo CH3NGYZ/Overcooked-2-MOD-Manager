@@ -1,5 +1,6 @@
 use super::*;
 use sha2::{Digest, Sha256};
+use std::io::Read;
 
 struct DependencyRoot {
     id: &'static str,
@@ -104,6 +105,8 @@ const EXPERIENCE_PRERELEASE: CustomerCase = CustomerCase {
     ..EXPERIENCE_SAME_VERSION
 };
 
+const EXPERIENCE_VERSION_REGEX: &str = r"^v?1\.(17|18)\.\d+$";
+
 fn plugin_zip(dll: &str, guid: &str, product: &str, version: &str) -> Vec<u8> {
     let mut bytes = PE.to_vec();
     bytes.extend(mods::plugin_blob(guid, product, version));
@@ -150,10 +153,20 @@ enum ReplayRoot {
     Dependency(DependencyRoot, Option<Vec<u8>>),
 }
 
+enum ReplayIdentity<'a> {
+    Declared,
+    Automatic {
+        version_regex: &'static str,
+        previous_dll: Option<&'a [u8]>,
+        ambiguous: bool,
+    },
+}
+
 async fn replay(
     case: CustomerCase,
     asset_zip: Vec<u8>,
     selection: ReplayRoot,
+    identity: ReplayIdentity<'_>,
     expect_takeover: bool,
 ) {
     let target = format!("BepInEx/plugins/{}", case.dll);
@@ -185,8 +198,31 @@ async fn replay(
     let binding = ModRepositoryBinding::from_release(&next, &tag).unwrap();
     let fixture = versioned_fixture(next);
     let mut config = fixture.state.config.load().unwrap();
-    config.repositories[0].replaces = official_replacements(&case);
-    config.repositories[0].replaces_revision = Some(fixture.state.config.data_selection().1);
+    let (previous_dll, expected_replacements) = match identity {
+        ReplayIdentity::Declared => {
+            config.repositories[0].replaces = official_replacements(&case);
+            config.repositories[0].replaces_revision =
+                Some(fixture.state.config.data_selection().1);
+            (None, case.expected_replacements)
+        }
+        ReplayIdentity::Automatic {
+            version_regex,
+            previous_dll,
+            ambiguous,
+        } => {
+            let next = &mut config.repositories[0];
+            next.version_regex = version_regex.into();
+            next.local_original_filename = case.dll.into();
+            if ambiguous {
+                let mut other = next.clone();
+                other.id = "f7705000-0000-4000-8000-000000000007".into();
+                other.username = "OtherPublisher".into();
+                other.repository = "Overcooked-2-DIYLevel-Other".into();
+                config.repositories.push(other);
+            }
+            (previous_dll, 0)
+        }
+    };
     let (root_id, root_tag) = if let Some((root_fixture, root_zip)) = &root {
         let mut root = repository(
             root_fixture.repository,
@@ -212,7 +248,7 @@ async fn replay(
         fixture.state.config.load().unwrap().repositories[0]
             .replaces
             .len(),
-        case.expected_replacements
+        expected_replacements
     );
 
     let manifest_dir = fixture.state.config.manifests_dir();
@@ -235,9 +271,22 @@ async fn replay(
     });
     if let Some(version) = case.old_dll_version {
         old.installed_dll_versions
-            .insert(target.clone(), version.into());
+            .insert(mods::manifest_dll_key(&target), version.into());
     }
     archive::write_manifest(&manifest_dir, &old).unwrap();
+    let enabled = fixture.game.join(&target);
+    let disabled = fixture.game.join(mods::disabled_dll_file(&target));
+    if let Some(previous_dll) = previous_dll {
+        write(&enabled, previous_dll);
+        let scanned = mods::scan_mods_with_manifests(&fixture.game, &config, Some(&manifest_dir));
+        let [installed] = scanned.as_slice() else {
+            panic!("expected one real installed MOD: {scanned:?}");
+        };
+        assert_eq!(installed.guid.as_deref(), Some(case.guid));
+        assert_eq!(installed.version.as_deref(), case.old_dll_version);
+        assert_eq!(installed.package_id.as_deref(), Some(case.old_id));
+        assert_eq!(installed.repository_binding, old.repository_binding);
+    }
     let old_toml = fs::read(&old_manifest_path).unwrap();
     let snapshots = || {
         (
@@ -246,10 +295,13 @@ async fn replay(
         )
     };
     let before = snapshots();
-    let enabled = fixture.game.join(&target);
-    let disabled = fixture.game.join(mods::disabled_dll_file(&target));
     let assert_unchanged = || {
-        assert!(!enabled.exists() && !disabled.exists());
+        if let Some(previous_dll) = previous_dll {
+            assert_eq!(fs::read(&enabled).unwrap(), previous_dll);
+        } else {
+            assert!(!enabled.exists());
+        }
+        assert!(!disabled.exists());
         assert!(!new_manifest_path.exists());
         assert_eq!(fs::read(&old_manifest_path).unwrap(), old_toml);
         assert_eq!(snapshots(), before);
@@ -283,13 +335,21 @@ async fn replay(
         assert!(plan.prepared);
         assert_eq!(plan.result.status, SolveStatus::Ready);
         assert!(plan.untracked_overwrites.is_empty());
+        let notice = if previous_dll.is_some() {
+            "modChanges.manifestOverwrite.replaceInstalled"
+        } else {
+            "modChanges.manifestOverwrite.installMissing"
+        };
+        assert!(plan.result.notices.iter().any(|value| value == notice));
         let action = plan
             .result
             .actions
             .iter()
             .find(|action| action.node_id == format!("mod:{}", case.new_id))
             .unwrap();
-        assert_eq!(action.kind, ActionKind::Install);
+        if previous_dll.is_none() {
+            assert_eq!(action.kind, ActionKind::Install);
+        }
         assert_eq!(action.to_tag.as_deref(), Some(tag.as_str()));
         if let Some((root_fixture, _)) = &root {
             assert!(
@@ -312,6 +372,7 @@ async fn replay(
     }
     assert!(!old_manifest_path.exists());
     assert!(new_manifest_path.is_file() && enabled.is_file() && !disabled.exists());
+    assert_eq!(fs::read(enabled).unwrap(), zip_dll(&asset_zip, case.dll));
     let installed = archive::read_manifests(&manifest_dir);
     assert_eq!(installed.len(), if root.is_some() { 2 } else { 1 });
     let next = installed
@@ -332,6 +393,14 @@ async fn replay(
     }
 }
 
+fn zip_dll(bytes: &[u8], dll: &str) -> Vec<u8> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut entry = archive.by_name(dll).unwrap();
+    let mut contents = Vec::new();
+    entry.read_to_end(&mut contents).unwrap();
+    contents
+}
+
 #[tokio::test]
 async fn customer_log_mod_settings_missing_dll_reclaims_orphan_only_on_commit() {
     let bytes = plugin_zip(
@@ -344,10 +413,18 @@ async fn customer_log_mod_settings_missing_dll_reclaims_orphan_only_on_commit() 
         SETTINGS,
         bytes.clone(),
         ReplayRoot::Dependency(HOST_UTILITIES, None),
+        ReplayIdentity::Declared,
         true,
     )
     .await;
-    replay(SETTINGS, bytes, ReplayRoot::SelectedAsset, true).await;
+    replay(
+        SETTINGS,
+        bytes,
+        ReplayRoot::SelectedAsset,
+        ReplayIdentity::Declared,
+        true,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -362,6 +439,7 @@ async fn customer_log_diylevel_installs_missing_experience_dependency_and_reclai
         EXPERIENCE,
         bytes,
         ReplayRoot::Dependency(DIYLEVEL, None),
+        ReplayIdentity::Declared,
         true,
     )
     .await;
@@ -376,11 +454,18 @@ async fn customer_log_explicit_prerelease_claims_missing_stable_source() {
         "Experience Optimization",
         case.new_version,
     );
-    replay(case, bytes, ReplayRoot::SelectedAsset, true).await;
+    replay(
+        case,
+        bytes,
+        ReplayRoot::SelectedAsset,
+        ReplayIdentity::Declared,
+        true,
+    )
+    .await;
 }
 
 #[tokio::test]
-async fn customer_log_implicit_prerelease_cannot_claim_missing_stable_source() {
+async fn automatic_replacement_requires_one_version_matching_repository() {
     let case = EXPERIENCE_PRERELEASE;
     let bytes = plugin_zip(
         case.dll,
@@ -388,11 +473,23 @@ async fn customer_log_implicit_prerelease_cannot_claim_missing_stable_source() {
         "Experience Optimization",
         case.new_version,
     );
-    for selection in [
-        ReplayRoot::DefaultAsset,
-        ReplayRoot::Dependency(DIYLEVEL, None),
+    for (version_regex, ambiguous, expect_takeover) in [
+        (EXPERIENCE_VERSION_REGEX, false, true),
+        (r"^v?1\.18\.\d+$", false, false),
+        (EXPERIENCE_VERSION_REGEX, true, false),
     ] {
-        replay(EXPERIENCE_PRERELEASE, bytes.clone(), selection, false).await;
+        replay(
+            EXPERIENCE_PRERELEASE,
+            bytes.clone(),
+            ReplayRoot::DefaultAsset,
+            ReplayIdentity::Automatic {
+                version_regex,
+                previous_dll: None,
+                ambiguous,
+            },
+            expect_takeover,
+        )
+        .await;
     }
 }
 
@@ -415,9 +512,50 @@ async fn customer_log_experience_manual_real_release_zips() {
             case,
             verified_zip(variable, digest),
             ReplayRoot::SelectedAsset,
+            ReplayIdentity::Declared,
             true,
         )
         .await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires locally downloaded Experience Optimization v1.17.3 and v1.18.1 ZIP files"]
+async fn customer_log_experience_automatically_reclaims_present_and_missing_dll() {
+    let stable = verified_zip(
+        "OC2_EXPERIENCE_OPTIMIZATION_ZIP",
+        "b66324215c6263fd5097c79c8c71d0e9aae337e7ba1aadb0093d51dfadb774d2",
+    );
+    let prerelease = verified_zip(
+        "OC2_EXPERIENCE_OPTIMIZATION_PRERELEASE_ZIP",
+        "10ad727c292d6adac28427342af48feb4ab4e4b2b031873a881f6674a86c3fd1",
+    );
+    let previous_dll = zip_dll(&stable, EXPERIENCE.dll);
+    assert_ne!(previous_dll, zip_dll(&prerelease, EXPERIENCE.dll));
+    for previous_dll in [None, Some(previous_dll.as_slice())] {
+        for selection in [
+            ReplayRoot::DefaultAsset,
+            ReplayRoot::Dependency(
+                DependencyRoot {
+                    requirement: ">=1.18.1",
+                    ..DIYLEVEL
+                },
+                None,
+            ),
+        ] {
+            replay(
+                EXPERIENCE_PRERELEASE,
+                prerelease.clone(),
+                selection,
+                ReplayIdentity::Automatic {
+                    version_regex: EXPERIENCE_VERSION_REGEX,
+                    previous_dll,
+                    ambiguous: false,
+                },
+                true,
+            )
+            .await;
+        }
     }
 }
 
@@ -448,6 +586,7 @@ async fn customer_log_real_release_zip_replays() {
             case,
             bytes,
             ReplayRoot::Dependency(root, Some(root_bytes)),
+            ReplayIdentity::Declared,
             true,
         )
         .await;

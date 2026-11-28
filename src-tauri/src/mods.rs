@@ -34,7 +34,7 @@ pub(crate) use metadata::{
 pub(crate) use relations::{
     common_source_relations, effective_map_relations, effective_relations, select_release_relations,
 };
-pub(crate) use replacements::replacement_repository;
+pub(crate) use replacements::orphan_replacement_repository;
 pub(crate) use scan::{scan_mods, scan_mods_with_manifests};
 pub(crate) use status::local_update_version;
 #[cfg(test)]

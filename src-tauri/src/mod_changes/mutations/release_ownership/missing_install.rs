@@ -3,6 +3,7 @@ use super::claims::ReleaseTargetError;
 use super::loose_files::LooseFile;
 use super::source_switch::SourceReplacement;
 use super::*;
+use crate::config::repository_id_is_configured;
 use crate::mod_changes::mutations::records::{InstallRecord, install_record_path};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -494,17 +495,4 @@ impl Builder<'_> {
 struct ResourceProof<'a> {
     directory: &'a str,
     allowed: Option<AllowedClaim<'a>>,
-}
-
-pub(super) fn repository_id_is_configured(config: &crate::models::AppConfig, old_id: &str) -> bool {
-    let retired_id = uuid::Uuid::parse_str(old_id).ok();
-    config
-        .repositories
-        .iter()
-        .map(|repo| &repo.id)
-        .chain(config.map_repositories.iter().map(|repo| &repo.id))
-        .any(|id| {
-            id.eq_ignore_ascii_case(old_id)
-                || retired_id.is_some_and(|retired| uuid::Uuid::parse_str(id) == Ok(retired))
-        })
 }

@@ -1,7 +1,8 @@
 use super::loose_files::{LooseFile, exact_replacement};
 use super::manifest_replacement::ManifestReplacement;
-use super::missing_install::{MissingInstallRecord, endpoints, repository_id_is_configured};
+use super::missing_install::{MissingInstallRecord, endpoints};
 use super::*;
+use crate::config::repository_id_is_configured;
 use crate::mod_changes::progress::PreparationError;
 use crate::mod_changes::session::UntrackedOverwrite;
 
@@ -42,6 +43,21 @@ impl ReleaseTargetClaims {
         self.missing_records
             .values()
             .any(MissingInstallRecord::switches_source)
+    }
+
+    pub fn source_switch_notices(&self) -> impl Iterator<Item = String> + '_ {
+        self.missing_records
+            .values()
+            .filter_map(|record| record.source_switch.as_ref())
+            .filter(|switch| switch.confirmation.is_none())
+            .map(|switch| {
+                if switch.installed.is_some() {
+                    "modChanges.manifestOverwrite.replaceInstalled"
+                } else {
+                    "modChanges.manifestOverwrite.installMissing"
+                }
+                .into()
+            })
     }
 
     pub(in crate::mod_changes) fn proof_read_paths(&self) -> impl Iterator<Item = TransactionPath> {

@@ -49,6 +49,9 @@ fn setup(root: &Path) -> (AppConfig, crate::archive::InstallManifest) {
     repo.repository = REPOSITORY.into();
     repo.channel = Channel::All;
     repo.plugin_guid = GUID.into();
+    repo.local_product_name.clear();
+    repo.local_original_filename.clear();
+    repo.version_regex = r"^1\.0\.\d+$".into();
     repo.asset_rules = vec![AssetRule {
         rule_type: AssetRuleType::Regex,
         value: r"^Overcooked-2-SkipLoading-v\d+\.\d+\.\d+\.zip$".into(),
@@ -84,7 +87,7 @@ fn scan(root: &Path, config: &AppConfig) -> Vec<crate::models::InstalledMod> {
 }
 
 #[test]
-fn declared_replacement_scan_and_rebind_keep_the_skip_loading_install_record() {
+fn matching_guid_and_version_offer_replacement_without_rewriting_the_old_record() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let (mut config, manifest) = setup(root);
@@ -94,7 +97,15 @@ fn declared_replacement_scan_and_rebind_keep_the_skip_loading_install_record() {
         fs::read(root.join(PATH)).unwrap(),
     );
     let mut installed = scan(root, &config);
-    for _ in 0..2 {
+    for clear_declaration in [false, true] {
+        if clear_declaration {
+            config.repositories[0].clear_replacements();
+            rebind_installed_mods(&config, &mut installed);
+            assert_eq!(
+                scan(root, &config)[0].replacement_repository_id.as_deref(),
+                Some(NEXT_ID)
+            );
+        }
         let [item] = installed.as_slice() else {
             panic!("expected one DLL")
         };
@@ -107,13 +118,8 @@ fn declared_replacement_scan_and_rebind_keep_the_skip_loading_install_record() {
         let status = crate::mods::status::collect_update_status(&config, &installed);
         assert_eq!(status[0].state, "update_available");
         assert_eq!(status[0].remote_version.as_deref(), Some("v1.2.0"));
-        rebind_installed_mods(&config, &mut installed);
     }
 
-    config.repositories[0].clear_replacements();
-    rebind_installed_mods(&config, &mut installed);
-    assert!(installed[0].replacement_repository_id.is_none());
-    assert_eq!(installed[0].status, "bound_repository_missing");
     assert_eq!(
         original,
         (
@@ -124,10 +130,9 @@ fn declared_replacement_scan_and_rebind_keep_the_skip_loading_install_record() {
 }
 
 #[test]
-fn declared_replacement_does_not_offer_while_the_old_line_is_configured_or_claimed_twice() {
+fn replacement_requires_one_available_repository_with_matching_guid_and_version() {
     let dir = tempfile::tempdir().unwrap();
     let (config, _) = setup(dir.path());
-    let mut variants = Vec::new();
     let mut old = binding_repository();
     old.repository = REPOSITORY.into();
     old.username = "CH3NGYZ".into();
@@ -135,37 +140,69 @@ fn declared_replacement_does_not_offer_while_the_old_line_is_configured_or_claim
     old.enabled = false;
     let mut original_still_exists = config.clone();
     original_still_exists.repositories.push(old);
-    variants.push(original_still_exists);
 
     let mut second = config.repositories[0].clone();
     second.id = "ambiguous-successor".into();
     second.username = "another-owner".into();
-    second.enabled = false;
+    second.version_regex = r"^1\.\d+\.0$".into();
     let mut ambiguous = config.clone();
     ambiguous.repositories.push(second);
-    variants.push(ambiguous);
 
-    let mut ambiguous_channel = config.clone();
-    ambiguous_channel.repositories[0].channel = Channel::Beta;
-    variants.push(ambiguous_channel);
+    let mut disabled_competitor = ambiguous.clone();
+    disabled_competitor.repositories[1].enabled = false;
+    let mut other_version = ambiguous.clone();
+    other_version.repositories[1].version_regex = r"^2\.".into();
 
     let mut wrong_guid = config.clone();
     wrong_guid.repositories[0].plugin_guid = "com.example.wrong".into();
-    variants.push(wrong_guid);
+    let mut wrong_version = config.clone();
+    wrong_version.repositories[0].version_regex = r"^2\.".into();
+    let mut disabled = config;
+    disabled.repositories[0].enabled = false;
 
-    let mut unauthorized = config;
-    unauthorized.repositories[0].replaces_revision = None;
-    variants.push(unauthorized);
-
-    for variant in variants {
+    for (name, variant, successor) in [
+        ("old source still configured", original_still_exists, None),
+        ("overlapping version patterns", ambiguous, None),
+        ("disabled competitor", disabled_competitor, Some(NEXT_ID)),
+        (
+            "competitor for another version",
+            other_version,
+            Some(NEXT_ID),
+        ),
+        ("incorrect GUID", wrong_guid, None),
+        ("incorrect version", wrong_version, None),
+        ("disabled replacement", disabled, None),
+    ] {
         let installed = scan(dir.path(), &variant);
-        assert!(installed[0].replacement_repository_id.is_none());
-        assert!(!installed[0].update_available);
+        assert_eq!(
+            installed[0].replacement_repository_id.as_deref(),
+            successor,
+            "{name}"
+        );
+        assert_eq!(installed[0].update_available, successor.is_some(), "{name}");
     }
 }
 
 #[test]
-fn declared_replacement_requires_a_single_installed_dll_and_online_record() {
+fn replacement_prefers_the_installed_line_when_the_destination_offers_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut config, _) = setup(dir.path());
+    for (channel, expected_tag) in [(Channel::All, "v1.2.0"), (Channel::Beta, "v1.3.0-beta.1")] {
+        config.repositories[0].channel = channel;
+        let installed = scan(dir.path(), &config);
+        assert_eq!(
+            installed[0].replacement_repository_id.as_deref(),
+            Some(NEXT_ID)
+        );
+        assert_eq!(installed[0].prerelease, false);
+        let status = crate::mods::status::collect_update_status(&config, &installed);
+        assert_eq!(status[0].state, "update_available");
+        assert_eq!(status[0].remote_version.as_deref(), Some(expected_tag));
+    }
+}
+
+#[test]
+fn replacement_requires_a_single_installed_dll_and_online_record() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let (config, manifest) = setup(root);
@@ -196,7 +233,7 @@ fn declared_replacement_requires_a_single_installed_dll_and_online_record() {
 }
 
 #[test]
-fn declared_replacement_only_offers_a_strictly_newer_default_zip_on_the_same_line() {
+fn replacement_only_offers_a_strictly_newer_default_zip_on_the_same_line() {
     let dir = tempfile::tempdir().unwrap();
     let (mut config, _) = setup(dir.path());
     for (tag, asset, pin, update) in [

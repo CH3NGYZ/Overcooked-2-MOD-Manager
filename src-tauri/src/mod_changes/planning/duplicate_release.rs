@@ -18,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-mod source_switch;
+pub(super) mod source_switch;
 
 fn installed_groups(trusted: &TrustedInventory) -> impl Iterator<Item = (&str, &NodeFiles)> {
     trusted.files.values().filter_map(|files| {
@@ -94,7 +94,7 @@ pub(super) fn attach_root(
             error
         }
     })?;
-    attach(trusted, repo_id, candidate, proof, None);
+    attach(trusted, repo_id, vec![candidate], proof, None);
     Ok(true)
 }
 
@@ -161,7 +161,7 @@ pub(super) fn attach_dependencies(
             }
         }
         if let Some((candidate, proof)) = upgrade {
-            attach(trusted, &repo_id, candidate, proof, None);
+            attach(trusted, &repo_id, vec![candidate], proof, None);
         } else {
             if let Some(node) = trusted
                 .inventory
@@ -344,7 +344,7 @@ fn prove(
 fn attach(
     trusted: &mut TrustedInventory,
     repo_id: &str,
-    candidate: Candidate,
+    candidates: Vec<Candidate>,
     proof: Consolidation,
     source_switch: Option<RetiredModCopy>,
 ) {
@@ -357,18 +357,23 @@ fn attach(
     let id = format!("mod:{repo_id}");
     combined.id.clone_from(&id);
     combined.mutable = true;
-    let candidate_id = candidate.id.clone();
+    let candidate_ids = candidates
+        .iter()
+        .map(|candidate| candidate.id.clone())
+        .collect();
     files.summary.node_id.clone_from(&id);
     files.summary.enabled = combined.enabled;
     if source_switch.is_some() {
         files.summary.repository_id = Some(repo_id.into());
     }
-    files.summary.candidates.clear();
-    files.summary.candidates.push(inventory::CandidateSummary {
-        id: candidate.id.clone(),
-        tag: candidate.tag.clone(),
-    });
-    combined.candidates = vec![candidate];
+    files.summary.candidates = candidates
+        .iter()
+        .map(|candidate| inventory::CandidateSummary {
+            id: candidate.id.clone(),
+            tag: candidate.tag.clone(),
+        })
+        .collect();
+    combined.candidates = candidates;
     trusted
         .inventory
         .nodes
@@ -379,7 +384,7 @@ fn attach(
     trusted.duplicate_releases.upgrades.insert(
         id,
         DuplicateReleaseUpgrade {
-            candidate_id,
+            candidate_ids,
             copies: retired,
             source_switch,
         },
@@ -442,7 +447,7 @@ fn eligible_release<'a>(
         || repo.plugin_guid.trim().is_empty()
         || repo.last_error.is_some()
         || releases::repository_coordinates(&repo.username, &repo.repository).is_err()
-        || !line_allows(repo.channel, prerelease)
+        || !repo.channel.allows_prerelease(prerelease)
         || mods::compare_mod_versions(tag, tag).is_none()
     {
         return None;
@@ -491,7 +496,7 @@ fn is_affiliated(
     let binding_matches = |binding: &ModRepositoryBinding| {
         binding.is_valid()
             && binding.matches_identity(repo)
-            && line_allows(binding.channel, prerelease)
+            && binding.channel.allows_prerelease(prerelease)
             && releases::compare_release_versions(tag, &binding.tag) == Some(Ordering::Greater)
     };
     for manifest in &files.manifests {
@@ -525,14 +530,6 @@ fn is_affiliated(
                         && source.repository.eq_ignore_ascii_case(&repo.repository)
                 })
         })
-}
-
-fn line_allows(channel: Channel, prerelease: bool) -> bool {
-    matches!(channel, Channel::All)
-        || matches!(
-            (channel, prerelease),
-            (Channel::Stable, false) | (Channel::Beta, true)
-        )
 }
 
 fn select_primary<'a>(copies: &'a [Copy<'a>], repo: &ModRepositoryConfig) -> Option<&'a Copy<'a>> {

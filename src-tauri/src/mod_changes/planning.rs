@@ -352,6 +352,13 @@ fn create_inner(
                 session.map_payload.is_some(),
             )
         };
+        if session.dependency_policy != DependencyPolicy::MapFilesOnly {
+            duplicate_release::source_switch::attach_dependencies(
+                &mut session.trusted,
+                &session.request,
+                &data,
+            );
+        }
         *step = "initial_solve";
         resolve_stage(state, &mut session, "initial")?;
         *step = "game_run_guard";

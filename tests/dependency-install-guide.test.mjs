@@ -508,10 +508,11 @@ test('cancelling a prepared panel clears its highlight and ordinary details keep
 
 test('details panel accepts an initial install tab without starting work and updates its log locale', async t => {
   t.after(() => { globalThis.__dependencyGuideLocale.value = 'zh-CN' })
+  const multilingual = '# zh-CN\nCode fallback\n# 简体中文\n简体说明\n# en\nEnglish notes'
   const { props, state } = mountedComponent(t, ReleaseDetailPanel, {
     title: 'Runtime', tabsOnlyHeader: true, provider: 'github', owner: 'sample', repository: 'runtime',
     initialTab: 'install', dependenciesTab: 'install', dependencies: [{ key: 'loader', name: 'Loader' }],
-    releaseNotes: '# English\nEnglish notes\n\n# 简体中文\n简体说明',
+    releaseNotes: multilingual,
     versions: [{ label: 'v4.0.0', value: 'v4.0.0' }], version: 'v4.0.0', assets: [{ name: 'runtime.zip' }],
   })
   assert.equal(state.activeTab, 'install')
@@ -522,12 +523,16 @@ test('details panel accepts an initial install tab without starting work and upd
   assert.equal(state.logText, 'English notes')
   globalThis.__dependencyGuideLocale.value = 'de'
   await settle()
-  assert.equal(state.logText, '# English\nEnglish notes\n\n# 简体中文\n简体说明')
-  props.value = { ...props.value, initialTab: 'info' }
+  assert.equal(state.logText, multilingual)
+  const original = '    Original Markdown code\r\n\r\n# English\r\nOnly English  \r\n'
+  props.value = { ...props.value, initialTab: 'info', releaseNotes: original }
   await settle()
   assert.equal(state.activeTab, 'info')
   assert.equal(state.guideHighlighted, false)
-  assert.equal(state.logText, '# English\nEnglish notes\n\n# 简体中文\n简体说明')
+  assert.equal(state.logText, original)
+  props.value = { ...props.value, releaseNotes: ' \r\n ' }
+  await settle()
+  assert.equal(state.logText, '')
 })
 
 test('production templates connect exact version preparation and primary click through existing installation events', () => {

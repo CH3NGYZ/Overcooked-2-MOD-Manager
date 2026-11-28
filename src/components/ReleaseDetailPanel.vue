@@ -263,7 +263,10 @@ const versionText = computed(() => props.versionFallback || props.version || '�
 const bindingText = computed(() => props.bindingLabel || t('tools.versionBinding'))
 /** 资产区用本地时间的时分秒；UTC 的 `published_at` 直接截日期会跨时区错位。 */
 const publishedDateTime = computed(() => formatLocalDateTime(props.publishedAt))
-const logText = computed(() => packageReleaseBody(props.releaseNotes, locale.value).trim())
+const logText = computed(() => {
+  const body = packageReleaseBody(props.releaseNotes, locale.value)
+  return body.trim() ? body : ''
+})
 const emptyLogText = computed(() => props.logEmptyText || t('modsLocal.thisReleaseHasNoNotes'))
 const showInstallDependencies = computed(() => props.dependenciesTab === 'install' && props.dependencies.length > 0)
 

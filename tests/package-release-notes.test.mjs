@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { selectReleaseNotes } from '../src/appUpdateNotes.ts'
+import { LOCALE_CODES, LOCALE_LABELS } from '../src/locale/types.ts'
 import { installedModReleaseTag, mapReleaseNotesReview, packageReleaseBody, packageReleaseNotes } from '../src/packageReleaseNotes.ts'
 
 const release = (tag_name, overrides = {}) => ({
@@ -109,6 +110,26 @@ test('each package version selects its own translated heading or falls back to i
   assert.deepEqual(versions.map(({ body }) => packageReleaseBody(body, 'fr')), [missing, empty, 'Changements\n'])
   assert.equal(packageReleaseBody(' \r\n ', 'en'), ' \r\n ')
   assert.equal(selectReleaseNotes(missing, 'fr'), '')
+})
+
+test('package notes prefer all 12 language names to matching codes regardless of order', () => {
+  const names = LOCALE_CODES.map(locale => `# **${LOCALE_LABELS[locale]}**\nName ${locale}`)
+  const codes = LOCALE_CODES.map(locale => `# ${locale.toUpperCase()}\nCode ${locale}`)
+  for (const headings of [[...codes, ...names], [...names, ...codes]]) {
+    const source = headings.join('\n\n')
+    for (const locale of LOCALE_CODES) assert.equal(packageReleaseBody(source, locale).trim(), `Name ${locale}`)
+  }
+  assert.equal(selectReleaseNotes([...codes, ...names].join('\n\n'), 'ja').trim(), 'Code ja')
+})
+
+test('package notes use a code when the named section is blank, and keep the original if neither is usable', () => {
+  const codeOnly = '# Release notes\r\n\r\n## **Português (Brasil)**\r\n \r\n## pt-BR\r\nCorreção  \r\n'
+  assert.equal(packageReleaseBody(codeOnly, 'pt-BR'), 'Correção  \n')
+  const missing = '\r\n    Original example\r\n\r\n# Português (Brasil)\r\n \r\n# pt-BR\r\n\r\n# English\r\nOnly English  \r\n'
+  assert.equal(packageReleaseBody(missing, 'pt-BR'), missing)
+  const secondLevel = '# Changes\n\n## zh-Hant\nCode\n\n## Traditional Chinese\nName'
+  assert.equal(packageReleaseBody(secondLevel, 'zh-TW'), 'Name')
+  assert.equal(packageReleaseBody('## zh-Hant\nCode', 'zh-TW'), 'Code')
 })
 
 test('package level-two headings use the same Markdown structure without changing manager notes', () => {

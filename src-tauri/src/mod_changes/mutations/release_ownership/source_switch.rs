@@ -173,6 +173,11 @@ impl Builder<'_> {
         else {
             return Ok(None);
         };
+        let selected_prerelease = explicit_root
+            && prerelease
+            && core.repo.channel == Channel::All
+            && matches!(self.session.wire_request.roots.as_slice(), [root]
+                if self.session.request.roots.first() == Some(&root.intent) && root.asset_name.is_some());
         let target = mods::canonical_dll_name(core.path);
         let projected = self
             .session
@@ -214,12 +219,13 @@ impl Builder<'_> {
                         prerelease,
                         Some(&core.repo.plugin_guid),
                     )
-                    && mods::installed_prerelease(
-                        &trusted.config,
-                        Some(previous),
-                        manifest.prerelease,
-                        None,
-                    ) == prerelease;
+                    && (selected_prerelease
+                        || mods::installed_prerelease(
+                            &trusted.config,
+                            Some(previous),
+                            manifest.prerelease,
+                            None,
+                        ) == prerelease);
                 (explicit || vacant).then_some((record, previous, explicit))
             });
         let Some((record, previous_binding, explicit)) = records.next() else {

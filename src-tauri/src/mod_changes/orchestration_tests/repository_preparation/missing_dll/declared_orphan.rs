@@ -49,6 +49,7 @@ struct CustomerCase {
     old_tag: &'static str,
     old_dll_version: Option<&'static str>,
     new_version: &'static str,
+    new_prerelease: bool,
     guid: &'static str,
     source_document: &'static str,
     dll: &'static str,
@@ -65,6 +66,7 @@ const SETTINGS: CustomerCase = CustomerCase {
     old_tag: "v1.1.1",
     old_dll_version: None,
     new_version: "1.3.1",
+    new_prerelease: false,
     guid: "com.ch3ngyz.plugin.overcooked2.modsettings",
     source_document: "mods/mods-azhe-settings-manager.toml",
     dll: "OC2ModSettings.dll",
@@ -81,11 +83,25 @@ const EXPERIENCE: CustomerCase = CustomerCase {
     old_tag: "v1.17.0",
     old_dll_version: Some("1.17.0"),
     new_version: "1.17.3",
+    new_prerelease: false,
     guid: "com.ch3ngyz.plugin.diylevel.sorting",
     source_document: "mods/mods-azhe-others.toml",
     dll: "OC2DIYLevel-ExperienceOptimization-体验优化.dll",
     asset: "OC2DIYLevel-ExperienceOptimization-v1.17.3.zip",
     expected_replacements: 2,
+};
+
+const EXPERIENCE_SAME_VERSION: CustomerCase = CustomerCase {
+    old_tag: "v1.17.3",
+    old_dll_version: Some("1.17.3"),
+    ..EXPERIENCE
+};
+
+const EXPERIENCE_PRERELEASE: CustomerCase = CustomerCase {
+    new_version: "1.18.1",
+    new_prerelease: true,
+    asset: "OC2DIYLevel-ExperienceOptimization-v1.18.1.zip",
+    ..EXPERIENCE_SAME_VERSION
 };
 
 fn plugin_zip(dll: &str, guid: &str, product: &str, version: &str) -> Vec<u8> {
@@ -128,18 +144,28 @@ fn official_replacements(case: &CustomerCase) -> Vec<ReplacedModRepository> {
         })
 }
 
+enum ReplayRoot {
+    SelectedAsset,
+    DefaultAsset,
+    Dependency(DependencyRoot, Option<Vec<u8>>),
+}
+
 async fn replay(
     case: CustomerCase,
     asset_zip: Vec<u8>,
-    dependency_root: Option<(DependencyRoot, Option<Vec<u8>>)>,
+    selection: ReplayRoot,
+    expect_takeover: bool,
 ) {
     let target = format!("BepInEx/plugins/{}", case.dll);
     let tag = format!("v{}", case.new_version);
-    let root = dependency_root.map(|(root, bytes)| {
+    let selected_asset = matches!(selection, ReplayRoot::SelectedAsset);
+    let root = if let ReplayRoot::Dependency(root, bytes) = selection {
         let bytes =
             bytes.unwrap_or_else(|| plugin_zip(root.dll, root.guid, root.repository, root.version));
-        (root, bytes)
-    });
+        Some((root, bytes))
+    } else {
+        None
+    };
     let server = Server::new(
         std::iter::once(asset_zip.clone())
             .chain(root.as_ref().map(|(_, bytes)| bytes.clone()))
@@ -153,6 +179,8 @@ async fn replay(
     next.install_target = "BepInEx/plugins".into();
     next.asset_rules[0].value = case.asset.into();
     next.cached_releases[0].assets = vec![served(&server, 0, case.asset, &asset_zip)];
+    next.cached_releases[0].prerelease = case.new_prerelease;
+    next.cached_releases[0].api_prerelease = Some(case.new_prerelease);
     next.source_id = Some(crate::repository_sources::DEFAULT_INDEX_ID.into());
     let binding = ModRepositoryBinding::from_release(&next, &tag).unwrap();
     let fixture = versioned_fixture(next);
@@ -229,12 +257,27 @@ async fn replay(
     assert_unchanged();
 
     for commit in [false, true] {
-        let initial =
-            planning::create(&fixture.state, request(root_id, Some(&root_tag), true)).unwrap();
+        let mut selection = request(root_id, Some(&root_tag), true);
+        if selected_asset {
+            selection.roots[0].asset_name = Some(case.asset.into());
+        }
+        let initial = planning::create(&fixture.state, selection).unwrap();
         assert!(!initial.prepared);
         let outcome = preparation::prepare(fixture.state.clone(), initial.plan_id, |_| {}).await;
         assert_unchanged();
-        assert_eq!(outcome.error, None);
+        if !expect_takeover {
+            assert_eq!(outcome.progress.stage, PreparationStage::Failed);
+            assert_eq!(
+                outcome.error,
+                Some(install_claim_error(
+                    &target,
+                    &format!("manifests/{}.toml", case.old_id),
+                )),
+            );
+            assert!(outcome.plan.is_none() && outcome.manifest_overwrite.is_none());
+            return;
+        }
+        assert_eq!(outcome.error, None, "{} → {tag}", case.old_tag);
         assert_eq!(outcome.progress.stage, PreparationStage::Ready);
         let plan = outcome.plan.unwrap();
         assert!(plan.prepared);
@@ -276,6 +319,7 @@ async fn replay(
         .find(|record| record.repository_id == case.new_id)
         .unwrap();
     assert_eq!(next.repository_binding.as_ref(), Some(&binding));
+    assert_eq!(next.prerelease, case.new_prerelease);
     assert_eq!(next.files, [target]);
     if let Some((root_fixture, _)) = &root {
         assert!(
@@ -296,8 +340,14 @@ async fn customer_log_mod_settings_missing_dll_reclaims_orphan_only_on_commit() 
         "MOD Settings",
         SETTINGS.new_version,
     );
-    replay(SETTINGS, bytes.clone(), Some((HOST_UTILITIES, None))).await;
-    replay(SETTINGS, bytes, None).await;
+    replay(
+        SETTINGS,
+        bytes.clone(),
+        ReplayRoot::Dependency(HOST_UTILITIES, None),
+        true,
+    )
+    .await;
+    replay(SETTINGS, bytes, ReplayRoot::SelectedAsset, true).await;
 }
 
 #[tokio::test]
@@ -308,7 +358,67 @@ async fn customer_log_diylevel_installs_missing_experience_dependency_and_reclai
         "Experience Optimization",
         EXPERIENCE.new_version,
     );
-    replay(EXPERIENCE, bytes, Some((DIYLEVEL, None))).await;
+    replay(
+        EXPERIENCE,
+        bytes,
+        ReplayRoot::Dependency(DIYLEVEL, None),
+        true,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn customer_log_explicit_prerelease_claims_missing_stable_source() {
+    let case = EXPERIENCE_PRERELEASE;
+    let bytes = plugin_zip(
+        case.dll,
+        case.guid,
+        "Experience Optimization",
+        case.new_version,
+    );
+    replay(case, bytes, ReplayRoot::SelectedAsset, true).await;
+}
+
+#[tokio::test]
+async fn customer_log_implicit_prerelease_cannot_claim_missing_stable_source() {
+    let case = EXPERIENCE_PRERELEASE;
+    let bytes = plugin_zip(
+        case.dll,
+        case.guid,
+        "Experience Optimization",
+        case.new_version,
+    );
+    for selection in [
+        ReplayRoot::DefaultAsset,
+        ReplayRoot::Dependency(DIYLEVEL, None),
+    ] {
+        replay(EXPERIENCE_PRERELEASE, bytes.clone(), selection, false).await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires locally downloaded Experience Optimization v1.17.3 and v1.18.1 ZIP files"]
+async fn customer_log_experience_manual_real_release_zips() {
+    for (case, variable, digest) in [
+        (
+            EXPERIENCE_SAME_VERSION,
+            "OC2_EXPERIENCE_OPTIMIZATION_ZIP",
+            "b66324215c6263fd5097c79c8c71d0e9aae337e7ba1aadb0093d51dfadb774d2",
+        ),
+        (
+            EXPERIENCE_PRERELEASE,
+            "OC2_EXPERIENCE_OPTIMIZATION_PRERELEASE_ZIP",
+            "10ad727c292d6adac28427342af48feb4ab4e4b2b031873a881f6674a86c3fd1",
+        ),
+    ] {
+        replay(
+            case,
+            verified_zip(variable, digest),
+            ReplayRoot::SelectedAsset,
+            true,
+        )
+        .await;
+    }
 }
 
 #[tokio::test]
@@ -334,7 +444,13 @@ async fn customer_log_real_release_zip_replays() {
     ] {
         let bytes = verified_zip(variable, sha256);
         let root_bytes = verified_zip(root_variable, root_sha256);
-        replay(case, bytes, Some((root, Some(root_bytes)))).await;
+        replay(
+            case,
+            bytes,
+            ReplayRoot::Dependency(root, Some(root_bytes)),
+            true,
+        )
+        .await;
     }
 }
 
